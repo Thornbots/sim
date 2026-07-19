@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find / -iname \"run_dev.sh\")",
+      "Bash(find / -type d -iname \"isaac_ros_command\")",
+      "Bash(docker exec isaac_ros_dev-x86_64-container *)",
+      "Bash(docker exec *)",
+      "Read(//home/blaise/workspaces/isaac_ros-dev/src/**)",
+      "Read(//home/blaise/workspaces/isaac_ros-dev/**)",
+      "Bash(sed -i 's|package://sentry_pkg/|package://sim/|g' /home/blaise/workspaces/isaac_ros-dev/src/sim/urdf/sentry.urdf.xacro)",
+      "Bash(sed -i 's|model://sentry_pkg/|model://sim/|g' /home/blaise/workspaces/isaac_ros-dev/src/sim/world/ARCC_Field_2026.sdf)"
+    ]
+  }
+}

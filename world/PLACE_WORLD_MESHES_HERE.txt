@@ -1,0 +1,2 @@
+Put the world mesh STL file here (referenced by ARCC_Field_2026.sdf via model://sim/world/...):
+  composite_part_1.stl
