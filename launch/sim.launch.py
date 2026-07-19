@@ -15,9 +15,12 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
+    RegisterEventHandler,
     SetEnvironmentVariable,
+    TimerAction,
 )
 from launch.conditions import IfCondition, UnlessCondition
+from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
@@ -115,14 +118,24 @@ def generate_launch_description():
         }],
     )
 
-    # --- Spawn the robot into the running world from the /robot_description topic.
+    # --- Spawn the robot into the running world.
+    # NOTE: deliberately using -string (raw URDF text) here, NOT -topic
+    # robot_description. -topic makes `create` subscribe to robot_description
+    # over ROS, and that subscription reliably fails to receive the
+    # TRANSIENT_LOCAL-cached message from robot_state_publisher -- confirmed
+    # by watching it live: `ros2 topic echo /robot_description` instantly got
+    # the same message via the same QoS while an already-matched spawn_sentry
+    # sat waiting 30+ seconds. That's a bug in ros_gz_sim create's own ROS
+    # subscription handling, not a startup-ordering race, so no amount of
+    # delay fixes it. -string sidesteps ROS entirely for this one hand-off:
+    # xacro's output is substituted directly into the process arguments.
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
         name='spawn_sentry',
         output='screen',
         arguments=[
-            '-topic', 'robot_description',
+            '-string', Command(['xacro ', default_xacro]),
             '-name', robot_name,
             '-x', LaunchConfiguration('x'),
             '-y', LaunchConfiguration('y'),
@@ -130,6 +143,18 @@ def generate_launch_description():
             '-Y', LaunchConfiguration('yaw'),
             '-allow_renaming', 'true',
         ],
+    )
+    # Keep a short delay before spawning so gz sim's entity-creation service
+    # has time to come up first (unrelated to the robot_description bug above).
+    # end up matched-but-never-delivered if too many participants join at
+    # once, and it then waits on "Waiting messages on topic" forever. Give
+    # discovery a couple seconds of headroom after robot_state_publisher
+    # actually starts before spawning.
+    delayed_spawn_robot = RegisterEventHandler(
+        OnProcessStart(
+            target_action=robot_state_publisher,
+            on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
+        )
     )
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
@@ -188,5 +213,5 @@ def generate_launch_description():
         scan_bridge,
         joint_state_bridge,
         robot_state_publisher,
-        spawn_robot,
+        delayed_spawn_robot,
     ])
