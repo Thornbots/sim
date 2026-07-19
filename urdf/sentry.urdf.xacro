@@ -153,14 +153,15 @@
           </horizontal>
         </scan>
         <range>
-          <min>0.120000</min>
-          <max>3.5</max>
+          <!-- Matches RPLIDAR A2M8 datasheet: 0.15-12m -->
+          <min>0.15</min>
+          <max>12.0</max>
           <resolution>0.015000</resolution>
         </range>
         <noise>
           <type>gaussian</type>
           <mean>0.0</mean>
-          <stddev>0.01</stddev>
+          <stddev>0.03</stddev>
         </noise>
       </lidar>
     </sensor>
