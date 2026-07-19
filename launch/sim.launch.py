@@ -257,6 +257,31 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
+    # --- Bridge for the head pan (see sentry.urdf.xacro's
+    # JointPositionController on headlink). The head partially blocks the
+    # lidar's own field of view at whatever bearing it currently sits at,
+    # so the idea was to slowly sweep it (sim/head_sweep.py) to move that
+    # blind wedge around and let SLAM fill it in over time.
+    # NOT auto-started (head_sweep is deliberately absent from the
+    # LaunchDescription below): tried it, and continuous head rotation
+    # measurably corrupted the map -- lidar points get integrated at
+    # whatever head angle robot_state_publisher's TF says *at the scan's
+    # timestamp*, and with the head moving fast enough, any slack in TF
+    # timestamp/interpolation smears wall traces across a spread of wrong
+    # angles instead of the intended "different fixed angle per pass".
+    # Bridge is left wired up so `ros2 run sim head_sweep` (or a much
+    # slower version of it) can still be tried manually later.
+    gz_headlink_topic = ['/model/', robot_name, '/joint/headlink/cmd_pos']
+    head_pan_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='head_pan_bridge',
+        output='screen',
+        arguments=[gz_headlink_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
+        remappings=[(gz_headlink_topic, '/head_pan_cmd')],
+        parameters=[{'use_sim_time': True}],
+    )
+
     return LaunchDescription([
         world_arg,
         robot_name_arg,
@@ -277,6 +302,7 @@ def generate_launch_description():
         planar_x_vel_bridge,
         planar_y_vel_bridge,
         yaw_vel_bridge,
+        head_pan_bridge,
         robot_state_publisher,
         delayed_spawn_robot,
     ])

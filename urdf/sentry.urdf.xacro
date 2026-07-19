@@ -130,9 +130,20 @@
        suspension does: isolates the chassis from ground-level disturbances. -->
   <link name="planar_x">
     <inertial>
-      <mass value="0.0001"/>
+      <!-- Deliberately not near-zero (an earlier version used mass 0.0001 /
+           inertia 1e-9): confirmed empirically that made the yaw joint spin
+           itself up to its velocity limit under a corner collision with 0
+           commanded velocity and 0 reported effort, i.e. not driven by any
+           controller; a near-massless connector link between joints is a
+           known DART/ODE instability under contact (any small residual
+           constraint force produces huge spurious acceleration on a link
+           with almost no inertia to resist it). Still tiny relative to the
+           real chassis (mass 0.05, izz 0.00226) so it doesn't meaningfully
+           change commanded motion, just gives the solver something
+           non-degenerate to work with. -->
+      <mass value="0.05"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
     </inertial>
   </link>
   <joint name="world_to_planar_x" type="prismatic">
@@ -143,9 +154,20 @@
   </joint>
   <link name="planar_y">
     <inertial>
-      <mass value="0.0001"/>
+      <!-- Deliberately not near-zero (an earlier version used mass 0.0001 /
+           inertia 1e-9): confirmed empirically that made the yaw joint spin
+           itself up to its velocity limit under a corner collision with 0
+           commanded velocity and 0 reported effort, i.e. not driven by any
+           controller; a near-massless connector link between joints is a
+           known DART/ODE instability under contact (any small residual
+           constraint force produces huge spurious acceleration on a link
+           with almost no inertia to resist it). Still tiny relative to the
+           real chassis (mass 0.05, izz 0.00226) so it doesn't meaningfully
+           change commanded motion, just gives the solver something
+           non-degenerate to work with. -->
+      <mass value="0.05"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
     </inertial>
   </link>
   <joint name="planar_x_to_y" type="prismatic">
@@ -156,9 +178,20 @@
   </joint>
   <link name="yaw_base">
     <inertial>
-      <mass value="0.0001"/>
+      <!-- Deliberately not near-zero (an earlier version used mass 0.0001 /
+           inertia 1e-9): confirmed empirically that made the yaw joint spin
+           itself up to its velocity limit under a corner collision with 0
+           commanded velocity and 0 reported effort, i.e. not driven by any
+           controller; a near-massless connector link between joints is a
+           known DART/ODE instability under contact (any small residual
+           constraint force produces huge spurious acceleration on a link
+           with almost no inertia to resist it). Still tiny relative to the
+           real chassis (mass 0.05, izz 0.00226) so it doesn't meaningfully
+           change commanded motion, just gives the solver something
+           non-degenerate to work with. -->
+      <mass value="0.05"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
     </inertial>
   </link>
   <joint name="planar_y_to_root_yaw" type="continuous">
@@ -166,58 +199,35 @@
     <child link="yaw_base"/>
     <axis xyz="0 0 1"/>
     <limit effort="1000" velocity="10"/>
+    <!-- Without damping, a corner collision's reaction torque spins this
+         joint up and it never slows back down on its own (confirmed: caught
+         it pegged at its 10 rad/s velocity limit with 0 effort reported,
+         i.e. not driven by the controller at all, purely leftover momentum);
+         explorer never commands yaw, but once spinning like that it kept
+         dragging/fighting the wall it was wedged against by friction,
+         reads as "stuck no matter what heading is picked" even though X/Y
+         are independently commandable. suspension_z already had damping for
+         the same reason; this joint was missed. -->
+    <dynamics damping="20.0"/>
   </joint>
-  <!-- Suspension: X/Y/yaw above are driven (JointController), always
-       exactly what's commanded; a real vehicle's wheel-contact-patch
-       motion is like that too. Everything below here is passive/gravity-
-       driven, modeling the suspension that sits between the wheelbase and
-       the chassis: heave (Z) lets the chassis ride up over a ramp or lip
-       instead of being pinned to a fixed height; roll/pitch let it tilt to
-       match the ground's local slope. Their <limit> ranges (+-25deg, +-0.3m)
-       are the actual fix for the original flip-on-a-lip problem: even a
-       hard impact can only rotate the chassis 25deg before the joint limit
-       stops it, so a full flip (which needs ~90deg+) is structurally
-       impossible, while a ramp's much shallower incline is well within
-       range. <dynamics damping> keeps a sudden bump from making it
-       oscillate instead of settling.
-       (Earlier attempt eliminated Z/roll/pitch entirely; solved flipping
-       but also made ramps impassable, since the chassis had no way to
-       rise to a ramp's height at all. This is the corrected version.) -->
-  <link name="susp_z">
-    <inertial>
-      <mass value="0.0001"/>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9"/>
-    </inertial>
-  </link>
+  <!-- X/Y/yaw above are driven (JointController), always exactly what's
+       commanded. Z is the only passive/gravity-driven DOF: lets the
+       chassis ride up over a ramp or lip instead of being pinned to a
+       fixed height, without needing roll/pitch to do it (root stays flat;
+       it rises onto a ramp rather than tilting to match its slope).
+       Simplified from an earlier 3-joint suspension (Z + roll + pitch)
+       that also let the chassis tilt; more physically faithful, but
+       more tuning surface than needed here, since roll/pitch was only
+       ever needed to prevent flipping, and Z alone already makes that
+       impossible (no roll/pitch DOF exists at all now, not just a limited
+       one) while being simpler to reason about. -->
+  <link name="root"/>
   <joint name="suspension_z" type="prismatic">
     <parent link="yaw_base"/>
-    <child link="susp_z"/>
+    <child link="root"/>
     <axis xyz="0 0 1"/>
     <limit lower="-0.3" upper="0.3" effort="1000" velocity="5"/>
     <dynamics damping="5.0"/>
-  </joint>
-  <link name="susp_roll">
-    <inertial>
-      <mass value="0.0001"/>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <inertia ixx="1e-9" ixy="0" ixz="0" iyy="1e-9" iyz="0" izz="1e-9"/>
-    </inertial>
-  </link>
-  <joint name="suspension_roll" type="revolute">
-    <parent link="susp_z"/>
-    <child link="susp_roll"/>
-    <axis xyz="1 0 0"/>
-    <limit lower="-0.44" upper="0.44" effort="1000" velocity="5"/>
-    <dynamics damping="2.0"/>
-  </joint>
-  <link name="root"/>
-  <joint name="suspension_pitch" type="revolute">
-    <parent link="susp_roll"/>
-    <child link="root"/>
-    <axis xyz="0 1 0"/>
-    <limit lower="-0.44" upper="0.44" effort="1000" velocity="5"/>
-    <dynamics damping="2.0"/>
   </joint>
   <joint name="fastened_2" type="fixed">
     <origin xyz="0 0 0" rpy="0 -0 3.14159"/>
@@ -250,12 +260,12 @@
     <child link="odowheel_1"/>
   </joint>
   <!-- Gravity is left ON here (unlike an earlier attempt that disabled it):
-       the suspension_z/roll/pitch joints above need gravity + normal
-       contact force to naturally settle the chassis onto the floor/ramp at
-       the correct height and angle, the same way a real suspended vehicle
-       does. Disabling gravity made the robot immune to floor lips but also
-       unable to climb ramps at all, since a chassis with no weight has
-       nothing pressing it down to follow the ground's shape. -->
+       the suspension_z joint above needs gravity + normal contact force
+       to naturally settle the chassis onto the floor/ramp at the correct
+       height, the same way a real suspended vehicle does. Disabling
+       gravity made the robot immune to floor lips but also unable to
+       climb ramps at all, since a chassis with no weight has nothing
+       pressing it down to follow the ground's shape. -->
   <gazebo reference="lidar">
     <sensor name="lidar" type="gpu_lidar">
       <always_on>true</always_on>
@@ -318,16 +328,33 @@
            yaw are affected); tracked here as a further workaround so
            odom_to_tf can source Y from here too instead of /odom. -->
       <joint_name>planar_x_to_y</joint_name>
+      <!-- robot_state_publisher needs /joint_states data for every
+           non-fixed joint to compute a single connected TF tree; any
+           untracked joint (world_to_planar_x and the 3 suspension joints
+           below were missing) fragments the tree into unconnected pieces,
+           breaking TF lookups like root->lidar entirely (not just reporting
+           a wrong value, the frames don't connect at all). -->
+      <joint_name>world_to_planar_x</joint_name>
+      <joint_name>suspension_z</joint_name>
       <ros>
         <argument>-p use_sim_time:=true</argument>
       </ros>
     </plugin>
-    <!-- Lets the gz sim GUI's "Joint Position Controller" panel drive the
-         head turn with a slider: that panel publishes a target angle (rad)
-         on /model/sentry/joint/headlink/0/cmd_pos, which this PID controller
-         tracks. Without this plugin the slider panel has nothing to command. -->
+    <!-- Lets the gz sim GUI's "Joint Position Controller" panel (and
+         sim/head_sweep.py, bridged into ROS) drive the head turn: publish a
+         target angle (rad) on /model/sentry/joint/headlink/cmd_pos and this
+         PID controller tracks it. Without this plugin nothing can command
+         the head at all.
+         <topic> is set explicitly here (the plugin's own auto-generated
+         default is .../headlink/0/cmd_pos) because that "/0/" index segment
+         isn't valid as a ROS name token; ros_gz_bridge's remap rule
+         parser rejects it outright ("Couldn't parse remap rule"), so
+         bridging the default topic into ROS for head_sweep.py is
+         impossible without overriding it here first. Hardcodes "sentry"
+         since gz's topic templating doesn't reach into plugin params. -->
     <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
       <joint_name>headlink</joint_name>
+      <topic>/model/sentry/joint/headlink/cmd_pos</topic>
       <p_gain>2.0</p_gain>
       <i_gain>0.1</i_gain>
       <d_gain>0.05</d_gain>
