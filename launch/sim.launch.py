@@ -146,10 +146,6 @@ def generate_launch_description():
     )
     # Keep a short delay before spawning so gz sim's entity-creation service
     # has time to come up first (unrelated to the robot_description bug above).
-    # end up matched-but-never-delivered if too many participants join at
-    # once, and it then waits on "Waiting messages on topic" forever. Give
-    # discovery a couple seconds of headroom after robot_state_publisher
-    # actually starts before spawning.
     delayed_spawn_robot = RegisterEventHandler(
         OnProcessStart(
             target_action=robot_state_publisher,
@@ -197,6 +193,70 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
+    # --- Bridge the OdometryPublisher gazebo plugin's output into ROS 2.
+    # Same story as joint_state above: that plugin (see sentry.urdf.xacro)
+    # only publishes on the gz-transport topic /model/<robot_name>/odometry
+    # as ignition.msgs.Odometry, not to ROS. This is deliberately just the
+    # raw bridge -- sim's job is to provide raw topics matching what real
+    # hardware would produce, nothing more. Turning /odom into the
+    # odom->root TF is sentry_pkg's job, see sentry_pkg/launch/auto.launch.py
+    # -- that's the "brain" package, sim is not.
+    gz_odom_topic = ['/model/', robot_name, '/odometry']
+    odom_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='odom_bridge',
+        output='screen',
+        arguments=[gz_odom_topic + ['@nav_msgs/msg/Odometry[gz.msgs.Odometry']],
+        remappings=[(gz_odom_topic, '/odom')],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    # --- Bridge /cmd_vel (ROS) into the VelocityControl gz plugin (see
+    # sentry.urdf.xacro) so the chassis can actually be driven in sim, e.g.
+    # to sweep the room for mapping. root is joint-constrained (X/Y/yaw
+    # only, see sentry.urdf.xacro), so driving it needs one JointController
+    # per joint rather than a single Twist bridge -- cmd_vel_to_joints
+    # splits /cmd_vel into the 3 topics these bridges forward into gz.
+    # ROS->GZ direction only (']' not '[') for all three.
+    cmd_vel_to_joints = Node(
+        package='sim',
+        executable='cmd_vel_to_joints',
+        name='cmd_vel_to_joints',
+        output='screen',
+        parameters=[{'use_sim_time': True}],
+    )
+    gz_planar_x_topic = ['/model/', robot_name, '/joint/world_to_planar_x/cmd_vel']
+    planar_x_vel_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='planar_x_vel_bridge',
+        output='screen',
+        arguments=[gz_planar_x_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
+        remappings=[(gz_planar_x_topic, '/planar_x_vel_cmd')],
+        parameters=[{'use_sim_time': True}],
+    )
+    gz_planar_y_topic = ['/model/', robot_name, '/joint/planar_x_to_y/cmd_vel']
+    planar_y_vel_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='planar_y_vel_bridge',
+        output='screen',
+        arguments=[gz_planar_y_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
+        remappings=[(gz_planar_y_topic, '/planar_y_vel_cmd')],
+        parameters=[{'use_sim_time': True}],
+    )
+    gz_yaw_topic = ['/model/', robot_name, '/joint/planar_y_to_root_yaw/cmd_vel']
+    yaw_vel_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='yaw_vel_bridge',
+        output='screen',
+        arguments=[gz_yaw_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
+        remappings=[(gz_yaw_topic, '/yaw_vel_cmd')],
+        parameters=[{'use_sim_time': True}],
+    )
+
     return LaunchDescription([
         world_arg,
         robot_name_arg,
@@ -212,6 +272,11 @@ def generate_launch_description():
         clock_bridge,
         scan_bridge,
         joint_state_bridge,
+        odom_bridge,
+        cmd_vel_to_joints,
+        planar_x_vel_bridge,
+        planar_y_vel_bridge,
+        yaw_vel_bridge,
         robot_state_publisher,
         delayed_spawn_robot,
     ])

@@ -43,6 +43,10 @@ setup(
     license='Apache-2.0',
     tests_require=['pytest'],
     entry_points={
-        'console_scripts': [],
+        'console_scripts': [
+            'wasd_teleop = sim.wasd_teleop:main',
+            'cmd_vel_to_joints = sim.cmd_vel_to_joints:main',
+            'auto_explore = sim.auto_explore:main',
+        ],
     },
 )
