@@ -112,11 +112,12 @@
     <parent link="root"/>
     <child link="body"/>
   </joint>
-  <joint name="headlink" type="continuous">
+  <joint name="headlink" type="revolute">
     <origin xyz="-2.54975e-18 5.65558e-17 0.252215" rpy="0 -0 3.14159"/>
     <axis xyz="0 0 -1"/>
     <parent link="body"/>
     <child link="head"/>
+    <limit lower="-3.14159" upper="3.14159" effort="10" velocity="3"/>
   </joint>
   <joint name="lidarlink" type="fixed">
     <origin xyz="-0.170562 -0.139254 0.0718" rpy="0 0 -1.95964"/>
@@ -181,6 +182,20 @@
       <ros>
         <argument>-p use_sim_time:=true</argument>
       </ros>
+    </plugin>
+    <!-- Lets the gz sim GUI's "Joint Position Controller" panel drive the
+         head turn with a slider: that panel publishes a target angle (rad)
+         on /model/sentry/joint/headlink/0/cmd_pos, which this PID controller
+         tracks. Without this plugin the slider panel has nothing to command. -->
+    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+      <joint_name>headlink</joint_name>
+      <p_gain>2.0</p_gain>
+      <i_gain>0.1</i_gain>
+      <d_gain>0.05</d_gain>
+      <i_max>1</i_max>
+      <i_min>-1</i_min>
+      <cmd_max>5</cmd_max>
+      <cmd_min>-5</cmd_min>
     </plugin>
   </gazebo>
 </robot>

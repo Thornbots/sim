@@ -8,7 +8,8 @@
       "Read(//home/blaise/workspaces/isaac_ros-dev/src/**)",
       "Read(//home/blaise/workspaces/isaac_ros-dev/**)",
       "Bash(sed -i 's|package://sentry_pkg/|package://sim/|g' /home/blaise/workspaces/isaac_ros-dev/src/sim/urdf/sentry.urdf.xacro)",
-      "Bash(sed -i 's|model://sentry_pkg/|model://sim/|g' /home/blaise/workspaces/isaac_ros-dev/src/sim/world/ARCC_Field_2026.sdf)"
+      "Bash(sed -i 's|model://sentry_pkg/|model://sim/|g' /home/blaise/workspaces/isaac_ros-dev/src/sim/world/ARCC_Field_2026.sdf)",
+      "Bash(getent group *)"
     ]
   }
 }

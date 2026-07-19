@@ -21,6 +21,7 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -100,7 +101,9 @@ def generate_launch_description():
     )
 
     # --- Robot description (xacro -> URDF) published on /robot_description.
-    robot_description = Command(['xacro ', default_xacro])
+    robot_description = ParameterValue(
+        Command(['xacro ', default_xacro]), value_type=str
+    )
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -139,6 +142,36 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
+    # --- Bridge the gpu_lidar sensor's /scan topic (defined in sentry.urdf.xacro)
+    # into ROS 2 so it's usable by rviz/SLAM/etc.
+    scan_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='scan_bridge',
+        output='screen',
+        arguments=['/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan'],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    # --- Bridge the JointStatePublisher gazebo plugin's output into ROS 2.
+    # That plugin (see sentry.urdf.xacro) only publishes on the gz-transport
+    # topic /world/<world>/model/<robot_name>/joint_state as ignition.msgs.Model
+    # -- it does NOT talk to ROS on its own -- so robot_state_publisher never
+    # sees /joint_states without this bridge, and TF for the head/lidar links
+    # (which hang off the continuous "headlink" joint) never gets published.
+    gz_joint_state_topic = [
+        '/world/ARCC_Field_2026/model/', robot_name, '/joint_state'
+    ]
+    joint_state_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='joint_state_bridge',
+        output='screen',
+        arguments=[gz_joint_state_topic + ['@sensor_msgs/msg/JointState[gz.msgs.Model']],
+        remappings=[(gz_joint_state_topic, '/joint_states')],
+        parameters=[{'use_sim_time': True}],
+    )
+
     return LaunchDescription([
         world_arg,
         robot_name_arg,
@@ -152,6 +185,8 @@ def generate_launch_description():
         gz_sim,
         gz_sim_headless,
         clock_bridge,
+        scan_bridge,
+        joint_state_bridge,
         robot_state_publisher,
         spawn_robot,
     ])
