@@ -103,12 +103,30 @@
        design), robot_state_publisher has nothing to publish world->root
        from on its own, sentry_pkg/launch/auto.launch.py's default
        (publish_odom_tf:=true, odom_frame:=odom) is what supplies that via
-       odom_to_tf, same as real hardware; no override needed. -->
+       odom_to_tf, same as real hardware; no override needed.
+       Rotational inertia (ixx/iyy/izz) is inflated ~1000x past body's
+       real value as a soft rotation lock: even with the active headlink
+       PID removed and auto_explore.py's model_only joint reset before
+       every set_pose (see that file), occasional small chassis rotation
+       was still observed after a teleport, root's own angular velocity
+       isn't part of any joint's state (root has no parent joint), so
+       nothing resets it if a teleport's hard position discontinuity
+       momentarily induces a reaction impulse through headlink/odowheel_x/
+       odowheel_y (all still attached to body, hence root, via real
+       joints). This is the same soft-lock idea an earlier design used
+       before it was replaced with a hard kinematic joint lock (see
+       above), but that lock was defeated by repeated *contact* torque
+       accumulation, which can't happen any more since this model has no
+       collision anywhere; the only remaining torque source is an
+       occasional single-step reaction impulse, and a large rotational
+       inertia suppresses the angular velocity that impulse produces
+       (impulse / inertia) to something negligible without needing any
+       active force control. -->
   <link name="root">
     <inertial>
       <mass value="0.0507536"/>
       <origin xyz="-2.33205e-05 -3.02404e-05 0.160359" rpy="0 -0 0"/>
-      <inertia ixx="0.00226416" ixy="0" ixz="0" iyy="0.00226416" iyz="0" izz="0.00226416"/>
+      <inertia ixx="2.26416" ixy="0" ixz="0" iyy="2.26416" iyz="0" izz="2.26416"/>
     </inertial>
   </link>
   <joint name="fastened_2" type="fixed">
@@ -210,8 +228,23 @@
     <!-- Lets the gz sim GUI's "Joint Position Controller" panel (and
          sim/head_sweep.py, bridged into ROS) drive the head turn: publish a
          target angle (rad) on /model/sentry/joint/headlink/cmd_pos and this
-         PID controller tracks it. Without this plugin nothing can command
-         the head at all.
+         PID controller tracks it.
+         Reintroduced after being removed for a while: this plugin holds
+         its target via continuous PID torque, and since body/root are
+         rigidly fastened with root a genuinely free 6DOF link (no parent
+         joint, see the root link definition above), that reaction torque
+         used to have nowhere to go but into rotating the whole free
+         root/body assembly, which compounded into visible chassis
+         rotation drift over an auto_explore.py sweep and corrupted the
+         map. Safe to bring back now that both of that bug's actual fixes
+         are in place: root's rotational inertia is inflated ~1000x (see
+         the root link definition above), so any reaction torque this PID
+         still produces yields negligible angular velocity, and
+         auto_explore.py's teleport() now resets all joint state
+         (including headlink) via a model_only WorldReset both before AND
+         after every set_pose, so even a transient PID reaction from a
+         teleport's position discontinuity gets wiped before the next hop
+         either way.
          <topic> is set explicitly here (the plugin's own auto-generated
          default is .../headlink/0/cmd_pos) because that "/0/" index segment
          isn't valid as a ROS name token; ros_gz_bridge's remap rule

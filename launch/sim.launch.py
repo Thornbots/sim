@@ -235,19 +235,11 @@ def generate_launch_description():
     # ROS-side equivalent to bridge here, it's a gz-transport-only service).
 
     # --- Bridge for the head pan (see sentry.urdf.xacro's
-    # JointPositionController on headlink). The head partially blocks the
-    # lidar's own field of view at whatever bearing it currently sits at,
-    # so the idea was to slowly sweep it (sim/head_sweep.py) to move that
-    # blind wedge around and let SLAM fill it in over time.
-    # NOT auto-started (head_sweep is deliberately absent from the
-    # LaunchDescription below): tried it, and continuous head rotation
-    # measurably corrupted the map -- lidar points get integrated at
-    # whatever head angle robot_state_publisher's TF says *at the scan's
-    # timestamp*, and with the head moving fast enough, any slack in TF
-    # timestamp/interpolation smears wall traces across a spread of wrong
-    # angles instead of the intended "different fixed angle per pass".
-    # Bridge is left wired up so `ros2 run sim head_sweep` (or a much
-    # slower version of it) can still be tried manually later.
+    # JointPositionController on headlink, reintroduced now that root's
+    # inflated rotational inertia and auto_explore.py's before/after
+    # joint resets make it safe again). Lets the gz sim GUI's "Joint
+    # Position Controller" panel slider and sim/head_sweep.py drive the
+    # head turn.
     gz_headlink_topic = ['/model/', robot_name, '/joint/headlink/cmd_pos']
     head_pan_bridge = Node(
         package='ros_gz_bridge',

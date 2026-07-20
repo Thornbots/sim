@@ -28,6 +28,17 @@ The robot is holonomic and never turns during normal operation, but
 unlike the old jointed design that made rotation structurally impossible,
 nothing here enforces that any more (see sentry.urdf.xacro), so every
 teleport call pins orientation to identity explicitly.
+
+Every teleport also calls `/world/<world>/control` with a model_only
+WorldReset first, snapping headlink/odowheel_x/odowheel_y back to their
+SDF-declared zero positions/velocities before the pose write. Confirmed
+empirically that a model_only reset doesn't touch root's own pose (it has
+no parent joint, so there's no "initial joint state" for it to reset to,
+only body/root's actual children joints get reset) -- it only clears
+joint state, so it's safe to call unconditionally right before set_pose
+on every hop, belt-and-suspenders against any residual joint
+position/velocity drift even though headlink no longer has an active
+controller that could reintroduce it (see sentry.urdf.xacro).
 """
 import subprocess
 
@@ -38,15 +49,12 @@ WORLD_NAME = 'ARCC_Field_2026'
 ENTITY_NAME = 'sentry'  # robot_name arg default in sim/launch/sim.launch.py
 Z = 0.03                # fixed spawn height, carried through every teleport
 
-# Grid bounds, in world-frame meters. Widened 1m past the original
-# conservative test-room-sized bounds in each direction to cover the whole
-# field; teleporting past a wall is harmless now that root has no
-# collision at all (see sentry.urdf.xacro), so oversizing this costs
-# nothing but a few wasted waypoints.
-GRID_X_MIN = -3.0
-GRID_X_MAX = 3.0
-GRID_Y_MIN = -3.0
-GRID_Y_MAX = 3.0
+# Grid bounds, in world-frame meters. X tightened 0.5m on each side from
+# the prior [-4, 4] to pull waypoints back off the walls in that axis.
+GRID_X_MIN = -3.5
+GRID_X_MAX = 3.5
+GRID_Y_MIN = -5.0
+GRID_Y_MAX = 5.0
 GRID_SPACING = 0.5      # m between adjacent grid points
 
 DWELL_SECONDS = 1.0      # s between teleports, so SLAM gets a settled scan
@@ -74,21 +82,11 @@ def build_grid():
     return waypoints
 
 
-def teleport(x, y, z=Z):
-    """True gz world-pose write via UserCommands' set_pose service (see
-    module docstring for why this now works). Returns whether gz reported
-    success; doesn't raise on an unreachable/misnamed entity so a single
-    bad call doesn't take the whole sweep down."""
-    req = (
-        f"name: '{ENTITY_NAME}', "
-        f"position: {{x: {x}, y: {y}, z: {z}}}, "
-        f"orientation: {{x: 0, y: 0, z: 0, w: 1}}"
-    )
+def _ign_service(service, reqtype, reptype, req):
     try:
         result = subprocess.run(
-            ['ign', 'service', '-s', f'/world/{WORLD_NAME}/set_pose',
-             '--reqtype', 'ignition.msgs.Pose',
-             '--reptype', 'ignition.msgs.Boolean',
+            ['ign', 'service', '-s', f'/world/{WORLD_NAME}/{service}',
+             '--reqtype', reqtype, '--reptype', reptype,
              '--timeout', str(int(SERVICE_TIMEOUT * 1000)),
              '--req', req],
             capture_output=True, text=True, timeout=SERVICE_TIMEOUT + 1.0,
@@ -96,6 +94,50 @@ def teleport(x, y, z=Z):
     except subprocess.TimeoutExpired:
         return False
     return 'true' in result.stdout
+
+
+def reset_joints():
+    """model_only WorldReset: snaps headlink/odowheel_x/odowheel_y back to
+    their SDF-declared zero positions/velocities. Confirmed empirically
+    that this does NOT touch root's own pose (it has no parent joint, so
+    there's no "initial joint state" for it to reset to), only actual
+    joints get reset."""
+    return _ign_service(
+        'control', 'ignition.msgs.WorldControl', 'ignition.msgs.Boolean',
+        'reset: {model_only: true}',
+    )
+
+
+def teleport(x, y, z=Z):
+    """True gz world-pose write via UserCommands' set_pose service (see
+    module docstring for why this now works). Returns whether gz reported
+    success; doesn't raise on an unreachable/misnamed entity so a single
+    bad call doesn't take the whole sweep down. Orientation is pinned to
+    identity on every call (root can physically rotate now, see the
+    module docstring).
+
+    reset_joints() runs both before AND after set_pose: before, so every
+    hop starts from a clean joint state; after, because that's actually
+    when a bad reaction shows up, root's hard position discontinuity can
+    induce a one-step reaction impulse through headlink/odowheel_x/
+    odowheel_y (all real joints on body/root), and resetting only
+    beforehand doesn't touch whatever that impulse just produced. root's
+    own inflated rotational inertia (see sentry.urdf.xacro) is what
+    actually suppresses the resulting angular velocity on root itself
+    (root has no joint, so nothing here can reset that directly); this
+    just keeps the joints themselves from carrying any residual spin
+    forward into the next hop's reaction."""
+    reset_joints()
+    req = (
+        f"name: '{ENTITY_NAME}', "
+        f"position: {{x: {x}, y: {y}, z: {z}}}, "
+        f"orientation: {{x: 0, y: 0, z: 0, w: 1}}"
+    )
+    ok = _ign_service(
+        'set_pose', 'ignition.msgs.Pose', 'ignition.msgs.Boolean', req,
+    )
+    reset_joints()
+    return ok
 
 
 class AutoExplore(Node):
