@@ -15,6 +15,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
+from std_srvs.srv import Trigger
 from dji_serial_bridge.msg import RobotPose
 
 
@@ -44,17 +45,56 @@ class PoseEmulator(Node):
         # drift offset each callback -- simulates ordinary encoder/sensor
         # noise, does not accumulate.
         self.declare_parameter('odom_jitter_stddev', 0.001)
+        # Occasional sudden position "jerk" -- distinct from the smooth
+        # drift random-walk above: models a discrete event like wheel slip
+        # on bumpy terrain or the robot hitting something, rather than
+        # continuous encoder error. This is event-triggered (see
+        # trigger_jerk() below) rather than a per-callback random draw --
+        # NOT tied to any real collision/contact sensor or arena-zone
+        # geometry (sim has neither wired up yet), so nothing in this file
+        # actually calls trigger_jerk() yet. It's exposed so a test harness
+        # (or later, a real event source once one exists) can fire it on
+        # demand to exercise/tune slam_toolbox's reaction to a sudden jump,
+        # without committing to how jerks get triggered for real.
+        # Stddev (meters) of the one-time impulse added to the persistent
+        # drift accumulator when a jerk fires -- meaningfully larger than a
+        # single odom_drift_stddev step so it reads as a sudden jump rather
+        # than blending into the smooth drift.
+        self.declare_parameter('odom_jerk_stddev', 0.05)
 
         self._drift_x = 0.0
         self._drift_y = 0.0
+        # Set by trigger_jerk(); consumed (and cleared) on the next
+        # odom_callback so the impulse is applied exactly once.
+        self._jerk_pending = False
 
         self.pose_pub = self.create_publisher(RobotPose, '/pose', 10)
         self.create_subscription(Odometry, '/sim/raw_odom', self.odom_callback, 10)
         self.create_subscription(JointState, '/sim/raw_joint_states', self.joint_callback, 10)
+        # Test-only trigger surface for the jerk event above: nothing in sim
+        # calls this on its own (no collision/contact sensor or arena-zone
+        # geometry wired up to call it from) -- it's here so a jerk can be
+        # fired on demand from a shell for testing/tuning, e.g.:
+        #   ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger
+        self.create_service(Trigger, '~/trigger_jerk', self._trigger_jerk_srv)
 
     def joint_callback(self, msg):
         if self.yaw_joint_name in msg.name:
             self.head_yaw = msg.position[msg.name.index(self.yaw_joint_name)]
+
+    def trigger_jerk(self):
+        """Arm a one-time sudden position jerk, applied on the next
+        odom_callback. Nothing in this module calls this on its own -- it
+        exists so a test harness (this node's own trigger_jerk service, a
+        future real event source, etc.) can fire a jerk on demand.
+        Intentionally left unwired/untriggered by default."""
+        self._jerk_pending = True
+
+    def _trigger_jerk_srv(self, request, response):
+        self.trigger_jerk()
+        response.success = True
+        response.message = 'jerk armed for next odom_callback'
+        return response
 
     def odom_callback(self, msg):
         x = float(msg.pose.pose.position.x)
@@ -75,6 +115,16 @@ class PoseEmulator(Node):
 
             x += self._drift_x + jitter_x
             y += self._drift_y + jitter_y
+
+            # Sudden jerk, if one was armed via trigger_jerk() -- a one-time
+            # impulse added into the persistent drift accumulator (not the
+            # per-sample jitter), so it sticks going forward as a discrete
+            # jump rather than snapping back like a one-frame blip would.
+            if self._jerk_pending:
+                jerk_stddev = self.get_parameter('odom_jerk_stddev').value
+                self._drift_x += random.gauss(0.0, jerk_stddev)
+                self._drift_y += random.gauss(0.0, jerk_stddev)
+                self._jerk_pending = False
 
         pose = RobotPose()
         pose.header.stamp = msg.header.stamp

@@ -7,6 +7,12 @@ Usage:
     ros2 launch sim sim.launch.py gui:=false
     ros2 launch sim sim.launch.py world:=/absolute/path/to/other.sdf
     ros2 launch sim sim.launch.py odom_noise_enabled:=true
+
+To exercise the sudden-jerk mechanism (wheel slip on bumpy terrain / hitting
+something -- a discrete jump, distinct from the smooth drift above), call
+pose_emulator's trigger_jerk service once sim is up:
+    ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger
+odom_jerk_stddev:= controls how large that one-time jump is (meters).
 """
 import os
 
@@ -67,6 +73,16 @@ def generate_launch_description():
     odom_jitter_stddev_arg = DeclareLaunchArgument(
         'odom_jitter_stddev', default_value='0.001',
         description='Stddev (m) of independent, non-accumulating per-sample jitter'
+    )
+    # Sudden one-time position "jerk" (wheel slip / bumpy terrain / hitting
+    # something), distinct from the smooth drift random-walk above. This is
+    # event-triggered (call pose_emulator's ~/trigger_jerk service, see
+    # module docstring) rather than fired automatically -- nothing here
+    # decides when a jerk happens, that's left for a test harness (or a
+    # real event source later) to decide.
+    odom_jerk_stddev_arg = DeclareLaunchArgument(
+        'odom_jerk_stddev', default_value='0.05',
+        description='Stddev (m) of the one-time impulse applied when a jerk is triggered'
     )
 
     world = LaunchConfiguration('world')
@@ -243,6 +259,9 @@ def generate_launch_description():
             'odom_jitter_stddev': ParameterValue(
                 LaunchConfiguration('odom_jitter_stddev'), value_type=float
             ),
+            'odom_jerk_stddev': ParameterValue(
+                LaunchConfiguration('odom_jerk_stddev'), value_type=float
+            ),
         }],
     )
 
@@ -296,6 +315,7 @@ def generate_launch_description():
         odom_noise_enabled_arg,
         odom_drift_stddev_arg,
         odom_jitter_stddev_arg,
+        odom_jerk_stddev_arg,
         gz_resource_path,
         ign_resource_path,
         gz_sim,
