@@ -6,6 +6,7 @@ Usage:
     ros2 launch sim sim.launch.py
     ros2 launch sim sim.launch.py gui:=false
     ros2 launch sim sim.launch.py world:=/absolute/path/to/other.sdf
+    ros2 launch sim sim.launch.py odom_noise_enabled:=true
 """
 import os
 
@@ -24,6 +25,7 @@ from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -47,6 +49,24 @@ def generate_launch_description():
     gui_arg = DeclareLaunchArgument(
         'gui', default_value='true',
         description='Set to false to run gz sim headless (server only)'
+    )
+
+    # --- Optional synthetic wheel-odometry drift injection (pose_emulator.py).
+    # Off by default -- sim's /pose stays exact ground truth unless explicitly
+    # opted into, so this never changes existing behavior by accident. Turn
+    # it on to exercise/demonstrate slam_toolbox's map->odom correction, which
+    # otherwise has nothing real to correct against in sim.
+    odom_noise_enabled_arg = DeclareLaunchArgument(
+        'odom_noise_enabled', default_value='false',
+        description='Enable synthetic position drift/jitter on sim/pose_emulator\'s /pose output'
+    )
+    odom_drift_stddev_arg = DeclareLaunchArgument(
+        'odom_drift_stddev', default_value='0.0005',
+        description='Stddev (m) of the per-callback random-walk step accumulated into drift'
+    )
+    odom_jitter_stddev_arg = DeclareLaunchArgument(
+        'odom_jitter_stddev', default_value='0.001',
+        description='Stddev (m) of independent, non-accumulating per-sample jitter'
     )
 
     world = LaunchConfiguration('world')
@@ -212,7 +232,18 @@ def generate_launch_description():
         executable='pose_emulator',
         name='pose_emulator',
         output='screen',
-        parameters=[{'use_sim_time': True}],
+        parameters=[{
+            'use_sim_time': True,
+            'odom_noise_enabled': ParameterValue(
+                LaunchConfiguration('odom_noise_enabled'), value_type=bool
+            ),
+            'odom_drift_stddev': ParameterValue(
+                LaunchConfiguration('odom_drift_stddev'), value_type=float
+            ),
+            'odom_jitter_stddev': ParameterValue(
+                LaunchConfiguration('odom_jitter_stddev'), value_type=float
+            ),
+        }],
     )
 
     # --- Drive the chassis in sim manually via /cmd_vel (sim/wasd_teleop.py).
@@ -262,6 +293,9 @@ def generate_launch_description():
         z_arg,
         yaw_arg,
         gui_arg,
+        odom_noise_enabled_arg,
+        odom_drift_stddev_arg,
+        odom_jitter_stddev_arg,
         gz_resource_path,
         ign_resource_path,
         gz_sim,
