@@ -74,7 +74,7 @@ class PoseEmulator(Node):
         # larger than a single odom_drift_stddev step so the resulting SLAM
         # correction reads as a sudden jump rather than blending into the
         # smooth drift.
-        self.declare_parameter('odom_jerk_stddev', 0.05)
+        self.declare_parameter('odom_jerk_stddev', 0.2)
 
         self._drift_x = 0.0
         self._drift_y = 0.0

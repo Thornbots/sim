@@ -81,7 +81,7 @@ def generate_launch_description():
     # decides when a jerk happens, that's left for a test harness (or a
     # real event source later) to decide.
     odom_jerk_stddev_arg = DeclareLaunchArgument(
-        'odom_jerk_stddev', default_value='0.05',
+        'odom_jerk_stddev', default_value='0.2',
         description='Stddev (m) of the one-time impulse applied when a jerk is triggered'
     )
 
