@@ -122,11 +122,20 @@ class PoseEmulator(Node):
         # = true_pose + drift, i.e. unchanged from before the jerk.
         self._drift_x -= dx
         self._drift_y -= dy
+        return dx, dy
 
     def _trigger_jerk_srv(self, request, response):
-        self.trigger_jerk()
+        dx, dy = self.trigger_jerk()
         response.success = True
-        response.message = 'jerk applied'
+        # Report the actual applied (dx, dy) -- Trigger has no dedicated
+        # payload field, so it's encoded into `message` rather than adding
+        # a custom service type just for this. A test harness that wants
+        # to assert slam_toolbox's correction actually tracks the jerk's
+        # real magnitude (as opposed to just its stddev parameter, which
+        # any single random draw can undershoot or overshoot considerably)
+        # needs the real (dx, dy) that was applied, not just the
+        # distribution it was drawn from.
+        response.message = f'jerk applied: dx={dx!r} dy={dy!r}'
         return response
 
     def odom_callback(self, msg):
