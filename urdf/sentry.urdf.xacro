@@ -213,6 +213,10 @@
       <robot_base_frame>root</robot_base_frame>
       <publish_odom_tf>true</publish_odom_tf>
       <dimensions>3</dimensions>
+      <!-- Real hardware's Type-C board publishes /pose at ~100Hz; match that
+           here so /sim/raw_odom -> pose_emulator -> /pose runs at the same
+           rate sim and real hardware both feed into pose_translator/SLAM at. -->
+      <odom_publish_frequency>100</odom_publish_frequency>
       <ros>
         <argument>-p use_sim_time:=true</argument>
       </ros>
