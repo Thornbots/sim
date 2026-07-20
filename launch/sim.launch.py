@@ -24,7 +24,6 @@ from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -103,19 +102,14 @@ def generate_launch_description():
         condition=UnlessCondition(LaunchConfiguration('gui')),
     )
 
-    # --- Robot description (xacro -> URDF) published on /robot_description.
-    robot_description = ParameterValue(
-        Command(['xacro ', default_xacro]), value_type=str
-    )
-    robot_state_publisher = Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        name='robot_state_publisher',
+    # --- Bridge sim clock to ROS so use_sim_time works everywhere.
+    clock_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='clock_bridge',
         output='screen',
-        parameters=[{
-            'robot_description': robot_description,
-            'use_sim_time': True,
-        }],
+        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        parameters=[{'use_sim_time': True}],
     )
 
     # --- Spawn the robot into the running world.
@@ -145,22 +139,15 @@ def generate_launch_description():
         ],
     )
     # Keep a short delay before spawning so gz sim's entity-creation service
-    # has time to come up first (unrelated to the robot_description bug above).
+    # has time to come up first. Triggered off clock_bridge's start (rather
+    # than robot_state_publisher, which sim no longer runs -- sentry_pkg owns
+    # robot_state_publisher/TF now, see auto.launch.py) since clock_bridge
+    # always starts regardless of the gui:= setting.
     delayed_spawn_robot = RegisterEventHandler(
         OnProcessStart(
-            target_action=robot_state_publisher,
+            target_action=clock_bridge,
             on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
         )
-    )
-
-    # --- Bridge sim clock to ROS so use_sim_time works everywhere.
-    clock_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name='clock_bridge',
-        output='screen',
-        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
-        parameters=[{'use_sim_time': True}],
     )
 
     # --- Bridge the gpu_lidar sensor's /scan topic (defined in sentry.urdf.xacro)
@@ -174,12 +161,15 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
-    # --- Bridge the JointStatePublisher gazebo plugin's output into ROS 2.
-    # That plugin (see sentry.urdf.xacro) only publishes on the gz-transport
-    # topic /world/<world>/model/<robot_name>/joint_state as ignition.msgs.Model
-    # -- it does NOT talk to ROS on its own -- so robot_state_publisher never
-    # sees /joint_states without this bridge, and TF for the head/lidar links
-    # (which hang off the continuous "headlink" joint) never gets published.
+    # --- Bridge the JointStatePublisher gazebo plugin's output into ROS 2, as
+    # /sim/raw_joint_states -- ground-truth, sim-internal only. Real hardware
+    # has no such topic (the Type-C board doesn't expose raw joint states),
+    # so nothing outside sim should consume this directly; it only feeds
+    # pose_emulator below, which repackages it into the same pose interface
+    # real hardware speaks. That plugin (see sentry.urdf.xacro) only
+    # publishes on the gz-transport topic
+    # /world/<world>/model/<robot_name>/joint_state as ignition.msgs.Model --
+    # it does NOT talk to ROS on its own, hence this bridge.
     gz_joint_state_topic = [
         '/world/ARCC_Field_2026/model/', robot_name, '/joint_state'
     ]
@@ -189,18 +179,16 @@ def generate_launch_description():
         name='joint_state_bridge',
         output='screen',
         arguments=[gz_joint_state_topic + ['@sensor_msgs/msg/JointState[gz.msgs.Model']],
-        remappings=[(gz_joint_state_topic, '/joint_states')],
+        remappings=[(gz_joint_state_topic, '/sim/raw_joint_states')],
         parameters=[{'use_sim_time': True}],
     )
 
-    # --- Bridge the OdometryPublisher gazebo plugin's output into ROS 2.
-    # Same story as joint_state above: that plugin (see sentry.urdf.xacro)
-    # only publishes on the gz-transport topic /model/<robot_name>/odometry
-    # as ignition.msgs.Odometry, not to ROS. This is deliberately just the
-    # raw bridge -- sim's job is to provide raw topics matching what real
-    # hardware would produce, nothing more. Turning /odom into the
-    # odom->root TF is sentry_pkg's job, see sentry_pkg/launch/auto.launch.py
-    # -- that's the "brain" package, sim is not.
+    # --- Bridge the OdometryPublisher gazebo plugin's output into ROS 2, as
+    # /sim/raw_odom -- ground-truth, sim-internal only, for the same reason
+    # as /sim/raw_joint_states above: real hardware has no raw /odom topic
+    # either, only its Type-C pose interface. That plugin (see
+    # sentry.urdf.xacro) only publishes on the gz-transport topic
+    # /model/<robot_name>/odometry as ignition.msgs.Odometry, not to ROS.
     gz_odom_topic = ['/model/', robot_name, '/odometry']
     odom_bridge = Node(
         package='ros_gz_bridge',
@@ -208,7 +196,22 @@ def generate_launch_description():
         name='odom_bridge',
         output='screen',
         arguments=[gz_odom_topic + ['@nav_msgs/msg/Odometry[gz.msgs.Odometry']],
-        remappings=[(gz_odom_topic, '/odom')],
+        remappings=[(gz_odom_topic, '/sim/raw_odom')],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    # --- Repackage /sim/raw_odom + /sim/raw_joint_states into the same
+    # dji_serial_bridge/msg/RobotPose interface real hardware's Type-C board
+    # publishes on /pose. sentry_pkg's pose_translator is the only thing
+    # that consumes pose data downstream of this, for both sim and real
+    # hardware, so sim's job is purely to speak the same wire format here --
+    # that's the "brain" package, sim is not (see
+    # sentry_pkg/launch/auto.launch.py).
+    pose_emulator = Node(
+        package='sim',
+        executable='pose_emulator',
+        name='pose_emulator',
+        output='screen',
         parameters=[{'use_sim_time': True}],
     )
 
@@ -267,8 +270,8 @@ def generate_launch_description():
         scan_bridge,
         joint_state_bridge,
         odom_bridge,
+        pose_emulator,
         cmd_vel_bridge,
         head_pan_bridge,
-        robot_state_publisher,
         delayed_spawn_robot,
     ])

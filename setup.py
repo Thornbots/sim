@@ -47,6 +47,7 @@ setup(
             'wasd_teleop = sim.wasd_teleop:main',
             'auto_explore = sim.auto_explore:main',
             'head_sweep = sim.head_sweep:main',
+            'pose_emulator = sim.pose_emulator:main',
         ],
     },
 )
