@@ -43,7 +43,7 @@ def generate_launch_description():
     )
     x_arg = DeclareLaunchArgument('x', default_value='0.0')
     y_arg = DeclareLaunchArgument('y', default_value='0.0')
-    z_arg = DeclareLaunchArgument('z', default_value='0.05')
+    z_arg = DeclareLaunchArgument('z', default_value='0.03')
     yaw_arg = DeclareLaunchArgument('yaw', default_value='0.0')
     gui_arg = DeclareLaunchArgument(
         'gui', default_value='true',
@@ -212,50 +212,27 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
-    # --- Bridge /cmd_vel (ROS) into the VelocityControl gz plugin (see
-    # sentry.urdf.xacro) so the chassis can actually be driven in sim, e.g.
-    # to sweep the room for mapping. root is joint-constrained (X/Y/yaw
-    # only, see sentry.urdf.xacro), so driving it needs one JointController
-    # per joint rather than a single Twist bridge -- cmd_vel_to_joints
-    # splits /cmd_vel into the 3 topics these bridges forward into gz.
-    # ROS->GZ direction only (']' not '[') for all three.
-    cmd_vel_to_joints = Node(
-        package='sim',
-        executable='cmd_vel_to_joints',
-        name='cmd_vel_to_joints',
-        output='screen',
-        parameters=[{'use_sim_time': True}],
-    )
-    gz_planar_x_topic = ['/model/', robot_name, '/joint/world_to_planar_x/cmd_vel']
-    planar_x_vel_bridge = Node(
+    # --- Drive the chassis in sim manually via /cmd_vel (sim/wasd_teleop.py).
+    # root is a genuinely free link again (see sentry.urdf.xacro), so a
+    # single VelocityControl plugin on it takes a Twist directly -- no more
+    # splitting into per-joint commands the way the old prismatic-joint-chain
+    # design needed.
+    gz_cmd_vel_topic = ['/model/', robot_name, '/cmd_vel']
+    cmd_vel_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
-        name='planar_x_vel_bridge',
+        name='cmd_vel_bridge',
         output='screen',
-        arguments=[gz_planar_x_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
-        remappings=[(gz_planar_x_topic, '/planar_x_vel_cmd')],
+        arguments=[gz_cmd_vel_topic + ['@geometry_msgs/msg/Twist]gz.msgs.Twist']],
+        remappings=[(gz_cmd_vel_topic, '/cmd_vel')],
         parameters=[{'use_sim_time': True}],
     )
-    gz_planar_y_topic = ['/model/', robot_name, '/joint/planar_x_to_y/cmd_vel']
-    planar_y_vel_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name='planar_y_vel_bridge',
-        output='screen',
-        arguments=[gz_planar_y_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
-        remappings=[(gz_planar_y_topic, '/planar_y_vel_cmd')],
-        parameters=[{'use_sim_time': True}],
-    )
-    gz_yaw_topic = ['/model/', robot_name, '/joint/planar_y_to_root_yaw/cmd_vel']
-    yaw_vel_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name='yaw_vel_bridge',
-        output='screen',
-        arguments=[gz_yaw_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
-        remappings=[(gz_yaw_topic, '/yaw_vel_cmd')],
-        parameters=[{'use_sim_time': True}],
-    )
+
+    # --- Teleport the chassis in sim via sim/auto_explore.py's grid sweep.
+    # root has no parent joint any more (see sentry.urdf.xacro), so gz's
+    # physics now honors a direct world-pose write on it; auto_explore.py
+    # calls gz's own `/world/<world>/set_pose` service directly (there's no
+    # ROS-side equivalent to bridge here, it's a gz-transport-only service).
 
     # --- Bridge for the head pan (see sentry.urdf.xacro's
     # JointPositionController on headlink). The head partially blocks the
@@ -298,10 +275,7 @@ def generate_launch_description():
         scan_bridge,
         joint_state_bridge,
         odom_bridge,
-        cmd_vel_to_joints,
-        planar_x_vel_bridge,
-        planar_y_vel_bridge,
-        yaw_vel_bridge,
+        cmd_vel_bridge,
         head_pan_bridge,
         robot_state_publisher,
         delayed_spawn_robot,
