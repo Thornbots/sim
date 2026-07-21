@@ -84,6 +84,17 @@ def generate_launch_description():
         'odom_jerk_stddev', default_value='0.2',
         description='Stddev (m) of the one-time impulse applied when a jerk is triggered'
     )
+    # Continuous wheel slip -- see pose_emulator.py's declare_parameter
+    # comment for the full model (a FRACTION of every meter driven lost
+    # from reported odometry, not a fixed amount lost per unit time like
+    # drift above). 0.0 default: reported motion exactly tracks true
+    # motion, unchanged from before this arg existed.
+    odom_slip_ratio_arg = DeclareLaunchArgument(
+        'odom_slip_ratio', default_value='0.0',
+        description='Fraction (0-1) of true distance traveled lost from '
+                     'reported odometry, e.g. 0.5 = wheels report only '
+                     'half the distance actually driven'
+    )
 
     world = LaunchConfiguration('world')
     robot_name = LaunchConfiguration('robot_name')
@@ -262,6 +273,9 @@ def generate_launch_description():
             'odom_jerk_stddev': ParameterValue(
                 LaunchConfiguration('odom_jerk_stddev'), value_type=float
             ),
+            'odom_slip_ratio': ParameterValue(
+                LaunchConfiguration('odom_slip_ratio'), value_type=float
+            ),
         }],
     )
 
@@ -316,6 +330,7 @@ def generate_launch_description():
         odom_drift_stddev_arg,
         odom_jitter_stddev_arg,
         odom_jerk_stddev_arg,
+        odom_slip_ratio_arg,
         gz_resource_path,
         ign_resource_path,
         gz_sim,
