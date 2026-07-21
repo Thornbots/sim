@@ -76,6 +76,20 @@ class PoseEmulator(Node):
         # smooth drift.
         self.declare_parameter('odom_jerk_stddev', 0.2)
 
+        # Continuous wheel slip -- distinct from both the drift random-walk
+        # (smooth, unbounded accumulation) and jerk (one-time impulse):
+        # this models wheels that spin but don't fully grip (e.g. the
+        # arena's "Bumpy Road" zone, see ARCC_2026_SENTRY_CONTEXT.md),
+        # losing a fixed FRACTION of every meter actually driven rather
+        # than accumulating a fixed amount over time regardless of motion.
+        # 0.5 means reported /pose only advances 0.5m for every 1m the
+        # robot actually moves -- wheel odometry systematically
+        # under-reports distance traveled, growing in proportion to how
+        # far the robot has actually gone, not how long it's been running.
+        # 0.0 (default) disables this -- reported motion exactly tracks
+        # true motion, same as before this parameter existed.
+        self.declare_parameter('odom_slip_ratio', 0.0)
+
         self._drift_x = 0.0
         self._drift_y = 0.0
         # Last known ground-truth position, updated every odom_callback, so
@@ -83,6 +97,18 @@ class PoseEmulator(Node):
         # without needing its own subscription.
         self._true_x = 0.0
         self._true_y = 0.0
+        # Slip bookkeeping: separate from _true_x/_true_y (which trigger_jerk
+        # reads and which must stay exact ground truth) and from
+        # _drift_x/_drift_y (an additive offset, unaffected by slip so
+        # trigger_jerk's cancellation logic keeps working unmodified).
+        # _slipped_x/_slipped_y integrate only a FRACTION of each true
+        # position delta -- None until the first callback establishes a
+        # starting point, since slip needs a previous sample to compute a
+        # delta from.
+        self._slipped_x = None
+        self._slipped_y = None
+        self._prev_true_x = None
+        self._prev_true_y = None
 
         self.pose_pub = self.create_publisher(RobotPose, '/pose', 10)
         self.create_subscription(Odometry, '/sim/raw_odom', self.odom_callback, 10)
@@ -139,10 +165,26 @@ class PoseEmulator(Node):
         return response
 
     def odom_callback(self, msg):
-        x = float(msg.pose.pose.position.x)
-        y = float(msg.pose.pose.position.y)
-        self._true_x = x
-        self._true_y = y
+        true_x = float(msg.pose.pose.position.x)
+        true_y = float(msg.pose.pose.position.y)
+        self._true_x = true_x
+        self._true_y = true_y
+
+        slip_ratio = self.get_parameter('odom_slip_ratio').value
+        if slip_ratio > 0.0:
+            if self._prev_true_x is None:
+                # First callback: nothing to compute a delta from yet, so
+                # start the slipped position exactly at true position (no
+                # slip applied retroactively to distance already
+                # "traveled" before this node existed).
+                self._slipped_x, self._slipped_y = true_x, true_y
+            else:
+                self._slipped_x += (true_x - self._prev_true_x) * (1.0 - slip_ratio)
+                self._slipped_y += (true_y - self._prev_true_y) * (1.0 - slip_ratio)
+            x, y = self._slipped_x, self._slipped_y
+        else:
+            x, y = true_x, true_y
+        self._prev_true_x, self._prev_true_y = true_x, true_y
 
         if self.get_parameter('odom_noise_enabled').value:
             drift_stddev = self.get_parameter('odom_drift_stddev').value
