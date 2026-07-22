@@ -199,8 +199,18 @@ class PoseEmulator(Node):
             jitter_x = random.gauss(0.0, jitter_stddev)
             jitter_y = random.gauss(0.0, jitter_stddev)
 
-            x += self._drift_x + jitter_x
-            y += self._drift_y + jitter_y
+            x += jitter_x
+            y += jitter_y
+
+        # Applied unconditionally (not gated behind odom_noise_enabled): a
+        # jerk's cancellation offset (see trigger_jerk()) must still reach
+        # the published pose even when odom_noise_enabled is False, or the
+        # jerk leaks straight into reported /pose instead of staying hidden
+        # until the next scan match -- defeats the whole point of a jerk.
+        # _drift_x/_drift_y are 0.0 unless trigger_jerk() has set them, so
+        # this is a no-op whenever no jerk has fired.
+        x += self._drift_x
+        y += self._drift_y
 
         pose = RobotPose()
         pose.header.stamp = msg.header.stamp
