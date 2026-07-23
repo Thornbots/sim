@@ -343,13 +343,13 @@
     <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
       <joint_name>headlink</joint_name>
       <topic>/model/sentry/joint/headlink/cmd_pos</topic>
-      <p_gain>2.0</p_gain>
+      <p_gain>50.0</p_gain>
       <i_gain>0.1</i_gain>
-      <d_gain>0.05</d_gain>
+      <d_gain>1.0</d_gain>
       <i_max>1</i_max>
       <i_min>-1</i_min>
-      <cmd_max>5</cmd_max>
-      <cmd_min>-5</cmd_min>
+      <cmd_max>50</cmd_max>
+      <cmd_min>-50</cmd_min>
     </plugin>
     <!-- Same idea as headlink's controller above: publish a target angle
          (rad, within headpitch's +/-0.6 limit) on
@@ -358,13 +358,13 @@
     <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
       <joint_name>headpitch</joint_name>
       <topic>/model/sentry/joint/headpitch/cmd_pos</topic>
-      <p_gain>2.0</p_gain>
+      <p_gain>50.0</p_gain>
       <i_gain>0.1</i_gain>
-      <d_gain>0.05</d_gain>
+      <d_gain>1.0</d_gain>
       <i_max>1</i_max>
       <i_min>-1</i_min>
-      <cmd_max>5</cmd_max>
-      <cmd_min>-5</cmd_min>
+      <cmd_max>50</cmd_max>
+      <cmd_min>-50</cmd_min>
     </plugin>
     <!-- Lets the chassis actually be driven around in sim manually (e.g.
          sim/wasd_teleop.py). Real hardware moves via the DJI Type-C board
