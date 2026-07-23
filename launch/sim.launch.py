@@ -279,6 +279,25 @@ def generate_launch_description():
         }],
     )
 
+    # --- Relays gz sim GUI's "Joint Position Controller" panel slider
+    # commands (which always publish on gz-transport's own
+    # /model/sentry/joint/<joint>/0/cmd_pos, not configurable from the GUI)
+    # into the custom no-"/0/" topics headlink/headpitch's
+    # JointPositionController plugins actually listen on (see
+    # sentry.urdf.xacro) -- ROS2 topic names can't have a namespace token
+    # starting with a digit, so the GUI's own topic can never be bridged
+    # into ROS directly (confirmed empirically), which is why the GUI
+    # slider and /head_pan_cmd|/head_pitch_cmd (used by head_sweep.py)
+    # can't both target the plugin's topic without this relay in between.
+    # Not a ROS node (no rclpy involved, see sim/head_slider_relay.py) so
+    # no use_sim_time param -- it only shuffles gz-transport messages.
+    head_slider_relay = Node(
+        package='sim',
+        executable='head_slider_relay',
+        name='head_slider_relay',
+        output='screen',
+    )
+
     # --- Drive the chassis in sim manually via /cmd_vel (sim/wasd_teleop.py).
     # root is a genuinely free link again (see sentry.urdf.xacro), so a
     # single VelocityControl plugin on it takes a Twist directly -- no more
@@ -400,6 +419,7 @@ def generate_launch_description():
         joint_state_bridge,
         odom_bridge,
         pose_emulator,
+        head_slider_relay,
         cmd_vel_bridge,
         head_pan_bridge,
         head_pitch_bridge,
