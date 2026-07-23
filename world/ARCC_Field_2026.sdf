@@ -131,12 +131,6 @@
         <view_controller>orbit</view_controller>
         <projection_type>perspective</projection_type>
       </camera>
-      <!-- Docks a slider panel for driving joints (headlink/headpitch on
-           sentry, see sentry.urdf.xacro's JointPositionController system
-           plugins) directly from the GUI, without which this plugin has
-           to be added manually every launch via the GUI's own plugin menu. -->
-      <plugin filename="JointPositionController" name="Joint Position Controller">
-      </plugin>
     </gui>
   </world>
 </sdf>
