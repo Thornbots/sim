@@ -175,11 +175,11 @@
     <parent link="head"/>
     <child link="lidar"/>
   </joint>
-  <!-- Pitch axis for the head-mounted camera. Placeholder mount point
-       (front-center of head, y-axis tilt) until it's positioned against
-       the real head mesh's geometry. -->
+  <!-- Pitch axis for the head-mounted camera. Mounted directly above the
+       lidar (same x/y as lidarlink's origin above, z raised ~5cm to clear
+       it) so the camera looks out from the same face of the head. -->
   <joint name="headpitch" type="revolute">
-    <origin xyz="0.1 0 0" rpy="0 0 0"/>
+    <origin xyz="-0.170562 -0.139254 0.1218" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
     <parent link="head"/>
     <child link="head_pitch"/>
@@ -261,12 +261,14 @@
        sensor; <topic> is the prefix each is auto-published under (see
        sim/launch/sim.launch.py's camera bridges for the full subtopic
        names and how they're remapped to match realsense-ros' own topic
-       names, so nodes written against real hardware work unmodified here). -->
+       names, so nodes written against real hardware work unmodified here).
+       60Hz matches real hardware's profile (see
+       realsense-yolov8-nitros-bridge/config/realsense_640x480x60.yaml). -->
   <gazebo reference="camera">
     <sensor name="camera" type="rgbd_camera">
       <always_on>true</always_on>
       <visualize>true</visualize>
-      <update_rate>30</update_rate>
+      <update_rate>60</update_rate>
       <topic>camera</topic>
       <gz_frame_id>camera</gz_frame_id>
       <camera>
