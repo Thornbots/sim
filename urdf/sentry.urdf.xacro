@@ -49,6 +49,34 @@
       </material>
     </visual>
   </link>
+  <!-- Pitch stage for the head, so a camera mounted on it can tilt
+       independently of the yaw-only headlink joint below. No mesh of its
+       own, just a bare kinematic link the camera is fastened to. -->
+  <link name="head_pitch">
+    <inertial>
+      <mass value="0.005"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="1e-06" ixy="0" ixz="0" iyy="1e-06" iyz="0" izz="1e-06"/>
+    </inertial>
+  </link>
+  <!-- Approximates a RealSense D435 (90x25x25mm, 72g); no mesh exists for
+       it yet so a plain box visual stands in until one is added. -->
+  <link name="camera">
+    <inertial>
+      <mass value="0.072"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="1.05e-05" ixy="0" ixz="0" iyy="5.4e-05" iyz="0" izz="5.4e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.025 0.09 0.025"/>
+      </geometry>
+      <material name="0.1_0.1_0.1_0.000000_0.000000">
+        <color rgba="0.1 0.1 0.1 1"/>
+      </material>
+    </visual>
+  </link>
   <link name="odowheel">
     <inertial>
       <mass value="3.2572e-05"/>
@@ -147,6 +175,21 @@
     <parent link="head"/>
     <child link="lidar"/>
   </joint>
+  <!-- Pitch axis for the head-mounted camera. Placeholder mount point
+       (front-center of head, y-axis tilt) until it's positioned against
+       the real head mesh's geometry. -->
+  <joint name="headpitch" type="revolute">
+    <origin xyz="0.1 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <parent link="head"/>
+    <child link="head_pitch"/>
+    <limit lower="-0.6" upper="0.6" effort="5" velocity="3"/>
+  </joint>
+  <joint name="cameralink" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="head_pitch"/>
+    <child link="camera"/>
+  </joint>
   <joint name="odowheel_x" type="continuous">
     <origin xyz="-0.089012 -0.009 0.0286405" rpy="3.14159 -0 3.14159"/>
     <axis xyz="0 -1 0"/>
@@ -169,6 +212,12 @@
     <gravity>false</gravity>
   </gazebo>
   <gazebo reference="head">
+    <gravity>false</gravity>
+  </gazebo>
+  <gazebo reference="head_pitch">
+    <gravity>false</gravity>
+  </gazebo>
+  <gazebo reference="camera">
     <gravity>false</gravity>
   </gazebo>
   <gazebo reference="odowheel">
@@ -207,6 +256,33 @@
       </lidar>
     </sensor>
   </gazebo>
+  <!-- RealSense D435-like RGBD camera for CV testing (yolov8/nitros bridge
+       etc). rgbd_camera bundles color + depth + camera_info under one
+       sensor; <topic> is the prefix each is auto-published under (see
+       sim/launch/sim.launch.py's camera bridges for the full subtopic
+       names and how they're remapped to match realsense-ros' own topic
+       names, so nodes written against real hardware work unmodified here). -->
+  <gazebo reference="camera">
+    <sensor name="camera" type="rgbd_camera">
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+      <update_rate>30</update_rate>
+      <topic>camera</topic>
+      <gz_frame_id>camera</gz_frame_id>
+      <camera>
+        <horizontal_fov>1.5184</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>10.0</far>
+        </clip>
+      </camera>
+    </sensor>
+  </gazebo>
   <gazebo>
     <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
       <odom_frame>odom</odom_frame>
@@ -223,6 +299,7 @@
     </plugin>
     <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher">
       <joint_name>headlink</joint_name>
+      <joint_name>headpitch</joint_name>
       <joint_name>odowheel_x</joint_name>
       <joint_name>odowheel_y</joint_name>
       <ros>
@@ -259,6 +336,21 @@
     <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
       <joint_name>headlink</joint_name>
       <topic>/model/sentry/joint/headlink/cmd_pos</topic>
+      <p_gain>2.0</p_gain>
+      <i_gain>0.1</i_gain>
+      <d_gain>0.05</d_gain>
+      <i_max>1</i_max>
+      <i_min>-1</i_min>
+      <cmd_max>5</cmd_max>
+      <cmd_min>-5</cmd_min>
+    </plugin>
+    <!-- Same idea as headlink's controller above: publish a target angle
+         (rad, within headpitch's +/-0.6 limit) on
+         /model/sentry/joint/headpitch/cmd_pos and this PID tracks it, so
+         the camera can be tilted from the gz GUI or a bridged ROS topic. -->
+    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+      <joint_name>headpitch</joint_name>
+      <topic>/model/sentry/joint/headpitch/cmd_pos</topic>
       <p_gain>2.0</p_gain>
       <i_gain>0.1</i_gain>
       <d_gain>0.05</d_gain>
