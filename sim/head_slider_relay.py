@@ -45,8 +45,13 @@ DATA_LINE = re.compile(r'^\s*data:\s*(-?[0-9.eE+-]+)\s*$')
 
 
 def relay_one(src_topic, dst_topic):
+    # stdbuf -oL: `ign topic -e` fully-buffers its stdout when it isn't a
+    # TTY (writing to this pipe), so without forcing line buffering here
+    # its "data: X" lines never actually reach us in real time -- they'd
+    # only show up once the OS pipe buffer happens to fill, which for a
+    # human dragging a slider slowly could be effectively never.
     echo = subprocess.Popen(
-        ['ign', 'topic', '-e', '-t', src_topic],
+        ['stdbuf', '-oL', 'ign', 'topic', '-e', '-t', src_topic],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
     )
     for line in echo.stdout:
