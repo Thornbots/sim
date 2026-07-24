@@ -15,15 +15,6 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
-      <!-- Excluded from the lidar's own raycasting (see the lidar sensor's
-           visibility_mask=0x01 below), since the real RPLIDAR is mounted
-           with its scanning disk clear of the robot's own chassis. The
-           gpu_lidar sensor here is a rendering sensor with no physics
-           collision to fall back on (this model has none anywhere, by
-           design, see the root link comment further down), so without
-           this it also renders the robot's own visual meshes as scan
-           obstacles, which the real hardware never sees. -->
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <link name="head">
@@ -40,7 +31,6 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <link name="lidar">
@@ -57,7 +47,6 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <!-- Pitch stage for the head, so a camera mounted on it can tilt
@@ -86,7 +75,6 @@
       <material name="0.1_0.1_0.1_0.000000_0.000000">
         <color rgba="0.1 0.1 0.1 1"/>
       </material>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <link name="odowheel">
@@ -103,7 +91,6 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <link name="odowheel_1">
@@ -120,7 +107,6 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <!-- root is a genuinely free 6DOF body again, with no collision anywhere
@@ -227,25 +213,55 @@
   <gazebo reference="root">
     <gravity>false</gravity>
   </gazebo>
+  <!-- visibility_flags has to be injected here, as a <gazebo reference="...">
+       extension, rather than as a plain child of the link's own <visual> in
+       the URDF above: URDF's schema doesn't define that element inside
+       <visual>, so the URDF->SDF conversion ros_gz_sim's `create` runs at
+       spawn time silently drops it if it's written there (confirmed: `ign
+       sdf -p` on the xacro-expanded URDF showed zero visibility_flags
+       occurrences in its output when it was written inline). Matched
+       against visibility_mask=0x01 on the lidar sensor further down, so
+       (mask & flags) == 0 hides just these visuals from that one sensor
+       while leaving them visible to the GUI/RGBD camera and everything
+       else, which don't set visibility_mask and so keep sdformat's default
+       (0xFFFFFFFF); see the lidar sensor's own comment below for why. -->
   <gazebo reference="body">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
   <gazebo reference="head">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
   <gazebo reference="head_pitch">
     <gravity>false</gravity>
   </gazebo>
   <gazebo reference="camera">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
   <gazebo reference="odowheel">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
   <gazebo reference="odowheel_1">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
   <gazebo reference="lidar">
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
     <sensor name="lidar" type="gpu_lidar">
       <always_on>true</always_on>
       <visualize>true</visualize>
