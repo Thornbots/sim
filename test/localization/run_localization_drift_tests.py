@@ -554,6 +554,19 @@ class LocalizationTestHelper(Node):
         compounds the previous one's error the way pure open-loop timing
         did.
 
+        Commanded speed is capped at `dist / CONTROL_PERIOD` (tapering
+        down as the remaining distance shrinks), not held at the full
+        nominal `speed` all the way in -- an earlier version of this did
+        exactly that and, observed live (2026-07-24, per the user watching
+        gz's GUI), visibly oscillated in place at every corner: at 4.0 m/s
+        and a 0.1s tick, uncapped speed can cover 0.4m between direction
+        re-checks, so anywhere within that distance of the target it
+        overshot past `WAYPOINT_TOLERANCE`, flipped to point back the
+        other way next tick, and repeated -- a bang-bang limit cycle, not
+        a settle. Capping speed so one tick's travel can't exceed the
+        remaining distance lets it decelerate into the tolerance instead
+        of ping-ponging through it.
+
         `duration` is kept as a generous wall-clock safety cap (3x,
         floored at +5s) so a stuck/never-arriving raw_odom -- or a target
         the robot can physically never reach -- can't hang the scenario
@@ -562,6 +575,7 @@ class LocalizationTestHelper(Node):
         endpoint at all.
         """
         WAYPOINT_TOLERANCE = 0.03  # meters; matches the lidar noise stddev
+        CONTROL_PERIOD = 0.1  # seconds; matches the spin_for() tick below
         speed = math.hypot(vx, vy)
         safety_deadline = time.monotonic() + max(duration * 3.0, duration + 5.0)
 
@@ -588,11 +602,12 @@ class LocalizationTestHelper(Node):
             dist = math.hypot(dx, dy)
             if dist <= WAYPOINT_TOLERANCE:
                 break
+            speed_now = min(speed, dist / CONTROL_PERIOD)
             msg = Twist()
-            msg.linear.x = speed * dx / dist
-            msg.linear.y = speed * dy / dist
+            msg.linear.x = speed_now * dx / dist
+            msg.linear.y = speed_now * dy / dist
             self.cmd_vel_pub.publish(msg)
-            self.spin_for(0.1)
+            self.spin_for(CONTROL_PERIOD)
         else:
             cur_x, cur_y = self._raw_odom_xy
             self.get_logger().warning(
