@@ -199,7 +199,7 @@ jerk_with_motion.
                        by another robot or running into a wall -- a
                        discrete collision impulse, not gradual wheel
                        slip/bumpy terrain. First repositions
-                       to OBSTACLE_LOOP_LEGS's own start corner (-0.5,-0.5)
+                       to OBSTACLE_LOOP_LEGS's own start corner (-0.5,-1.0)
                        (same reposition _run_cornering_loop_scenario does),
                        then per trial: fire trigger_jerk, wait 0.5s
                        asserting the correction TF has NOT yet moved (the
@@ -527,44 +527,51 @@ class LocalizationTestHelper(Node):
             return None
 
     def drive(self, vx, vy, duration):
-        """Publish /cmd_vel at 10Hz until the robot has actually covered
-        the (vx, vy, duration) leg's intended ground-truth distance
-        (`hypot(vx, vy) * duration`), then stop -- NOT simply for
-        `duration` wall-clock seconds as this used to do.
+        """Steer toward the (vx, vy, duration) leg's intended ground-truth
+        endpoint (`start + (vx, vy) * duration`) at speed `hypot(vx, vy)`,
+        re-aiming every tick off `/sim/raw_odom`, until within
+        `WAYPOINT_TOLERANCE` of it -- NOT simply publish a fixed (vx, vy)
+        Twist for `duration` wall-clock seconds as this used to do.
 
         `duration` alone assumed gz-sim's real-time factor is exactly
         1.0, so a fixed wall-clock timer reliably produced a fixed sim
-        distance. It doesn't hold under load (GPU lidar rendering, the
-        GUI window, general container contention -- see SESSION_NOTES.md):
-        when RTF dips below 1.0, less sim time elapses per wall-clock
-        second, so the old timer stopped each leg short of its intended
-        corner. Nothing ever re-anchored position between legs, so that
-        shortfall compounded leg over leg across a whole scenario's loop,
-        walking the real driven path out of registration with the
-        geometry OBSTACLE_LOOP_LEGS/PATROL_LEGS were sized against (e.g.
-        drift_correction_obstacle's 0.85m clearance from the spawned
-        box) -- occasionally far enough to clip an obstacle the nominal
-        geometry was supposed to clear by construction.
+        distance in a fixed direction. Neither held under load (GPU lidar
+        rendering, the GUI window, general container contention -- see
+        SESSION_NOTES.md): when RTF dipped below 1.0, less sim time
+        elapsed per wall-clock second, undershooting each leg's intended
+        corner; a first fix (2026-07-24) gated on ground-truth distance
+        projected onto the commanded heading, which fixed that undershoot,
+        but a fixed heading still can't correct any *lateral* drift off
+        that heading (observed live: the driven path kept drifting up and
+        to the right across legs even with distance-gating in place) --
+        nothing was ever steering back toward the intended line, only
+        checking progress along it. Steering at the actual current
+        position's bearing to the target endpoint every tick corrects
+        both axes at once: any lateral drift just changes next tick's
+        aim, the same way a real waypoint-following controller would.
+        Nothing re-anchors between legs still (each leg's start is
+        wherever the previous one actually ended), but each leg no longer
+        compounds the previous one's error the way pure open-loop timing
+        did.
 
-        Gating on `/sim/raw_odom` (ground-truth, pre-noise-model position
-        -- see pose_emulator.py) instead of wall-clock time makes each
-        leg cover its intended distance regardless of RTF. `duration` is
-        kept as a generous wall-clock safety cap (3x, floored at +5s) so a
-        stuck/never-arriving raw_odom can't hang the scenario forever;
-        hitting that cap logs a warning rather than silently proceeding,
-        since it means the leg didn't reach its intended distance at all.
+        `duration` is kept as a generous wall-clock safety cap (3x,
+        floored at +5s) so a stuck/never-arriving raw_odom -- or a target
+        the robot can physically never reach -- can't hang the scenario
+        forever; hitting that cap logs a warning rather than silently
+        proceeding, since it means the leg didn't reach its intended
+        endpoint at all.
         """
-        msg = Twist()
-        msg.linear.x = vx
-        msg.linear.y = vy
+        WAYPOINT_TOLERANCE = 0.03  # meters; matches the lidar noise stddev
         speed = math.hypot(vx, vy)
-        target_dist = speed * duration
         safety_deadline = time.monotonic() + max(duration * 3.0, duration + 5.0)
 
         if speed <= 1e-6 or not self.wait_for_raw_odom():
-            # No direction to gate on, or ground-truth odom never showed
-            # up -- fall back to the old wall-clock behavior rather than
-            # spinning forever or dividing by zero.
+            # No direction to aim toward, or ground-truth odom never
+            # showed up -- fall back to the old wall-clock behavior rather
+            # than spinning forever or dividing by zero.
+            msg = Twist()
+            msg.linear.x = vx
+            msg.linear.y = vy
             end = time.monotonic() + duration
             while time.monotonic() < end:
                 self.cmd_vel_pub.publish(msg)
@@ -573,21 +580,26 @@ class LocalizationTestHelper(Node):
             self.spin_for(0.2)
             return
 
-        start_xy = self._raw_odom_xy
-        dir_x, dir_y = vx / speed, vy / speed
+        start_x, start_y = self._raw_odom_xy
+        target_x, target_y = start_x + vx * duration, start_y + vy * duration
         while time.monotonic() < safety_deadline:
+            cur_x, cur_y = self._raw_odom_xy
+            dx, dy = target_x - cur_x, target_y - cur_y
+            dist = math.hypot(dx, dy)
+            if dist <= WAYPOINT_TOLERANCE:
+                break
+            msg = Twist()
+            msg.linear.x = speed * dx / dist
+            msg.linear.y = speed * dy / dist
             self.cmd_vel_pub.publish(msg)
             self.spin_for(0.1)
-            dx = self._raw_odom_xy[0] - start_xy[0]
-            dy = self._raw_odom_xy[1] - start_xy[1]
-            progress = dx * dir_x + dy * dir_y  # projected onto travel dir
-            if progress >= target_dist:
-                break
         else:
+            cur_x, cur_y = self._raw_odom_xy
             self.get_logger().warning(
-                f'drive({vx}, {vy}, {duration}): hit safety cap without '
-                f'covering the intended {target_dist:.3f}m -- leg stopped '
-                f'short')
+                f'drive({vx}, {vy}, {duration}): hit safety cap '
+                f'{math.hypot(target_x - cur_x, target_y - cur_y):.3f}m '
+                f'short of intended endpoint ({target_x:.3f}, '
+                f'{target_y:.3f})')
         self.cmd_vel_pub.publish(Twist())  # stop
         self.spin_for(0.2)
 
@@ -657,27 +669,31 @@ PATROL_LEGS = [
 # put the box at the loop's own center and size the loop 1m out from it
 # in every direction, so clearance is true by construction instead of by
 # a chain of one-off offset corrections.
-# OBSTACLE_XY = (0.5, 0.5) deliberately reuses PATROL_LEGS's own loop
-# center (its corners (0,0),(1,0),(1,1),(0,1) center on (0.5,0.5)) --
-# already-validated open space (jerk_with_motion drives through this
-# immediate area for tens of seconds without incident), not a new,
+# OBSTACLE_XY = (0.5, 0.0) -- shifted 0.5m south of PATROL_LEGS's own loop
+# center (0.5, 0.5) (2026-07-24, per the user watching a live run) so the
+# whole square sits 0.5m further from upper_mid's wall and lands its south
+# edge exactly on PATROL_LEGS's own already-validated -1.0 floor (see that
+# constant's comment) instead of 0.5m short of it. Still open,
+# already-validated territory either way (jerk_with_motion drives through
+# this immediate area for tens of seconds without incident), not a new,
 # untested spot.
 # NOT baked into ARCC_Field_2026.sdf or the saved ARCC26 map -- that's
 # the point: from the backend's perspective this is a lidar return with
 # no corresponding feature in the map it loaded.
-OBSTACLE_XY = (0.5, 0.5)
+OBSTACLE_XY = (0.5, 0.0)
 OBSTACLE_SIZE = 0.3  # meters, x/y footprint
 OBSTACLE_HEIGHT = 0.8  # meters, based at the ground (z=[0, OBSTACLE_HEIGHT])
 
-# 2m square loop centered on OBSTACLE_XY, corners at (-0.5,-0.5),
-# (1.5,-0.5), (1.5,1.5), (-0.5,1.5) -- exactly 1m out from the box's
+# 2m square loop centered on OBSTACLE_XY, corners at (-0.5,-1.0),
+# (1.5,-1.0), (1.5,1.0), (-0.5,1.0) -- exactly 1m out from the box's
 # center on every side (box half-width 0.15m, so ~0.85m from each face).
 # Checked against this file's own documented wall clearances (see
 # PATROL_LEGS's comment; y-axis only, no x-axis data exists here):
-#   north edge y=1.5 -- 0.99m clear of upper_mid's wall at y=2.49.
-#   south edge y=-0.5 -- 0.5m short of PATROL_LEGS's own documented -1.0
-#     floor (which itself has a further 1.11m before lower_mid's wall),
-#     so comfortably inside already-established safe territory.
+#   north edge y=1.0 -- 1.49m clear of upper_mid's wall at y=2.49 (more
+#     margin than before the 0.5m southward shift).
+#   south edge y=-1.0 -- lands exactly on PATROL_LEGS's own documented
+#     -1.0 floor, which itself has a further 1.11m before lower_mid's
+#     wall -- comfortably inside already-established safe territory.
 #   x extent -0.5 to 1.5 -- only 0.5m beyond the already-validated
 #     x=[0,1] core on each side (unlike earlier abandoned +1/+2m east
 #     excursions), no wall data to check against but a much smaller,
@@ -685,10 +701,10 @@ OBSTACLE_HEIGHT = 0.8  # meters, based at the ground (z=[0, OBSTACLE_HEIGHT])
 # Legs are (vx, vy, duration) like PATROL_LEGS, but 2m per side (0.5s at
 # 4.0 m/s) since this loop's side length is 2m, not 1m.
 OBSTACLE_LOOP_LEGS = [
-    (4.0, 0.0, 0.5),    # east   (-0.5,-0.5) -> (1.5,-0.5)
-    (0.0, 4.0, 0.5),    # north  (1.5,-0.5)  -> (1.5,1.5)
-    (-4.0, 0.0, 0.5),   # west   (1.5,1.5)   -> (-0.5,1.5)
-    (0.0, -4.0, 0.5),   # south  (-0.5,1.5)  -> (-0.5,-0.5)
+    (4.0, 0.0, 0.5),    # east   (-0.5,-1.0) -> (1.5,-1.0)
+    (0.0, 4.0, 0.5),    # north  (1.5,-1.0)  -> (1.5,1.0)
+    (-4.0, 0.0, 0.5),   # west   (1.5,1.0)   -> (-0.5,1.0)
+    (0.0, -4.0, 0.5),   # south  (-0.5,1.0)  -> (-0.5,-1.0)
 ]
 
 # Stationary dwell inserted after each leg of the cornering loop
@@ -981,13 +997,13 @@ def scenario_noise_correction(gui, backend):
             return sc
 
         # Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
-        # own start corner (-0.5,-0.5) before tracing it -- same reposition
+        # own start corner (-0.5,-1.0) before tracing it -- same reposition
         # every other scenario driving this square does (see
         # _run_cornering_loop_scenario / scenario_jerk_with_motion).
         helper.drive(-4.0, 0.0, 0.125)   # -0.5m west, to x=-0.5
-        helper.drive(0.0, -4.0, 0.125)   # -0.5m south, to y=-0.5
+        helper.drive(0.0, -4.0, 0.25)    # -1.0m south, to y=-1.0
         sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
-               '(-0.5,-0.5) before tracing it')
+               '(-0.5,-1.0) before tracing it')
 
         samples = []
         OBSERVE_SECONDS = 60.0
@@ -1148,14 +1164,14 @@ def scenario_jerk_with_motion(gui, backend):
             return sc
 
         # Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
-        # own start corner (-0.5,-0.5) before tracing it -- same reposition
+        # own start corner (-0.5,-1.0) before tracing it -- same reposition
         # _run_cornering_loop_scenario does (see its comment). Without this,
-        # trial 1's leg would drive the (-0.5,-0.5)->(1.5,-0.5) segment from
+        # trial 1's leg would drive the (-0.5,-1.0)->(1.5,-1.0) segment from
         # the wrong starting point, throwing off every corner after it too.
         helper.drive(-4.0, 0.0, 0.125)   # -0.5m west, to x=-0.5
-        helper.drive(0.0, -4.0, 0.125)   # -0.5m south, to y=-0.5
+        helper.drive(0.0, -4.0, 0.25)    # -1.0m south, to y=-1.0
         sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
-               '(-0.5,-0.5) before tracing it')
+               '(-0.5,-1.0) before tracing it')
 
         trial_results = []
         for trial in range(1, JERK_WITH_MOTION_REPEATS + 1):
@@ -1422,12 +1438,12 @@ def _run_cornering_loop_scenario(sc, gui, backend, spawn_obstacle):
         scans_before_drive = helper._scan_count
 
         # Move from spawn (0,0, inside the loop) out to the loop's own
-        # start corner (-0.5,-0.5) before tracing its perimeter -- see
+        # start corner (-0.5,-1.0) before tracing its perimeter -- see
         # OBSTACLE_LOOP_LEGS's comment for the loop's full geometry and
         # wall-clearance derivation.
         helper.drive(-4.0, 0.0, 0.125)   # -0.5m west, to x=-0.5
-        helper.drive(0.0, -4.0, 0.125)   # -0.5m south, to y=-0.5
-        sc.log('repositioned to the loop\'s start corner (-0.5,-0.5) '
+        helper.drive(0.0, -4.0, 0.25)    # -1.0m south, to y=-1.0
+        sc.log('repositioned to the loop\'s start corner (-0.5,-1.0) '
                'before tracing its perimeter')
 
         # Drive the loop. Sampling the correction TF each leg.
