@@ -48,6 +48,7 @@ setup(
             'auto_explore = sim.auto_explore:main',
             'head_sweep = sim.head_sweep:main',
             'pose_emulator = sim.pose_emulator:main',
+            'head_slider_relay = sim.head_slider_relay:main',
         ],
     },
 )
