@@ -9,6 +9,7 @@ data downstream of this, for both sim and real hardware, so sim's job
 here is purely to speak the same wire format, not to do anything
 SLAM-specific itself.
 """
+import math
 import random
 
 import rclpy
@@ -79,6 +80,22 @@ class PoseEmulator(Node):
         # smooth drift.
         self.declare_parameter('odom_jerk_stddev', 0.2)
 
+        # Optional bias on the jerk's DIRECTION only (magnitude stays
+        # governed by odom_jerk_stddev above) -- pulls the drawn jerk
+        # toward a fixed target point (e.g. a test loop's center) instead
+        # of firing in a uniformly random direction. Meant for test
+        # scenarios that drive a loop whose corners sit close to real
+        # walls, where a fully random jerk risks teleporting the robot
+        # into or dangerously near one; biasing toward the loop's center
+        # keeps jerks statistically pulling the robot back inward. Off by
+        # default (odom_jerk_bias_enabled=False) so existing behavior
+        # (uniformly random jerk direction) is unchanged unless a caller
+        # explicitly opts in; the x/y target values are meaningless while
+        # disabled.
+        self.declare_parameter('odom_jerk_bias_enabled', False)
+        self.declare_parameter('odom_jerk_bias_x', 0.0)
+        self.declare_parameter('odom_jerk_bias_y', 0.0)
+
         # Continuous wheel slip -- distinct from both the drift random-walk
         # (smooth, unbounded accumulation) and jerk (one-time impulse):
         # this models wheels that spin but don't fully grip (e.g. the
@@ -143,8 +160,31 @@ class PoseEmulator(Node):
         visibly react to it -- only slam_toolbox's next scan match should
         notice the robot isn't where wheel odometry claims."""
         jerk_stddev = self.get_parameter('odom_jerk_stddev').value
-        dx = random.gauss(0.0, jerk_stddev)
-        dy = random.gauss(0.0, jerk_stddev)
+
+        if self.get_parameter('odom_jerk_bias_enabled').value:
+            # Direction biased toward (odom_jerk_bias_x, odom_jerk_bias_y)
+            # instead of drawn uniformly at random; magnitude distribution
+            # is unchanged (still hypot of two independent gaussian draws)
+            # so this only reshapes WHERE the jerk points, not how big it
+            # typically is.
+            magnitude = math.hypot(random.gauss(0.0, jerk_stddev),
+                                    random.gauss(0.0, jerk_stddev))
+            target_x = self.get_parameter('odom_jerk_bias_x').value
+            target_y = self.get_parameter('odom_jerk_bias_y').value
+            to_target_x = target_x - self._true_x
+            to_target_y = target_y - self._true_y
+            if math.hypot(to_target_x, to_target_y) < 1e-6:
+                # Already at (or on top of) the bias target -- no direction
+                # to point toward, fall back to a random one rather than
+                # dividing by ~zero.
+                angle = random.uniform(-math.pi, math.pi)
+            else:
+                angle = math.atan2(to_target_y, to_target_x)
+            dx = magnitude * math.cos(angle)
+            dy = magnitude * math.sin(angle)
+        else:
+            dx = random.gauss(0.0, jerk_stddev)
+            dy = random.gauss(0.0, jerk_stddev)
 
         teleport(self._true_x + dx, self._true_y + dy)
 
