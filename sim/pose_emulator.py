@@ -28,6 +28,9 @@ class PoseEmulator(Node):
         self.declare_parameter('yaw_joint_name', 'headlink')
         self.yaw_joint_name = self.get_parameter('yaw_joint_name').value
         self.head_yaw = 0.0
+        self.declare_parameter('pitch_joint_name', 'headpitch')
+        self.pitch_joint_name = self.get_parameter('pitch_joint_name').value
+        self.head_pitch = 0.0
 
         # Real hardware's wheel odometry accumulates drift (wheel slip,
         # encoder error -- worse on the arena's "Bumpy Road" zone) that
@@ -123,6 +126,8 @@ class PoseEmulator(Node):
     def joint_callback(self, msg):
         if self.yaw_joint_name in msg.name:
             self.head_yaw = msg.position[msg.name.index(self.yaw_joint_name)]
+        if self.pitch_joint_name in msg.name:
+            self.head_pitch = msg.position[msg.name.index(self.pitch_joint_name)]
 
     def trigger_jerk(self):
         """Fire a one-time sudden position jerk, applied immediately (not
@@ -218,7 +223,7 @@ class PoseEmulator(Node):
         pose.y = y
         pose.vel_x = float(msg.twist.twist.linear.x)
         pose.vel_y = float(msg.twist.twist.linear.y)
-        pose.head_pitch = 0.0
+        pose.head_pitch = float(self.head_pitch)
         pose.head_yaw = float(self.head_yaw)
         self.pose_pub.publish(pose)
 
