@@ -81,3 +81,54 @@ ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
 - No `<static>` tag on the robot model is set by this launch file — the
   robot is spawned as a normal dynamic model since the xacro doesn't mark
   it static.
+
+## Testing
+
+`test/localization/run_localization_drift_tests.py` is a standalone
+integration suite (not part of `colcon test`) that launches `sim` +
+`sentry_pkg` (which includes `sentry_localization`) end to end and
+exercises localization drift/jerk-correction behavior against this
+package's synthetic odometry noise model (`sim/pose_emulator.py`). Run
+after tuning `sentry_localization/config/slam.yaml`,
+`config/amcl.yaml`, `config/ekf.yaml`, or `pose_emulator.py`'s noise
+model:
+
+```bash
+isaac_ros_common/scripts/dexec.sh -- python3 \
+  /workspaces/isaac_ros-dev/src/sim/test/localization/run_localization_drift_tests.py \
+  --backend slam   # or amcl, ekf
+```
+
+**After editing a `sentry_localization/config/*.yaml` file, rebuild
+before rerunning the suite** — that package's `data_files`
+(config/launch/map) are copied at build time, not live-read from
+`src/`, so an edited YAML silently has no effect on the running
+container until a rebuild resyncs `install/`:
+
+```bash
+isaac_ros_common/scripts/dexec.sh -- colcon build --symlink-install \
+  --packages-select sentry_localization sentry_pkg
+```
+
+`--symlink-install` makes `install/` a symlink chain back to `src/` (via
+`build/`) for both this rebuild and every future one, so subsequent config
+edits take effect immediately with no rebuild needed — only the *first*
+build (or any build that didn't use `--symlink-install`) leaves a stale
+plain-copy trap. If a run's results look implausibly unaffected by a
+config change you just made, check `diff install/sentry_localization/
+share/sentry_localization/config/amcl.yaml src/sentry_localization/
+config/amcl.yaml` before assuming the change itself didn't work.
+
+Scenarios (`--scenario NAME` to run just one; all four run by default, in
+this order): `baseline`, `drift_correction`, `drift_correction_obstacle`,
+`jerk_with_motion`. Each scenario's exact pass condition and rationale is
+documented in the script's own module docstring (`SCENARIOS` section) —
+read that before interpreting a failure. `drift_correction` shares its
+driving loop and threshold with `drift_correction_obstacle` on purpose —
+compare the two directly before attributing a failure on either to the
+obstacle specifically.
+
+Other useful flags: `--keep-running` (skip teardown for interactive
+follow-up), `--headless` (no gz-sim GUI — GUI is the default per the
+project's standing "watch sim live" rule, see `SESSION_NOTES.md`). Full
+usage/rationale in the script's own docstring.
