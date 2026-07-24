@@ -94,6 +94,25 @@ def generate_launch_description():
         'odom_jerk_stddev', default_value='0.2',
         description='Stddev (m) of the one-time impulse applied when a jerk is triggered'
     )
+    # Optional direction bias for the jerk above (see pose_emulator.py's
+    # declare_parameter comment) -- pulls the jerk toward
+    # (odom_jerk_bias_x, odom_jerk_bias_y) instead of firing in a
+    # uniformly random direction, for test loops whose corners sit close
+    # to real walls. Off by default: existing random-direction jerk
+    # behavior is unchanged unless explicitly enabled.
+    odom_jerk_bias_enabled_arg = DeclareLaunchArgument(
+        'odom_jerk_bias_enabled', default_value='false',
+        description='Bias the jerk\'s direction toward (odom_jerk_bias_x, '
+                     'odom_jerk_bias_y) instead of a uniformly random direction'
+    )
+    odom_jerk_bias_x_arg = DeclareLaunchArgument(
+        'odom_jerk_bias_x', default_value='0.0',
+        description='X target (m) the jerk direction is biased toward, when enabled'
+    )
+    odom_jerk_bias_y_arg = DeclareLaunchArgument(
+        'odom_jerk_bias_y', default_value='0.0',
+        description='Y target (m) the jerk direction is biased toward, when enabled'
+    )
     # Continuous wheel slip -- see pose_emulator.py's declare_parameter
     # comment for the full model (a FRACTION of every meter driven lost
     # from reported odometry, not a fixed amount lost per unit time like
@@ -286,6 +305,15 @@ def generate_launch_description():
             'odom_jerk_stddev': ParameterValue(
                 LaunchConfiguration('odom_jerk_stddev'), value_type=float
             ),
+            'odom_jerk_bias_enabled': ParameterValue(
+                LaunchConfiguration('odom_jerk_bias_enabled'), value_type=bool
+            ),
+            'odom_jerk_bias_x': ParameterValue(
+                LaunchConfiguration('odom_jerk_bias_x'), value_type=float
+            ),
+            'odom_jerk_bias_y': ParameterValue(
+                LaunchConfiguration('odom_jerk_bias_y'), value_type=float
+            ),
             'odom_slip_ratio': ParameterValue(
                 LaunchConfiguration('odom_slip_ratio'), value_type=float
             ),
@@ -437,6 +465,9 @@ def generate_launch_description():
         odom_drift_stddev_arg,
         odom_jitter_stddev_arg,
         odom_jerk_stddev_arg,
+        odom_jerk_bias_enabled_arg,
+        odom_jerk_bias_x_arg,
+        odom_jerk_bias_y_arg,
         odom_slip_ratio_arg,
         gz_resource_path,
         ign_resource_path,
