@@ -290,6 +290,25 @@ def generate_launch_description():
         }],
     )
 
+    # --- Relays gz sim GUI's "Joint Position Controller" panel slider
+    # commands (which always publish on gz-transport's own
+    # /model/sentry/joint/<joint>/0/cmd_pos, not configurable from the GUI)
+    # into the custom no-"/0/" topics headlink/headpitch's
+    # JointPositionController plugins actually listen on (see
+    # sentry.urdf.xacro) -- ROS2 topic names can't have a namespace token
+    # starting with a digit, so the GUI's own topic can never be bridged
+    # into ROS directly (confirmed empirically), which is why the GUI
+    # slider and /head_pan_cmd|/head_pitch_cmd (used by head_sweep.py)
+    # can't both target the plugin's topic without this relay in between.
+    # Not a ROS node (no rclpy involved, see sim/head_slider_relay.py) so
+    # no use_sim_time param -- it only shuffles gz-transport messages.
+    head_slider_relay = Node(
+        package='sim',
+        executable='head_slider_relay',
+        name='head_slider_relay',
+        output='screen',
+    )
+
     # --- Drive the chassis in sim manually via /cmd_vel (sim/wasd_teleop.py).
     # root is a genuinely free link again (see sentry.urdf.xacro), so a
     # single VelocityControl plugin on it takes a Twist directly -- no more
@@ -326,6 +345,66 @@ def generate_launch_description():
         output='screen',
         arguments=[gz_headlink_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
         remappings=[(gz_headlink_topic, '/head_pan_cmd')],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    # --- Bridge for the head-mounted camera's pitch (see sentry.urdf.xacro's
+    # JointPositionController on headpitch), same pattern as head_pan_bridge
+    # above.
+    gz_headpitch_topic = ['/model/', robot_name, '/joint/headpitch/cmd_pos']
+    head_pitch_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='head_pitch_bridge',
+        output='screen',
+        arguments=[gz_headpitch_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
+        remappings=[(gz_headpitch_topic, '/head_pitch_cmd')],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    # --- Bridge the rgbd_camera sensor (defined in sentry.urdf.xacro,
+    # <topic>camera</topic>) into ROS 2, remapped to the same topic names
+    # realsense-ros uses on real hardware (see
+    # realsense-yolov8-nitros-bridge/launch/isaac_ros_yolov8_realsense.launch.py)
+    # so CV nodes written against the physical camera run unmodified in sim.
+    camera_image_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='camera_image_bridge',
+        output='screen',
+        arguments=['/camera/image@sensor_msgs/msg/Image[gz.msgs.Image'],
+        remappings=[('/camera/image', '/color/image_raw')],
+        parameters=[{'use_sim_time': True}],
+    )
+    camera_depth_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='camera_depth_bridge',
+        output='screen',
+        arguments=['/camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image'],
+        remappings=[('/camera/depth_image', '/depth/image_rect_raw')],
+        parameters=[{'use_sim_time': True}],
+    )
+    # rgbd_camera only publishes one set of intrinsics (for the color lens);
+    # reused for both color and depth since this is a single fixed-baseline
+    # rig, same simplification real D435 firmware makes when depth is
+    # aligned to color.
+    camera_color_info_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='camera_color_info_bridge',
+        output='screen',
+        arguments=['/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'],
+        remappings=[('/camera/camera_info', '/color/camera_info')],
+        parameters=[{'use_sim_time': True}],
+    )
+    camera_depth_info_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='camera_depth_info_bridge',
+        output='screen',
+        arguments=['/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'],
+        remappings=[('/camera/camera_info', '/depth/camera_info')],
         parameters=[{'use_sim_time': True}],
     )
 
@@ -366,7 +445,14 @@ def generate_launch_description():
         joint_state_bridge,
         odom_bridge,
         pose_emulator,
+        head_slider_relay,
         cmd_vel_bridge,
         head_pan_bridge,
+        head_pitch_bridge,
+        camera_image_bridge,
+        camera_depth_bridge,
+        camera_color_info_bridge,
+        camera_depth_info_bridge,
         delayed_spawn_robot,
+        rviz,
     ])
