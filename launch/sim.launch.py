@@ -5,6 +5,7 @@ and spawns the sentry robot (from sentry_urdf.xacro) into it.
 Usage:
     ros2 launch sim sim.launch.py
     ros2 launch sim sim.launch.py gui:=false
+    ros2 launch sim sim.launch.py rviz:=false
     ros2 launch sim sim.launch.py world:=/absolute/path/to/other.sdf
     ros2 launch sim sim.launch.py odom_noise_enabled:=true
 
@@ -36,9 +37,11 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('sim')
+    sentry_pkg_share = get_package_share_directory('sentry_pkg')
 
     default_world = os.path.join(pkg_share, 'world', 'ARCC_Field_2026.sdf')
     default_xacro = os.path.join(pkg_share, 'urdf', 'sentry.urdf.xacro')
+    default_rviz_config = os.path.join(sentry_pkg_share, 'rviz', 'config.rviz')
 
     world_arg = DeclareLaunchArgument(
         'world', default_value=default_world,
@@ -55,6 +58,14 @@ def generate_launch_description():
     gui_arg = DeclareLaunchArgument(
         'gui', default_value='true',
         description='Set to false to run gz sim headless (server only)'
+    )
+    rviz_arg = DeclareLaunchArgument(
+        'rviz', default_value='true',
+        description='Set to false to skip launching rviz2'
+    )
+    rviz_config_arg = DeclareLaunchArgument(
+        'rviz_config', default_value=default_rviz_config,
+        description='Full path to the rviz2 config file to load'
     )
 
     # --- Optional synthetic wheel-odometry drift injection (pose_emulator.py).
@@ -279,6 +290,25 @@ def generate_launch_description():
         }],
     )
 
+    # --- Relays gz sim GUI's "Joint Position Controller" panel slider
+    # commands (which always publish on gz-transport's own
+    # /model/sentry/joint/<joint>/0/cmd_pos, not configurable from the GUI)
+    # into the custom no-"/0/" topics headlink/headpitch's
+    # JointPositionController plugins actually listen on (see
+    # sentry.urdf.xacro) -- ROS2 topic names can't have a namespace token
+    # starting with a digit, so the GUI's own topic can never be bridged
+    # into ROS directly (confirmed empirically), which is why the GUI
+    # slider and /head_pan_cmd|/head_pitch_cmd (used by head_sweep.py)
+    # can't both target the plugin's topic without this relay in between.
+    # Not a ROS node (no rclpy involved, see sim/head_slider_relay.py) so
+    # no use_sim_time param -- it only shuffles gz-transport messages.
+    head_slider_relay = Node(
+        package='sim',
+        executable='head_slider_relay',
+        name='head_slider_relay',
+        output='screen',
+    )
+
     # --- Drive the chassis in sim manually via /cmd_vel (sim/wasd_teleop.py).
     # root is a genuinely free link again (see sentry.urdf.xacro), so a
     # single VelocityControl plugin on it takes a Twist directly -- no more
@@ -318,6 +348,79 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
+    # --- Bridge for the head-mounted camera's pitch (see sentry.urdf.xacro's
+    # JointPositionController on headpitch), same pattern as head_pan_bridge
+    # above.
+    gz_headpitch_topic = ['/model/', robot_name, '/joint/headpitch/cmd_pos']
+    head_pitch_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='head_pitch_bridge',
+        output='screen',
+        arguments=[gz_headpitch_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
+        remappings=[(gz_headpitch_topic, '/head_pitch_cmd')],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    # --- Bridge the rgbd_camera sensor (defined in sentry.urdf.xacro,
+    # <topic>camera</topic>) into ROS 2, remapped to the same topic names
+    # realsense-ros uses on real hardware (see
+    # realsense-yolov8-nitros-bridge/launch/isaac_ros_yolov8_realsense.launch.py)
+    # so CV nodes written against the physical camera run unmodified in sim.
+    camera_image_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='camera_image_bridge',
+        output='screen',
+        arguments=['/camera/image@sensor_msgs/msg/Image[gz.msgs.Image'],
+        remappings=[('/camera/image', '/color/image_raw')],
+        parameters=[{'use_sim_time': True}],
+    )
+    camera_depth_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='camera_depth_bridge',
+        output='screen',
+        arguments=['/camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image'],
+        remappings=[('/camera/depth_image', '/depth/image_rect_raw')],
+        parameters=[{'use_sim_time': True}],
+    )
+    # rgbd_camera only publishes one set of intrinsics (for the color lens);
+    # reused for both color and depth since this is a single fixed-baseline
+    # rig, same simplification real D435 firmware makes when depth is
+    # aligned to color.
+    camera_color_info_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='camera_color_info_bridge',
+        output='screen',
+        arguments=['/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'],
+        remappings=[('/camera/camera_info', '/color/camera_info')],
+        parameters=[{'use_sim_time': True}],
+    )
+    camera_depth_info_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='camera_depth_info_bridge',
+        output='screen',
+        arguments=['/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'],
+        remappings=[('/camera/camera_info', '/depth/camera_info')],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    # --- rviz2, using sentry_pkg's config (same one sentry_pkg's own launch
+    # files use) so sim and real-hardware runs look the same. use_sim_time
+    # matches every other node above since sim's /clock is what's bridged in.
+    rviz = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', LaunchConfiguration('rviz_config')],
+        parameters=[{'use_sim_time': True}],
+        condition=IfCondition(LaunchConfiguration('rviz')),
+    )
+
     return LaunchDescription([
         world_arg,
         robot_name_arg,
@@ -326,6 +429,8 @@ def generate_launch_description():
         z_arg,
         yaw_arg,
         gui_arg,
+        rviz_arg,
+        rviz_config_arg,
         odom_noise_enabled_arg,
         odom_drift_stddev_arg,
         odom_jitter_stddev_arg,
@@ -340,7 +445,14 @@ def generate_launch_description():
         joint_state_bridge,
         odom_bridge,
         pose_emulator,
+        head_slider_relay,
         cmd_vel_bridge,
         head_pan_bridge,
+        head_pitch_bridge,
+        camera_image_bridge,
+        camera_depth_bridge,
+        camera_color_info_bridge,
+        camera_depth_info_bridge,
         delayed_spawn_robot,
+        rviz,
     ])
