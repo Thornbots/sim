@@ -13,7 +13,6 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rviz2</exec_depend>
-  <exec_depend>sentry_pkg</exec_depend>
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>std_srvs</depend>
