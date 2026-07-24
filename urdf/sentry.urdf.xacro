@@ -15,6 +15,15 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
+      <!-- Excluded from the lidar's own raycasting (see the lidar sensor's
+           visibility_mask=0x01 below), since the real RPLIDAR is mounted
+           with its scanning disk clear of the robot's own chassis. The
+           gpu_lidar sensor here is a rendering sensor with no physics
+           collision to fall back on (this model has none anywhere, by
+           design, see the root link comment further down), so without
+           this it also renders the robot's own visual meshes as scan
+           obstacles, which the real hardware never sees. -->
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <link name="head">
@@ -31,6 +40,7 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <link name="lidar">
@@ -47,6 +57,7 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <!-- Pitch stage for the head, so a camera mounted on it can tilt
@@ -75,6 +86,7 @@
       <material name="0.1_0.1_0.1_0.000000_0.000000">
         <color rgba="0.1 0.1 0.1 1"/>
       </material>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <link name="odowheel">
@@ -91,6 +103,7 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <link name="odowheel_1">
@@ -107,6 +120,7 @@
       <material name="0.615686_0.811765_0.929412_0.000000_0.000000">
         <color rgba="0.615686 0.811765 0.929412 1"/>
       </material>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
   </link>
   <!-- root is a genuinely free 6DOF body again, with no collision anywhere
@@ -258,6 +272,14 @@
           <mean>0.0</mean>
           <stddev>0.03</stddev>
         </noise>
+        <!-- Matched against visibility_flags=0xFFFFFFFE on the robot's own
+             visuals above (bit 0 cleared there): (mask & flags) == 0 for
+             those, so this lidar no longer scans its own body/head/camera/
+             odowheels, matching real hardware, which never sees itself.
+             Nothing else in the world sets visibility_flags, so everything
+             else keeps the sdformat default (0xFFFFFFFF) and stays fully
+             visible to this sensor. -->
+        <visibility_mask>0x01</visibility_mask>
       </lidar>
     </sensor>
   </gazebo>
