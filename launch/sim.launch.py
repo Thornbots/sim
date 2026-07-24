@@ -5,6 +5,7 @@ and spawns the sentry robot (from sentry_urdf.xacro) into it.
 Usage:
     ros2 launch sim sim.launch.py
     ros2 launch sim sim.launch.py gui:=false
+    ros2 launch sim sim.launch.py rviz:=false
     ros2 launch sim sim.launch.py world:=/absolute/path/to/other.sdf
     ros2 launch sim sim.launch.py odom_noise_enabled:=true
 
@@ -36,9 +37,11 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('sim')
+    sentry_pkg_share = get_package_share_directory('sentry_pkg')
 
     default_world = os.path.join(pkg_share, 'world', 'ARCC_Field_2026.sdf')
     default_xacro = os.path.join(pkg_share, 'urdf', 'sentry.urdf.xacro')
+    default_rviz_config = os.path.join(sentry_pkg_share, 'rviz', 'config.rviz')
 
     world_arg = DeclareLaunchArgument(
         'world', default_value=default_world,
@@ -55,6 +58,14 @@ def generate_launch_description():
     gui_arg = DeclareLaunchArgument(
         'gui', default_value='true',
         description='Set to false to run gz sim headless (server only)'
+    )
+    rviz_arg = DeclareLaunchArgument(
+        'rviz', default_value='true',
+        description='Set to false to skip launching rviz2'
+    )
+    rviz_config_arg = DeclareLaunchArgument(
+        'rviz_config', default_value=default_rviz_config,
+        description='Full path to the rviz2 config file to load'
     )
 
     # --- Optional synthetic wheel-odometry drift injection (pose_emulator.py).
@@ -318,6 +329,19 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
+    # --- rviz2, using sentry_pkg's config (same one sentry_pkg's own launch
+    # files use) so sim and real-hardware runs look the same. use_sim_time
+    # matches every other node above since sim's /clock is what's bridged in.
+    rviz = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', LaunchConfiguration('rviz_config')],
+        parameters=[{'use_sim_time': True}],
+        condition=IfCondition(LaunchConfiguration('rviz')),
+    )
+
     return LaunchDescription([
         world_arg,
         robot_name_arg,
@@ -326,6 +350,8 @@ def generate_launch_description():
         z_arg,
         yaw_arg,
         gui_arg,
+        rviz_arg,
+        rviz_config_arg,
         odom_noise_enabled_arg,
         odom_drift_stddev_arg,
         odom_jitter_stddev_arg,
