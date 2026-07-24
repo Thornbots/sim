@@ -213,51 +213,44 @@
   <gazebo reference="root">
     <gravity>false</gravity>
   </gazebo>
-  <!-- visibility_flags has to be injected here, as a <gazebo reference="...">
-       extension, rather than as a plain child of the link's own <visual> in
-       the URDF above: URDF's schema doesn't define that element inside
-       <visual>, so the URDF->SDF conversion ros_gz_sim's `create` runs at
-       spawn time silently drops it if it's written there (confirmed: `ign
-       sdf -p` on the xacro-expanded URDF showed zero visibility_flags
-       occurrences in its output when it was written inline). Matched
-       against visibility_mask=0x01 on the lidar sensor further down, so
-       (mask & flags) == 0 hides just these visuals from that one sensor
-       while leaving them visible to the GUI/RGBD camera and everything
-       else, which don't set visibility_mask and so keep sdformat's default
-       (0xFFFFFFFF); see the lidar sensor's own comment below for why. -->
   <gazebo reference="body">
     <gravity>false</gravity>
-    <visual>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
-    </visual>
   </gazebo>
   <gazebo reference="head">
     <gravity>false</gravity>
-    <visual>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
-    </visual>
   </gazebo>
   <gazebo reference="head_pitch">
     <gravity>false</gravity>
   </gazebo>
   <gazebo reference="camera">
     <gravity>false</gravity>
-    <visual>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
-    </visual>
   </gazebo>
   <gazebo reference="odowheel">
     <gravity>false</gravity>
-    <visual>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
-    </visual>
   </gazebo>
   <gazebo reference="odowheel_1">
     <gravity>false</gravity>
-    <visual>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
-    </visual>
   </gazebo>
+  <!-- Excludes only the lidar's own housing mesh from its own scan (via
+       visibility_mask=0x01 on the sensor below, matched against
+       visibility_flags=0xFFFFFFFE here so mask & flags evaluates to
+       zero). That mesh wraps the sensor's exact origin, so gpu_lidar (a
+       rendering sensor with no physics collision to fall back on; this
+       model has none anywhere, by design) was reporting spurious
+       near-zero-range self-hits against it. This intentionally does NOT
+       extend to body/head/camera/odowheel: head, in particular, genuinely
+       obstructs part of the lidar's real field of view at whatever
+       bearing it currently sits at (matching real hardware, see
+       sim/head_sweep.py's docstring, which sweeps the head specifically
+       to move that real blind wedge around over time) and should keep
+       physically blocking/occluding the beam there, not become invisible
+       to it. Injected via a <gazebo reference="..."> extension rather than
+       as a plain child of the link's own <visual> in the URDF above:
+       URDF's schema doesn't define visibility_flags inside <visual>, so
+       the URDF->SDF conversion ros_gz_sim's `create` runs at spawn time
+       silently drops it if it's written there (confirmed: `ign sdf -p` on
+       the xacro-expanded URDF showed zero visibility_flags occurrences in
+       its output when it was written inline). -->
   <gazebo reference="lidar">
     <visual>
       <visibility_flags>0xFFFFFFFE</visibility_flags>
