@@ -19,7 +19,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float64
 
-PERIOD_SECONDS = 16.0   # full back-and-forth cycle time
+PERIOD_SECONDS = 6.0    # full back-and-forth cycle time
 AMPLITUDE = 2.5         # rad, safely inside the +-pi joint limit
 
 

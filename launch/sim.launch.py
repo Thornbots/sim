@@ -37,11 +37,10 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('sim')
-    sentry_pkg_share = get_package_share_directory('sentry_pkg')
 
     default_world = os.path.join(pkg_share, 'world', 'ARCC_Field_2026.sdf')
     default_xacro = os.path.join(pkg_share, 'urdf', 'sentry.urdf.xacro')
-    default_rviz_config = os.path.join(sentry_pkg_share, 'rviz', 'config.rviz')
+    default_rviz_config = os.path.join(pkg_share, 'rviz', 'config.rviz')
 
     world_arg = DeclareLaunchArgument(
         'world', default_value=default_world,
