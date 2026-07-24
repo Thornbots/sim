@@ -126,7 +126,8 @@ responsible for, not literally "map->odom" in every case:
 SCENARIOS
 ---------
 Run in this order (see SCENARIOS dict / main() below): baseline,
-drift_correction, drift_correction_obstacle, jerk_with_motion.
+noise_correction, drift_correction, drift_correction_obstacle,
+jerk_with_motion.
 1. baseline        -- odom_noise_enabled:=false. Stack comes up cleanly,
                        the correction TF settles and stays STABLE (does
                        not drift further with no noise/motion) -- NOT
@@ -134,7 +135,17 @@ drift_correction, drift_correction_obstacle, jerk_with_motion.
                        ARCC26 map's origin doesn't coincide with sim's
                        spawn pose, so a consistent ~0.1-0.15m absolute
                        offset here is normal. No ERROR in any log.
-2. drift_correction -- (slam/amcl only, see BACKENDS) tests lidar
+2. noise_correction -- odom_noise_enabled:=true (drift/jitter only, no
+                       slip): drives the same 2m hard-cornering square as
+                       drift_correction/drift_correction_obstacle/
+                       jerk_with_motion (OBSTACLE_LOOP_LEGS) for 60s under
+                       continuous odometry drift/jitter on top of that
+                       cornering, no jerks. Asserts the correction TF
+                       corrects periodically and stays bounded (second
+                       half of the run's samples shouldn't be more than
+                       2x the first half's max) rather than growing
+                       without limit.
+3. drift_correction -- (slam/amcl only, see BACKENDS) tests lidar
                        relocalization performance against accumulated
                        cornering error: drives a hard-cornering 2m square
                        loop (OBSTACLE_LOOP_LEGS) with no obstacle spawned.
@@ -154,7 +165,7 @@ drift_correction, drift_correction_obstacle, jerk_with_motion.
                        unmapped obstacle compounds this cornering-induced
                        wobble, or whether the wobble is the cornering
                        alone.
-3. drift_correction_obstacle -- (slam/amcl only, see BACKENDS) strictly
+4. drift_correction_obstacle -- (slam/amcl only, see BACKENDS) strictly
                        harder than drift_correction: same hard-cornering
                        loop, PLUS a static box spawned into the
                        running world mid-scenario (not present in
@@ -176,7 +187,10 @@ drift_correction, drift_correction_obstacle, jerk_with_motion.
                        scenario's result says nothing about the obstacle
                        specifically, since the no-obstacle case hadn't even
                        cleared the bar yet.
-4. jerk_with_motion -- (slam/amcl only, see BACKENDS) first repositions
+5. jerk_with_motion -- (slam/amcl only, see BACKENDS) models getting hit
+                       by another robot or running into a wall -- a
+                       discrete collision impulse, not gradual wheel
+                       slip/bumpy terrain. First repositions
                        to OBSTACLE_LOOP_LEGS's own start corner (-0.5,-0.5)
                        (same reposition _run_cornering_loop_scenario does),
                        then per trial: fire trigger_jerk, wait 0.5s
@@ -505,10 +519,12 @@ BACKEND_FRAMES = {
     'ekf': ('odom', 'root'),
 }
 
-# Driving path used by jerk_with_motion, at the robot's real 4.0 m/s top
-# speed (see that scenario's git history for why, vs. the old 0.15 m/s
-# wiggle -- also previously shared with continuous_drift before that
-# scenario was removed as redundant with drift_correction).
+# No longer driven by any scenario -- noise_correction and
+# jerk_with_motion both switched to OBSTACLE_LOOP_LEGS's bigger square
+# (see their own comments for why). Kept as the geometric basis
+# OBSTACLE_XY/OBSTACLE_LOOP_LEGS's own comments derive their placement
+# from (this loop's already-validated safe center/corners), and in case
+# a future scenario wants a smaller, gentler loop again.
 #
 # A first version of this (2026-07-20) tried to actually tour the field --
 # mapped clean_map.pgm's wall positions via connected-component analysis,
@@ -856,6 +872,92 @@ def scenario_baseline(gui, backend):
         teardown_stack(sim_tree, sentry_tree, helper)
 
 
+def scenario_noise_correction(gui, backend):
+    parent, child = BACKEND_FRAMES[backend]
+    edge = f'{parent}->{child}'
+    sc = Scenario('noise_correction',
+                  f'continuous drift+jitter with motion (odom_noise_enabled, '
+                  f'no slip): {edge} should correct periodically and stay '
+                  'bounded, not grow without limit')
+    sim_tree = sentry_tree = helper = None
+    try:
+        sim_tree, sentry_tree, helper = run_stack(
+            gui, backend, odom_noise_enabled=True)
+        if not wait_for_stack_ready(sc, helper):
+            sc.result(False, 'stack failed to reach a healthy /scan rate '
+                              'in time -- see log above')
+            return sc
+        pose = helper.wait_for_correction_tf(timeout=45.0)
+        if pose is None:
+            sc.result(False, f'{edge} never became available within 45s')
+            return sc
+
+        # Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
+        # own start corner (-0.5,-0.5) before tracing it -- same reposition
+        # every other scenario driving this square does (see
+        # _run_cornering_loop_scenario / scenario_jerk_with_motion).
+        helper.drive(-4.0, 0.0, 0.125)   # -0.5m west, to x=-0.5
+        helper.drive(0.0, -4.0, 0.125)   # -0.5m south, to y=-0.5
+        sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
+               '(-0.5,-0.5) before tracing it')
+
+        samples = []
+        OBSERVE_SECONDS = 60.0
+        # Same 2m hard-cornering square drift_correction/
+        # drift_correction_obstacle/jerk_with_motion drive
+        # (OBSTACLE_LOOP_LEGS, real 4.0 m/s) rather than a separate path of
+        # its own -- fixed 60s duration regardless of correction behavior
+        # (no early-exit depending on the correction TF), so this can't run
+        # away the way an early-exit-based loop could if the TF ever
+        # stalled (see jerk_with_motion's docstring for that failure
+        # mode). Also keeps the distance-traveled gate opening throughout
+        # the window (a fully stationary robot wouldn't exercise periodic
+        # correction at all).
+        t0 = time.monotonic()
+        i = 0
+        while time.monotonic() - t0 < OBSERVE_SECONDS:
+            vx, vy, duration = OBSTACLE_LOOP_LEGS[i % len(OBSTACLE_LOOP_LEGS)]
+            i += 1
+            helper.drive(vx, vy, duration)
+            p = helper.get_correction_tf(timeout=2.0)
+            if p is not None:
+                elapsed = time.monotonic() - t0
+                mag = math.hypot(p[0], p[1])
+                samples.append((elapsed, mag))
+                sc.log(f't={elapsed:5.1f}s  |{edge} xy|={mag:.4f} m')
+
+        if len(samples) < 3:
+            sc.result(False, f'too few {edge} samples ({len(samples)}) '
+                              'to assess boundedness')
+            return sc
+
+        mags = [m for _, m in samples]
+        max_mag = max(mags)
+        # "Bounded" check: compare the max of the second half of samples
+        # against the max of the first half. If the backend is correcting
+        # drift periodically, the second half shouldn't be substantially
+        # larger than the first -- growth would indicate corrections
+        # aren't keeping up (or aren't happening at all).
+        half = len(mags) // 2
+        first_half_max = max(mags[:half]) if half else mags[0]
+        second_half_max = max(mags[half:])
+        growth_ratio = second_half_max / max(first_half_max, 1e-6)
+
+        sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
+        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'sentry_pkg')
+
+        GROWTH_THRESHOLD = 2.0  # second half shouldn't be >2x first half
+        ok = growth_ratio < GROWTH_THRESHOLD and not sim_errs and not sentry_errs
+        sc.result(ok,
+                   f'max|xy|={max_mag:.4f} m, first_half_max={first_half_max:.4f}, '
+                   f'second_half_max={second_half_max:.4f}, '
+                   f'growth_ratio={growth_ratio:.2f} (threshold {GROWTH_THRESHOLD}), '
+                   f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+        return sc
+    finally:
+        teardown_stack(sim_tree, sentry_tree, helper)
+
+
 # Number of independent jerk trials scenario_jerk_with_motion fires
 # within a single launched stack (2026-07-22, per the user: run the jerk
 # tests more times to be confident they work well, not just react
@@ -896,8 +998,8 @@ JERK_WITH_MOTION_REPEATS = 8
 def _leg_for_displacement(dx, dy, speed=4.0):
     """Converts a desired (dx, dy) world-frame displacement into a
     (vx, vy, duration) drive() call at a fixed real driving speed --
-    same convention as PATROL_LEGS/OBSTACLE_LOOP_LEGS/JERK_SQUARE_LEGS's
-    own legs (speed pinned at the robot's real 4.0 m/s regardless of
+    same convention as PATROL_LEGS/OBSTACLE_LOOP_LEGS's own legs (speed
+    pinned at the robot's real 4.0 m/s regardless of
     displacement length/shape). Used by scenario_jerk_with_motion to
     turn a corrective displacement into an actual drive command. Returns
     (0.0, 0.0, 0.0) for a near-zero displacement (nothing to drive)
@@ -912,9 +1014,11 @@ def _leg_for_displacement(dx, dy, speed=4.0):
 
 def scenario_jerk_with_motion(gui, backend):
     sc = Scenario('jerk_with_motion',
-                  f'repositions to OBSTACLE_LOOP_LEGS\'s start corner, then '
-                  f'per trial: trigger_jerk (biased inward toward '
-                  f'OBSTACLE_XY), wait 0.5s asserting the correction TF has '
+                  f'models getting hit by another robot or running into a '
+                  f'wall -- a discrete collision impulse, not gradual wheel '
+                  f'slip/bumpy terrain. Repositions to OBSTACLE_LOOP_LEGS\'s '
+                  f'start corner, then per trial: trigger_jerk (biased inward '
+                  f'toward OBSTACLE_XY), wait 0.5s asserting the correction TF has '
                   f'not yet moved, then drive a single bounded leg to the '
                   f'next corner of the 2m hard-cornering square centered on '
                   f'OBSTACLE_XY -- the drive is corrected by the jerk\'s own '
@@ -937,11 +1041,12 @@ def scenario_jerk_with_motion(gui, backend):
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
     sim_tree = sentry_tree = helper = None
-    # 0.5, not the old 0.3 -- exercises jerks up to the
-    # robot's real worst-case bump/slip displacement (see
-    # ARCC_2026_SENTRY_CONTEXT.md's "Bumpy Road" zone), not
-    # just a gentle nudge.
-    JERK_STDDEV = 0.5
+    # Models getting hit by another robot or running into a wall -- a
+    # discrete collision impulse, not gradual wheel slip/bumpy terrain.
+    # dx/dy are independent N(0, JERK_STDDEV) draws, so the resulting
+    # magnitude follows a Rayleigh distribution with mean
+    # JERK_STDDEV * sqrt(pi/2) -- 0.24 targets a ~30cm average jerk.
+    JERK_STDDEV = 0.24
     try:
         sim_tree, sentry_tree, helper = run_stack(
             gui, backend, odom_noise_enabled=False, odom_jerk_stddev=JERK_STDDEV,
@@ -1070,6 +1175,16 @@ def scenario_jerk_with_motion(gui, backend):
             # assuming the old 0.3 still applies; faster driving and bigger
             # jerks are not guaranteed to produce the same correction-fraction
             # plateau.
+            # CAVEAT (2026-07-24): JERK_STDDEV changed 0.5 -> 0.08 -> 0.24
+            # (collision-impulse framing, now targeting a ~30cm average jerk)
+            # -- all of the above plateau/threshold calibration was against
+            # the original 0.5 parameter. Not yet re-validated at this
+            # value; a jerk's correction may sit closer to or further from
+            # amcl's own positional noise floor at this magnitude than it
+            # did originally, which could change the observed
+            # correction-fraction plateau in
+            # either direction -- re-derive if this scenario's pass rate
+            # looks off under the new magnitude.
             # 2026-07-23: this used to be a `while` loop repeatedly driving
             # PATROL_LEGS for up to 60s, stopping early once the threshold
             # was crossed. That open-ended retry was found to be the root
@@ -1315,6 +1430,7 @@ def scenario_drift_correction(gui, backend):
 
 SCENARIOS = {
     'baseline': scenario_baseline,
+    'noise_correction': scenario_noise_correction,
     'drift_correction': scenario_drift_correction,
     'drift_correction_obstacle': scenario_drift_correction_obstacle,
     'jerk_with_motion': scenario_jerk_with_motion,
