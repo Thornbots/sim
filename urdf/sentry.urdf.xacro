@@ -231,30 +231,22 @@
   <gazebo reference="odowheel_1">
     <gravity>false</gravity>
   </gazebo>
-  <!-- Excludes only the lidar's own housing mesh from its own scan (via
-       visibility_mask=0x01 on the sensor below, matched against
-       visibility_flags=0xFFFFFFFE here so mask & flags evaluates to
-       zero). That mesh wraps the sensor's exact origin, so gpu_lidar (a
-       rendering sensor with no physics collision to fall back on; this
-       model has none anywhere, by design) was reporting spurious
-       near-zero-range self-hits against it. This intentionally does NOT
-       extend to body/head/camera/odowheel: head, in particular, genuinely
-       obstructs part of the lidar's real field of view at whatever
-       bearing it currently sits at (matching real hardware, see
-       sim/head_sweep.py's docstring, which sweeps the head specifically
-       to move that real blind wedge around over time) and should keep
-       physically blocking/occluding the beam there, not become invisible
-       to it. Injected via a <gazebo reference="..."> extension rather than
-       as a plain child of the link's own <visual> in the URDF above:
-       URDF's schema doesn't define visibility_flags inside <visual>, so
-       the URDF->SDF conversion ros_gz_sim's `create` runs at spawn time
-       silently drops it if it's written there (confirmed: `ign sdf -p` on
-       the xacro-expanded URDF showed zero visibility_flags occurrences in
-       its output when it was written inline). -->
+  <!-- Self-occlusion (the lidar's own housing mesh, and the head's real
+       partial blocking of its own field of view at whatever bearing it
+       currently sits at, see sim/head_sweep.py's docstring) used to be
+       modeled here via gz-sim's visibility_mask/visibility_flags, but that
+       approach was all-or-nothing per visual: either a visual is fully
+       invisible to the lidar (so it also sees straight through the head
+       even where it should genuinely occlude) or fully visible (so it
+       reports the head's own mesh as a false self-hit), with no way to
+       express "block the beam here without counting it as a detection".
+       Removed in favor of sentry_pkg's lidar_self_filter node, a software
+       filter that blanks a fixed angular sector of /scan_raw; see that
+       node's docstring for why a fixed sector is valid here (the lidar
+       rotates rigidly with the head) and for the actual measured sector.
+       That approach also works for real hardware, which has no rendering
+       tricks available at all. -->
   <gazebo reference="lidar">
-    <visual>
-      <visibility_flags>0xFFFFFFFE</visibility_flags>
-    </visual>
     <sensor name="lidar" type="gpu_lidar">
       <always_on>true</always_on>
       <visualize>true</visualize>
@@ -281,14 +273,6 @@
           <mean>0.0</mean>
           <stddev>0.03</stddev>
         </noise>
-        <!-- Matched against visibility_flags=0xFFFFFFFE on the robot's own
-             visuals above (bit 0 cleared there): (mask & flags) == 0 for
-             those, so this lidar no longer scans its own body/head/camera/
-             odowheels, matching real hardware, which never sees itself.
-             Nothing else in the world sets visibility_flags, so everything
-             else keeps the sdformat default (0xFFFFFFFF) and stays fully
-             visible to this sensor. -->
-        <visibility_mask>0x01</visibility_mask>
       </lidar>
     </sensor>
   </gazebo>

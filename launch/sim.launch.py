@@ -208,13 +208,16 @@ def generate_launch_description():
     )
 
     # --- Bridge the gpu_lidar sensor's /scan topic (defined in sentry.urdf.xacro)
-    # into ROS 2 so it's usable by rviz/SLAM/etc.
+    # into ROS 2, remapped to scan_raw -- sentry_pkg's lidar_self_filter node
+    # is the only thing that publishes the final /scan (see its docstring),
+    # for both sim and real hardware.
     scan_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='scan_bridge',
         output='screen',
         arguments=['/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan'],
+        remappings=[('/scan', '/scan_raw')],
         parameters=[{'use_sim_time': True}],
     )
 
