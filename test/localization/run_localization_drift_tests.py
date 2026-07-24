@@ -113,11 +113,19 @@ responsible for, not literally "map->odom" in every case:
     way and asserting against either the same-shape "must not change" or
     "must change to track the jerk" expectation would just be a guess --
     the EKF pipeline's own tuning/verification is still open work (see
-    SESSION_NOTES.md), revisit once that lands. drift_correction_obstacle is
-    SKIPPED for ekf too, for a simpler reason: ekf_node never touches
-    /scan at all, so an unmapped lidar return has no defined effect on
-    odom->root whatsoever -- there's no scan-matching step here to have
-    an opinion about.
+    SESSION_NOTES.md), revisit once that lands. drift_correction and
+    drift_correction_obstacle DO run for ekf, unlike jerk_with_motion:
+    ekf_node itself only fuses /odom + /scan_odom, but /scan_odom comes
+    from rf2o_laser_odometry doing real scan-to-scan matching on raw
+    /scan (see Dockerfile.thornbots LAYER 7's comment) -- so lidar data
+    does feed into odom->root, just via scan-to-scan matching rather than
+    slam_toolbox/amcl's scan-to-map matching. That distinction matters
+    for drift_correction_obstacle specifically: an "unmapped" obstacle
+    isn't a special case for scan-to-scan matching the way it is for
+    scan-to-map (rf2o has no map to be missing a feature from), so a
+    similar reading between drift_correction and drift_correction_obstacle
+    is expected for ekf even more strongly than for slam/amcl -- both are
+    asserted against the same MAX_DELTA_THRESHOLD regardless.
   - 'mapping' is NOT a --backend choice here: mapping mode's job is
     building/refining a map, not evaluating localization accuracy against
     one, so these drift/jerk correction scenarios don't have a meaningful
@@ -145,7 +153,7 @@ jerk_with_motion.
                        half of the run's samples shouldn't be more than
                        2x the first half's max) rather than growing
                        without limit.
-3. drift_correction -- (slam/amcl only, see BACKENDS) tests lidar
+3. drift_correction -- tests lidar
                        relocalization performance against accumulated
                        cornering error: drives a hard-cornering 2m square
                        loop (OBSTACLE_LOOP_LEGS) with no obstacle spawned.
@@ -165,7 +173,7 @@ jerk_with_motion.
                        unmapped obstacle compounds this cornering-induced
                        wobble, or whether the wobble is the cornering
                        alone.
-4. drift_correction_obstacle -- (slam/amcl only, see BACKENDS) strictly
+4. drift_correction_obstacle -- strictly
                        harder than drift_correction: same hard-cornering
                        loop, PLUS a static box spawned into the
                        running world mid-scenario (not present in
@@ -266,6 +274,7 @@ from rclpy.node import Node
 from rclpy.duration import Duration
 from tf2_ros import Buffer, TransformListener, LookupException, ExtrapolationException
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Trigger
 
@@ -405,9 +414,27 @@ class LocalizationTestHelper(Node):
             Trigger, '/pose_emulator/trigger_jerk')
         self._scan_count = 0
         self.create_subscription(LaserScan, '/scan', self._on_scan, 10)
+        # Ground-truth (sim-internal, pre-noise-model) position, used by
+        # drive() to gate each leg on actual distance traveled rather than
+        # a wall-clock timer -- see drive()'s docstring for why.
+        self._raw_odom_xy = None
+        self.create_subscription(
+            Odometry, '/sim/raw_odom', self._on_raw_odom, 10)
 
     def _on_scan(self, msg):
         self._scan_count += 1
+
+    def _on_raw_odom(self, msg):
+        p = msg.pose.pose.position
+        self._raw_odom_xy = (p.x, p.y)
+
+    def wait_for_raw_odom(self, timeout=10.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._raw_odom_xy is not None:
+                return True
+            self.spin_for(0.1)
+        return False
 
     def spin_for(self, seconds):
         end = time.monotonic() + seconds
@@ -500,14 +527,67 @@ class LocalizationTestHelper(Node):
             return None
 
     def drive(self, vx, vy, duration):
-        """Publish /cmd_vel at 10Hz for `duration` seconds, then stop."""
+        """Publish /cmd_vel at 10Hz until the robot has actually covered
+        the (vx, vy, duration) leg's intended ground-truth distance
+        (`hypot(vx, vy) * duration`), then stop -- NOT simply for
+        `duration` wall-clock seconds as this used to do.
+
+        `duration` alone assumed gz-sim's real-time factor is exactly
+        1.0, so a fixed wall-clock timer reliably produced a fixed sim
+        distance. It doesn't hold under load (GPU lidar rendering, the
+        GUI window, general container contention -- see SESSION_NOTES.md):
+        when RTF dips below 1.0, less sim time elapses per wall-clock
+        second, so the old timer stopped each leg short of its intended
+        corner. Nothing ever re-anchored position between legs, so that
+        shortfall compounded leg over leg across a whole scenario's loop,
+        walking the real driven path out of registration with the
+        geometry OBSTACLE_LOOP_LEGS/PATROL_LEGS were sized against (e.g.
+        drift_correction_obstacle's 0.85m clearance from the spawned
+        box) -- occasionally far enough to clip an obstacle the nominal
+        geometry was supposed to clear by construction.
+
+        Gating on `/sim/raw_odom` (ground-truth, pre-noise-model position
+        -- see pose_emulator.py) instead of wall-clock time makes each
+        leg cover its intended distance regardless of RTF. `duration` is
+        kept as a generous wall-clock safety cap (3x, floored at +5s) so a
+        stuck/never-arriving raw_odom can't hang the scenario forever;
+        hitting that cap logs a warning rather than silently proceeding,
+        since it means the leg didn't reach its intended distance at all.
+        """
         msg = Twist()
         msg.linear.x = vx
         msg.linear.y = vy
-        end = time.monotonic() + duration
-        while time.monotonic() < end:
+        speed = math.hypot(vx, vy)
+        target_dist = speed * duration
+        safety_deadline = time.monotonic() + max(duration * 3.0, duration + 5.0)
+
+        if speed <= 1e-6 or not self.wait_for_raw_odom():
+            # No direction to gate on, or ground-truth odom never showed
+            # up -- fall back to the old wall-clock behavior rather than
+            # spinning forever or dividing by zero.
+            end = time.monotonic() + duration
+            while time.monotonic() < end:
+                self.cmd_vel_pub.publish(msg)
+                self.spin_for(0.1)
+            self.cmd_vel_pub.publish(Twist())
+            self.spin_for(0.2)
+            return
+
+        start_xy = self._raw_odom_xy
+        dir_x, dir_y = vx / speed, vy / speed
+        while time.monotonic() < safety_deadline:
             self.cmd_vel_pub.publish(msg)
             self.spin_for(0.1)
+            dx = self._raw_odom_xy[0] - start_xy[0]
+            dy = self._raw_odom_xy[1] - start_xy[1]
+            progress = dx * dir_x + dy * dir_y  # projected onto travel dir
+            if progress >= target_dist:
+                break
+        else:
+            self.get_logger().warning(
+                f'drive({vx}, {vy}, {duration}): hit safety cap without '
+                f'covering the intended {target_dist:.3f}m -- leg stopped '
+                f'short')
         self.cmd_vel_pub.publish(Twist())  # stop
         self.spin_for(0.2)
 
@@ -1418,13 +1498,11 @@ def scenario_drift_correction_obstacle(gui, backend):
         'to contend with, a PASS here is only meaningful if drift_correction '
         'also passed -- if drift_correction failed, treat any pass/fail '
         'here as uninformative about the obstacle specifically, since the '
-        'easier no-obstacle case hadn\'t even cleared the bar yet.')
-    if backend == 'ekf':
-        sc.skip('ekf_node never touches /scan at all -- an unmapped '
-                'lidar return has no defined effect on odom->root, so '
-                'there is no scan-matching step here to have an opinion '
-                'about. See BACKENDS in the module docstring.')
-        return sc
+        'easier no-obstacle case hadn\'t even cleared the bar yet. Runs for '
+        'ekf too: rf2o_laser_odometry\'s scan-to-scan matching (feeding '
+        '/scan_odom into ekf_node) has no map to be missing a feature '
+        'from, so an unmapped obstacle is not expected to move the needle '
+        'versus drift_correction -- see BACKENDS in the module docstring.')
     return _run_cornering_loop_scenario(sc, gui, backend, spawn_obstacle=True)
 
 
@@ -1442,12 +1520,11 @@ def scenario_drift_correction(gui, backend):
         'response to any mapped/unmapped feature. Asserted '
         'against the same MAX_DELTA_THRESHOLD as drift_correction_obstacle '
         'on purpose: a similar reading on both means an added unmapped '
-        'obstacle isn\'t compounding the cornering-induced wobble.')
-    if backend == 'ekf':
-        sc.skip('ekf_node never touches /scan at all -- no scan-matching '
-                'step here to have an opinion about cornering-induced '
-                'scan mismatch. See BACKENDS in the module docstring.')
-        return sc
+        'obstacle isn\'t compounding the cornering-induced wobble. Runs '
+        'for ekf too: rf2o_laser_odometry does real scan-to-scan matching '
+        'on raw /scan, feeding /scan_odom into ekf_node, so lidar data '
+        'does drive odom->root here -- see BACKENDS in the module '
+        'docstring for the scan-to-scan vs scan-to-map distinction.')
     return _run_cornering_loop_scenario(sc, gui, backend, spawn_obstacle=False)
 
 
