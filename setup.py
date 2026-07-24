@@ -29,6 +29,7 @@ data_files += data_files_for_dir('urdf', 'urdf')
 data_files += data_files_for_dir('worlds', 'worlds')
 data_files += data_files_for_dir('meshes', 'meshes')
 data_files += data_files_for_dir('world', 'world')
+data_files += data_files_for_dir('rviz', 'rviz')
 
 setup(
     name=package_name,
