@@ -1,44 +1,11 @@
 """
-Grid-teleport mapping sweep for sim mapping runs. Sim-only: teleports the
-chassis directly, no equivalent on real hardware.
-
-Visits a fixed (x, y) grid in a snake pattern and teleports the chassis to
-each point directly, one at a time, dwelling briefly at each so SLAM
-(subscribed to /scan the same as ever) integrates a scan at that pose. No
-obstacle avoidance, no reactive driving, no frontier bias: nothing here
-steers around walls, it just jumps to the next grid point regardless of
-what's there.
-
-"Teleport" now means an actual gz-sim world-pose write via the
-`/world/<world>/set_pose` gz-transport service (gz::sim::systems::
-UserCommands, always loaded, see world/ARCC_Field_2026.sdf), called
-directly through the `ign service` CLI since there's no ROS-side
-equivalent to bridge and no gz-transport Python bindings in this image.
-This only works because sentry.urdf.xacro's "root" link is a genuinely
-free 6DOF body with no parent joint and no collision on any link: gz's
-physics only honors a direct world-pose write on a link gz-physics'
-FreeGroup API recognizes as free-floating (a jointed link silently
-ignores it, confirmed empirically against an earlier version of the URDF
-that drove root through a translation-only prismatic joint chain instead
-specifically to prevent rotation), and having no collision means nothing
-the chassis teleports through/into can ever generate contact forces that
-would spin it up now that rotation is physically possible again.
-
-The robot is holonomic and never turns during normal operation, but
-unlike the old jointed design that made rotation structurally impossible,
-nothing here enforces that any more (see sentry.urdf.xacro), so every
-teleport call pins orientation to identity explicitly.
-
-Every teleport also calls `/world/<world>/control` with a model_only
-WorldReset first, snapping headlink/odowheel_x/odowheel_y back to their
-SDF-declared zero positions/velocities before the pose write. Confirmed
-empirically that a model_only reset doesn't touch root's own pose (it has
-no parent joint, so there's no "initial joint state" for it to reset to,
-only body/root's actual children joints get reset) -- it only clears
-joint state, so it's safe to call unconditionally right before set_pose
-on every hop, belt-and-suspenders against any residual joint
-position/velocity drift even though headlink no longer has an active
-controller that could reintroduce it (see sentry.urdf.xacro).
+Grid-teleport mapping sweep for sim (sim-only). Visits a fixed (x, y)
+grid in a snake pattern, teleporting the chassis to each point and
+dwelling briefly so SLAM integrates a scan there -- no obstacle
+avoidance/reactive driving, it just jumps regardless of what's there.
+"Teleport" is a `/world/<world>/set_pose` gz-transport call via `ign
+service`; each call is preceded by a model_only WorldReset to zero
+joint state first. See README.md for why/how both are safe here.
 """
 import subprocess
 
@@ -109,24 +76,11 @@ def reset_joints():
 
 
 def teleport(x, y, z=Z):
-    """True gz world-pose write via UserCommands' set_pose service (see
-    module docstring for why this now works). Returns whether gz reported
-    success; doesn't raise on an unreachable/misnamed entity so a single
-    bad call doesn't take the whole sweep down. Orientation is pinned to
-    identity on every call (root can physically rotate now, see the
-    module docstring).
-
-    reset_joints() runs both before AND after set_pose: before, so every
-    hop starts from a clean joint state; after, because that's actually
-    when a bad reaction shows up, root's hard position discontinuity can
-    induce a one-step reaction impulse through headlink/odowheel_x/
-    odowheel_y (all real joints on body/root), and resetting only
-    beforehand doesn't touch whatever that impulse just produced. root's
-    own inflated rotational inertia (see sentry.urdf.xacro) is what
-    actually suppresses the resulting angular velocity on root itself
-    (root has no joint, so nothing here can reset that directly); this
-    just keeps the joints themselves from carrying any residual spin
-    forward into the next hop's reaction."""
+    """True gz world-pose write via UserCommands' set_pose service; returns
+    whether gz reported success, doesn't raise on a bad entity name.
+    Orientation pinned to identity each call. reset_joints() runs both
+    before AND after -- see README.md for why the after-call is needed
+    (a reaction-impulse artifact from root's position discontinuity)."""
     reset_joints()
     req = (
         f"name: '{ENTITY_NAME}', "

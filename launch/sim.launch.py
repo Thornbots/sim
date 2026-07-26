@@ -1,19 +1,11 @@
 """
-Launches gz sim (Ignition/Gazebo Sim) loaded with the ARCC_Field_2026 world
-and spawns the sentry robot (from sentry_urdf.xacro) into it.
+Launches gz sim loaded with the ARCC_Field_2026 world and spawns the
+sentry robot (from sentry_urdf.xacro) into it.
 
-Usage:
-    ros2 launch sim sim.launch.py
-    ros2 launch sim sim.launch.py gui:=false
-    ros2 launch sim sim.launch.py rviz:=false
-    ros2 launch sim sim.launch.py world:=/absolute/path/to/other.sdf
-    ros2 launch sim sim.launch.py odom_noise_enabled:=true
-
-To exercise the sudden-jerk mechanism (wheel slip on bumpy terrain / hitting
-something -- a discrete jump, distinct from the smooth drift above), call
-pose_emulator's trigger_jerk service once sim is up:
-    ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger
-odom_jerk_stddev:= controls how large that one-time jump is (meters).
+Usage: `ros2 launch sim sim.launch.py [gui:=false] [rviz:=false]
+[world:=/abs/path.sdf] [odom_noise_enabled:=true]`. To fire a one-time
+odom "jerk" (odom_jerk_stddev:= sets its size in meters), once sim is up:
+`ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger`.
 """
 import os
 
@@ -189,16 +181,10 @@ def generate_launch_description():
     )
 
     # --- Spawn the robot into the running world.
-    # NOTE: deliberately using -string (raw URDF text) here, NOT -topic
-    # robot_description. -topic makes `create` subscribe to robot_description
-    # over ROS, and that subscription reliably fails to receive the
-    # TRANSIENT_LOCAL-cached message from robot_state_publisher -- confirmed
-    # by watching it live: `ros2 topic echo /robot_description` instantly got
-    # the same message via the same QoS while an already-matched spawn_sentry
-    # sat waiting 30+ seconds. That's a bug in ros_gz_sim create's own ROS
-    # subscription handling, not a startup-ordering race, so no amount of
-    # delay fixes it. -string sidesteps ROS entirely for this one hand-off:
-    # xacro's output is substituted directly into the process arguments.
+    # NOTE: deliberately -string (raw URDF text), NOT -topic
+    # robot_description -- ros_gz_sim create's -topic subscription
+    # reliably fails to receive robot_state_publisher's TRANSIENT_LOCAL
+    # message (confirmed bug, not a startup race). See README.md.
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
@@ -320,18 +306,10 @@ def generate_launch_description():
         }],
     )
 
-    # --- Relays gz sim GUI's "Joint Position Controller" panel slider
-    # commands (which always publish on gz-transport's own
-    # /model/sentry/joint/<joint>/0/cmd_pos, not configurable from the GUI)
-    # into the custom no-"/0/" topics headlink/headpitch's
-    # JointPositionController plugins actually listen on (see
-    # sentry.urdf.xacro) -- ROS2 topic names can't have a namespace token
-    # starting with a digit, so the GUI's own topic can never be bridged
-    # into ROS directly (confirmed empirically), which is why the GUI
-    # slider and /head_pan_cmd|/head_pitch_cmd (used by head_sweep.py)
-    # can't both target the plugin's topic without this relay in between.
-    # Not a ROS node (no rclpy involved, see sim/head_slider_relay.py) so
-    # no use_sim_time param -- it only shuffles gz-transport messages.
+    # --- Bridges gz sim GUI's slider panel (fixed gz-transport topic
+    # naming, not GUI-configurable) into headlink/headpitch's actual
+    # command topics -- see sim/head_slider_relay.py and README.md.
+    # Not a ROS node (no rclpy), so no use_sim_time param.
     head_slider_relay = Node(
         package='sim',
         executable='head_slider_relay',

@@ -1,17 +1,9 @@
 """
-Slowly sweeps the head back and forth while driving. The head (and the
-lidar mounted on it) partially obstructs the lidar's own field of view at
-whatever bearing the head currently sits at; a fixed head position means
-that blind wedge stays in the same place relative to the robot forever.
-Sweeping it means the blind wedge moves too, so across a few seconds of
-driving the lidar (via robot_state_publisher's already-correct head->lidar
-TF, tracked through the headlink joint) ends up covering the full circle
-even though any single instant is still partially obstructed -- SLAM
-integrates scans over time, so this fills in what a fixed head position
-never would.
-
-headlink's own joint limit is +-pi (see sentry.urdf.xacro), so this is a
-sweep, not a continuous spin.
+Slowly sweeps the head (and its mounted lidar) back and forth while
+driving, to move the head's lidar self-occlusion blind wedge over time
+so SLAM's scan integration ends up covering the full circle. headlink's
+joint limit is +-pi (see sentry.urdf.xacro), so this sweeps rather than
+spins continuously.
 """
 import math
 

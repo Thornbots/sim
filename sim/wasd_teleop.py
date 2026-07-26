@@ -1,16 +1,10 @@
 """
-WASD keyboard teleop for the sim robot's holonomic /cmd_vel.
+WASD keyboard teleop for the sim robot's holonomic /cmd_vel (sim-only;
+real hardware drives via the DJI Type-C board, not ROS). Talks to the
+VelocityControl gz plugin (sim/urdf/sentry.urdf.xacro) via the /cmd_vel
+bridge in sim/launch/sim.launch.py.
 
-Only exists for sim: real hardware drives via the DJI Type-C board
-directly, not ROS, so there's nothing to teleop there. This talks to the
-VelocityControl gz plugin (see sim/urdf/sentry.urdf.xacro) through the
-/cmd_vel bridge set up in sim/launch/sim.launch.py.
-
-  w/s - forward/back   (+x / -x)
-  a/d - strafe left/right (+y / -y)
-  q/e - rotate left/right (+yaw / -yaw)
-  space - stop
-  x   - quit
+  w/s forward/back  a/d strafe  q/e rotate  space stop  x quit
 """
 import sys
 import termios

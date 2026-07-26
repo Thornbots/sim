@@ -1,38 +1,10 @@
 #!/usr/bin/env python3
 """Ground-truth accuracy diagnostic for the `ekf` localization backend.
-
-Answers the question the drift/jerk suite structurally can't: *does fusing
-`/scan_odom` (rf2o) into `/odom` via `ekf_node` actually produce a better
-estimate of where the robot really is?*
-
-Why this exists separately from `run_localization_drift_tests.py`:
-
-- That suite's `drift_correction` scenarios call `run_stack(...,
-  odom_noise_enabled=False)` and `odom_slip_ratio` defaults to 0.0. Read
-  `sim/pose_emulator.py`'s `odom_callback`: with both off, the reported
-  `/odom` position is assigned `x, y = true_x, true_y` -- it is *exactly*
-  ground truth, bit for bit. An EKF cannot beat a perfect input; fusing a
-  noisy second source into it can only degrade it. Any "EKF is worse than
-  raw /odom" number measured under those settings says nothing about the
-  EKF.
-- Those scenarios also assert on `MAX_DELTA_THRESHOLD` (delta of the
-  correction TF from its pre-loop value), which is a `map->odom`
-  residual-correction metric. For `ekf` the relevant edge is `odom->root`,
-  whose delta is dominated by the robot's own real motion around the loop.
-
-So this script instead: turns wheel-odometry error ON (drift random walk +
-continuous slip, modelling the ARCC field's "Bumpy Road" zone), drives the
-same cornering loop, and scores both estimators against `/sim/raw_odom`
-(gz-sim's true pose) using mean/RMS/max Euclidean error.
-
-Usage (inside the container):
-    python3 sim/test/localization/ekf_ground_truth_diag.py
-    python3 sim/test/localization/ekf_ground_truth_diag.py --headless
-    python3 sim/test/localization/ekf_ground_truth_diag.py --slip-ratio 0.10
-
-Exit status is 0 if the EKF beat raw `/odom` on mean error, 1 otherwise --
-that is the actual pass condition for the EKF work, unlike the drift
-suite's thresholds.
+Answers what run_localization_drift_tests.py structurally can't (see
+README.md): does fusing /scan_odom into /odom via ekf_node actually beat
+raw /odom, scored against /sim/raw_odom? Usage: `python3
+ekf_ground_truth_diag.py [--headless] [--slip-ratio 0.10]`. Exit 0 if
+EKF beat raw /odom on mean error, 1 otherwise.
 """
 
 import argparse

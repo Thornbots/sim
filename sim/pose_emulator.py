@@ -1,13 +1,10 @@
 """
 Emulates the real Type-C board's POSE_MSG interface in sim: republishes
 sim's raw ground-truth /sim/raw_odom + /sim/raw_joint_states (bridged
-straight from gz, see sim.launch.py) as a dji_serial_bridge/msg/RobotPose
-on /pose -- the same topic/message real hardware's Type-C board sends
-(via ros2_dji_serial_bridge's dji_serial_bridge_node, also on /pose).
-sentry_pkg's pose_translator is the only thing that ever consumes pose
-data downstream of this, for both sim and real hardware, so sim's job
-here is purely to speak the same wire format, not to do anything
-SLAM-specific itself.
+from gz, see sim.launch.py) as a dji_serial_bridge/msg/RobotPose on
+/pose -- the same topic/message real hardware's Type-C board sends.
+sentry_pkg's pose_translator is the only downstream consumer for both
+sim and real hardware, so sim's job here is purely wire-format parity.
 """
 import math
 import random
@@ -51,63 +48,32 @@ class PoseEmulator(Node):
         # drift offset each callback -- simulates ordinary encoder/sensor
         # noise, does not accumulate.
         self.declare_parameter('odom_jitter_stddev', 0.001)
-        # Occasional sudden position "jerk" -- distinct from the smooth
-        # drift random-walk above: models a discrete EXTERNAL event, like
-        # wheel slip on a bump or hitting something, that actually displaces
-        # the robot's real position without the wheel encoders having
-        # driven (and therefore registered) that displacement themselves.
-        # That means a jerk has to do the opposite of what it might look
-        # like at first: it MOVES THE REAL SIMULATED ROBOT in gz by a random
-        # (dx, dy), and simultaneously cancels that same (dx, dy) out of the
-        # persistent drift accumulator so the REPORTED /pose does not jump
-        # at all at the moment of the trigger -- wheel odometry has no way
-        # to know the real displacement happened, so it should keep
-        # reporting exactly what it would have reported anyway. The
-        # resulting discrepancy between reported (wheel) odometry and the
-        # robot's new true position only becomes visible later, when
-        # slam_toolbox's next scan match against the map disagrees with
-        # wheel odometry and corrects map->odom -- that correction is the
-        # actual thing this is meant to exercise. This is event-triggered
-        # (see trigger_jerk()/the ~/trigger_jerk service below) rather than
-        # a per-callback random draw or tied to any real collision/contact
-        # sensor or arena-zone geometry (sim has neither wired up), so
-        # nothing in this file calls trigger_jerk() automatically -- it's a
-        # manually-fired test/tuning surface, e.g.:
-        #   ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger
-        # Stddev (meters) of the one-time (dx, dy) jerk impulse -- meaningfully
-        # larger than a single odom_drift_stddev step so the resulting SLAM
-        # correction reads as a sudden jump rather than blending into the
-        # smooth drift.
+        # One-time "jerk" event: models a discrete EXTERNAL displacement
+        # (wheel slip, collision) that moves the real robot without wheel
+        # encoders registering it -- trigger_jerk() moves the sim robot and
+        # cancels that delta from the drift accumulator so /pose stays
+        # continuous. Manual only: `ros2 service call
+        # /pose_emulator/trigger_jerk std_srvs/srv/Trigger`. Stddev below.
+        # See README.md for why this works "backwards".
         self.declare_parameter('odom_jerk_stddev', 0.2)
 
-        # Optional bias on the jerk's DIRECTION only (magnitude stays
-        # governed by odom_jerk_stddev above) -- pulls the drawn jerk
-        # toward a fixed target point (e.g. a test loop's center) instead
-        # of firing in a uniformly random direction. Meant for test
-        # scenarios that drive a loop whose corners sit close to real
-        # walls, where a fully random jerk risks teleporting the robot
-        # into or dangerously near one; biasing toward the loop's center
-        # keeps jerks statistically pulling the robot back inward. Off by
-        # default (odom_jerk_bias_enabled=False) so existing behavior
-        # (uniformly random jerk direction) is unchanged unless a caller
-        # explicitly opts in; the x/y target values are meaningless while
-        # disabled.
+        # Optional bias on the jerk's DIRECTION only (magnitude still governed
+        # by odom_jerk_stddev) -- pulls the drawn jerk toward a fixed target
+        # point (e.g. a test loop's center) instead of firing uniformly at
+        # random, so test loops whose corners sit close to walls don't risk
+        # a jerk teleporting the robot into one. Off by default; x/y target
+        # values are meaningless while disabled. See README.md for the
+        # scenario that relies on this (jerk_with_motion).
         self.declare_parameter('odom_jerk_bias_enabled', False)
         self.declare_parameter('odom_jerk_bias_x', 0.0)
         self.declare_parameter('odom_jerk_bias_y', 0.0)
 
-        # Continuous wheel slip -- distinct from both the drift random-walk
-        # (smooth, unbounded accumulation) and jerk (one-time impulse):
-        # this models wheels that spin but don't fully grip (e.g. the
-        # arena's "Bumpy Road" zone, see ARCC_2026_SENTRY_CONTEXT.md),
-        # losing a fixed FRACTION of every meter actually driven rather
-        # than accumulating a fixed amount over time regardless of motion.
-        # 0.5 means reported /pose only advances 0.5m for every 1m the
-        # robot actually moves -- wheel odometry systematically
-        # under-reports distance traveled, growing in proportion to how
-        # far the robot has actually gone, not how long it's been running.
-        # 0.0 (default) disables this -- reported motion exactly tracks
-        # true motion, same as before this parameter existed.
+        # Continuous wheel slip -- distinct from drift (smooth, unbounded
+        # accumulation) and jerk (one-time impulse): models wheels that
+        # spin but don't fully grip (e.g. the arena's "Bumpy Road" zone),
+        # losing a fixed FRACTION of every meter actually driven. 0.5 means
+        # reported /pose only advances 0.5m per 1m actually moved. 0.0
+        # (default) disables this.
         self.declare_parameter('odom_slip_ratio', 0.0)
 
         self._drift_x = 0.0
@@ -147,18 +113,11 @@ class PoseEmulator(Node):
             self.head_pitch = msg.position[msg.name.index(self.pitch_joint_name)]
 
     def trigger_jerk(self):
-        """Fire a one-time sudden position jerk, applied immediately (not
-        deferred to the next odom_callback): draws a random (dx, dy),
-        physically teleports the real simulated robot in gz by that delta
-        via sim.auto_explore.teleport() (a blocking gz-service call, ~up to
-        a few seconds worst case -- acceptable for this manually-triggered
-        test service), and simultaneously subtracts (dx, dy) from the same
-        persistent drift accumulator odom_callback already uses for the
-        continuous random-walk drift. That cancellation is what keeps the
-        REPORTED /pose continuous across the trigger: wheel odometry
-        couldn't have known about the real displacement, so it shouldn't
-        visibly react to it -- only slam_toolbox's next scan match should
-        notice the robot isn't where wheel odometry claims."""
+        """Fires a one-time position jerk immediately: draws a random
+        (dx, dy), teleports the real sim robot via
+        sim.auto_explore.teleport(), and subtracts the same delta from the
+        drift accumulator so REPORTED /pose stays continuous -- only the
+        next scan match should notice. See README.md for the full model."""
         jerk_stddev = self.get_parameter('odom_jerk_stddev').value
 
         if self.get_parameter('odom_jerk_bias_enabled').value:
