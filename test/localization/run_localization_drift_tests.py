@@ -344,24 +344,25 @@ PATROL_LEGS = [
 
 # scenario_drift_correction_obstacle drives its OWN loop
 # (OBSTACLE_LOOP_LEGS below), not PATROL_LEGS -- centered on the box so
-# clearance is true by construction. NOT baked into ARCC_Field_2026.sdf
-# or the saved ARCC26 map -- from the backend's perspective this is a
-# lidar return with no corresponding map feature. See README.md for the
-# placement history (why this shifted 0.5m from PATROL_LEGS's center).
-OBSTACLE_XY = (0.5, 0.0)
+# clearance is true by construction. Matches where the box actually
+# spawns (world origin, same point as the robot's own spawn). NOT baked
+# into ARCC_Field_2026.sdf or the saved ARCC26 map -- from the backend's
+# perspective this is a lidar return with no corresponding map feature.
+# See README.md for the placement history.
+OBSTACLE_XY = (0.0, 0.0)
 OBSTACLE_SIZE = 0.3  # meters, x/y footprint
 OBSTACLE_HEIGHT = 0.8  # meters, based at the ground (z=[0, OBSTACLE_HEIGHT])
 
-# 2m square loop centered on OBSTACLE_XY, corners at (-0.5,-1.0),
-# (1.5,-1.0), (1.5,1.0), (-0.5,1.0) -- 1m out from the box on every side.
-# Verified clear of every documented wall (see README.md for the
+# 3m x 3m square loop centered on OBSTACLE_XY, corners at (-1.5,-1.5),
+# (1.5,-1.5), (1.5,1.5), (-1.5,1.5) -- 1.35m out from the box on every
+# side. Verified clear of every documented wall (see README.md for the
 # corner-by-corner clearance derivation). Legs are (vx, vy, duration)
-# like PATROL_LEGS, but 2m per side (0.5s at 4.0 m/s).
+# like PATROL_LEGS, but 3m per side (0.75s at 4.0 m/s).
 OBSTACLE_LOOP_LEGS = [
-    (4.0, 0.0, 0.5),    # east   (-0.5,-1.0) -> (1.5,-1.0)
-    (0.0, 4.0, 0.5),    # north  (1.5,-1.0)  -> (1.5,1.0)
-    (-4.0, 0.0, 0.5),   # west   (1.5,1.0)   -> (-0.5,1.0)
-    (0.0, -4.0, 0.5),   # south  (-0.5,1.0)  -> (-0.5,-1.0)
+    (4.0, 0.0, 0.75),    # east   (-1.5,-1.5) -> (1.5,-1.5)
+    (0.0, 4.0, 0.75),    # north  (1.5,-1.5)  -> (1.5,1.5)
+    (-4.0, 0.0, 0.75),   # west   (1.5,1.5)   -> (-1.5,1.5)
+    (0.0, -4.0, 0.75),   # south  (-1.5,1.5)  -> (-1.5,-1.5)
 ]
 
 # Stationary dwell after each cornering leg, giving lidar relocalization
@@ -641,13 +642,13 @@ def scenario_noise_correction(gui, backend, use_ekf):
             return sc
 
         # Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
-        # own start corner (-0.5,-1.0) before tracing it -- same reposition
+        # own start corner (-1.5,-1.5) before tracing it -- same reposition
         # every other scenario driving this square does (see
         # _run_cornering_loop_scenario / scenario_jerk_with_motion).
-        helper.drive(-4.0, 0.0, 0.125)   # -0.5m west, to x=-0.5
-        helper.drive(0.0, -4.0, 0.25)    # -1.0m south, to y=-1.0
+        helper.drive(-4.0, 0.0, 0.375)   # -1.5m west, to x=-1.5
+        helper.drive(0.0, -4.0, 0.375)   # -1.5m south, to y=-1.5
         sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
-               '(-0.5,-1.0) before tracing it')
+               '(-1.5,-1.5) before tracing it')
 
         samples = []
         OBSERVE_SECONDS = 60.0
@@ -779,14 +780,14 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
             return sc
 
         # Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
-        # own start corner (-0.5,-1.0) before tracing it -- same reposition
+        # own start corner (-1.5,-1.5) before tracing it -- same reposition
         # _run_cornering_loop_scenario does (see its comment). Without this,
-        # trial 1's leg would drive the (-0.5,-1.0)->(1.5,-1.0) segment from
+        # trial 1's leg would drive the (-1.5,-1.5)->(1.5,-1.5) segment from
         # the wrong starting point, throwing off every corner after it too.
-        helper.drive(-4.0, 0.0, 0.125)   # -0.5m west, to x=-0.5
-        helper.drive(0.0, -4.0, 0.25)    # -1.0m south, to y=-1.0
+        helper.drive(-4.0, 0.0, 0.375)   # -1.5m west, to x=-1.5
+        helper.drive(0.0, -4.0, 0.375)   # -1.5m south, to y=-1.5
         sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
-               '(-0.5,-1.0) before tracing it')
+               '(-1.5,-1.5) before tracing it')
 
         trial_results = []
         for trial in range(1, JERK_WITH_MOTION_REPEATS + 1):
@@ -925,12 +926,12 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
         scans_before_drive = helper._scan_count
 
         # Move from spawn (0,0, inside the loop) out to the loop's own
-        # start corner (-0.5,-1.0) before tracing its perimeter -- see
+        # start corner (-1.5,-1.5) before tracing its perimeter -- see
         # OBSTACLE_LOOP_LEGS's comment for the loop's full geometry and
         # wall-clearance derivation.
-        helper.drive(-4.0, 0.0, 0.125)   # -0.5m west, to x=-0.5
-        helper.drive(0.0, -4.0, 0.25)    # -1.0m south, to y=-1.0
-        sc.log('repositioned to the loop\'s start corner (-0.5,-1.0) '
+        helper.drive(-4.0, 0.0, 0.375)   # -1.5m west, to x=-1.5
+        helper.drive(0.0, -4.0, 0.375)   # -1.5m south, to y=-1.5
+        sc.log('repositioned to the loop\'s start corner (-1.5,-1.5) '
                'before tracing its perimeter')
 
         # Drive the loop. Sampling the correction TF each leg.
