@@ -2,11 +2,14 @@
 """
 Integration suite for sentry_localization's map-relative drift/jerk
 correction, against sim's synthetic odom noise model (sim/pose_emulator.py).
---backend {slam,amcl,ekf} (default amcl); --scenario NAME; --keep-running;
---headless. Scenarios (in order): baseline, noise_correction,
-drift_correction, drift_correction_obstacle, jerk_with_motion. See
-README.md for WHY THIS EXISTS, BACKENDS (per-backend TF edge), and
-SCENARIOS (pass conditions/rationale).
+Mirrors auto.launch.py's two independent axes: --backend {slam,amcl,none}
+(default amcl, who owns map->odom -- 'mapping' isn't offered, see below)
+and --use-ekf (whether odom->root is EKF-fused, layerable on any backend --
+the old standalone 'ekf' backend is now --backend none --use-ekf).
+--scenario NAME; --keep-running; --headless. Scenarios (in order):
+baseline, noise_correction, drift_correction, drift_correction_obstacle,
+jerk_with_motion. See README.md for WHY THIS EXISTS, BACKENDS (per-backend
+TF edge), and SCENARIOS (pass conditions/rationale).
 """
 import argparse
 import math
@@ -117,9 +120,9 @@ def check_no_orphans(label):
              "ps aux | grep -E 'ign gazebo|gz sim|slam_toolbox|amcl|"
              "map_server|ekf_filter_node|pose_translator|pose_emulator' | "
              "grep -v grep | "
-             # Excludes this script's own process: --backend amcl/ekf on
-             # its own command line would otherwise self-match the
-             # amcl/ekf_filter_node patterns above.
+             # Excludes this script's own process: --backend amcl or
+             # --use-ekf on its own command line would otherwise
+             # self-match the amcl/ekf_filter_node patterns above.
              "grep -v run_localization_drift_tests.py"],
             capture_output=True, text=True, timeout=10,
         ).stdout.strip()
@@ -153,7 +156,7 @@ class LocalizationTestHelper(Node):
         super().__init__('localization_drift_test_helper')
         # Which TF edge counts as "the correction" -- see README.md's
         # BACKENDS section: (map, odom) for slam/amcl, (odom, root) for
-        # ekf.
+        # none (no map layer at all).
         self.parent_frame = parent_frame
         self.child_frame = child_frame
         self.tf_buffer = Buffer()
@@ -315,11 +318,14 @@ WORKSPACE = '/workspaces/isaac_ros-dev'
 LOG_DIR = '/tmp/localization_drift_tests'
 
 # Which TF edge each backend's "correction" actually shows up on -- see
-# README.md's BACKENDS section.
+# README.md's BACKENDS section. Independent of --use-ekf: map->odom is
+# always owned by slam/amcl regardless of EKF fusion underneath it; 'none'
+# has no map layer at all, so odom->root (whatever's feeding it) is the
+# only edge there is.
 BACKEND_FRAMES = {
     'slam': ('map', 'odom'),
     'amcl': ('map', 'odom'),
-    'ekf': ('odom', 'root'),
+    'none': ('odom', 'root'),
 }
 
 # No longer driven by any scenario (noise_correction/jerk_with_motion
@@ -443,12 +449,16 @@ class Scenario:
         self.details.append(f'SKIP: {reason}')
 
 
-def run_stack(gui, backend, odom_noise_enabled, odom_jerk_stddev=None,
+def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
               odom_drift_stddev=None, odom_jitter_stddev=None,
-              odom_slip_ratio=None, odom_jerk_bias_xy=None):
+              odom_slip_ratio=0.25, odom_jerk_bias_xy=None):
     """Starts sim + sentry_pkg launch trees, waits for the graph to come
     up, returns (sim_tree, sentry_tree, helper_node). Caller must call
-    teardown_stack() when done."""
+    teardown_stack() when done. odom_slip_ratio defaults to 0.25 (not 0.0)
+    -- wheel slip is the condition EKF fusion actually helps under (rf2o
+    scan-matching doesn't degrade with slip the way integrated wheel
+    odometry does); a scenario that needs the old zero-slip behavior
+    should pass odom_slip_ratio=0.0 explicitly."""
     os.makedirs(LOG_DIR, exist_ok=True)
 
     sim_args = (
@@ -480,15 +490,13 @@ def run_stack(gui, backend, odom_noise_enabled, odom_jerk_stddev=None,
     # make log-scraping for real errors harder.
     time.sleep(8.0)
 
-    # backend 'ekf' means map-free, EKF-fused odom->root -- expressed as
-    # localization_mode:=none use_ekf:=true since the launch surface split
-    # that into two independent args (see auto.launch.py/
-    # localization.launch.py). slam/amcl are unchanged, use_ekf stays false.
-    launch_mode = 'none' if backend == 'ekf' else backend
-    use_ekf = 'true' if backend == 'ekf' else 'false'
+    # backend maps 1:1 onto auto.launch.py's localization_mode; use_ekf is
+    # forwarded as its own independent arg, same two-axis shape as
+    # auto.launch.py/localization.launch.py.
     sentry_args = (
         'ros2 launch sentry_pkg auto.launch.py real_hardware:=false '
-        f'localization_mode:={launch_mode} use_ekf:={use_ekf} load_map:=true'
+        f'localization_mode:={backend} '
+        f"use_ekf:={'true' if use_ekf else 'false'} load_map:=true"
     )
     if backend == 'slam':
         # auto.launch.py's map_file default (clean_map) only ships a
@@ -558,7 +566,7 @@ def scan_log_for_errors(log_text, name):
 # Scenarios
 # --------------------------------------------------------------------------
 
-def scenario_baseline(gui, backend):
+def scenario_baseline(gui, backend, use_ekf):
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
     sc = Scenario('baseline', f'no noise: stack comes up cleanly, {edge} '
@@ -567,7 +575,7 @@ def scenario_baseline(gui, backend):
     sim_tree = sentry_tree = helper = None
     try:
         sim_tree, sentry_tree, helper = run_stack(
-            gui, backend, odom_noise_enabled=False)
+            gui, backend, use_ekf, odom_noise_enabled=False)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
                               'in time -- see log above')
@@ -612,7 +620,7 @@ def scenario_baseline(gui, backend):
         teardown_stack(sim_tree, sentry_tree, helper)
 
 
-def scenario_noise_correction(gui, backend):
+def scenario_noise_correction(gui, backend, use_ekf):
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
     sc = Scenario('noise_correction',
@@ -622,7 +630,7 @@ def scenario_noise_correction(gui, backend):
     sim_tree = sentry_tree = helper = None
     try:
         sim_tree, sentry_tree, helper = run_stack(
-            gui, backend, odom_noise_enabled=True)
+            gui, backend, use_ekf, odom_noise_enabled=True)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
                               'in time -- see log above')
@@ -723,7 +731,7 @@ def _leg_for_displacement(dx, dy, speed=4.0):
     return speed * dx / distance, speed * dy / distance, duration
 
 
-def scenario_jerk_with_motion(gui, backend):
+def scenario_jerk_with_motion(gui, backend, use_ekf):
     sc = Scenario('jerk_with_motion',
                   f'models getting hit by another robot or running into a '
                   f'wall -- a discrete collision impulse, not gradual wheel '
@@ -744,13 +752,14 @@ def scenario_jerk_with_motion(gui, backend):
                   f'bound the rest of the suite uses. Finishes with one more '
                   f'full lap around OBSTACLE_LOOP_LEGS as a final closing '
                   f'check.')
-    if backend == 'ekf':
-        sc.skip('ekf fuses /odom directly with no distance-traveled gate '
-                'analogous to slam_toolbox/amcl -- its jerk response '
-                "isn't characterized yet (EKF tuning/verification is "
-                'still open work, see SESSION_NOTES.md), so there is no '
-                'sound expectation to assert here. See BACKENDS in the '
-                'module docstring.')
+    if backend == 'none':
+        sc.skip('no map layer under test (backend none) means EKF fuses '
+                '/odom directly with no distance-traveled gate analogous '
+                "to slam_toolbox/amcl -- its jerk response isn't "
+                'characterized yet (EKF tuning/verification is still open '
+                'work, see SESSION_NOTES.md), so there is no sound '
+                'expectation to assert here. See BACKENDS in the module '
+                'docstring.')
         return sc
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
@@ -763,8 +772,8 @@ def scenario_jerk_with_motion(gui, backend):
     JERK_STDDEV = 0.24
     try:
         sim_tree, sentry_tree, helper = run_stack(
-            gui, backend, odom_noise_enabled=False, odom_jerk_stddev=JERK_STDDEV,
-            odom_jerk_bias_xy=OBSTACLE_XY)
+            gui, backend, use_ekf, odom_noise_enabled=False,
+            odom_jerk_stddev=JERK_STDDEV, odom_jerk_bias_xy=OBSTACLE_XY)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
                               'in time -- see log above')
@@ -907,7 +916,7 @@ def scenario_jerk_with_motion(gui, backend):
 MAX_DELTA_THRESHOLD = 0.30  # meters
 
 
-def _run_cornering_loop_scenario(sc, gui, backend, spawn_obstacle):
+def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
     """Shared driving logic for scenario_drift_correction_obstacle and
     scenario_drift_correction -- both drive the identical 2m
     hard-cornering loop (OBSTACLE_LOOP_LEGS) with an obstacle either
@@ -921,7 +930,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, spawn_obstacle):
     sim_tree = sentry_tree = helper = None
     try:
         sim_tree, sentry_tree, helper = run_stack(
-            gui, backend, odom_noise_enabled=False)
+            gui, backend, use_ekf, odom_noise_enabled=False)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
                               'in time -- see log above')
@@ -1004,7 +1013,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, spawn_obstacle):
         teardown_stack(sim_tree, sentry_tree, helper)
 
 
-def scenario_drift_correction_obstacle(gui, backend):
+def scenario_drift_correction_obstacle(gui, backend, use_ekf):
     sc = Scenario(
         'drift_correction_obstacle',
         'strictly harder version of drift_correction: same hard-cornering '
@@ -1019,14 +1028,16 @@ def scenario_drift_correction_obstacle(gui, backend):
         'also passed -- if drift_correction failed, treat any pass/fail '
         'here as uninformative about the obstacle specifically, since the '
         'easier no-obstacle case hadn\'t even cleared the bar yet. Runs for '
-        'ekf too: rf2o_laser_odometry\'s scan-to-scan matching (feeding '
-        '/scan_odom into ekf_node) has no map to be missing a feature '
-        'from, so an unmapped obstacle is not expected to move the needle '
-        'versus drift_correction -- see BACKENDS in the module docstring.')
-    return _run_cornering_loop_scenario(sc, gui, backend, spawn_obstacle=True)
+        'backend none too: rf2o_laser_odometry\'s scan-to-scan matching '
+        '(feeding /scan_odom into ekf_node) has no map to be missing a '
+        'feature from, so an unmapped obstacle is not expected to move the '
+        'needle versus drift_correction -- see BACKENDS in the module '
+        'docstring.')
+    return _run_cornering_loop_scenario(
+        sc, gui, backend, use_ekf, spawn_obstacle=True)
 
 
-def scenario_drift_correction(gui, backend):
+def scenario_drift_correction(gui, backend, use_ekf):
     sc = Scenario(
         'drift_correction',
         'tests lidar relocalization performance against accumulated '
@@ -1041,11 +1052,12 @@ def scenario_drift_correction(gui, backend):
         'against the same MAX_DELTA_THRESHOLD as drift_correction_obstacle '
         'on purpose: a similar reading on both means an added unmapped '
         'obstacle isn\'t compounding the cornering-induced wobble. Runs '
-        'for ekf too: rf2o_laser_odometry does real scan-to-scan matching '
-        'on raw /scan, feeding /scan_odom into ekf_node, so lidar data '
-        'does drive odom->root here -- see BACKENDS in the module '
+        'for backend none too: rf2o_laser_odometry does real scan-to-scan '
+        'matching on raw /scan, feeding /scan_odom into ekf_node, so lidar '
+        'data does drive odom->root here -- see BACKENDS in the module '
         'docstring for the scan-to-scan vs scan-to-map distinction.')
-    return _run_cornering_loop_scenario(sc, gui, backend, spawn_obstacle=False)
+    return _run_cornering_loop_scenario(
+        sc, gui, backend, use_ekf, spawn_obstacle=False)
 
 
 SCENARIOS = {
@@ -1061,10 +1073,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--backend', choices=sorted(BACKEND_FRAMES.keys()),
                          default='amcl',
-                         help='Which auto.launch.py localization_mode to '
-                              'exercise (default: amcl). See BACKENDS in '
-                              'the module docstring for what each one '
-                              "means here and why 'mapping' isn't offered.")
+                         help="Which auto.launch.py localization_mode to "
+                              "exercise -- who owns map->odom (default: "
+                              "amcl). See BACKENDS in the module docstring "
+                              "for what each one means here and why "
+                              "'mapping' isn't offered.")
+    parser.add_argument('--use-ekf', action='store_true',
+                         help='Forward use_ekf:=true to auto.launch.py -- '
+                              'EKF-fuses odom->root instead of passing '
+                              '/odom through raw. Independent of --backend, '
+                              'same as auto.launch.py\'s own use_ekf arg; '
+                              'the old standalone ekf backend is now '
+                              '--backend none --use-ekf.')
     parser.add_argument('--scenario', choices=sorted(SCENARIOS.keys()),
                          help='Run only this scenario (default: all, in '
                               'the order listed in the module docstring)')
@@ -1083,8 +1103,9 @@ def main():
         names = [args.scenario] if args.scenario else list(SCENARIOS.keys())
         results = []
         for name in names:
-            print(f'\n=== Running scenario: {name} (backend={args.backend}) ===')
-            sc = SCENARIOS[name](gui, args.backend)
+            print(f'\n=== Running scenario: {name} (backend={args.backend}, '
+                  f'use_ekf={args.use_ekf}) ===')
+            sc = SCENARIOS[name](gui, args.backend, args.use_ekf)
             results.append(sc)
     finally:
         rclpy.shutdown()
