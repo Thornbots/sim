@@ -1,263 +1,12 @@
 #!/usr/bin/env python3
 """
-Automated integration test suite for sentry_localization's map-relative
-localization drift/jerk correction behavior, exercised against sim's
-synthetic wheel-odometry noise model (sim/sim/pose_emulator.py:
-odom_noise_enabled/odom_drift_stddev/odom_jitter_stddev/odom_jerk_stddev,
-see that file's module docstring for the full noise-model design
-rationale).
-
-Runs against any of sentry_pkg/auto.launch.py's localization_mode backends
-(--backend slam/amcl/ekf, default amcl -- not mapping, see BACKENDS below
-for why). Originally written slam_toolbox-only (hence the old filename,
-run_slam_drift_tests.py); generalized once auto.launch.py grew amcl/ekf
-alongside slam_toolbox's own localization mode, since exercising "does the
-correction layer respond to jerks/drift correctly" is equally relevant to
-all of them, just watching a different TF edge (see BACKENDS below).
-
-WHY THIS EXISTS
----------------
-Before this suite, exercising this correction behavior meant manually:
-launching sim, launching sentry_pkg + sentry_localization's stack, firing `ros2
-service call /pose_emulator/trigger_jerk ...` or twiddling
-odom_noise_enabled by hand, then eyeballing `ros2 run tf2_ros tf2_echo <the
-right two frames>` in a separate shell, then manually tearing both launches
-down before the next attempt. That's slow, error-prone (easy to forget a
-teardown step and leave orphaned nodes causing duplicate-node TF jitter on
-the next run -- see SESSION_NOTES.md), and not repeatable enough to safely
-use as a regression check after touching slam.yaml/amcl.yaml/ekf.yaml or
-pose_emulator.py's noise model. This script automates exactly that manual
-loop: launch stack -> drive scenario -> sample the correction TF over time
--> assert -> tear down -> repeat.
-
-WHY A STANDALONE SCRIPT, NOT A pytest/colcon-test FILE
--------------------------------------------------------
-sibling packages (e.g. sentry_localization/test/) run ament_copyright/
-ament_flake8/ament_pep257 pytest-style tests via `colcon test`. Those are
-fast, single-process, static-analysis-style checks with no external state.
-This suite is the opposite on every axis that matters for choosing a test
-runner:
-  - It needs a running Docker container, gz-sim, and two full `ros2 launch`
-    trees (sim + sentry_pkg, which itself includes sentry_localization) --
-    none of which `colcon test`'s default invocation sets up or tears down
-    for you.
-  - Each scenario takes real wall-clock seconds to tens of seconds
-    (physics settling, minimum_time_interval/minimum_travel_distance-style
-    gating, scan-match convergence) -- not typical unit-test-speed.
-  - Scenarios must run strictly sequentially, each with a full stack
-    teardown/relaunch in between, to get a clean map/TF state -- colcon
-    test's parallel-by-default test execution model actively fights this.
-  - Failure diagnosis needs the actual measured drift/correction numbers
-    printed clearly, not just a pytest assert traceback.
-Wiring this into colcon test/pytest discovery would mean fighting the
-runner's assumptions (test isolation, parallelism, speed) for no real
-benefit -- nothing here is meant to run as part of a routine `colcon test`
-pass anyway; it's meant to be invoked deliberately, e.g. after tuning
-slam.yaml/amcl.yaml/ekf.yaml or pose_emulator.py's noise params. A plain
-script that is simply run directly is the better fit. It still uses rclpy
-directly (not subprocess+CLI parsing) for all in-process ROS interaction
-(TF lookups, service calls, cmd_vel publishing), since that's the natural,
-robust way to talk to a running ROS graph from Python.
-
-USAGE
------
-Run from inside the isaac_ros_dev container (needs rclpy + the sim/
-sentry_pkg/sentry_localization packages built and sourced -- exactly what
-dexec.sh's env sourcing already provides), from the host:
-
-    isaac_ros_common/scripts/dexec.sh -- \\
-        python3 /workspaces/isaac_ros-dev/src/sim/test/localization/run_localization_drift_tests.py
-
-Optional: --backend {slam,amcl,ekf} (default amcl) to pick which
-auto.launch.py localization_mode to exercise. --scenario NAME to run just
-one scenario (see SCENARIOS below), --keep-running to skip teardown after
-the last scenario (for interactive follow-up inspection), --headless to
-run gz-sim headless instead of the default GUI window (faster, but
-nothing to watch -- GUI is on by default so a human can watch/sanity-check
-scenario behavior live, matching the standing "always launch sim with
-GUI" rule in SESSION_NOTES.md).
-
-This script manages its OWN sim + sentry_pkg launch trees end to end (using
-the same setsid/process-group approach as dexec.sh -d / kill_launch.sh, see
-LaunchTree below) -- it does not attach to or reuse a stack you may already
-have running interactively. If you have an interactive stack up already,
-either stop it first (this script needs its ports/topics/services
-exclusively -- ROS topics/services are process-global, not namespaced per
-launch, so two stacks would collide) or just let this script run in a
-separate terminal after you tear yours down; it does not try to coexist
-with one.
-
-BACKENDS
---------
-Each backend owns a different TF edge as its "correction" -- the thing
-these scenarios actually watch is whichever edge that backend is
-responsible for, not literally "map->odom" in every case:
-  - 'slam' (default): slam_toolbox's own localization mode owns map->odom.
-    Gated on distance traveled since the last processed scan (see
-    slam.yaml's minimum_travel_distance comment) -- a jerk with zero
-    reported motion afterward never even attempts a fresh scan match.
-  - 'amcl': nav2 amcl owns map->odom instead. Gated the same conceptual
-    way as slam_toolbox (amcl.yaml's update_min_d/update_min_a are its
-    equivalent of minimum_travel_distance/heading), so the same
-    jerk_with_motion assertions apply unchanged, just watching amcl's own
-    TF broadcast instead of slam_toolbox's.
-  - 'ekf' owns odom->root instead of map->odom (localization_mode:=ekf
-    runs no map node at all -- see auto.launch.py's module docstring) --
-    baseline is exercised against odom->root instead of
-    map->odom (BACKEND_FRAMES below), since that's the analogous "is the
-    correction layer behaving" edge for this backend. jerk_with_motion is
-    SKIPPED for ekf, not asserted: ekf_node fuses
-    /odom's x/y directly (see config/ekf.yaml), with no
-    distance-traveled gate analogous to slam_toolbox/amcl's, so a
-    stationary jerk's effect on odom->root isn't characterized the same
-    way and asserting against either the same-shape "must not change" or
-    "must change to track the jerk" expectation would just be a guess --
-    the EKF pipeline's own tuning/verification is still open work (see
-    SESSION_NOTES.md), revisit once that lands. drift_correction and
-    drift_correction_obstacle DO run for ekf, unlike jerk_with_motion:
-    ekf_node itself only fuses /odom + /scan_odom, but /scan_odom comes
-    from rf2o_laser_odometry doing real scan-to-scan matching on raw
-    /scan (see Dockerfile.thornbots LAYER 7's comment) -- so lidar data
-    does feed into odom->root, just via scan-to-scan matching rather than
-    slam_toolbox/amcl's scan-to-map matching. That distinction matters
-    for drift_correction_obstacle specifically: an "unmapped" obstacle
-    isn't a special case for scan-to-scan matching the way it is for
-    scan-to-map (rf2o has no map to be missing a feature from), so a
-    similar reading between drift_correction and drift_correction_obstacle
-    is expected for ekf even more strongly than for slam/amcl -- both are
-    asserted against the same MAX_DELTA_THRESHOLD regardless.
-  - 'mapping' is NOT a --backend choice here: mapping mode's job is
-    building/refining a map, not evaluating localization accuracy against
-    one, so these drift/jerk correction scenarios don't have a meaningful
-    reading against it.
-
-SCENARIOS
----------
-Run in this order (see SCENARIOS dict / main() below): baseline,
-noise_correction, drift_correction, drift_correction_obstacle,
-jerk_with_motion.
-1. baseline        -- odom_noise_enabled:=false. Stack comes up cleanly,
-                       the correction TF settles and stays STABLE (does
-                       not drift further with no noise/motion) -- NOT
-                       necessarily near (0,0,0) for slam/amcl: the saved
-                       ARCC26 map's origin doesn't coincide with sim's
-                       spawn pose, so a consistent ~0.1-0.15m absolute
-                       offset here is normal. No ERROR in any log.
-2. noise_correction -- odom_noise_enabled:=true (drift/jitter only, no
-                       slip): drives the same 2m hard-cornering square as
-                       drift_correction/drift_correction_obstacle/
-                       jerk_with_motion (OBSTACLE_LOOP_LEGS) for 60s under
-                       continuous odometry drift/jitter on top of that
-                       cornering, no jerks. Asserts the correction TF
-                       corrects periodically and stays bounded (second
-                       half of the run's samples shouldn't be more than
-                       2x the first half's max) rather than growing
-                       without limit.
-3. drift_correction -- tests lidar
-                       relocalization performance against accumulated
-                       cornering error: drives a hard-cornering 2m square
-                       loop (OBSTACLE_LOOP_LEGS) with no obstacle spawned.
-                       The loop's instant-reversal corners at real 4.0 m/s
-                       accumulate real dead-reckoning error faster than
-                       amcl's scan-match gate can track it live; the
-                       measured "wobble" is amcl visibly correcting that
-                       accumulated error back onto the map once the robot
-                       stops at each leg's post-drive dwell (confirmed
-                       live in rviz: the correction snaps in right as the
-                       robot settles, not mid-drive) -- it's the
-                       correction itself being observed, not a wheel-slip
-                       artifact. Shares its driving code and
-                       MAX_DELTA_THRESHOLD with drift_correction_obstacle
-                       on purpose (see _run_cornering_loop_scenario) --
-                       comparing the two isolates whether an added
-                       unmapped obstacle compounds this cornering-induced
-                       wobble, or whether the wobble is the cornering
-                       alone.
-4. drift_correction_obstacle -- strictly
-                       harder than drift_correction: same hard-cornering
-                       loop, PLUS a static box spawned into the
-                       running world mid-scenario (not present in
-                       ARCC_Field_2026.sdf or the saved ARCC26 map -- from
-                       the backend's perspective it's a lidar return with
-                       no corresponding map feature), driving the 2m
-                       square loop centered on it (OBSTACLE_LOOP_LEGS, 1m
-                       out from the box in every direction -- see that
-                       constant's comment for the wall-clearance
-                       derivation) so it's seen from every angle but never
-                       driven into. Assert the correction TF stays bounded
-                       relative to its pre-spawn value (one small unmapped
-                       object should only locally corrupt returns near it,
-                       not swing the whole map alignment) and that scans
-                       keep flowing (backend didn't stall). A PASS here is
-                       only meaningful if drift_correction (the easier,
-                       obstacle-free case, run immediately before this
-                       one) also passed -- if that one failed, this
-                       scenario's result says nothing about the obstacle
-                       specifically, since the no-obstacle case hadn't even
-                       cleared the bar yet.
-5. jerk_with_motion -- (slam/amcl only, see BACKENDS) models getting hit
-                       by another robot or running into a wall -- a
-                       discrete collision impulse, not gradual wheel
-                       slip/bumpy terrain. First repositions
-                       to OBSTACLE_LOOP_LEGS's own start corner (-0.5,-1.0)
-                       (same reposition _run_cornering_loop_scenario does),
-                       then per trial: fire trigger_jerk, wait 0.5s
-                       asserting the correction TF has NOT yet moved (the
-                       jerk shouldn't leak into the reported/corrected pose
-                       before any real motion happens), then drive a
-                       SINGLE bounded leg to the next corner of the same
-                       2m hard-cornering square drift_correction/
-                       drift_correction_obstacle use (OBSTACLE_LOOP_LEGS,
-                       centered on OBSTACLE_XY, one corner advanced per
-                       trial) and assert EITHER the correction TF produces
-                       a prompt, real correction whose magnitude tracks the
-                       jerk, OR the end state simply lands within
-                       MAX_DELTA_THRESHOLD (the same flat 30cm bound
-                       drift_correction/drift_correction_obstacle/
-                       noise_correction all use) -- a small random jerk
-                       draw can demand an unrealistically tiny fraction-
-                       based correction that a healthy backend still
-                       wouldn't hit, so landing within the same bound the
-                       rest of the suite already accepts is a legitimate
-                       pass on its own. The jerk itself is biased inward (toward
-                       OBSTACLE_XY, via pose_emulator's odom_jerk_bias_*
-                       params) rather than fired in a uniformly random
-                       direction -- this square's corners sit close enough
-                       to real walls (see OBSTACLE_LOOP_LEGS's comment)
-                       that a purely random jerk could otherwise displace
-                       the robot into or dangerously near one mid-run. The
-                       leg itself is also corrected by the jerk's actual
-                       (dx, dy) (see _leg_for_displacement) so the robot
-                       still lands exactly on the intended corner regardless
-                       of what the jerk did, instead of drifting the whole
-                       loop off its checked geometry trial over trial.
-                       Each trial drives only one short leg -- no more
-                       open-ended timeout loop (a prior version drove a
-                       small patrol loop repeatedly for up to 60s waiting
-                       for the correction to appear, which, if the
-                       correction TF ever stalled for an unrelated reason,
-                       meant ~60s of continuous driving with no position
-                       feedback and let the robot accumulate enough
-                       open-loop execution drift to leave the field and
-                       crash gz-sim's physics). Repeats this
-                       JERK_WITH_MOTION_REPEATS (8) times within a single
-                       launched stack (fresh random jerk draw each trial,
-                       see that constant's comment) -- ALL trials must
-                       pass, so one lucky/unlucky random draw can't flip
-                       the scenario's result either way. After all 8
-                       trials, drives one more full lap around
-                       OBSTACLE_LOOP_LEGS (continuing the same corner cycle
-                       the trials were already advancing through) as a
-                       final closing-the-loop check, asserting scan/log
-                       health the same way the rest of the scenario does.
-
-NOTE (2026-07-23): a former scenario 5, jerk_stationary, fired
-trigger_jerk with the robot never moving afterward and asserted the
-correction TF must NOT change (a known/expected structural limitation of
-both backends' distance-traveled scan-match gate, not a bug). Removed per
-the user -- this suite's purpose here is verifying the robot CAN recover
-from a jerk (jerk_with_motion), not also independently re-verifying the
-documented case where it structurally can't without motion.
+Integration suite for sentry_localization's map-relative drift/jerk
+correction, against sim's synthetic odom noise model (sim/pose_emulator.py).
+--backend {slam,amcl,ekf} (default amcl); --scenario NAME; --keep-running;
+--headless. Scenarios (in order): baseline, noise_correction,
+drift_correction, drift_correction_obstacle, jerk_with_motion. See
+README.md for WHY THIS EXISTS, BACKENDS (per-backend TF edge), and
+SCENARIOS (pass conditions/rationale).
 """
 import argparse
 import math
@@ -402,8 +151,8 @@ def check_no_orphans(label):
 class LocalizationTestHelper(Node):
     def __init__(self, parent_frame='map', child_frame='odom'):
         super().__init__('localization_drift_test_helper')
-        # Which TF edge counts as "the correction" -- see BACKENDS in the
-        # module docstring: (map, odom) for slam/amcl, (odom, root) for
+        # Which TF edge counts as "the correction" -- see README.md's
+        # BACKENDS section: (map, odom) for slam/amcl, (odom, root) for
         # ekf.
         self.parent_frame = parent_frame
         self.child_frame = child_frame
@@ -442,20 +191,12 @@ class LocalizationTestHelper(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
 
     def wait_for_scans_flowing(self, min_scans=10, timeout=60.0):
-        """Blocks until at least `min_scans` /scan messages have been
-        received, or `timeout` elapses. Used as the real "is the stack
-        actually up and processing lidar data" readiness signal -- more
-        reliable than checking for the correction TF's mere existence,
-        since slam_toolbox/amcl broadcast an initial identity transform
-        immediately on startup (before processing a single real scan
-        against the loaded map), so waiting on TF alone can let a
-        scenario start its timed assertions well before the stack is
-        actually warmed up (observed directly: a run where slam_toolbox
-        had only registered 2 scans total in over 30 wall-clock seconds,
-        evidently due to transient system load slowing scan-matcher
-        startup). Returns True if the threshold was reached, False on
-        timeout (caller should treat that as a slow/unhealthy stack, not
-        silently proceed).
+        """Blocks until `min_scans` /scan messages arrive or `timeout`
+        elapses. More reliable readiness signal than the correction TF's
+        mere existence, since slam_toolbox/amcl broadcast an initial
+        identity transform before processing any real scan. Returns True
+        if the threshold was reached, False on timeout (caller should
+        treat that as an unhealthy stack). See README.md.
         """
         self._scan_count = 0
         deadline = time.monotonic() + timeout
@@ -500,22 +241,12 @@ class LocalizationTestHelper(Node):
 
     def call_trigger_jerk_and_get_dxdy(self, timeout=10.0):
         """Calls trigger_jerk and returns the actual applied (dx, dy) (m),
-        parsed out of the Trigger response's `message` field (see
-        sim/sim/pose_emulator.py's _trigger_jerk_srv -- Trigger has no
-        dedicated payload field, so the real (dx, dy) that was actually
-        drawn/applied is encoded into the message string). Using the real
-        applied (dx, dy) rather than the odom_jerk_stddev distribution
-        parameter matters for two reasons: (1) a single random draw from
-        that distribution can be much larger or smaller than the stddev
-        itself (e.g. a draw near zero is entirely possible), so asserting
-        a fixed fraction of stddev as the expected correction is flaky by
-        construction; (2) callers that need to drive a corrective leg
-        canceling the jerk's real physical displacement (see
-        scenario_jerk_with_motion) need the actual vector, not just its
-        magnitude. Falls back to None (caller should fall back to a
-        stddev-based magnitude estimate, and skip any position
-        correction) if the message can't be parsed -- keeps this robust
-        to pose_emulator message-format changes rather than hard-failing.
+        parsed from the Trigger response's `message` field (no dedicated
+        payload field exists). Uses the real applied value rather than
+        odom_jerk_stddev since a single draw can differ greatly from the
+        distribution parameter -- see README.md. Returns None (caller
+        falls back to a stddev estimate, skips position correction) if
+        the message can't be parsed.
         """
         result = self.call_trigger_jerk(timeout=timeout)
         try:
@@ -527,53 +258,10 @@ class LocalizationTestHelper(Node):
             return None
 
     def drive(self, vx, vy, duration):
-        """Steer toward the (vx, vy, duration) leg's intended ground-truth
-        endpoint (`start + (vx, vy) * duration`) at speed `hypot(vx, vy)`,
-        re-aiming every tick off `/sim/raw_odom`, until within
-        `WAYPOINT_TOLERANCE` of it -- NOT simply publish a fixed (vx, vy)
-        Twist for `duration` wall-clock seconds as this used to do.
-
-        `duration` alone assumed gz-sim's real-time factor is exactly
-        1.0, so a fixed wall-clock timer reliably produced a fixed sim
-        distance in a fixed direction. Neither held under load (GPU lidar
-        rendering, the GUI window, general container contention -- see
-        SESSION_NOTES.md): when RTF dipped below 1.0, less sim time
-        elapsed per wall-clock second, undershooting each leg's intended
-        corner; a first fix (2026-07-24) gated on ground-truth distance
-        projected onto the commanded heading, which fixed that undershoot,
-        but a fixed heading still can't correct any *lateral* drift off
-        that heading (observed live: the driven path kept drifting up and
-        to the right across legs even with distance-gating in place) --
-        nothing was ever steering back toward the intended line, only
-        checking progress along it. Steering at the actual current
-        position's bearing to the target endpoint every tick corrects
-        both axes at once: any lateral drift just changes next tick's
-        aim, the same way a real waypoint-following controller would.
-        Nothing re-anchors between legs still (each leg's start is
-        wherever the previous one actually ended), but each leg no longer
-        compounds the previous one's error the way pure open-loop timing
-        did.
-
-        Commanded speed is capped at `dist / CONTROL_PERIOD` (tapering
-        down as the remaining distance shrinks), not held at the full
-        nominal `speed` all the way in -- an earlier version of this did
-        exactly that and, observed live (2026-07-24, per the user watching
-        gz's GUI), visibly oscillated in place at every corner: at 4.0 m/s
-        and a 0.1s tick, uncapped speed can cover 0.4m between direction
-        re-checks, so anywhere within that distance of the target it
-        overshot past `WAYPOINT_TOLERANCE`, flipped to point back the
-        other way next tick, and repeated -- a bang-bang limit cycle, not
-        a settle. Capping speed so one tick's travel can't exceed the
-        remaining distance lets it decelerate into the tolerance instead
-        of ping-ponging through it.
-
-        `duration` is kept as a generous wall-clock safety cap (3x,
-        floored at +5s) so a stuck/never-arriving raw_odom -- or a target
-        the robot can physically never reach -- can't hang the scenario
-        forever; hitting that cap logs a warning rather than silently
-        proceeding, since it means the leg didn't reach its intended
-        endpoint at all.
-        """
+        """Steers toward the leg's endpoint, re-aiming every tick off
+        `/sim/raw_odom` until within `WAYPOINT_TOLERANCE`, tapering speed
+        near the target to avoid corner oscillation. `duration` is only a
+        wall-clock safety cap. See README.md for the design history."""
         WAYPOINT_TOLERANCE = 0.03  # meters; matches the lidar noise stddev
         CONTROL_PERIOD = 0.1  # seconds; matches the spin_for() tick below
         speed = math.hypot(vx, vy)
@@ -627,48 +315,20 @@ WORKSPACE = '/workspaces/isaac_ros-dev'
 LOG_DIR = '/tmp/localization_drift_tests'
 
 # Which TF edge each backend's "correction" actually shows up on -- see
-# BACKENDS in the module docstring.
+# README.md's BACKENDS section.
 BACKEND_FRAMES = {
     'slam': ('map', 'odom'),
     'amcl': ('map', 'odom'),
     'ekf': ('odom', 'root'),
 }
 
-# No longer driven by any scenario -- noise_correction and
-# jerk_with_motion both switched to OBSTACLE_LOOP_LEGS's bigger square
-# (see their own comments for why). Kept as the geometric basis
-# OBSTACLE_XY/OBSTACLE_LOOP_LEGS's own comments derive their placement
-# from (this loop's already-validated safe center/corners), and in case
-# a future scenario wants a smaller, gentler loop again.
-#
-# A first version of this (2026-07-20) tried to actually tour the field --
-# mapped clean_map.pgm's wall positions via connected-component analysis,
-# converted to world coords via clean_map.yaml's resolution/origin, and
-# built a 6-leg loop that AABB-checked clear of every wall by real margin
-# (the closest was ~0.77m from the maze block). It still ended up driving
-# into the upper-middle wall, confirmed live by watching gz-sim: the first
-# ~10 loop cycles (~40s) tracked fine, then map->odom error grew sharply
-# and never recovered (see that commit's test log) -- consistent with an
-# actual collision partway through, not a wrong-from-the-start coordinate
-# error (which would fail the very first cycle, not the tenth). Most
-# likely cause: these legs are open-loop (fixed velocity for a fixed
-# duration, no position feedback at all), so small per-leg execution
-# error on the free-floating chassis (no joint chain, no friction to
-# damp overshoot) can accumulate across many repeated cycles until it's
-# enough to clip a wall that looked comfortably clear on paper. Not worth
-# chasing the exact mechanism further -- the fix is a smaller, simpler
-# loop, not a more precisely-computed big one.
-#
-# This version stays inside the open central gap the whole time -- never
-# needs to approach any wall's x/y band at all, at any point in the loop,
-# so there's nothing to route around and no accumulated-drift budget that
-# matters: even generous execution error still lands nowhere near a wall.
-# Comfortable margins at this size (world coords, meters): ~1.49m south
-# of upper_mid's near edge (y=2.49), ~1.11m north of lower_mid's (y=
-# -2.11), and both are nowhere near bottom_wall's ramp-adjacent edge
-# (y=-3.35) -- this loop never goes south of y=-1.0.
-# Legs are (vx, vy, duration), not (vx, vy) cycled at a fixed duration,
-# so scenarios can reuse this one constant either way.
+# No longer driven by any scenario (noise_correction/jerk_with_motion
+# switched to OBSTACLE_LOOP_LEGS's bigger square) -- kept as the
+# geometric basis OBSTACLE_XY/OBSTACLE_LOOP_LEGS derive their placement
+# from, and in case a future scenario wants a smaller loop again. Stays
+# inside the open central gap the whole time, comfortably clear of every
+# wall. Legs are (vx, vy, duration). See README.md for the abandoned
+# full-field-tour version and why it caused a wall collision.
 PATROL_LEGS = [
     (4.0, 0.0, 0.25),    # east   0,0   -> 1,0
     (0.0, 4.0, 0.25),    # north  1,0   -> 1,1
@@ -676,45 +336,21 @@ PATROL_LEGS = [
     (0.0, -4.0, 0.25),   # south  0,1   -> 0,0
 ]
 
-# scenario_drift_correction_obstacle drives its OWN loop (OBSTACLE_LOOP_LEGS
-# below), not PATROL_LEGS -- earlier versions (2026-07-21) tried placing
-# the box off to the side of PATROL_LEGS's existing loop and reusing that
-# loop unshifted, then tried various reposition offsets to dodge it after
-# live testing showed collisions/overshoot -- simpler and more robust to
-# put the box at the loop's own center and size the loop 1m out from it
-# in every direction, so clearance is true by construction instead of by
-# a chain of one-off offset corrections.
-# OBSTACLE_XY = (0.5, 0.0) -- shifted 0.5m south of PATROL_LEGS's own loop
-# center (0.5, 0.5) (2026-07-24, per the user watching a live run) so the
-# whole square sits 0.5m further from upper_mid's wall and lands its south
-# edge exactly on PATROL_LEGS's own already-validated -1.0 floor (see that
-# constant's comment) instead of 0.5m short of it. Still open,
-# already-validated territory either way (jerk_with_motion drives through
-# this immediate area for tens of seconds without incident), not a new,
-# untested spot.
-# NOT baked into ARCC_Field_2026.sdf or the saved ARCC26 map -- that's
-# the point: from the backend's perspective this is a lidar return with
-# no corresponding feature in the map it loaded.
+# scenario_drift_correction_obstacle drives its OWN loop
+# (OBSTACLE_LOOP_LEGS below), not PATROL_LEGS -- centered on the box so
+# clearance is true by construction. NOT baked into ARCC_Field_2026.sdf
+# or the saved ARCC26 map -- from the backend's perspective this is a
+# lidar return with no corresponding map feature. See README.md for the
+# placement history (why this shifted 0.5m from PATROL_LEGS's center).
 OBSTACLE_XY = (0.5, 0.0)
 OBSTACLE_SIZE = 0.3  # meters, x/y footprint
 OBSTACLE_HEIGHT = 0.8  # meters, based at the ground (z=[0, OBSTACLE_HEIGHT])
 
 # 2m square loop centered on OBSTACLE_XY, corners at (-0.5,-1.0),
-# (1.5,-1.0), (1.5,1.0), (-0.5,1.0) -- exactly 1m out from the box's
-# center on every side (box half-width 0.15m, so ~0.85m from each face).
-# Checked against this file's own documented wall clearances (see
-# PATROL_LEGS's comment; y-axis only, no x-axis data exists here):
-#   north edge y=1.0 -- 1.49m clear of upper_mid's wall at y=2.49 (more
-#     margin than before the 0.5m southward shift).
-#   south edge y=-1.0 -- lands exactly on PATROL_LEGS's own documented
-#     -1.0 floor, which itself has a further 1.11m before lower_mid's
-#     wall -- comfortably inside already-established safe territory.
-#   x extent -0.5 to 1.5 -- only 0.5m beyond the already-validated
-#     x=[0,1] core on each side (unlike earlier abandoned +1/+2m east
-#     excursions), no wall data to check against but a much smaller,
-#     more conservative reach into unknown territory.
-# Legs are (vx, vy, duration) like PATROL_LEGS, but 2m per side (0.5s at
-# 4.0 m/s) since this loop's side length is 2m, not 1m.
+# (1.5,-1.0), (1.5,1.0), (-0.5,1.0) -- 1m out from the box on every side.
+# Verified clear of every documented wall (see README.md for the
+# corner-by-corner clearance derivation). Legs are (vx, vy, duration)
+# like PATROL_LEGS, but 2m per side (0.5s at 4.0 m/s).
 OBSTACLE_LOOP_LEGS = [
     (4.0, 0.0, 0.5),    # east   (-0.5,-1.0) -> (1.5,-1.0)
     (0.0, 4.0, 0.5),    # north  (1.5,-1.0)  -> (1.5,1.0)
@@ -722,19 +358,11 @@ OBSTACLE_LOOP_LEGS = [
     (0.0, -4.0, 0.5),   # south  (-0.5,1.0)  -> (-0.5,-1.0)
 ]
 
-# Stationary dwell inserted after each leg of the cornering loop
-# (2026-07-22) -- gives the scan/TF pipeline and lidar relocalization a
-# moment to settle after each hard-reversal corner before the next fast
-# leg starts, closer to how a real robot would corner (brief pause, not
-# nonstop full-speed cornering) rather than compounding lag/slip leg over
-# leg. Real driving speed (4.0 m/s) itself isn't negotiable, so this is
-# the knob available to give relocalization a fair chance to catch up.
-# While stationary the motion gate stays closed (no new filter update
-# fires -- the same distance-traveled gate mechanism jerk_with_motion's
-# "wait 0.5s, assert no leak" check exercises). Not yet re-validated
-# against a real run -- re-derive this value from observed behavior if
-# 1.0s doesn't get max_delta under MAX_DELTA_THRESHOLD, same caveat as
-# this file's other tuned constants.
+# Stationary dwell after each cornering leg, giving lidar relocalization
+# a moment to settle after each hard-reversal corner (driving speed
+# itself is fixed at 4.0 m/s, not negotiable). Not yet re-validated --
+# re-derive if 1.0s doesn't get max_delta under MAX_DELTA_THRESHOLD. See
+# README.md.
 OBSTACLE_LOOP_DWELL_SECONDS = 1.0
 
 
@@ -763,18 +391,12 @@ def launch_cmd(args_str):
 def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
                         size=OBSTACLE_SIZE, height=OBSTACLE_HEIGHT,
                         timeout=15.0):
-    """One-shot spawn of a static box into the running gz-sim world, via
-    the same `ros_gz_sim create -string <inline SDF>` mechanism
-    sim.launch.py's spawn_robot uses (-topic is documented broken for
-    this stack -- see that Node's comment / SESSION_NOTES.md) -- but run
-    directly as a subprocess here rather than as a launch Node, since
-    this needs to fire mid-scenario (after the pre-spawn baseline is
-    sampled), not at stack startup. <static>true</static>: no
-    physics/inertia needed, it should never move on its own. Torn down
-    for free when the scenario's full sim teardown kills the whole
-    gz-sim process group afterward -- no separate despawn needed.
-    size is the x/y footprint, height is z (NOT a cube), based at the
-    ground (z=[0, height]).
+    """One-shot spawn of a static box into the running gz-sim world (same
+    `ros_gz_sim create -string <inline SDF>` mechanism as spawn_robot,
+    run as a subprocess so it can fire mid-scenario instead of at stack
+    startup). `size` is the x/y footprint, `height` is z (NOT a cube),
+    based at the ground. Torn down for free with the rest of the stack --
+    no separate despawn needed. See README.md.
     """
     x, y = xy
     sdf = (
@@ -952,18 +574,11 @@ def scenario_baseline(gui, backend):
         mag = math.hypot(x, y)
         sc.log(f'{edge} = (x={x:.4f}, y={y:.4f}, yaw={yaw:.4f}), '
                f'|xy|={mag:.4f} m')
-        # NOTE: for slam/amcl, this is NOT expected to be near (0,0,0)
-        # here, even with zero injected noise -- the saved ARCC26 map's
-        # origin (see map/ARCC26.yaml: origin: [-4.3, -6.23, 0]) does not
-        # coincide with sim's robot spawn pose / map_start_pose:=[0,0,0]
-        # used at launch, so a consistent ~0.1-0.15m offset here is
-        # NORMAL and was confirmed reproducible across many runs this
-        # session with odom_noise disabled. What this scenario actually
-        # checks is STABILITY: with no noise and no motion, that offset
-        # should not drift further over time (a growing offset here,
-        # even with noise disabled, would indicate a real problem in
-        # the backend's steady-state behavior, unrelated to the noise
-        # model).
+        # NOTE: for slam/amcl this is NOT expected to be near (0,0,0) even
+        # with zero noise -- the saved map's origin doesn't coincide with
+        # sim's spawn pose, so a ~0.1-0.15m offset is NORMAL. This
+        # scenario checks STABILITY (offset shouldn't grow), not absolute
+        # position. See README.md.
 
         # Let it run a bit longer and re-sample.
         helper.spin_for(10.0)
@@ -1022,16 +637,10 @@ def scenario_noise_correction(gui, backend):
 
         samples = []
         OBSERVE_SECONDS = 60.0
-        # Same 2m hard-cornering square drift_correction/
-        # drift_correction_obstacle/jerk_with_motion drive
-        # (OBSTACLE_LOOP_LEGS, real 4.0 m/s) rather than a separate path of
-        # its own -- fixed 60s duration regardless of correction behavior
-        # (no early-exit depending on the correction TF), so this can't run
-        # away the way an early-exit-based loop could if the TF ever
-        # stalled (see jerk_with_motion's docstring for that failure
-        # mode). Also keeps the distance-traveled gate opening throughout
-        # the window (a fully stationary robot wouldn't exercise periodic
-        # correction at all).
+        # Same square as drift_correction/drift_correction_obstacle/
+        # jerk_with_motion (OBSTACLE_LOOP_LEGS). Fixed 60s duration, no
+        # early-exit on the correction TF -- see README.md for why an
+        # early-exit loop is unsafe here.
         t0 = time.monotonic()
         i = 0
         while time.monotonic() - t0 < OBSERVE_SECONDS:
@@ -1078,40 +687,17 @@ def scenario_noise_correction(gui, backend):
 
 
 # Number of independent jerk trials scenario_jerk_with_motion fires
-# within a single launched stack (2026-07-22, per the user: run the jerk
-# tests more times to be confident they work well, not just react
-# correctly to one random draw; bumped 3 -> 8 on 2026-07-23, also per the
-# user). Reused across a single run_stack()/teardown_stack() pair rather
-# than a fresh relaunch per trial -- trigger_jerk's (dx, dy) is an
-# independent random.gauss() draw each call (see pose_emulator.py), so
-# repeating it within one already-running stack already exercises a
-# fresh random magnitude/direction each time; relaunching per trial would
-# only add ~15-20s of launch/teardown overhead per repeat for no added
-# coverage. ALL trials must pass for the scenario to pass -- one
-# lucky/unlucky draw shouldn't be able to flip the result either way.
-# After all trials, one more full lap around OBSTACLE_LOOP_LEGS is driven
-# as a final closing check (see the post-trial-loop block below).
+# within a single launched stack (bumped 3 -> 8, per the user). ALL
+# trials must pass. One more full lap around OBSTACLE_LOOP_LEGS is driven
+# after all trials as a final closing check. See README.md.
 JERK_WITH_MOTION_REPEATS = 8
 
-# jerk_with_motion drives the same 2m hard-cornering square drift_correction/
+# jerk_with_motion drives the same square drift_correction/
 # drift_correction_obstacle use (OBSTACLE_LOOP_LEGS, centered on
-# OBSTACLE_XY -- see that constant's own comment for corner geometry and
-# wall-clearance derivation), rather than a separate smaller square of its
-# own: this scenario's trigger_jerk calls now bias inward (toward
-# OBSTACLE_XY, see run_stack's odom_jerk_bias_xy kwarg /
-# pose_emulator.py's odom_jerk_bias_* params) specifically because this
-# square's corners sit close enough to real walls that a fully random
-# jerk direction could otherwise push the robot into or dangerously near
-# one mid-run -- sharing the loop keeps that risk analysis in one place
-# instead of maintaining a second geometry to reason about. Each trial
-# drives ONE leg of OBSTACLE_LOOP_LEGS toward the next corner rather than
-# looping, so the total driven distance per trial is bounded by
-# construction (see this scenario's docstring entry for why an unbounded
-# timeout loop was replaced with this), cycling with % 4
-# (JERK_WITH_MOTION_REPEATS=8 wraps around the 4-leg square twice over the
-# trial loop; the extra lap driven after the trial loop, see
-# scenario_jerk_with_motion, continues the same cycle rather than
-# restarting it).
+# OBSTACLE_XY), biasing trigger_jerk inward toward OBSTACLE_XY since
+# these corners sit close to real walls. Each trial drives ONE leg
+# (bounded distance, cycling % 4) rather than looping open-endedly. See
+# README.md for why.
 
 
 def _leg_for_displacement(dx, dy, speed=4.0):
@@ -1214,22 +800,12 @@ def scenario_jerk_with_motion(gui, backend):
                 jerk_dx = jerk_dy = 0.0
                 applied_jerk_mag = JERK_STDDEV
 
-            # Wait exactly 0.5s with no motion yet -- the correction TF
-            # should NOT have moved in that window: both backends' scan-
-            # matching is gated on distance traveled since the last
-            # processed scan, as measured off REPORTED odometry (see
-            # slam.yaml's minimum_travel_distance comment / amcl.yaml's
-            # update_min_d/a), and a jerk deliberately leaves reported
-            # odometry unchanged, so with zero reported motion that gate
-            # never opens. This is a sanity check that the jerk itself
-            # didn't leak into the reported/corrected pose before any real
-            # motion happens. Kept as a SOFT check (logged + tracked
-            # separately from `trial_ok`, not folded into it) so one
-            # noisy/borderline reading here can't obscure the main thing
-            # this scenario is actually testing (the post-drive correction
-            # below) -- still counted into the printed trial detail so a
-            # genuine leak is visible, just not fatal to the trial by
-            # itself.
+            # Wait 0.5s with no motion yet -- correction TF should NOT move
+            # (both backends gate scan-matching on distance traveled since
+            # the last scan, and a jerk deliberately leaves reported
+            # odometry unchanged). SOFT check only (tracked separately
+            # from trial_ok) so a borderline reading here doesn't obscure
+            # the real post-drive correction check below. See README.md.
             helper.spin_for(0.5)
             pose_after_wait = helper.get_correction_tf(timeout=2.0)
             NO_CHANGE_THRESHOLD = 0.02  # meters, near-zero tolerance
@@ -1245,95 +821,13 @@ def scenario_jerk_with_motion(gui, backend):
             else:
                 sc.log(f'{edge} 0.5s after jerk, before motion = unavailable')
 
-            # Now give it a small amount of real motion so the backend's
-            # distance-traveled gate opens and it attempts a fresh scan
-            # match. Measure relative to the PRE-JERK pose, not raw
-            # magnitude from the map origin -- the correction TF is not
-            # expected to sit at exact identity even with zero noise (the
-            # saved ARCC26 map's origin need not exactly coincide with sim's
-            # spawn pose, and ordinary scan-matching has some baseline give),
-            # so what actually indicates "did the jerk get corrected" is the
-            # CHANGE caused by the jerk, not its absolute value. The
-            # threshold is a fraction of the ACTUAL applied jerk magnitude
-            # (parsed from trigger_jerk's response above), not of
-            # odom_jerk_stddev -- comparing against the distribution
-            # parameter instead of the real draw was tried first and found
-            # flaky in practice (a single gauss() draw can land well under
-            # its own stddev), see git history for that iteration.
-            # NOTE: this scenario was observed to be sensitive to unrelated
-            # CPU contention on the host from other, pre-existing
-            # interactive processes sharing the container (e.g. an rviz2
-            # instance left running from earlier manual testing this
-            # session) -- under contention, scan processing can fall
-            # meaningfully behind wall-clock (observed directly for
-            # slam_toolbox: only 2 sensor registrations logged across an
-            # entire ~35s scenario run while contended, versus prompt,
-            # repeated re-registration when the box was quiet). The
-            # get_correction_tf() sample below uses a generous 5s timeout
-            # for the same reason -- keeps the assertion meaningful without
-            # being a false failure purely because something unrelated was
-            # eating CPU on a shared dev box.
-            # CORRECTION_FRACTION = 0.3 (not 0.5): repeated validation runs
-            # this session showed slam_toolbox settling into a genuine but
-            # PARTIAL correction plateau, typically 40-70% of the true jerk
-            # magnitude rather than a full 100% snap-back (expected --
-            # scan-matching corrects the pose graph incrementally, and this
-            # scenario only gives it a small, brief wiggle motion rather than
-            # a full traverse). 0.5 sat right at the edge of that plateau and
-            # produced borderline false failures purely from run-to-run
-            # variance; 0.3 leaves comfortable margin below the observed
-            # plateau while still being far above what the KNOWN-BROKEN case
-            # (minimum_travel_distance reverted to 0.5, see this suite's
-            # validation run in the final report) ever produces, which was
-            # indistinguishable from zero. Not yet independently re-validated
-            # against amcl's own plateau behavior -- if amcl runs of this
-            # scenario turn out flaky, that's the first constant to revisit.
-            # CAVEAT (2026-07-20): all of the above was calibrated against the
-            # old 0.15 m/s / JERK_STDDEV=0.3 parameters. Both were since bumped
-            # to the robot's real top speed (4 m/s) and a larger worst-case
-            # jerk (0.5) to make this suite actually exercise realistic
-            # conditions -- if this scenario starts failing/flaking under the
-            # new parameters, re-derive the plateau fraction rather than
-            # assuming the old 0.3 still applies; faster driving and bigger
-            # jerks are not guaranteed to produce the same correction-fraction
-            # plateau.
-            # CAVEAT (2026-07-24): JERK_STDDEV changed 0.5 -> 0.08 -> 0.24
-            # (collision-impulse framing, now targeting a ~30cm average jerk)
-            # -- all of the above plateau/threshold calibration was against
-            # the original 0.5 parameter. Not yet re-validated at this
-            # value; a jerk's correction may sit closer to or further from
-            # amcl's own positional noise floor at this magnitude than it
-            # did originally, which could change the observed
-            # correction-fraction plateau in
-            # either direction -- re-derive if this scenario's pass rate
-            # looks off under the new magnitude.
-            # 2026-07-23: this used to be a `while` loop repeatedly driving
-            # PATROL_LEGS for up to 60s, stopping early once the threshold
-            # was crossed. That open-ended retry was found to be the root
-            # cause of a live crash: if the correction TF ever stopped
-            # updating for an unrelated reason (backend stall, gz-sim
-            # hiccup), the early-exit condition never fired and the loop
-            # ran the FULL 60s -- ~60 repeated patrol cycles of open-loop
-            # driving (fixed velocity/duration, no position feedback) on a
-            # free-floating chassis, which accumulated enough real
-            # execution drift to drive the robot out of the field entirely
-            # and crash gz-sim's physics engine. Replaced with a single
-            # bounded drive to the next corner of OBSTACLE_LOOP_LEGS (one
-            # short leg, 2m) followed by exactly one final TF sample --
-            # bounding the total driven distance per trial by construction
-            # instead of by a timeout that depends on the correction TF
-            # actually behaving.
-            # The jerk above physically teleported the robot by
-            # (jerk_dx, jerk_dy) -- driving the planned leg unmodified
-            # from here would land 2m+(jerk offset) away from
-            # OBSTACLE_LOOP_LEGS's next corner instead of AT it, drifting
-            # the whole loop off its walls-clearance-checked geometry
-            # trial over trial and risking exactly the wall clip that
-            # inward jerk biasing (see run_stack's odom_jerk_bias_xy)
-            # already guards against for the jerk itself. Counteract it:
-            # drive (planned leg displacement - jerk displacement)
-            # instead of the raw leg, so the robot still lands exactly
-            # on the next corner regardless of what the jerk just did.
+            # Give it real motion so the backend's distance-traveled gate
+            # opens and re-attempts a scan match, then measure against a
+            # fraction of the ACTUAL jerk (not odom_jerk_stddev).
+            # CORRECTION_FRACTION and the bounded single-leg drive both
+            # carry calibration/incident history -- see README.md's
+            # correction-fraction-threshold-history section before
+            # changing this.
             CORRECTION_FRACTION = 0.3
             correction_threshold = applied_jerk_mag * CORRECTION_FRACTION
             leg_vx, leg_vy, leg_duration = OBSTACLE_LOOP_LEGS[
@@ -1351,16 +845,11 @@ def scenario_jerk_with_motion(gui, backend):
                 delta = 0.0
                 sc.log(f'{edge} unavailable after driving to next corner')
 
-            # A trial also passes if the end state simply lands within
-            # MAX_DELTA_THRESHOLD -- the same flat 30cm bound
-            # drift_correction/drift_correction_obstacle/noise_correction
-            # already use -- even if it didn't clear the (often much
-            # smaller) fraction-of-jerk correction_threshold above. That
-            # fraction-based check can demand an unrealistically tiny
-            # delta for a small random jerk draw and fail a trial that's
-            # otherwise perfectly healthy; being within the same bound
-            # the rest of the suite already accepts as "corrected enough"
-            # is a legitimate pass on its own.
+            # A trial also passes if it simply lands within
+            # MAX_DELTA_THRESHOLD (the suite's shared 30cm bound), even if
+            # it missed the smaller fraction-of-jerk correction_threshold
+            # -- see README.md for why the fraction-based check alone can
+            # unfairly fail a healthy trial.
             trial_ok = (delta > correction_threshold
                         or delta <= MAX_DELTA_THRESHOLD) and no_leak_ok
             trial_results.append(
@@ -1406,15 +895,9 @@ def scenario_jerk_with_motion(gui, backend):
 
 
 # Threshold shared by scenario_drift_correction_obstacle and
-# scenario_drift_correction (see _run_cornering_loop_scenario) -- both
-# drive the exact same hard-cornering loop and are asserted against the
-# same bound on purpose: if drift_correction_obstacle's wobble were really
-# obstacle-induced rather than just the cornering itself, drift_correction
-# (no obstacle) should read meaningfully lower. The wobble itself is amcl
-# visibly correcting dead-reckoning error accumulated during the hard
-# instant-reversal corners (the loop's real 4.0 m/s driving speed is a
-# hard requirement, not adjustable) once the robot stops at each leg's
-# dwell (confirmed live in rviz) -- not obstacle-robustness or amcl noise.
+# scenario_drift_correction on purpose -- both drive the exact same
+# hard-cornering loop, so comparing against the same bound isolates
+# whether obstacle wobble is really obstacle-induced. See README.md.
 MAX_DELTA_THRESHOLD = 0.30  # meters
 
 

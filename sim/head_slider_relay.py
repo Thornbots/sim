@@ -1,43 +1,11 @@
 """
-Relays gz sim GUI's "Joint Position Controller" panel slider commands into
-the ROS-bridgeable topics headlink/headpitch's JointPositionController
-system plugins actually listen on (see sentry.urdf.xacro).
-
-Why this exists: the GUI slider panel always publishes to gz-transport's
-own auto-generated default topic for a joint,
-  /model/<model>/joint/<joint>/<axis>/cmd_pos
-(axis is always 0 for these single-DOF joints) -- this is not configurable
-from the GUI side. sentry.urdf.xacro's plugins instead listen on a custom
-topic without the axis segment (/model/sentry/joint/headlink/cmd_pos etc.)
-specifically so sim.launch.py's ros_gz_bridge Nodes can remap them to clean
-ROS topics (/head_pan_cmd, /head_pitch_cmd, used by e.g. head_sweep.py) --
-ROS2 topic names can't have a namespace token starting with a digit, so
-the GUI's own default topic can never be bridged into ROS directly
-(confirmed: ros_gz_bridge's parameter_bridge raises
-InvalidTopicNameError/RCLInvalidROSArgsError on '.../0/cmd_pos' whether or
-not it's used as a remap target). Since gz-sim's JointPositionController
-only accepts one <topic> per instance, both control paths can't target the
-plugin directly at once either -- this script is the bridge between them,
-letting the GUI slider and /head_pan_cmd|/head_pitch_cmd both drive the
-same controller instance.
-
-No gz-transport Python bindings are installed in this image (checked:
-no `ignition.transport`/`gz.transport*` module), so this shells out to the
-`ign topic` CLI (ignition-transport11-cli) for both the subscribe side
-(`ign topic -e`, kept running as a long-lived subprocess) and the publish
-side (`ign topic -p`, invoked fresh per relayed message -- each call pays
-gz-transport's discovery overhead, tens of ms typically).
-
-That per-message discovery cost means the head previously lagged visibly
-behind a dragged slider: the reader loop fed every intermediate value
-straight into a blocking `subprocess.run` publish, so a burst of slider
-ticks queued up faster than they could be published, and the head kept
-crawling through that backlog toward where the slider *used to be* well
-after you'd stopped moving it. Reader and publisher are split into two
-threads sharing only the latest value (an Event coalesces bursts) so the
-publisher only ever sends the most current position -- any values that
-arrive while a publish is in flight are dropped, not queued, matching
-where the slider currently sits rather than replaying its history.
+Relays gz sim GUI's fixed-name joint-slider topic
+(/model/<model>/joint/<joint>/0/cmd_pos, not ROS-bridgeable) into the
+custom topics headlink/headpitch's JointPositionController plugins
+listen on (see sentry.urdf.xacro), so both the GUI slider and
+/head_pan_cmd|/head_pitch_cmd can drive the same controller. Shells out
+to `ign topic` (no gz-transport Python bindings here); reader/publisher
+run on separate threads to avoid input lag -- see README.md for why.
 """
 import re
 import subprocess
