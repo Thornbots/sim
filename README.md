@@ -256,13 +256,16 @@ watch whichever edge that backend is responsible for, not literally
 ### run_localization_drift_tests.py — amcl vs amcl+EKF under slip (measured 2026-07-26)
 
 Manual `--backend amcl` vs `--backend amcl --use-ekf` comparison runs
-(`--scenario drift_correction`, `MAX_DELTA_THRESHOLD=0.30m`), run both at
-the suite's old zero-slip behavior and at the new `odom_slip_ratio=0.25`
-default (see `run_stack`'s docstring):
+(`--scenario drift_correction`), run both at the suite's old zero-slip
+behavior and at the new `odom_slip_ratio=0.25` default (see `run_stack`'s
+docstring). Raw drift numbers measured against the then-current
+`MAX_DELTA_THRESHOLD=0.30m`; PASS/FAIL below re-evaluated against the
+now-hardened `MAX_DELTA_THRESHOLD=0.20m` (numbers themselves unaffected,
+only which side of the bound they land on):
 
 | `odom_slip_ratio` | `amcl` alone | `amcl` + `use_ekf:=true` |
 |---|---|---|
-| 0.0 (old default) | 0.1478 m (PASS) | 0.2043 m (PASS, worse) |
+| 0.0 (old default) | 0.1478 m (PASS) | 0.2043 m (**FAIL** vs 0.20m; was PASS vs old 0.30m) |
 | 0.25 (new default) | 0.4033 m (**FAIL**) | 0.1642 m (PASS) |
 
 At zero slip, EKF makes `amcl` measurably worse — `/odom` is already a
@@ -271,10 +274,10 @@ near-perfect motion-model input in that case (see the
 scan-matching noise on top of it can only hurt. Under realistic slip,
 the picture flips: raw `/odom` degrades enough that `amcl` alone fails
 the suite's own threshold, while EKF-fused odometry keeps `amcl` passing
-at roughly 2.5x lower drift. This is the first measured evidence that
-`use_ekf:=true` benefits a map-owning backend (not just the standalone
-`none --use-ekf` case `ekf_ground_truth_diag.py` already covered) --
-`slam --use-ekf` under slip remains untested.
+comfortably under the hardened 0.20m bound too. This is the first
+measured evidence that `use_ekf:=true` benefits a map-owning backend (not
+just the standalone `none --use-ekf` case `ekf_ground_truth_diag.py`
+already covered) — `slam --use-ekf` under slip remains untested.
 
 ### run_localization_drift_tests.py — SCENARIOS
 
@@ -328,14 +331,12 @@ Run in this order (`baseline`, `noise_correction`, `drift_correction`,
    getting hit by another robot or running into a wall — a discrete
    collision impulse, not gradual wheel slip/bumpy terrain. First
    repositions to `OBSTACLE_LOOP_LEGS`'s own start corner (-0.5,-1.0),
-   then per trial: fire `trigger_jerk`, wait 0.5s asserting the
-   correction TF has NOT yet moved (the jerk shouldn't leak into the
-   reported/corrected pose before any real motion), then drive a SINGLE
+   then per trial: fire `trigger_jerk`, then drive a SINGLE
    bounded leg to the next corner of the same 2m hard-cornering square
    (`OBSTACLE_LOOP_LEGS`, centered on `OBSTACLE_XY`, one corner advanced
    per trial) and assert EITHER the correction TF produces a prompt,
    real correction whose magnitude tracks the jerk, OR the end state
-   simply lands within `MAX_DELTA_THRESHOLD` (the same flat 30cm bound
+   simply lands within `MAX_DELTA_THRESHOLD` (the same flat 20cm bound
    the rest of the suite uses) — a small random jerk draw can demand an
    unrealistically tiny fraction-based correction that a healthy backend
    still wouldn't hit, so landing within the suite's shared bound is a
@@ -447,7 +448,7 @@ compounding lag/slip leg over leg. Real driving speed (4.0 m/s) itself
 isn't negotiable, so this is the knob available to give relocalization a
 fair chance to catch up. While stationary the motion gate stays closed
 (no new filter update fires — the same distance-traveled gate mechanism
-`jerk_with_motion`'s "wait 0.5s, assert no leak" check exercises). Not
+`jerk_with_motion`'s trigger_jerk trials rely on). Not
 yet re-validated against a real run — re-derive this value from observed
 behavior if 1.0s doesn't get `max_delta` under `MAX_DELTA_THRESHOLD`,
 same caveat as this file's other tuned constants.
@@ -589,22 +590,6 @@ correction-fraction history below), cycling with `% 4`
 the trial loop; the extra lap driven after the trial loop continues the
 same cycle rather than restarting it).
 
-### run_localization_drift_tests.py — jerk_with_motion no-leak-before-motion soft check
-
-Waits exactly 0.5s with no motion right after a jerk — the correction TF
-should NOT have moved in that window: both backends' scan-matching is
-gated on distance traveled since the last processed scan, measured off
-REPORTED odometry (`slam.yaml`'s `minimum_travel_distance` /
-`amcl.yaml`'s `update_min_d`/`update_min_a`), and a jerk deliberately
-leaves reported odometry unchanged, so with zero reported motion that
-gate never opens. This is a sanity check that the jerk itself didn't
-leak into the reported/corrected pose before any real motion happens.
-Kept as a SOFT check (logged + tracked separately from `trial_ok`, not
-folded into it) so one noisy/borderline reading here can't obscure the
-main thing this scenario is actually testing (the post-drive correction)
-— still counted into the printed trial detail so a genuine leak is
-visible, just not fatal to the trial by itself.
-
 ### run_localization_drift_tests.py — correction-fraction threshold calibration history (CORRECTION_FRACTION, the 2026-07-23 gz-sim crash, and the fix)
 
 This is the calibration history behind the post-jerk correction
@@ -612,7 +597,14 @@ assertion in `scenario_jerk_with_motion` — read this before changing
 `CORRECTION_FRACTION`, `JERK_STDDEV`, or the drive/measure structure
 around it.
 
-After the 0.5s no-leak check, the scenario gives the robot a small
+(This scenario used to also assert a "no-leak-before-motion" soft check
+— a 0.5s no-motion wait right after the jerk, asserting the correction TF
+hadn't moved yet — removed 2026-07-26 per the user; it was failing
+independently of the actual post-drive correction being tested and had
+started dominating `jerk_with_motion`'s FAIL reasons under the harsher
+0.25-slip/0.20m-threshold defaults.)
+
+After the jerk, the scenario gives the robot a small
 amount of real motion so the backend's distance-traveled gate opens and
 attempts a fresh scan match. The measurement is relative to the
 PRE-JERK pose, not raw magnitude from the map origin — the correction TF
@@ -699,7 +691,7 @@ the jerk just did.
 ### run_localization_drift_tests.py — trial fallback pass condition (MAX_DELTA_THRESHOLD)
 
 A trial also passes if the end state simply lands within
-`MAX_DELTA_THRESHOLD` — the same flat 30cm bound `drift_correction`/
+`MAX_DELTA_THRESHOLD` — the same flat 20cm bound `drift_correction`/
 `drift_correction_obstacle`/`noise_correction` already use — even if it
 didn't clear the (often much smaller) fraction-of-jerk
 `correction_threshold`. That fraction-based check can demand an
@@ -710,7 +702,8 @@ on its own.
 
 ### run_localization_drift_tests.py — MAX_DELTA_THRESHOLD shared bound
 
-`MAX_DELTA_THRESHOLD = 0.30` (meters) is shared by
+`MAX_DELTA_THRESHOLD = 0.20` (meters, hardened from 0.30 on 2026-07-26) is
+shared by
 `scenario_drift_correction_obstacle` and `scenario_drift_correction` —
 both drive the exact same hard-cornering loop and are asserted against
 the same bound on purpose: if `drift_correction_obstacle`'s wobble were

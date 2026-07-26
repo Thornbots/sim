@@ -737,8 +737,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
                   f'wall -- a discrete collision impulse, not gradual wheel '
                   f'slip/bumpy terrain. Repositions to OBSTACLE_LOOP_LEGS\'s '
                   f'start corner, then per trial: trigger_jerk (biased inward '
-                  f'toward OBSTACLE_XY), wait 0.5s asserting the correction TF has '
-                  f'not yet moved, then drive a single bounded leg to the '
+                  f'toward OBSTACLE_XY), then drive a single bounded leg to the '
                   f'next corner of the 2m hard-cornering square centered on '
                   f'OBSTACLE_XY -- the drive is corrected by the jerk\'s own '
                   f'real (dx, dy) (see _leg_for_displacement) so the robot '
@@ -748,7 +747,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
                   f'Repeated {JERK_WITH_MOTION_REPEATS}x: each trial passes if '
                   f'the correction TF either produces a prompt correction '
                   f'tracking the jerk magnitude, OR the end state simply '
-                  f'lands within MAX_DELTA_THRESHOLD -- the same flat 30cm '
+                  f'lands within MAX_DELTA_THRESHOLD -- the same flat 20cm '
                   f'bound the rest of the suite uses. Finishes with one more '
                   f'full lap around OBSTACLE_LOOP_LEGS as a final closing '
                   f'check.')
@@ -815,27 +814,6 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
                 jerk_dx = jerk_dy = 0.0
                 applied_jerk_mag = JERK_STDDEV
 
-            # Wait 0.5s with no motion yet -- correction TF should NOT move
-            # (both backends gate scan-matching on distance traveled since
-            # the last scan, and a jerk deliberately leaves reported
-            # odometry unchanged). SOFT check only (tracked separately
-            # from trial_ok) so a borderline reading here doesn't obscure
-            # the real post-drive correction check below. See README.md.
-            helper.spin_for(0.5)
-            pose_after_wait = helper.get_correction_tf(timeout=2.0)
-            NO_CHANGE_THRESHOLD = 0.02  # meters, near-zero tolerance
-            no_leak_ok = True
-            if pose_after_wait is not None:
-                leak_delta = math.hypot(pose_after_wait[0] - pose_before[0],
-                                         pose_after_wait[1] - pose_before[1])
-                no_leak_ok = leak_delta < NO_CHANGE_THRESHOLD
-                sc.log(f'{edge} 0.5s after jerk, before motion = '
-                       f'{pose_after_wait} (delta from pre-jerk '
-                       f'{leak_delta:.4f} m, threshold {NO_CHANGE_THRESHOLD} m, '
-                       f'{"OK" if no_leak_ok else "UNEXPECTED MOVEMENT"})')
-            else:
-                sc.log(f'{edge} 0.5s after jerk, before motion = unavailable')
-
             # Give it real motion so the backend's distance-traveled gate
             # opens and re-attempts a scan match, then measure against a
             # fraction of the ACTUAL jerk (not odom_jerk_stddev).
@@ -861,29 +839,25 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
                 sc.log(f'{edge} unavailable after driving to next corner')
 
             # A trial also passes if it simply lands within
-            # MAX_DELTA_THRESHOLD (the suite's shared 30cm bound), even if
+            # MAX_DELTA_THRESHOLD (the suite's shared 20cm bound), even if
             # it missed the smaller fraction-of-jerk correction_threshold
             # -- see README.md for why the fraction-based check alone can
             # unfairly fail a healthy trial.
             trial_ok = (delta > correction_threshold
-                        or delta <= MAX_DELTA_THRESHOLD) and no_leak_ok
+                        or delta <= MAX_DELTA_THRESHOLD)
             trial_results.append(
                 (trial_ok,
                  f'trial {trial}: delta {delta:.4f} m after one leg '
                  f'(threshold {correction_threshold:.4f} m = '
                  f'{CORRECTION_FRACTION}x applied jerk {applied_jerk_mag:.4f} m, '
-                 f'OR within MAX_DELTA_THRESHOLD {MAX_DELTA_THRESHOLD} m; '
-                 f'no-leak-before-motion {"OK" if no_leak_ok else "FAILED"})'))
+                 f'OR within MAX_DELTA_THRESHOLD {MAX_DELTA_THRESHOLD} m)'))
 
         # One more full lap around OBSTACLE_LOOP_LEGS after all trials
         # (2026-07-23, per the user) -- continues the same corner cycle
-        # the trials were already advancing through (no jerk before this,
-        # so no 0.5s no-motion wait here either -- that wait is only
-        # meaningful right after a fresh jerk, to check it didn't leak
-        # into the reported pose before any motion; there's no jerk to
-        # check for here). Just a closing-the-loop drive + scan/log
-        # health check, not a fresh correction-magnitude assertion (no
-        # pre-jerk pose to measure against at this point).
+        # the trials were already advancing through. Just a
+        # closing-the-loop drive + scan/log health check, not a fresh
+        # correction-magnitude assertion (no pre-jerk pose to measure
+        # against at this point).
         sc.log(f'--- extra lap around the square after all '
                f'{JERK_WITH_MOTION_REPEATS} trials ---')
         for leg_offset in range(len(OBSTACLE_LOOP_LEGS)):
@@ -913,7 +887,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
 # scenario_drift_correction on purpose -- both drive the exact same
 # hard-cornering loop, so comparing against the same bound isolates
 # whether obstacle wobble is really obstacle-induced. See README.md.
-MAX_DELTA_THRESHOLD = 0.30  # meters
+MAX_DELTA_THRESHOLD = 0.20  # meters (hardened from 0.30 -- see README.md)
 
 
 def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
