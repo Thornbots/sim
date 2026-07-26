@@ -258,8 +258,25 @@
           <horizontal>
             <samples>3000</samples>
             <resolution>1.000000</resolution>
-            <min_angle>0.000000</min_angle>
-            <max_angle>6.280000</max_angle>
+            <!-- Symmetric about the sensor's forward axis (-pi to +pi), NOT
+                 0 to 2pi. Two reasons, and this is not cosmetic:
+                 1. It matches what real RPLIDAR ROS drivers publish, so sim
+                    and hardware agree on the scan convention.
+                 2. rf2o_laser_odometry ignores angle_min outright and
+                    assumes the scan is centered on zero. See
+                    CLaserOdometry2D.cpp, which derives each beam's bearing
+                    as `tita = -0.5*fovh + u*fovh/(cols-1)`. Under the old
+                    0 to 6.28 range every beam was therefore mis-assigned by
+                    exactly pi, so rf2o perceived the world rotated 180
+                    degrees and reported /scan_odom displacement of the
+                    right magnitude in precisely the wrong direction
+                    (measured 2026-07-25: 179.81 deg mean error over all
+                    four drive axes). That made EKF fusion catastrophically
+                    worse than raw wheel odometry.
+                 sentry_pkg's lidar_self_filter derives bearings as
+                 angle_min + i*angle_increment, so it is unaffected. -->
+            <min_angle>-3.140000</min_angle>
+            <max_angle>3.140000</max_angle>
           </horizontal>
         </scan>
         <range>
