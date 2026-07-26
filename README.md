@@ -96,7 +96,10 @@ model:
 ```bash
 isaac_ros_common/scripts/dexec.sh -- python3 \
   /workspaces/isaac_ros-dev/src/sim/test/localization/run_localization_drift_tests.py \
-  --backend slam   # or amcl, ekf
+  --backend slam   # or amcl, none
+  # --use-ekf layers EKF fusion on top of any --backend (independent axis,
+  # mirrors auto.launch.py's use_ekf arg); the old standalone ekf backend
+  # is now --backend none --use-ekf.
 ```
 
 **After editing a `sentry_localization/config/*.yaml` file, rebuild
@@ -150,11 +153,13 @@ Automated integration suite for `sentry_localization`'s map-relative
 localization drift/jerk correction behavior, exercised against sim's
 synthetic wheel-odometry noise model (`sim/pose_emulator.py`:
 `odom_noise_enabled`/`odom_drift_stddev`/`odom_jitter_stddev`/
-`odom_jerk_stddev`). Runs against any of `sentry_pkg/auto.launch.py`'s
-`localization_mode` backends (`--backend slam/amcl/ekf`, default `amcl`).
-Originally written slam_toolbox-only (hence the old filename,
+`odom_jerk_stddev`). Mirrors `sentry_pkg/auto.launch.py`'s two independent
+axes: `--backend slam/amcl/none` (default `amcl`, who owns `map->odom`)
+and `--use-ekf` (whether `odom->root` is EKF-fused, layerable on any
+backend). Originally written slam_toolbox-only (hence the old filename,
 `run_slam_drift_tests.py`); generalized once `auto.launch.py` grew
-amcl/ekf alongside slam_toolbox's own localization mode.
+amcl alongside slam_toolbox's own localization mode, then split EKF
+fusion out into its own independent `use_ekf` axis.
 
 **Why this exists**: before this suite, exercising this correction
 behavior meant manually launching sim, launching the sentry_pkg +
@@ -212,28 +217,36 @@ watch whichever edge that backend is responsible for, not literally
   conceptual way (`amcl.yaml`'s `update_min_d`/`update_min_a`), so the
   same `jerk_with_motion` assertions apply unchanged, just watching
   amcl's own TF broadcast.
-- **`ekf`** owns `odom->root` instead of `map->odom` (launched under the
-  hood as `localization_mode:=none use_ekf:=true` — `none` runs no map
-  node at all, `use_ekf:=true` turns on the fusion; see
-  `auto.launch.py`'s docstring); baseline is exercised against
-  `odom->root` (see `BACKEND_FRAMES` in the script). `jerk_with_motion`
-  is SKIPPED for ekf: `ekf_node` fuses `/odom`'s x/y directly (see
-  `config/ekf.yaml`) with no distance-traveled gate analogous to
-  slam_toolbox/amcl's, so a stationary jerk's effect on `odom->root`
-  isn't characterized the same way, and asserting either the
-  "must not change" or "must change to track the jerk" expectation would
-  just be a guess — EKF tuning/verification is still open work (see
-  `SESSION_NOTES.md`). `drift_correction` and `drift_correction_obstacle`
-  DO run for ekf: `ekf_node` only fuses `/odom` + `/scan_odom`, but
-  `/scan_odom` comes from `rf2o_laser_odometry` doing real scan-to-scan
-  matching on raw `/scan` (see `Dockerfile.thornbots` LAYER 7), so lidar
-  data does feed `odom->root`, just via scan-to-scan rather than
-  scan-to-map matching. That distinction matters for
-  `drift_correction_obstacle`: an "unmapped" obstacle isn't a special
-  case for scan-to-scan matching (rf2o has no map to be missing a
-  feature from), so a similar reading between `drift_correction` and
-  `drift_correction_obstacle` is expected for ekf even more strongly
-  than slam/amcl — both asserted against the same `MAX_DELTA_THRESHOLD`.
+- **`none`** owns `odom->root` instead of `map->odom` — no map node runs
+  at all (see `auto.launch.py`'s docstring); baseline is exercised against
+  `odom->root` (see `BACKEND_FRAMES` in the script). On its own (`--backend
+  none`, no `--use-ekf`) this is just raw `/odom` passthrough, not a very
+  interesting case; the old standalone `ekf` backend is `--backend none
+  --use-ekf`. `jerk_with_motion` is SKIPPED for `--backend none`: `ekf_node`
+  fuses `/odom`'s x/y directly (see `config/ekf.yaml`) with no
+  distance-traveled gate analogous to slam_toolbox/amcl's, so a stationary
+  jerk's effect on `odom->root` isn't characterized the same way, and
+  asserting either the "must not change" or "must change to track the
+  jerk" expectation would just be a guess — EKF tuning/verification is
+  still open work (see `SESSION_NOTES.md`). `drift_correction` and
+  `drift_correction_obstacle` DO run for `--backend none`: `ekf_node` only
+  fuses `/odom` + `/scan_odom`, but `/scan_odom` comes from
+  `rf2o_laser_odometry` doing real scan-to-scan matching on raw `/scan`
+  (see `Dockerfile.thornbots` LAYER 7), so lidar data does feed
+  `odom->root`, just via scan-to-scan rather than scan-to-map matching.
+  That distinction matters for `drift_correction_obstacle`: an "unmapped"
+  obstacle isn't a special case for scan-to-scan matching (rf2o has no map
+  to be missing a feature from), so a similar reading between
+  `drift_correction` and `drift_correction_obstacle` is expected for
+  `--backend none` even more strongly than slam/amcl — both asserted
+  against the same `MAX_DELTA_THRESHOLD`.
+- **`--use-ekf`** is independent of `--backend`: it swaps `odom->root`'s
+  source from raw `/odom` passthrough to `ekf_node`-fused `/odom` +
+  `/scan_odom`, on top of whichever backend owns `map->odom` (or nothing,
+  for `none`). `slam --use-ekf` / `amcl --use-ekf` are valid, launchable
+  combinations — not yet exercised by any scenario here (coverage gap, not
+  a bug); `BACKEND_FRAMES`/the watched TF edge doesn't change with
+  `--use-ekf` since `map->odom` ownership is unaffected by it.
 - **`mapping`** is NOT a `--backend` choice here: its job is
   building/refining a map, not evaluating localization accuracy against
   one, so these scenarios have no meaningful reading against it.

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Ground-truth accuracy diagnostic for the `ekf` localization backend.
+"""Ground-truth accuracy diagnostic for EKF-fused odometry (--backend none
+--use-ekf in run_localization_drift_tests.py's terms).
 Answers what run_localization_drift_tests.py structurally can't (see
 README.md): does fusing /scan_odom into /odom via ekf_node actually beat
 raw /odom, scored against /sim/raw_odom? Usage: `python3
@@ -60,7 +61,8 @@ class GroundTruthProbe(Node):
 
     def ekf_xy(self, timeout=0.5):
         """Fused estimate, read off the `odom->root` TF that ekf_node owns
-        in `ekf` mode (there is no map frame in this mode)."""
+        under localization_mode:=none (there is no map frame in this
+        mode)."""
         try:
             tf = self.tf_buffer.lookup_transform(
                 'odom', 'root', rclpy.time.Time(),
@@ -96,8 +98,11 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
     probe = None
     try:
         # Wheel odometry error ON -- the whole point (see module docstring).
+        # backend='none' (no map layer), use_ekf=True -- the old standalone
+        # 'ekf' backend, now expressed via run_localization_drift_tests.py's
+        # two-axis backend/use_ekf split.
         sim_tree, sentry_tree, helper = _drift.run_stack(
-            gui, 'ekf',
+            gui, 'none', True,
             odom_noise_enabled=True,
             odom_drift_stddev=drift_stddev,
             odom_slip_ratio=slip_ratio)
