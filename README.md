@@ -244,12 +244,37 @@ watch whichever edge that backend is responsible for, not literally
   source from raw `/odom` passthrough to `ekf_node`-fused `/odom` +
   `/scan_odom`, on top of whichever backend owns `map->odom` (or nothing,
   for `none`). `slam --use-ekf` / `amcl --use-ekf` are valid, launchable
-  combinations — not yet exercised by any scenario here (coverage gap, not
-  a bug); `BACKEND_FRAMES`/the watched TF edge doesn't change with
-  `--use-ekf` since `map->odom` ownership is unaffected by it.
+  combinations; `amcl --use-ekf` has now been measured manually (see
+  the results subsection right below) -- `slam --use-ekf` is still an
+  untested coverage gap, not a bug. `BACKEND_FRAMES`/the watched TF edge
+  doesn't change with `--use-ekf` since `map->odom` ownership is
+  unaffected by it.
 - **`mapping`** is NOT a `--backend` choice here: its job is
   building/refining a map, not evaluating localization accuracy against
   one, so these scenarios have no meaningful reading against it.
+
+### run_localization_drift_tests.py — amcl vs amcl+EKF under slip (measured 2026-07-26)
+
+Manual `--backend amcl` vs `--backend amcl --use-ekf` comparison runs
+(`--scenario drift_correction`, `MAX_DELTA_THRESHOLD=0.30m`), run both at
+the suite's old zero-slip behavior and at the new `odom_slip_ratio=0.25`
+default (see `run_stack`'s docstring):
+
+| `odom_slip_ratio` | `amcl` alone | `amcl` + `use_ekf:=true` |
+|---|---|---|
+| 0.0 (old default) | 0.1478 m (PASS) | 0.2043 m (PASS, worse) |
+| 0.25 (new default) | 0.4033 m (**FAIL**) | 0.1642 m (PASS) |
+
+At zero slip, EKF makes `amcl` measurably worse — `/odom` is already a
+near-perfect motion-model input in that case (see the
+`ekf_ground_truth_diag.py` section below), so fusing in `rf2o`'s own
+scan-matching noise on top of it can only hurt. Under realistic slip,
+the picture flips: raw `/odom` degrades enough that `amcl` alone fails
+the suite's own threshold, while EKF-fused odometry keeps `amcl` passing
+at roughly 2.5x lower drift. This is the first measured evidence that
+`use_ekf:=true` benefits a map-owning backend (not just the standalone
+`none --use-ekf` case `ekf_ground_truth_diag.py` already covered) --
+`slam --use-ekf` under slip remains untested.
 
 ### run_localization_drift_tests.py — SCENARIOS
 
