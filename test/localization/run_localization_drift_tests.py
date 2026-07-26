@@ -480,9 +480,15 @@ def run_stack(gui, backend, odom_noise_enabled, odom_jerk_stddev=None,
     # make log-scraping for real errors harder.
     time.sleep(8.0)
 
+    # backend 'ekf' means map-free, EKF-fused odom->root -- expressed as
+    # localization_mode:=none use_ekf:=true since the launch surface split
+    # that into two independent args (see auto.launch.py/
+    # localization.launch.py). slam/amcl are unchanged, use_ekf stays false.
+    launch_mode = 'none' if backend == 'ekf' else backend
+    use_ekf = 'true' if backend == 'ekf' else 'false'
     sentry_args = (
         'ros2 launch sentry_pkg auto.launch.py real_hardware:=false '
-        f'localization_mode:={backend} load_map:=true'
+        f'localization_mode:={launch_mode} use_ekf:={use_ekf} load_map:=true'
     )
     if backend == 'slam':
         # auto.launch.py's map_file default (clean_map) only ships a

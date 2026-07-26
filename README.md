@@ -212,8 +212,9 @@ watch whichever edge that backend is responsible for, not literally
   conceptual way (`amcl.yaml`'s `update_min_d`/`update_min_a`), so the
   same `jerk_with_motion` assertions apply unchanged, just watching
   amcl's own TF broadcast.
-- **`ekf`** owns `odom->root` instead of `map->odom`
-  (`localization_mode:=ekf` runs no map node at all — see
+- **`ekf`** owns `odom->root` instead of `map->odom` (launched under the
+  hood as `localization_mode:=none use_ekf:=true` — `none` runs no map
+  node at all, `use_ekf:=true` turns on the fusion; see
   `auto.launch.py`'s docstring); baseline is exercised against
   `odom->root` (see `BACKEND_FRAMES` in the script). `jerk_with_motion`
   is SKIPPED for ekf: `ekf_node` fuses `/odom`'s x/y directly (see
