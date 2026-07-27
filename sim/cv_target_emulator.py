@@ -99,6 +99,15 @@ _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
 _PANEL_OFFSETS_RAD = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
 _PANEL_NAMES = ('front', 'left', 'back', 'right')
 _PANEL_USES_RADIUS_X = (True, False, True, False)  # front/back vs left/right
+# Small Armor Module (Standard-class, most ARCC opponents per
+# ARCC_2026_SENTRY_CONTEXT.md) is a flat 0.1m x 0.1m square -- confirmed
+# 2026-07-27, supersedes the earlier "not authoritative" hedge above.
+PANEL_SIZE = 0.1
+# S122 (ARCC_2026_SENTRY_CONTEXT.md "Mounting angle"): panel outward normal
+# makes a 75-degree angle with straight-up, i.e. canted ~15 degrees off
+# pure-horizontal (90 degrees would be flush-vertical) -- not the z=0
+# flush-vertical assumption used before this was confirmed.
+PANEL_NORMAL_ANGLE_FROM_UP = math.radians(75.0)
 
 
 class CvTargetEmulator(Node):
@@ -183,16 +192,28 @@ class CvTargetEmulator(Node):
     def _panel_poses(self):
         """World (position, outward_normal_unit_vector) for each of the 4
         armor panels, chassis yaw applied via the target's own rotation
-        matrix -- see module docstring for the panel layout."""
+        matrix -- see module docstring for the panel layout.
+
+        Position offset stays in the horizontal chassis plane (radius_x/y
+        place the panel's center on the correct side face), but the
+        outward normal is canted per S122 -- PANEL_NORMAL_ANGLE_FROM_UP
+        from straight-up, not flush-horizontal (z=0)."""
         radius_x = self.get_parameter('panel_radius_x').value
         radius_y = self.get_parameter('panel_radius_y').value
         poses = []
         for offset, use_x in zip(_PANEL_OFFSETS_RAD, _PANEL_USES_RADIUS_X):
             radius = radius_x if use_x else radius_y
-            local_dir = np.array([math.cos(offset), math.sin(offset), 0.0])
-            world_dir = self._target_rot @ local_dir
-            panel_pos = self._target_pos + radius * world_dir
-            poses.append((panel_pos, world_dir))
+            horiz_dir = np.array([math.cos(offset), math.sin(offset), 0.0])
+            world_horiz = self._target_rot @ horiz_dir
+            panel_pos = self._target_pos + radius * world_horiz
+
+            local_normal = np.array([
+                math.sin(PANEL_NORMAL_ANGLE_FROM_UP) * math.cos(offset),
+                math.sin(PANEL_NORMAL_ANGLE_FROM_UP) * math.sin(offset),
+                math.cos(PANEL_NORMAL_ANGLE_FROM_UP),
+            ])
+            world_normal = self._target_rot @ local_normal
+            poses.append((panel_pos, world_normal))
         return poses
 
     def _camera_pose(self):
@@ -335,8 +356,8 @@ class CvTargetEmulator(Node):
             panel.pose.orientation.z = math.sin(yaw / 2.0)
             panel.pose.orientation.w = math.cos(yaw / 2.0)
             panel.scale.x = 0.02
-            panel.scale.y = 0.13
-            panel.scale.z = 0.13
+            panel.scale.y = PANEL_SIZE
+            panel.scale.z = PANEL_SIZE
             panel.color.b = 1.0
             panel.color.g = 1.0
             panel.color.a = 0.5
