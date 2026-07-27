@@ -12,9 +12,12 @@ For each fire_command received: computes the muzzle pose (from
 cv_target_emulator.py uses -- duplicated here rather than imported so this
 test doesn't silently start passing/failing from an unrelated emulator
 refactor), simulates a straight-line 25 m/s projectile (muzzle-speed cap
-per ARCC_2026_SENTRY_CONTEXT.md), and checks whether the target's true
-ground-truth position at estimated impact time falls within --hit-radius
-of that flight path.
+per ARCC_2026_SENTRY_CONTEXT.md), and checks the shot against all 4 of the
+target's armor panels (also duplicated from cv_target_emulator.py's
+layout) at estimated impact time: a hit needs BOTH the flight path to pass
+within --hit-radius of a panel's 0.1m x 0.1m face AND to arrive within
+that panel's 145-degree front exposure cone (ARCC_2026_SENTRY_CONTEXT.md)
+-- geometrically on-target from behind the panel still misses.
 
 Requires mcb_relay.py to actually relay a FireCommand onto
 /dji_serial_bridge/fire_command (wired 2026-07-27) and an upstream
@@ -23,7 +26,7 @@ Until that node exists this reports zero shots for every speed -- a real
 result (no fire commands were ever sent), not a bug in this script.
 
 Usage: python3 run_shot_hit_tests.py [--speeds 0.5 1 2 4]
-[--duration 12.0] [--hit-radius 0.27] [--headless]
+[--duration 12.0] [--hit-radius 0.05] [--headless]
 """
 import argparse
 import math
@@ -44,7 +47,6 @@ from dji_serial_bridge.msg import FireCommand
 
 
 MUZZLE_SPEED = 25.0  # m/s -- ARCC_2026_SENTRY_CONTEXT.md's muzzle-speed cap
-DEFAULT_HIT_RADIUS = 0.27  # m -- avg of cv_target_emulator's panel_radius_x/y (0.30/0.24)
 
 DEFAULT_SPEEDS = [0.5, 1.0, 2.0, 4.0]
 # Spin rate swept inversely to speed, spanning ARCC's documented
@@ -109,6 +111,50 @@ _HEADLINK_AXIS = (0.0, 0.0, -1.0)
 _HEADPITCH_ORIGIN_R = _rotation_from_rpy(0, 0, -0.38885)
 _HEADPITCH_ORIGIN_T = (0.1, 0.0, 0.1218)
 _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
+
+# Same 4-panel layout as cv_target_emulator.py's _panel_poses (front/left/
+# back/right, spaced 90 degrees apart around the chassis center) --
+# duplicated for the same "independent of an emulator refactor" reason as
+# the FK constants above.
+_PANEL_OFFSETS_RAD = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
+_PANEL_USES_RADIUS_X = (True, False, True, False)
+PANEL_RADIUS_X = 0.30  # chassis-center-to-panel offset, front/back
+PANEL_RADIUS_Y = 0.24  # chassis-center-to-panel offset, left/right
+# Small Armor Module is a flat 0.1m x 0.1m square (ARCC_2026_SENTRY_CONTEXT.md
+# "What an armor panel actually looks like" / cv_target_emulator.PANEL_SIZE).
+PANEL_SIZE = 0.1
+DEFAULT_HIT_RADIUS = PANEL_SIZE / 2.0  # inscribed-circle half-side
+# "front 145 of the panel's exposure surface must stay unblocked"
+# (ARCC_2026_SENTRY_CONTEXT.md line 237) -- a shot arriving outside this
+# cone couldn't have registered on the real panel even if it's
+# geometrically on-target, so the angle check matters as much as distance.
+PANEL_EXPOSURE_HALF_ANGLE = math.radians(145.0 / 2.0)
+# S122 (ARCC_2026_SENTRY_CONTEXT.md "Mounting angle"): panel outward normal
+# makes a 75-degree angle with straight-up, i.e. canted ~15 degrees off
+# pure-horizontal (90 degrees would be flush-vertical).
+PANEL_NORMAL_ANGLE_FROM_UP = math.radians(75.0)
+
+
+def _panel_poses(target_pos, target_rot):
+    """World (position, outward_normal_unit_vector) for each of the 4 armor
+    panels -- mirrors cv_target_emulator.py's _panel_poses exactly.
+    Position offset stays in the horizontal chassis plane; the outward
+    normal is canted per S122, not flush-horizontal (z=0)."""
+    poses = []
+    for offset, use_x in zip(_PANEL_OFFSETS_RAD, _PANEL_USES_RADIUS_X):
+        radius = PANEL_RADIUS_X if use_x else PANEL_RADIUS_Y
+        horiz_dir = np.array([math.cos(offset), math.sin(offset), 0.0])
+        world_horiz = target_rot @ horiz_dir
+        panel_pos = target_pos + radius * world_horiz
+
+        local_normal = np.array([
+            math.sin(PANEL_NORMAL_ANGLE_FROM_UP) * math.cos(offset),
+            math.sin(PANEL_NORMAL_ANGLE_FROM_UP) * math.sin(offset),
+            math.cos(PANEL_NORMAL_ANGLE_FROM_UP),
+        ])
+        world_normal = target_rot @ local_normal
+        poses.append((panel_pos, world_normal))
+    return poses
 
 
 def spin_hz_for_speed(speed, speed_min, speed_max):
@@ -180,6 +226,7 @@ class ShotHitSampler(Node):
         self._head_yaw = 0.0
         self._head_pitch = 0.0
         self._target_pos = None
+        self._target_rot = None
 
         self._pending_shots = []
         self.shots_fired = 0
@@ -229,7 +276,9 @@ class ShotHitSampler(Node):
 
     def _on_target_odom(self, msg):
         p = msg.pose.pose.position
+        q = msg.pose.pose.orientation
         self._target_pos = np.array([p.x, p.y, p.z])
+        self._target_rot = _rotation_from_quaternion(q.x, q.y, q.z, q.w)
         self._resolve_pending(self._stamp_s(msg.header.stamp))
 
     def _on_fire_command(self, msg):
@@ -262,12 +311,33 @@ class ShotHitSampler(Node):
             if now_s < shot['impact_time']:
                 still_pending.append(shot)
                 continue
-            to_target = self._target_pos - shot['muzzle_pos']
-            along = float(np.dot(to_target, shot['aim_dir']))
-            closest_on_ray = shot['muzzle_pos'] + along * shot['aim_dir']
-            miss = float(np.linalg.norm(self._target_pos - closest_on_ray))
-            self.miss_distances.append(miss)
-            if miss <= self.hit_radius:
+
+            # Check all 4 panels, not just the chassis center -- a shot can
+            # be close to the chassis but still miss every physical panel,
+            # or land on whichever panel happens to be facing away.
+            panels = _panel_poses(self._target_pos, self._target_rot)
+            best_miss = None
+            hit = False
+            for panel_pos, panel_normal in panels:
+                to_panel = panel_pos - shot['muzzle_pos']
+                along = float(np.dot(to_panel, shot['aim_dir']))
+                closest_on_ray = shot['muzzle_pos'] + along * shot['aim_dir']
+                miss = float(np.linalg.norm(panel_pos - closest_on_ray))
+                if best_miss is None or miss < best_miss:
+                    best_miss = miss
+
+                # Exposure-cone check: the shot must also arrive from
+                # within the panel's front 145 degrees, or it couldn't have
+                # registered even if geometrically on-target (see
+                # PANEL_EXPOSURE_HALF_ANGLE).
+                to_muzzle = shot['muzzle_pos'] - panel_pos
+                to_muzzle_norm = to_muzzle / (np.linalg.norm(to_muzzle) + 1e-9)
+                incidence = math.acos(np.clip(np.dot(panel_normal, to_muzzle_norm), -1.0, 1.0))
+                if miss <= self.hit_radius and incidence <= PANEL_EXPOSURE_HALF_ANGLE:
+                    hit = True
+
+            self.miss_distances.append(best_miss)
+            if hit:
                 self.hits += 1
         self._pending_shots = still_pending
 
