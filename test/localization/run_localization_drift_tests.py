@@ -1103,6 +1103,15 @@ def scenario_odom_stuck(gui, backend, use_ekf):
             return sc
         sc.log(f'{edge} before trigger = {pose_before}')
 
+        # Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
+        # own start corner (-1.5,-1.5) before tracing it -- same reposition
+        # every other scenario driving this square does (see
+        # _run_cornering_loop_scenario / scenario_noise_correction).
+        helper.drive(-4.0, 0.0, 0.375)   # -1.5m west, to x=-1.5
+        helper.drive(0.0, -4.0, 0.375)   # -1.5m south, to y=-1.5
+        sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
+               '(-1.5,-1.5) before tracing it')
+
         helper.call_trigger_odom_stuck()
         sc.log('triggered odom_stuck: /pose now pinned at (0, 0)')
         scans_before_drive = helper._scan_count
