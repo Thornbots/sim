@@ -133,8 +133,9 @@ compare the two directly before attributing a failure on either to the
 obstacle specifically.
 
 Other useful flags: `--keep-running` (skip teardown for interactive
-follow-up), `--headless` (no gz-sim GUI — GUI is the default per the
-project's standing "watch sim live" rule, see `SESSION_NOTES.md`). Each
+follow-up), `--headless` (skips both gz-sim's GUI and rviz2 — both are on
+by default per the project's standing "watch sim live" rule, see
+`SESSION_NOTES.md`). Each
 scenario's exact pass condition and rationale, the per-backend TF edge
 being watched (`BACKENDS`), and the suite's design history are in
 `## Notes` below — read that before interpreting a failure, not the
