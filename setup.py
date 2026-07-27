@@ -50,6 +50,8 @@ setup(
             'head_sweep = sim.head_sweep:main',
             'pose_emulator = sim.pose_emulator:main',
             'head_slider_relay = sim.head_slider_relay:main',
+            'target_driver = sim.target_driver:main',
+            'cv_target_emulator = sim.cv_target_emulator:main',
         ],
     },
 )

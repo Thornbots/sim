@@ -117,6 +117,34 @@ def generate_launch_description():
                      'half the distance actually driven'
     )
 
+    # --- Optional fast-moving-target CV simulation (target_driver.py +
+    # cv_target_emulator.py). Off by default -- no new nodes/topics run
+    # unless spawn_target:=true is passed, and neither new node depends on
+    # sentry_pkg's SLAM/AMCL/EKF stack (auto.launch.py); both only need
+    # /sim/raw_odom + /sim/raw_joint_states, produced inside sim itself.
+    # See README.md's ## Notes for the noise model / FK / dwell-count
+    # rationale.
+    spawn_target_arg = DeclareLaunchArgument(
+        'spawn_target', default_value='false',
+        description='Launch target_driver + cv_target_emulator for CV detection testing'
+    )
+    target_speed_arg = DeclareLaunchArgument(
+        'target_speed', default_value='2.0',
+        description='Target lateral speed (m/s) for target_driver\'s traverse path'
+    )
+    cv_noise_pos_stddev_arg = DeclareLaunchArgument(
+        'cv_noise_pos_stddev', default_value='0.03',
+        description='Stddev (m) of Gaussian position noise injected into cv_target_emulator\'s roi_point'
+    )
+    cv_dropout_probability_arg = DeclareLaunchArgument(
+        'cv_dropout_probability', default_value='0.0',
+        description='Per-sample probability (0-1) cv_target_emulator drops an otherwise-valid detection'
+    )
+    cv_publish_latency_s_arg = DeclareLaunchArgument(
+        'cv_publish_latency_s', default_value='0.0',
+        description='Fixed publish latency (s) cv_target_emulator adds before publishing a detection'
+    )
+
     world = LaunchConfiguration('world')
     robot_name = LaunchConfiguration('robot_name')
 
@@ -416,6 +444,44 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
+    # --- Fast-moving-target CV simulation, gated behind spawn_target
+    # (default false, see arg declarations above). Pure-ROS nodes -- no gz
+    # entity/bridge involved, target_driver publishes ground truth directly
+    # and cv_target_emulator computes the noisy detection from it, so both
+    # can run standalone against bare sim.launch.py.
+    target_driver = Node(
+        package='sim',
+        executable='target_driver',
+        name='target_driver',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'target_speed': ParameterValue(
+                LaunchConfiguration('target_speed'), value_type=float
+            ),
+        }],
+        condition=IfCondition(LaunchConfiguration('spawn_target')),
+    )
+    cv_target_emulator = Node(
+        package='sim',
+        executable='cv_target_emulator',
+        name='cv_target_emulator',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'noise_pos_stddev': ParameterValue(
+                LaunchConfiguration('cv_noise_pos_stddev'), value_type=float
+            ),
+            'dropout_probability': ParameterValue(
+                LaunchConfiguration('cv_dropout_probability'), value_type=float
+            ),
+            'publish_latency_s': ParameterValue(
+                LaunchConfiguration('cv_publish_latency_s'), value_type=float
+            ),
+        }],
+        condition=IfCondition(LaunchConfiguration('spawn_target')),
+    )
+
     # --- rviz2, using sentry_pkg's config (same one sentry_pkg's own launch
     # files use) so sim and real-hardware runs look the same. use_sim_time
     # matches every other node above since sim's /clock is what's bridged in.
@@ -447,6 +513,11 @@ def generate_launch_description():
         odom_jerk_bias_x_arg,
         odom_jerk_bias_y_arg,
         odom_slip_ratio_arg,
+        spawn_target_arg,
+        target_speed_arg,
+        cv_noise_pos_stddev_arg,
+        cv_dropout_probability_arg,
+        cv_publish_latency_s_arg,
         gz_resource_path,
         ign_resource_path,
         gz_sim,
@@ -457,6 +528,8 @@ def generate_launch_description():
         odom_bridge,
         pose_emulator,
         head_slider_relay,
+        target_driver,
+        cv_target_emulator,
         cmd_vel_bridge,
         head_pan_bridge,
         head_pitch_bridge,

@@ -944,3 +944,115 @@ Both no longer exist in the current tree (file removed; the
 translucent-ground-truth-RobotModel launch block referenced in the task
 isn't present in `launch/sim.launch.py` any more) — skipped, nothing to
 trim.
+
+### target_driver.py / cv_target_emulator.py — CV target simulation, no gz entity
+
+Per user direction, the fast-moving target is **not** a gz entity/model/
+plugin — `target_driver.py` just integrates its own `(x, y, z)` state in a
+timer callback and publishes `nav_msgs/Odometry` on
+`/target/ground_truth_odom`, the same "plain ROS node standing in for
+something more complex" approach `pose_emulator.py` already uses for robot
+pose. This sidesteps SDF/xacro authoring, a spawn step, and gz-side bridges
+entirely, and means the target can't be eyeballed in the gz GUI — there's
+nothing there to look at; verification is topic echoes + the standalone
+vector/bearing check described below, not the GUI.
+
+Both nodes advance/stamp using `self.get_clock().now()` (which resolves to
+`/clock` under `use_sim_time`), never a wall-clock-derived value:
+`target_driver` integrates position from clock deltas rather than assuming
+the timer's period, and `cv_target_emulator` stamps `roi_point.header.stamp`
+from its own clock at actual publish time rather than forwarding
+`/target/ground_truth_odom`'s stamp. `point_to_cv_target.on_point` derives
+its EMA `dt` straight from that header, so either shortcut would silently
+mislabel every downstream velocity/acceleration estimate if sim's
+real-time-factor ever drifts from 1.0.
+
+**Path geometry and the dwell-count guard.** `target_driver`'s default path
+is a lateral bounce at fixed depth `x=3.0m`, `y∈[-2.0, 2.0]`, `z=0.3m`.
+`point_to_cv_target`'s EMA velocity filter
+(`velocity_filter_alpha=0.4`) needs several consecutive in-frame samples to
+converge, and any inter-sample gap over `max_extrapolation_gap_s=0.5s`
+resets velocity to zero — a path that only clips the frame edge-to-edge for
+a few frames measures EMA warm-up lag, not real tracking quality. Sizing
+check: visible half-width at distance `d` is `d·tan(hfov/2)` ≈
+`3.0·tan(1.5184/2)` ≈ 2.85m, comfortably wider than the path's 2.0m
+half-amplitude (≈0.85m margin each side), so the traverse stays in-frustum
+for its whole sweep rather than clipping the edge. `sim/test/cv/
+run_cv_detection_tests.py` counts consecutive in-frustum `roi_point`
+publications per transit and **hard-fails** (not just warns) if any swept
+speed drops below `--min-dwell` (default 10) — measured 2026-07-27: min 47
+consecutive samples at 8 m/s, the fastest speed in the default sweep, so
+the default geometry holds with real headroom well past that.
+
+**Camera FK, no TF.** `cv_target_emulator` computes the camera's world pose
+by chaining `sentry.urdf.xacro`'s fixed joint offsets directly
+(root→`fastened_2`→body→`headlink`(yaw)→head→`headpitch`(pitch)→head_pitch→
+`cameralink`→camera), the same no-TF, self-contained approach
+`pose_emulator.py` already uses (sim intentionally runs no
+`robot_state_publisher`). Joint angles are read from `/sim/raw_joint_states`
+by name, not array position. One easy-to-miss detail: `headlink`'s and
+`fastened_2`'s pi-yaw origins cancel when `head_yaw=0` (net identity), but
+`headpitch`'s own origin has a **fixed** `-0.38885 rad` yaw that does
+*not* cancel — it applies regardless of joint state, empirically tuned
+against the rendered camera feed (see `sentry.urdf.xacro`'s own comment on
+that joint).
+
+`run_cv_detection_tests.py`'s independent position-error check
+deliberately does *not* reuse `cv_target_emulator`'s FK matrix (so it can
+catch a sign/rotation bug there independently), but it does apply this
+same `-0.38885 rad` offset manually
+(`CvTrackingSampler.HEADPITCH_YAW_OFFSET`) — its sign was **verified, not
+assumed**: comparing `pos_err` with `+0.38885`, `-0.38885`, and `0`
+applied (2026-07-27, via a standalone one-off verification script, not
+checked in) gave mean `pos_err` of
+~2.45m, ~0.13m, and ~1.22m respectively. Only `-0.38885` collapses the
+error toward the ~0.03m noise floor, which is only possible if
+`cv_target_emulator`'s FK sign is correct (a wrong or missing sign would
+either double the error or leave it at the unrotated ~1.22m baseline, not
+shrink it). This is the same "compare vectors, not magnitudes" method
+used for rf2o's `angle_min` bug — magnitude alone (a single `pos_err`
+number) can't distinguish a correct rotation from one with the wrong
+sign, since `tan(+x)` and `tan(-x)` have equal magnitude.
+
+**Convention: REP-103, not optical.** Target position is computed relative
+to the camera in REP-103 body convention (x=forward, y=left, z=up) — NOT
+the optical frame (x=right, y=down, z=forward) a real camera driver would
+report. `point_to_cv_target.on_point` (line ~93) converts
+`x=-p.y, y=p.z, z=p.x` — i.e. it expects REP-103 input on `roi_point`.
+Computing optical and mislabeling it REP-103 would silently rotate every
+detection by a fixed offset, the same class of bug already hit once with
+rf2o's `angle_min` (see that entry above: 179.81° error, magnitude
+correct, direction exactly backwards, only caught by comparing displacement
+*vectors* rather than magnitudes). Verified 2026-07-27 the same way: a
+standalone script compared `/cv/target`'s reported left/right sign against
+the true bearing computed from `/sim/raw_odom` + `/target/ground_truth_odom`
+independently of `cv_target_emulator`'s own FK — 20/20 samples agreed, no
+sign flip.
+
+**Noise model.** `cv_target_emulator` gates on FOV
+(`horizontal_fov=1.5184`, plus a derived vertical FOV from the 640x480
+aspect ratio) and range (`0.1`–`10.0m`, `sentry.urdf.xacro`'s camera clip
+planes) — outside either, it publishes nothing (simulates track loss,
+exercises `point_to_cv_target`'s watchdog). Inside, it adds independent
+per-axis Gaussian position noise (`noise_pos_stddev`, default 0.03m),
+optional per-sample detection dropout (`dropout_probability`), and optional
+fixed publish latency (`publish_latency_s`) via a small pending-publish
+queue keyed off `self.get_clock().now()`. All off/zero by default except
+noise, mirroring `pose_emulator.py`'s "off by default, opt-in via
+`sim.launch.py` args" convention — `spawn_target:=false` (the default)
+changes nothing about existing `sim.launch.py` behavior.
+
+**Environment footguns hit while building/testing this** (distinct from
+the `AMENT_PREFIX_PATH` footgun documented in `SESSION_NOTES.md`): sim's
+`gz-sim`/`ros_gz` apt deps aren't installed by default in this container
+(`DOCKER.md` already documents the fix: `sudo isaac_ros_common/docker/
+scripts/install-sim.sh`); and `sentry_pkg`'s build under
+`/workspaces/isaac_ros-dev/install` was found to be a stale colcon
+symlink-install pointing at a deleted git worktree from an earlier
+session, breaking both `ros2 run sentry_pkg point_to_cv_target` and a
+plain Python import — fixed by rebuilding
+(`colcon build --packages-select sentry_pkg --symlink-install` after
+removing the stale `build/`/`install/sentry_pkg` dirs). See
+`SESSION_NOTES.md`'s 2026-07-27 section for the full writeup, including
+why `run_cv_detection_tests.py` invokes `point_to_cv_target` by absolute
+install path rather than `ros2 run`.
