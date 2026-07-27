@@ -464,6 +464,7 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
 
     sim_args = (
         f"ros2 launch sim sim.launch.py gui:={'true' if gui else 'false'} "
+        f"rviz:={'true' if gui else 'false'} "
         f"odom_noise_enabled:={'true' if odom_noise_enabled else 'false'}"
     )
     if odom_jerk_stddev is not None:
@@ -1064,10 +1065,9 @@ def main():
                          help='Run only this scenario (default: all, in '
                               'the order listed in the module docstring)')
     parser.add_argument('--headless', action='store_true',
-                         help='Run gz-sim headless instead of the default '
-                              'GUI window (faster, but nothing to watch -- '
-                              'GUI is on by default, see the module '
-                              'docstring)')
+                         help='Skip both gz-sim\'s GUI window and rviz2 '
+                              '(faster, but nothing to watch -- both are '
+                              'on by default, see the module docstring)')
     args = parser.parse_args()
     gui = not args.headless
 
