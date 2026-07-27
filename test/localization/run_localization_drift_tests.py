@@ -8,8 +8,8 @@ and --use-ekf (whether odom->root is EKF-fused, layerable on any backend --
 the old standalone 'ekf' backend is now --backend none --use-ekf).
 --scenario NAME; --keep-running; --headless. Scenarios (in order):
 baseline, noise_correction, drift_correction, drift_correction_obstacle,
-jerk_with_motion. See README.md for WHY THIS EXISTS, BACKENDS (per-backend
-TF edge), and SCENARIOS (pass conditions/rationale).
+jerk_with_motion, odom_stuck. See README.md for WHY THIS EXISTS, BACKENDS
+(per-backend TF edge), and SCENARIOS (pass conditions/rationale).
 """
 import argparse
 import math
@@ -259,6 +259,22 @@ class LocalizationTestHelper(Node):
             return float(dx_str.strip()), float(dy_str.strip())
         except (IndexError, ValueError):
             return None
+
+    def call_trigger_odom_stuck(self, timeout=10.0):
+        """Calls /pose_emulator/trigger_odom_stuck, which permanently pins
+        /pose's x/y (and vel_x/vel_y) at (0, 0) from then on -- models a
+        dead wheel encoder, not a recoverable glitch. One-shot, no
+        undo -- see pose_emulator.py's _trigger_odom_stuck_srv."""
+        client = self.create_client(
+            Trigger, '/pose_emulator/trigger_odom_stuck')
+        if not client.wait_for_service(timeout_sec=timeout):
+            raise RuntimeError(
+                '/pose_emulator/trigger_odom_stuck not available')
+        future = client.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
+        if not future.done():
+            raise RuntimeError('trigger_odom_stuck call timed out')
+        return future.result()
 
     def drive(self, vx, vy, duration):
         """Steers toward the leg's endpoint, re-aiming every tick off
@@ -1047,12 +1063,110 @@ def scenario_drift_correction(gui, backend, use_ekf):
         sc, gui, backend, use_ekf, spawn_obstacle=False)
 
 
+# Minimum spread (m) the correction TF must show across odom_stuck's
+# samples to count as "still actively correcting" rather than latched
+# onto one frozen value -- deliberately small, this is a liveness check,
+# not a drift bound (there's no valid odometry left to bound drift
+# against once the sensor is dead). See scenario_odom_stuck/README.md.
+ODOM_STUCK_MIN_TF_SPREAD = 0.01  # meters
+
+
+def scenario_odom_stuck(gui, backend, use_ekf):
+    parent, child = BACKEND_FRAMES[backend]
+    edge = f'{parent}->{child}'
+    sc = Scenario(
+        'odom_stuck',
+        f'models a dead wheel encoder: one-shot, permanent trigger pins '
+        f'/pose\'s x/y at (0, 0) forever (fresh timestamps keep arriving, '
+        f'unlike a stalled topic) while the robot keeps being driven. '
+        f'Unlike every other scenario here, there is no valid odometry '
+        f'left to bound drift against, so this is a LIVENESS check, not a '
+        f'correctness one: the backend must keep processing scans and '
+        f'keep attempting {edge} corrections (not freeze/latch on one '
+        f'value) even though its odom input looks stationary. See '
+        f'README.md for the known risk that amcl/slam\'s '
+        f'update_min_d/minimum_travel_distance gate is driven by odom-'
+        f'reported travel and may never re-open once odom is frozen -- a '
+        f'failure here is a diagnostic finding about the stack, not '
+        f'necessarily a test bug.')
+    sim_tree = sentry_tree = helper = None
+    try:
+        sim_tree, sentry_tree, helper = run_stack(
+            gui, backend, use_ekf, odom_noise_enabled=False)
+        if not wait_for_stack_ready(sc, helper):
+            sc.result(False, 'stack failed to reach a healthy /scan rate '
+                              'in time -- see log above')
+            return sc
+        pose_before = helper.wait_for_correction_tf(timeout=45.0)
+        if pose_before is None:
+            sc.result(False, f'{edge} never became available within 45s')
+            return sc
+        sc.log(f'{edge} before trigger = {pose_before}')
+
+        helper.call_trigger_odom_stuck()
+        sc.log('triggered odom_stuck: /pose now pinned at (0, 0)')
+        scans_before_drive = helper._scan_count
+
+        OBSERVE_SECONDS = 30.0
+        samples = []
+        t0 = time.monotonic()
+        i = 0
+        while time.monotonic() - t0 < OBSERVE_SECONDS:
+            vx, vy, duration = OBSTACLE_LOOP_LEGS[i % len(OBSTACLE_LOOP_LEGS)]
+            i += 1
+            helper.drive(vx, vy, duration)
+            p = helper.get_correction_tf(timeout=2.0)
+            if p is not None:
+                elapsed = time.monotonic() - t0
+                samples.append(p)
+                sc.log(f't={elapsed:5.1f}s  {edge} = '
+                       f'(x={p[0]:.4f}, y={p[1]:.4f}, yaw={p[2]:.4f})')
+
+        if len(samples) < 3:
+            sc.result(False, f'too few {edge} samples ({len(samples)}) to '
+                              'assess liveness')
+            return sc
+
+        if helper._scan_count <= scans_before_drive:
+            sc.result(False, 'scan count did not advance after odom went '
+                              'stuck -- backend may have stalled')
+            return sc
+
+        # "Still trying" check: max pairwise distance among post-trigger
+        # samples. A backend latched on one frozen correction would show
+        # ~0 spread despite the robot visibly moving; a backend still
+        # attempting corrections shows measurable spread even though it
+        # has no valid odometry to correct with.
+        max_spread = 0.0
+        for j in range(len(samples)):
+            for k in range(j + 1, len(samples)):
+                d = math.hypot(samples[j][0] - samples[k][0],
+                                samples[j][1] - samples[k][1])
+                max_spread = max(max_spread, d)
+
+        sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
+        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'sentry_pkg')
+
+        ok = (max_spread >= ODOM_STUCK_MIN_TF_SPREAD
+              and not sim_errs and not sentry_errs)
+        sc.result(ok,
+                   f'max pairwise {edge} spread over {OBSERVE_SECONDS:.0f}s '
+                   f'after odom_stuck = {max_spread:.4f} m (threshold '
+                   f'{ODOM_STUCK_MIN_TF_SPREAD} m -- proves the backend is '
+                   f'still attempting corrections, not latched), '
+                   f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+        return sc
+    finally:
+        teardown_stack(sim_tree, sentry_tree, helper)
+
+
 SCENARIOS = {
     'baseline': scenario_baseline,
     'noise_correction': scenario_noise_correction,
     'drift_correction': scenario_drift_correction,
     'drift_correction_obstacle': scenario_drift_correction_obstacle,
     'jerk_with_motion': scenario_jerk_with_motion,
+    'odom_stuck': scenario_odom_stuck,
 }
 
 
