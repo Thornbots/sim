@@ -1,14 +1,22 @@
 """
-Simulated fast-moving-target ground truth: no gz entity, model, or plugin --
-this node just integrates its own (x, y, z) state in a timer callback and
-publishes nav_msgs/Odometry on /target/ground_truth_odom, the same way
-pose_emulator.py stands in for real hardware without touching gz. See
-README.md for the lateral-traverse path shape and dwell-count rationale.
+Simulated fast-moving-*robot* ground truth (chassis + spin, not a single
+point): no gz entity, model, or plugin -- this node just integrates its own
+chassis (x, y, z, yaw) state in a timer callback and publishes
+nav_msgs/Odometry on /target/ground_truth_odom, the same way pose_emulator.py
+stands in for real hardware without touching gz. Models the opponent-robot
+behavior documented in ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot
+characteristics" section: chassis translates (lateral bounce, up to 4 m/s
+per that doc) while continuously spinning in place at spin_hz (1-2 Hz
+"wiggle" defense) -- cv_target_emulator.py derives the 4 armor-panel poses
+from this chassis pose + a fixed panel layout, it is not itself a panel.
+See README.md for the path shape and dwell-count rationale.
 
 Frame: header.frame_id is set to match /sim/raw_odom's ('odom' by default,
 see sentry.urdf.xacro's OdometryPublisher plugin) since cv_target_emulator
 assumes both ground-truth topics share one world frame with no TF lookup.
 """
+import math
+
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
@@ -19,6 +27,7 @@ class TargetDriver(Node):
         super().__init__('target_driver')
 
         self.declare_parameter('target_speed', 2.0)
+        self.declare_parameter('spin_hz', 1.5)
         self.declare_parameter('publish_rate_hz', 60.0)
         self.declare_parameter('center_x', 3.0)
         self.declare_parameter('center_y', 0.0)
@@ -34,6 +43,7 @@ class TargetDriver(Node):
 
         self.y = self.center_y
         self.direction = 1.0
+        self.yaw = 0.0
         self._last_time = None
 
         self.pub = self.create_publisher(Odometry, '/target/ground_truth_odom', 10)
@@ -43,6 +53,7 @@ class TargetDriver(Node):
 
         self.get_logger().info(
             f"target_driver ready: speed={self.get_parameter('target_speed').value:.2f} m/s, "
+            f"spin={self.get_parameter('spin_hz').value:.2f} Hz, "
             f"path x={self.center_x:.2f} y=[{self.center_y - self.half_width:.2f}, "
             f"{self.center_y + self.half_width:.2f}] z={self.target_z:.2f}, "
             f"frame_id={self.frame_id}"
@@ -52,12 +63,13 @@ class TargetDriver(Node):
         # Advance by elapsed sim-time delta (self.get_clock().now(), which
         # resolves to /clock under use_sim_time), never by the assumed
         # timer period -- otherwise a real-time-factor != 1.0 makes true
-        # speed diverge from the target_speed param. First tick has no
-        # prior sample to diff against, so it only seeds _last_time.
+        # speed/spin diverge from the target_speed/spin_hz params. First
+        # tick has no prior sample to diff against, so it only seeds
+        # _last_time.
         now = self.get_clock().now()
         if self._last_time is None:
             self._last_time = now
-            self._publish(0.0)
+            self._publish(0.0, 0.0)
             return
         dt = (now - self._last_time).nanoseconds / 1e9
         self._last_time = now
@@ -81,9 +93,13 @@ class TargetDriver(Node):
             self.direction = 1.0
             vy = self.direction * speed
 
-        self._publish(vy)
+        spin_hz = self.get_parameter('spin_hz').value
+        omega = 2.0 * math.pi * spin_hz
+        self.yaw = (self.yaw + omega * dt + math.pi) % (2.0 * math.pi) - math.pi
 
-    def _publish(self, vy):
+        self._publish(vy, omega)
+
+    def _publish(self, vy, omega):
         msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.frame_id
@@ -91,8 +107,11 @@ class TargetDriver(Node):
         msg.pose.pose.position.x = float(self.center_x)
         msg.pose.pose.position.y = float(self.y)
         msg.pose.pose.position.z = float(self.target_z)
-        msg.pose.pose.orientation.w = 1.0
+        # Yaw-only orientation (chassis spin, flat ground) as a quaternion.
+        msg.pose.pose.orientation.z = math.sin(self.yaw / 2.0)
+        msg.pose.pose.orientation.w = math.cos(self.yaw / 2.0)
         msg.twist.twist.linear.y = float(vy)
+        msg.twist.twist.angular.z = float(omega)
         self.pub.publish(msg)
 
 
