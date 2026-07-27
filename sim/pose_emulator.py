@@ -96,6 +96,14 @@ class PoseEmulator(Node):
         self._prev_true_x = None
         self._prev_true_y = None
 
+        # One-time, permanent "dead sensor" event: models a wheel encoder
+        # that stops reporting real motion entirely and just sticks at
+        # (0, 0) forever -- unlike jerk/drift/slip, there's no cancellation
+        # math here, since a truly dead sensor isn't recoverable. Manual
+        # only: `ros2 service call /pose_emulator/trigger_odom_stuck
+        # std_srvs/srv/Trigger`. See README.md.
+        self._odom_stuck = False
+
         self.pose_pub = self.create_publisher(RobotPose, '/pose', 10)
         self.create_subscription(Odometry, '/sim/raw_odom', self.odom_callback, 10)
         self.create_subscription(JointState, '/sim/raw_joint_states', self.joint_callback, 10)
@@ -105,6 +113,7 @@ class PoseEmulator(Node):
         # fired on demand from a shell for testing/tuning, e.g.:
         #   ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger
         self.create_service(Trigger, '~/trigger_jerk', self._trigger_jerk_srv)
+        self.create_service(Trigger, '~/trigger_odom_stuck', self._trigger_odom_stuck_srv)
 
     def joint_callback(self, msg):
         if self.yaw_joint_name in msg.name:
@@ -168,6 +177,12 @@ class PoseEmulator(Node):
         response.message = f'jerk applied: dx={dx!r} dy={dy!r}'
         return response
 
+    def _trigger_odom_stuck_srv(self, request, response):
+        self._odom_stuck = True
+        response.success = True
+        response.message = 'odom stuck: /pose will report (0, 0) from now on'
+        return response
+
     def odom_callback(self, msg):
         true_x = float(msg.pose.pose.position.x)
         true_y = float(msg.pose.pose.position.y)
@@ -216,12 +231,21 @@ class PoseEmulator(Node):
         x += self._drift_x
         y += self._drift_y
 
+        vel_x = float(msg.twist.twist.linear.x)
+        vel_y = float(msg.twist.twist.linear.y)
+        if self._odom_stuck:
+            # Dead sensor: fresh timestamps keep arriving, but position and
+            # velocity are pinned at zero regardless of actual motion --
+            # distinct from a stalled topic, which slam_toolbox/amcl would
+            # notice via TF timeout. This should NOT.
+            x, y, vel_x, vel_y = 0.0, 0.0, 0.0, 0.0
+
         pose = RobotPose()
         pose.header.stamp = msg.header.stamp
         pose.x = x
         pose.y = y
-        pose.vel_x = float(msg.twist.twist.linear.x)
-        pose.vel_y = float(msg.twist.twist.linear.y)
+        pose.vel_x = vel_x
+        pose.vel_y = vel_y
         pose.head_pitch = float(self.head_pitch)
         pose.head_yaw = float(self.head_yaw)
         self.pose_pub.publish(pose)
