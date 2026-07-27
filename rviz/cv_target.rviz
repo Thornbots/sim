@@ -6,17 +6,15 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
-        - /RobotModel1/Status1
         - /Odometry1/Topic1
         - /Odometry1/Shape1
         - /MarkerArray1/Topic1
       Splitter Ratio: 0.5
-    Tree Height: 621
+    Tree Height: 446
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Tool Properties
     Expanded:
-      - /2D Goal Pose1
       - /Publish Point1
     Name: Tool Properties
     Splitter Ratio: 0.5886790156364441
@@ -69,6 +67,44 @@ Visualization Manager:
         Expand Link Details: false
         Expand Tree: false
         Link Tree Style: Links in Alphabetic Order
+        body:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        camera:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        head:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        head_pitch:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        lidar:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        odowheel:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        odowheel_1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        root:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
       Mass Properties:
         Inertia: false
         Mass: false
@@ -159,11 +195,12 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        {}
+        cv_target: true
+        cv_target_aim: true
+        cv_target_panels: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
-        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /target_markers
@@ -197,7 +234,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 10.574543952941895
+      Distance: 12.248480796813965
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -206,24 +243,24 @@ Visualization Manager:
       Focal Point:
         X: 3
         Y: 0
-        Z: 0.3
+        Z: 0.30000001192092896
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.7503982782363892
+      Pitch: 0.4753985106945038
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 3.0854008197784424
-    Saved: []
+      Yaw: 2.8554012775421143
+    Saved: ~
 Window Geometry:
   Displays:
     collapsed: false
   Height: 1141
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000001560000037ffc0200000004fb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb0000000c004b0069006e00650063007401000001b8000001c60000030c00000261000000010000010f00000391fc0200000003fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000000a005600690065007700730100000000000003910000000000000000fb0000001200530065006c0065006300740069006f006e010000025a000000b20000000000000000000000020000000000000000fc0100000002fb0000000800540069006d006501000000000000045000000000000000000000045f0000037f00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000100000000000002cb0000041ffc0200000005fb000000100044006900730070006c006100790073010000003b00000247000000c700fffffffb0000001200530065006c0065006300740069006f006e00000001b6000000b60000005c00fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730000000209000000dd0000005c00fffffffb0000000a00560069006500770073010000028800000176000000a000fffffffb0000000800540069006d00650100000404000000560000003700ffffff000004ab0000041f00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Time:

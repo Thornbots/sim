@@ -29,7 +29,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import Point, PointStamped
 from vision_msgs.msg import Detection2D, ObjectHypothesisWithPose
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -283,12 +283,12 @@ class CvTargetEmulator(Node):
                 self.get_logger().info(
                     f"no panel presenting after {self._dwell_count} consecutive samples")
             self._dwell_count = 0
-            self._publish_markers(world_frame, panels, detected_world=None)
+            self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world=None)
             return
 
         if np.random.uniform() < self.get_parameter('dropout_probability').value:
             self._dwell_count = 0  # dropout breaks the dwell run too
-            self._publish_markers(world_frame, panels, detected_world=None)
+            self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world=None)
             return
 
         _, fwd, left, up, panel_pos = best
@@ -302,7 +302,7 @@ class CvTargetEmulator(Node):
         # markers below -- the actual roi_point payload (fwd_n/left_n/up_n)
         # stays camera-relative REP-103, unaffected by this.
         detected_world = cam_pos + cam_rot @ np.array([fwd_n, left_n, up_n])
-        self._publish_markers(world_frame, panels, detected_world)
+        self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world)
 
         point = PointStamped()
         point.point.x = fwd_n
@@ -319,15 +319,38 @@ class CvTargetEmulator(Node):
         publish_at = self.get_clock().now() + rclpy.duration.Duration(seconds=latency_s)
         self._pending.append((publish_at, point, detection))
 
-    def _publish_markers(self, frame_id, panels, detected_world):
+    def _publish_markers(self, frame_id, panels, cam_pos, cam_rot, detected_world):
         """rviz visualization only -- chassis center (green) always shown,
         all 4 panels (dim cyan boxes) always shown so spin is visible even
         when nothing currently presents, noisy-detected (yellow) shown only
         while a panel actually qualified and wasn't dropped, so losing
         track is visible as the yellow sphere disappearing rather than
-        freezing in place."""
+        freezing in place. A white arrow from the camera along its current
+        aim direction (cam_rot's local +Z) shows where the head is looking,
+        regardless of whether anything currently presents."""
         now = self.get_clock().now().to_msg()
         markers = MarkerArray()
+
+        aim = Marker()
+        aim.header.frame_id = frame_id
+        aim.header.stamp = now
+        aim.ns = 'cv_target_aim'
+        aim.id = 0
+        aim.type = Marker.ARROW
+        aim.action = Marker.ADD
+        # Camera-local +X is forward, not +Z -- see the REP-103 conversion
+        # above (rel_cam[0] is called 'fwd').
+        aim_dir = cam_rot @ np.array([1.0, 0.0, 0.0])
+        start = cam_pos
+        end = cam_pos + aim_dir * self.get_parameter('range_far').value
+        aim.points = [Point(x=float(start[0]), y=float(start[1]), z=float(start[2])),
+                      Point(x=float(end[0]), y=float(end[1]), z=float(end[2]))]
+        aim.scale.x = 0.03  # shaft diameter
+        aim.scale.y = 0.06  # head diameter
+        aim.scale.z = 0.0   # head length, 0 = auto
+        aim.color.r = aim.color.g = aim.color.b = 1.0
+        aim.color.a = 0.5
+        markers.markers.append(aim)
 
         gt = Marker()
         gt.header.frame_id = frame_id
