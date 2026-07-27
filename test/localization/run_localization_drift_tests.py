@@ -369,22 +369,45 @@ OBSTACLE_XY = (0.0, 0.0)
 OBSTACLE_SIZE = 0.3  # meters, x/y footprint
 OBSTACLE_HEIGHT = 0.8  # meters, based at the ground (z=[0, OBSTACLE_HEIGHT])
 
-# 3m x 3m square loop centered on OBSTACLE_XY, corners at (-1.5,-1.5),
-# (1.5,-1.5), (1.5,1.5), (-1.5,1.5) -- 1.35m out from the box on every
-# side. Verified clear of every documented wall (see README.md for the
-# corner-by-corner clearance derivation). Legs are (vx, vy, duration)
-# like PATROL_LEGS, but 3m per side (0.75s at 4.0 m/s).
-OBSTACLE_LOOP_LEGS = [
-    (4.0, 0.0, 0.75),    # east   (-1.5,-1.5) -> (1.5,-1.5)
-    (0.0, 4.0, 0.75),    # north  (1.5,-1.5)  -> (1.5,1.5)
-    (-4.0, 0.0, 0.75),   # west   (1.5,1.5)   -> (-1.5,1.5)
-    (0.0, -4.0, 0.75),   # south  (-1.5,1.5)  -> (-1.5,-1.5)
-]
+# Shared driving speed (m/s) for OBSTACLE_LOOP_LEGS's cornering loop and
+# its start-corner reposition, across every scenario that uses either --
+# override with --speed. Changing this was tuned/verified at the default
+# 4.0 m/s (see OBSTACLE_LOOP_DWELL_SECONDS below); other speeds haven't
+# been re-validated against MAX_DELTA_THRESHOLD or jerk_with_motion's
+# timing and may need those re-tuned.
+DRIVE_SPEED = 4.0
 
-# Stationary dwell after each cornering leg, giving lidar relocalization
-# a moment to settle after each hard-reversal corner (driving speed
-# itself is fixed at 4.0 m/s, not negotiable). Not yet re-validated --
-# re-derive if 1.0s doesn't get max_delta under MAX_DELTA_THRESHOLD. See
+
+def _make_loop_legs(speed):
+    """3m x 3m square loop centered on OBSTACLE_XY, corners at (-1.5,-1.5),
+    (1.5,-1.5), (1.5,1.5), (-1.5,1.5) -- 1.35m out from the box on every
+    side. Verified clear of every documented wall (see README.md for the
+    corner-by-corner clearance derivation). Legs are (vx, vy, duration)
+    like PATROL_LEGS, 3m per side."""
+    d = 3.0 / speed
+    return [
+        (speed, 0.0, d),    # east   (-1.5,-1.5) -> (1.5,-1.5)
+        (0.0, speed, d),    # north  (1.5,-1.5)  -> (1.5,1.5)
+        (-speed, 0.0, d),   # west   (1.5,1.5)   -> (-1.5,1.5)
+        (0.0, -speed, d),   # south  (-1.5,1.5)  -> (-1.5,-1.5)
+    ]
+
+
+OBSTACLE_LOOP_LEGS = _make_loop_legs(DRIVE_SPEED)
+
+
+def _reposition_to_loop_start(helper):
+    """Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
+    own start corner (-1.5,-1.5) before tracing it, at DRIVE_SPEED."""
+    d = 1.5 / DRIVE_SPEED
+    helper.drive(-DRIVE_SPEED, 0.0, d)   # -1.5m west, to x=-1.5
+    helper.drive(0.0, -DRIVE_SPEED, d)   # -1.5m south, to y=-1.5
+
+
+# Stationary dwell after each cornering loop leg, giving lidar
+# relocalization a moment to settle after each hard-reversal corner.
+# Tuned/verified at DRIVE_SPEED's default 4.0 m/s -- re-derive if 1.0s
+# doesn't get max_delta under MAX_DELTA_THRESHOLD at other speeds. See
 # README.md.
 OBSTACLE_LOOP_DWELL_SECONDS = 1.0
 
@@ -662,12 +685,10 @@ def scenario_noise_correction(gui, backend, use_ekf):
             sc.result(False, f'{edge} never became available within 45s')
             return sc
 
-        # Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
-        # own start corner (-1.5,-1.5) before tracing it -- same reposition
-        # every other scenario driving this square does (see
+        # Reposition to OBSTACLE_LOOP_LEGS's own start corner -- same
+        # reposition every other scenario driving this square does (see
         # _run_cornering_loop_scenario / scenario_jerk_with_motion).
-        helper.drive(-4.0, 0.0, 0.375)   # -1.5m west, to x=-1.5
-        helper.drive(0.0, -4.0, 0.375)   # -1.5m south, to y=-1.5
+        _reposition_to_loop_start(helper)
         sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
                '(-1.5,-1.5) before tracing it')
 
@@ -802,13 +823,12 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
                               'in time -- see log above')
             return sc
 
-        # Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
-        # own start corner (-1.5,-1.5) before tracing it -- same reposition
-        # _run_cornering_loop_scenario does (see its comment). Without this,
-        # trial 1's leg would drive the (-1.5,-1.5)->(1.5,-1.5) segment from
-        # the wrong starting point, throwing off every corner after it too.
-        helper.drive(-4.0, 0.0, 0.375)   # -1.5m west, to x=-1.5
-        helper.drive(0.0, -4.0, 0.375)   # -1.5m south, to y=-1.5
+        # Reposition to OBSTACLE_LOOP_LEGS's own start corner -- same
+        # reposition _run_cornering_loop_scenario does (see its comment).
+        # Without this, trial 1's leg would drive the (-1.5,-1.5)->
+        # (1.5,-1.5) segment from the wrong starting point, throwing off
+        # every corner after it too.
+        _reposition_to_loop_start(helper)
         sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
                '(-1.5,-1.5) before tracing it')
 
@@ -953,12 +973,10 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
                    f'OBSTACLE_LOOP_LEGS')
         scans_before_drive = helper._scan_count
 
-        # Move from spawn (0,0, inside the loop) out to the loop's own
-        # start corner (-1.5,-1.5) before tracing its perimeter -- see
+        # Reposition to the loop's own start corner -- see
         # OBSTACLE_LOOP_LEGS's comment for the loop's full geometry and
         # wall-clearance derivation.
-        helper.drive(-4.0, 0.0, 0.375)   # -1.5m west, to x=-1.5
-        helper.drive(0.0, -4.0, 0.375)   # -1.5m south, to y=-1.5
+        _reposition_to_loop_start(helper)
         sc.log('repositioned to the loop\'s start corner (-1.5,-1.5) '
                'before tracing its perimeter')
 
@@ -1103,12 +1121,10 @@ def scenario_odom_stuck(gui, backend, use_ekf):
             return sc
         sc.log(f'{edge} before trigger = {pose_before}')
 
-        # Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
-        # own start corner (-1.5,-1.5) before tracing it -- same reposition
-        # every other scenario driving this square does (see
+        # Reposition to OBSTACLE_LOOP_LEGS's own start corner -- same
+        # reposition every other scenario driving this square does (see
         # _run_cornering_loop_scenario / scenario_noise_correction).
-        helper.drive(-4.0, 0.0, 0.375)   # -1.5m west, to x=-1.5
-        helper.drive(0.0, -4.0, 0.375)   # -1.5m south, to y=-1.5
+        _reposition_to_loop_start(helper)
         sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
                '(-1.5,-1.5) before tracing it')
 
@@ -1180,6 +1196,7 @@ SCENARIOS = {
 
 
 def main():
+    global DRIVE_SPEED, OBSTACLE_LOOP_LEGS
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--backend', choices=sorted(BACKEND_FRAMES.keys()),
                          default='amcl',
@@ -1202,8 +1219,20 @@ def main():
                          help='Skip both gz-sim\'s GUI window and rviz2 '
                               '(faster, but nothing to watch -- both are '
                               'on by default, see the module docstring)')
+    parser.add_argument('--speed', type=float, default=DRIVE_SPEED,
+                         help='m/s for OBSTACLE_LOOP_LEGS\'s cornering '
+                              f'loop and its start-corner reposition, '
+                              f'across every scenario that drives it '
+                              f'(default: {DRIVE_SPEED}). See '
+                              'DRIVE_SPEED\'s comment -- other speeds '
+                              'haven\'t been re-validated against '
+                              'MAX_DELTA_THRESHOLD/jerk timing.')
     args = parser.parse_args()
     gui = not args.headless
+
+    if args.speed != DRIVE_SPEED:
+        DRIVE_SPEED = args.speed
+        OBSTACLE_LOOP_LEGS = _make_loop_legs(DRIVE_SPEED)
 
     check_no_orphans('pre-flight')
 
