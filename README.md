@@ -1021,12 +1021,13 @@ a few frames measures EMA warm-up lag, not real tracking quality. Sizing
 check: visible half-width at distance `d` is `d·tan(hfov/2)` ≈
 `3.0·tan(1.5184/2)` ≈ 2.85m, comfortably wider than the path's 2.0m
 half-amplitude (≈0.85m margin each side), so the traverse stays in-frustum
-for its whole sweep rather than clipping the edge. `sim/test/cv/
-run_cv_detection_tests.py` counts consecutive in-frustum `roi_point`
-publications per transit and **hard-fails** (not just warns) if any swept
-speed drops below `--min-dwell` (default 10) — measured 2026-07-27: min 47
-consecutive samples at 8 m/s, the fastest speed in the default sweep, so
-the default geometry holds with real headroom well past that.
+for its whole sweep rather than clipping the edge. A consecutive
+in-frustum `roi_point` count per transit dropping below ~10 samples
+indicates the EMA velocity filter's warm-up lag rather than real tracking
+degradation, not the geometry above — measured 2026-07-27 (via the
+now-removed `run_cv_detection_tests.py`): min 47 consecutive samples at 8
+m/s, the fastest speed in that sweep, so the default geometry holds with
+real headroom well past that.
 
 **Camera FK, no TF.** `cv_target_emulator` computes the camera's world pose
 by chaining `sentry.urdf.xacro`'s fixed joint offsets directly
@@ -1041,11 +1042,10 @@ by name, not array position. One easy-to-miss detail: `headlink`'s and
 against the rendered camera feed (see `sentry.urdf.xacro`'s own comment on
 that joint).
 
-`run_cv_detection_tests.py`'s independent position-error check
-deliberately does *not* reuse `cv_target_emulator`'s FK matrix (so it can
-catch a sign/rotation bug there independently), but it does apply this
-same `-0.38885 rad` offset manually
-(`CvTrackingSampler.HEADPITCH_YAW_OFFSET`) — its sign was **verified, not
+The now-removed `run_cv_detection_tests.py`'s independent position-error
+check deliberately did *not* reuse `cv_target_emulator`'s FK matrix (so it
+could catch a sign/rotation bug there independently), but it did apply
+this same `-0.38885 rad` offset manually — its sign was **verified, not
 assumed**: comparing `pos_err` with `+0.38885`, `-0.38885`, and `0`
 applied (2026-07-27, via a standalone one-off verification script, not
 checked in) gave mean `pos_err` of
@@ -1098,5 +1098,5 @@ plain Python import — fixed by rebuilding
 (`colcon build --packages-select sentry_pkg --symlink-install` after
 removing the stale `build/`/`install/sentry_pkg` dirs). See
 `SESSION_NOTES.md`'s 2026-07-27 section for the full writeup, including
-why `run_cv_detection_tests.py` invokes `point_to_cv_target` by absolute
+why the sim/CV test scripts invoke `point_to_cv_target` by absolute
 install path rather than `ros2 run`.
