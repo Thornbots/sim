@@ -26,7 +26,12 @@ Until that node exists this reports zero shots for every speed -- a real
 result (no fire commands were ever sent), not a bug in this script.
 
 Usage: python3 run_shot_hit_tests.py [--speeds 0.5 1 2 4]
-[--duration 12.0] [--hit-radius 0.05] [--headless]
+[--duration 12.0] [--hit-radius 0.05] [--headless] [--skip-stationary]
+
+Runs a completely stationary (speed=0, spin=0) baseline case before the
+speed sweep, unless --skip-stationary -- a working pipeline should hit
+this trivially, so a miss there means the harness itself is broken, not
+that tracking/prediction is hard.
 """
 import argparse
 import math
@@ -271,7 +276,11 @@ class ShotHitSampler(Node):
             _HEADPITCH_ORIGIN_T)
         t_muzzle = t_head @ t_headpitch
         pos = t_muzzle[:3, 3]
-        forward = t_muzzle[:3, :3] @ np.array([0.0, 0.0, 1.0])
+        # Camera-local +X is forward, not +Z -- see cv_target_emulator.py's
+        # REP-103 conversion (rel_cam[0] is called 'fwd'). This was wrong
+        # (used +Z) and is the likely cause of the earlier ~2.85m
+        # near-constant miss distance across every speed.
+        forward = t_muzzle[:3, :3] @ np.array([1.0, 0.0, 0.0])
         return pos, forward / np.linalg.norm(forward)
 
     def _on_target_odom(self, msg):
@@ -379,6 +388,23 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         os.path.join(log_dir, f'mcb_relay_{speed}_spin{spin_hz:.2f}.log'),
     )
 
+    # Visualization only: sim itself intentionally runs no TF/
+    # robot_state_publisher (nodes compute their own FK -- see README.md),
+    # so nothing feeds cv_target.rviz's RobotModel display without this.
+    # real_hardware:=false + localization_mode:=none skips SLAM/AMCL and
+    # the real-hardware-only mcb_relay/point_to_cv_target it would
+    # otherwise launch (no conflict with the ones started above); it just
+    # gets robot_state_publisher + pose_translator + odom_tf_broadcaster
+    # onto the graph, sourced from sim's own /pose (pose_emulator) and
+    # /sim/raw_joint_states. Skipped entirely when headless -- nothing to
+    # look at, not worth the extra process tree.
+    robot_tf = LaunchTree(
+        'robot_tf',
+        ['ros2', 'launch', 'sentry_pkg', 'auto.launch.py',
+         'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false'],
+        os.path.join(log_dir, f'robot_tf_{speed}_spin{spin_hz:.2f}.log'),
+    )
+
     rclpy.init()
     sampler = ShotHitSampler(hit_radius=hit_radius)
     try:
@@ -386,6 +412,8 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         sampler.spin_for(6.0)
         cv_bridge.start()
         mcb_relay.start()
+        if not headless:
+            robot_tf.start()
         sampler.spin_for(2.0)
 
         sampler.spin_for(duration)
@@ -393,6 +421,8 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         dropped = sampler.finish()
         cv_bridge.stop()
         mcb_relay.stop()
+        if not headless:
+            robot_tf.stop()
         sim.stop()
         sampler.destroy_node()
         rclpy.shutdown()
@@ -421,6 +451,10 @@ def main():
     parser.add_argument('--hit-radius', type=float, default=DEFAULT_HIT_RADIUS,
                          help='Perpendicular miss distance (m) still counted as a hit')
     parser.add_argument('--headless', action='store_true')
+    parser.add_argument('--skip-stationary', action='store_true',
+                         help='Skip the speed=0/spin=0 baseline case run before the sweep')
+    parser.add_argument('--only-stationary', action='store_true',
+                         help='Run only the speed=0/spin=0 baseline case, skip the speed sweep entirely')
     parser.add_argument('--log-dir', default='/tmp/shot_hit_test_logs')
     args = parser.parse_args()
 
@@ -428,14 +462,28 @@ def main():
     speed_min, speed_max = min(args.speeds), max(args.speeds)
 
     any_shots = False
-    for speed in args.speeds:
-        spin_hz = spin_hz_for_speed(speed, speed_min, speed_max)
-        print(f'\n=== speed={speed} m/s, spin={spin_hz:.2f} Hz ===')
+
+    if not args.skip_stationary:
+        # Completely stationary (speed=0, spin=0) baseline, not part of the
+        # inverse speed<->spin sweep -- a real prediction/aim pipeline
+        # should hit this trivially, so a miss here means the harness
+        # itself is broken, not that tracking/prediction is hard.
+        print('\n=== stationary baseline: speed=0.00 m/s, spin=0.00 Hz ===')
         sampler, dropped = run_one_speed(
-            speed, spin_hz, args.duration, args.headless, args.log_dir, args.hit_radius)
-        got_shots = summarize(speed, spin_hz, sampler, dropped)
+            0.0, 0.0, args.duration, args.headless, args.log_dir, args.hit_radius)
+        got_shots = summarize(0.0, 0.0, sampler, dropped)
         any_shots = any_shots or got_shots
         time.sleep(1.0)
+
+    if not args.only_stationary:
+        for speed in args.speeds:
+            spin_hz = spin_hz_for_speed(speed, speed_min, speed_max)
+            print(f'\n=== speed={speed} m/s, spin={spin_hz:.2f} Hz ===')
+            sampler, dropped = run_one_speed(
+                speed, spin_hz, args.duration, args.headless, args.log_dir, args.hit_radius)
+            got_shots = summarize(speed, spin_hz, sampler, dropped)
+            any_shots = any_shots or got_shots
+            time.sleep(1.0)
 
     if not any_shots:
         print('\nNo shots observed at any speed -- sentry_pkg is not yet publishing on '
