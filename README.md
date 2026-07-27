@@ -399,6 +399,15 @@ Run in this order (`baseline`, `noise_correction`, `drift_correction`,
    bug in this test — see BACKENDS for `--backend none`'s different
    failure mode.
 
+   **Measured (2026-07-27)**: confirmed against the tuned sim world.
+   `--backend amcl` (no EKF): `map->odom` FAILs, latched at one frozen
+   value (0.0000m spread) for the full 30s — exactly the structural gate
+   risk above. `--backend amcl --use-ekf`: PASSes, 1.3071m spread over
+   the same window — the EKF keeps fusing IMU/other inputs into `/odom`
+   even with the wheel-encoder input dead, so odom keeps reporting
+   travel and amcl's distance gate keeps re-opening. EKF is a real fix
+   for this failure mode with amcl, not just noise smoothing.
+
 **NOTE (2026-07-23)**: a former scenario 5, `jerk_stationary`, fired
 `trigger_jerk` with the robot never moving afterward and asserted the
 correction TF must NOT change (a known/expected structural limitation of
