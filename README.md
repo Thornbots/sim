@@ -250,6 +250,18 @@ watch whichever edge that backend is responsible for, not literally
   untested coverage gap, not a bug. `BACKEND_FRAMES`/the watched TF edge
   doesn't change with `--use-ekf` since `map->odom` ownership is
   unaffected by it.
+- **`odom_stuck`** runs for all three backends — the freeze mechanism
+  (fresh, zeroed `/pose` messages) is uniform, but the failure mode it
+  exercises differs per backend: `slam`/`amcl` gate re-matching on
+  odom-reported travel distance (see above), which frozen odom may never
+  satisfy again; `none`'s `ekf_node` only fuses `/odom`'s *velocity* into
+  `odom->root` (`config/ekf.yaml`, `sensor_timeout: 0.5`) — since frozen
+  odom keeps publishing fresh (zeroed) messages rather than going stale,
+  that timeout won't fire, so EKF just believes the robot has stopped
+  moving via that input rather than declaring it dead. Whether
+  `/scan_odom` (still fed by real scan-to-scan matching) is enough to
+  keep `odom->root` tracking real motion despite that is exactly what
+  `odom_stuck`'s liveness assertion checks for `--backend none`.
 - **`mapping`** is NOT a `--backend` choice here: its job is
   building/refining a map, not evaluating localization accuracy against
   one, so these scenarios have no meaningful reading against it.
@@ -283,7 +295,7 @@ already covered) — `slam --use-ekf` under slip remains untested.
 ### run_localization_drift_tests.py — SCENARIOS
 
 Run in this order (`baseline`, `noise_correction`, `drift_correction`,
-`drift_correction_obstacle`, `jerk_with_motion`):
+`drift_correction_obstacle`, `jerk_with_motion`, `odom_stuck`):
 
 1. **baseline** — `odom_noise_enabled:=false`. Stack comes up cleanly,
    the correction TF settles and stays STABLE (does not drift further
@@ -363,6 +375,29 @@ Run in this order (`baseline`, `noise_correction`, `drift_correction`,
    full lap around `OBSTACLE_LOOP_LEGS` (continuing the same corner cycle)
    as a final closing-the-loop check, asserting scan/log health the same
    way the rest of the scenario does.
+
+6. **odom_stuck** — models a dead wheel encoder, not a recoverable
+   glitch: one-shot, permanent `trigger_odom_stuck` call pins `/pose`'s
+   x/y (and vel_x/vel_y) at (0, 0) forever afterward — fresh timestamps
+   keep arriving (unlike a stalled topic, which the backend's own TF
+   timeout would notice), the values themselves just go dead. Unlike
+   every other scenario here, this is a LIVENESS check, not a correctness
+   one: there is no valid odometry left to bound drift against once the
+   sensor is dead, so the assertion is that the backend keeps processing
+   scans (scan count still advances) and keeps actively attempting
+   corrections (max pairwise spread across the post-trigger correction TF
+   samples exceeds `ODOM_STUCK_MIN_TF_SPREAD`, 1cm) rather than freezing/
+   latching on one stale value while the robot is visibly still being
+   driven. No recovery half — this only tests that the stack keeps trying,
+   not that it's told the sensor came back. Known open risk: amcl/slam's
+   own scan-match gate (`update_min_d`/`minimum_travel_distance`, see
+   BACKENDS above) is driven by *odom-reported* travel distance — if odom
+   is completely frozen, that gate may structurally never re-open even
+   though the robot is physically moving, in which case this scenario is
+   expected to legitimately FAIL for `slam`/`amcl`. That would be a real
+   finding about the stack's reliance on odom for its own liveness, not a
+   bug in this test — see BACKENDS for `--backend none`'s different
+   failure mode.
 
 **NOTE (2026-07-23)**: a former scenario 5, `jerk_stationary`, fired
 `trigger_jerk` with the robot never moving afterward and asserted the
