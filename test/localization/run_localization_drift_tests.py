@@ -224,6 +224,22 @@ class LocalizationTestHelper(Node):
                           1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         return (t.x, t.y, yaw)
 
+    def get_root_position(self, timeout=2.0):
+        """Full (x, y) position estimate -- self.parent_frame->root, e.g.
+        map->root for slam/amcl (chains through the map->odom correction
+        this class otherwise tracks) or odom->root for none (already the
+        whole chain). Comparable directly against _raw_odom_xy (ground
+        truth) to measure actual position error, unlike get_correction_tf
+        which only returns the correction offset. None if unavailable."""
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.parent_frame, 'root', rclpy.time.Time(),
+                timeout=Duration(seconds=timeout))
+        except (LookupException, ExtrapolationException, Exception):
+            return None
+        t = tf.transform.translation
+        return (t.x, t.y)
+
     def wait_for_correction_tf(self, timeout=30.0, poll=0.5):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -491,18 +507,18 @@ class Scenario:
 
 def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
               odom_drift_stddev=None, odom_jitter_stddev=None,
-              odom_slip_ratio=0.15, odom_jerk_bias_xy=None):
+              odom_slip_ratio=0.0, odom_jerk_bias_xy=None):
     """Starts sim + sentry_pkg launch trees, waits for the graph to come
     up, returns (sim_tree, sentry_tree, helper_node). Caller must call
-    teardown_stack() when done. odom_slip_ratio defaults to 0.15 (not 0.0)
-    -- wheel slip is the condition EKF fusion actually helps under (rf2o
-    scan-matching doesn't degrade with slip the way integrated wheel
-    odometry does); a scenario that needs the old zero-slip behavior
-    should pass odom_slip_ratio=0.0 explicitly. Lowered from 0.25 on
-    2026-07-27 -- 0.25 combined with the current 3m loop and 0.20m
-    threshold proved unachievable by any backend/config tried; 0.15
-    plus MAX_DELTA_THRESHOLD (now 0.40m, calibrated against tuned
-    --backend slam) is the realistic target -- see README.md."""
+    teardown_stack() when done. odom_slip_ratio defaults to 0.0 -- only
+    the drift scenarios (_run_cornering_loop_scenario, i.e.
+    drift_correction/drift_correction_obstacle) want slip; every other
+    scenario should be testing its own failure mode (noise, jerk, dead
+    odom) in isolation, not that plus incidental slip. Those two pass
+    0.02 explicitly -- this used to be every scenario's shared default
+    (previously 0.15, then briefly 0.25) before being scoped down to
+    just the drift scenarios; see MAX_DELTA_THRESHOLD's comment for that
+    history and for how 0.40m was calibrated against it."""
     os.makedirs(LOG_DIR, exist_ok=True)
 
     sim_args = (
@@ -931,11 +947,15 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
 # scenario_drift_correction on purpose -- both drive the exact same
 # hard-cornering loop, so comparing against the same bound isolates
 # whether obstacle wobble is really obstacle-induced. Calibrated
-# 2026-07-27 against tuned --backend slam (no EKF) at the current 0.15
-# default slip: 3 clean full-suite runs measured 0.30-0.33m on both
-# scenarios (tight band, not noisy). 0.40 gives ~25% margin over the
-# worst single run observed (0.3261m) and >30% over the ~0.32m typical
-# -- real margin without being toothless. See README.md.
+# 2026-07-27 against tuned --backend slam (no EKF) at 0.15 slip (then
+# the shared default every scenario got, not just these two): 3 clean
+# full-suite runs measured 0.30-0.33m on both scenarios (tight band, not
+# noisy). 0.40 gives ~25% margin over the worst single run observed
+# (0.3261m) and >30% over the ~0.32m typical -- real margin without
+# being toothless. Slip dropped from 0.15 to 0.02 (and scoped to just
+# these two scenarios) after that calibration -- NOT yet re-measured
+# against the lower slip, so 0.40 is likely far looser than needed now;
+# re-tighten once re-calibrated. See README.md.
 MAX_DELTA_THRESHOLD = 0.40  # meters
 
 
@@ -953,7 +973,8 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
     sim_tree = sentry_tree = helper = None
     try:
         sim_tree, sentry_tree, helper = run_stack(
-            gui, backend, use_ekf, odom_noise_enabled=False)
+            gui, backend, use_ekf, odom_noise_enabled=False,
+            odom_slip_ratio=0.02)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
                               'in time -- see log above')
@@ -981,7 +1002,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
                'before tracing its perimeter')
 
         # Drive the loop. Sampling the correction TF each leg.
-        OBSERVE_SECONDS = 45.0
+        OBSERVE_SECONDS = 30.0
         samples = []
         t0 = time.monotonic()
         i = 0

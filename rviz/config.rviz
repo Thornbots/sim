@@ -6,9 +6,8 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
+        - /RobotModel1
         - /RobotModel1/Status1
-        - /Odometry1/Topic1
-        - /Odometry1/Shape1
         - /Image1/Topic1
       Splitter Ratio: 0.5
     Tree Height: 621
@@ -29,7 +28,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: LaserScan
+    SyncSource: ""
 Visualization Manager:
   Class: ""
   Displays:
