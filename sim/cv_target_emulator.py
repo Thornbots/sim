@@ -1,16 +1,26 @@
 """
-Ground-truth-plus-noise CV emulator (no YOLOv8 render pipeline). Subscribes
+Ground-truth-plus-noise CV emulator (no YOLOv8 render pipeline) for a
+4-armor-panel target *robot*, not a single point. Subscribes
 /sim/raw_odom + /sim/raw_joint_states (camera FK, no TF) and
-/target/ground_truth_odom; publishes roi_point (PointStamped) + roi
+/target/ground_truth_odom (chassis center + yaw, see target_driver.py);
+derives the 4 panel poses from a fixed layout (panel_radius, spaced 90
+degrees apart) rotated by the chassis yaw. A panel only "presents" (is
+detectable) when its outward normal points toward the camera within
+panel_view_half_angle, matching a real armor panel's LED/retroreflector
+being visible only from roughly in front of it -- so as the chassis spins
+(target_driver's spin_hz), which panel presents keeps changing, same as
+ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot characteristics" section
+describes. Among presenting panels also inside the camera's FOV/range, the
+most head-on one is published on roi_point (PointStamped) + roi
 (Detection2D) -- exactly what point_to_cv_target.py subscribes to. Target
 position is REP-103 relative to the camera (x=forward, y=left, z=up), NOT
-optical -- point_to_cv_target.on_point expects that convention. Gates on
-FOV (horizontal_fov=1.5184) + range (0.1-10.0m); publishes nothing outside
-(track loss). Also publishes MarkerArray on target_markers (world frame:
-green sphere = ground truth, yellow sphere = noisy detection, yellow
-absent when out of frustum/dropped) for rviz visualization only -- not
-consumed by point_to_cv_target. See README.md's ## Notes for the FK
-chain, dwell-count guard, and REP-103-vs-optical rationale.
+optical -- point_to_cv_target.on_point expects that convention. Publishes
+nothing when no panel qualifies (track loss). Also publishes MarkerArray on
+target_markers (world frame: green sphere = chassis center, small cyan
+boxes = all 4 panels, yellow sphere = the currently-selected noisy
+detection, yellow absent when nothing qualifies) for rviz visualization
+only -- not consumed by point_to_cv_target. See README.md's ## Notes for
+the FK chain, dwell-count guard, and REP-103-vs-optical rationale.
 """
 import math
 
@@ -78,6 +88,18 @@ _HEADPITCH_ORIGIN_T = (0.1, 0.0, 0.1218)
 _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
 # cameralink is identity -- omitted, camera frame == head_pitch frame.
 
+# 4 armor panels spaced 90 degrees apart around the chassis center (front,
+# left, back, right), matching a standard RoboMaster-class robot's layout
+# per ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot characteristics". Not
+# an authoritative extracted spec (this repo's rulebook notes don't have
+# exact construction dimensions yet -- see ARCC_2026_SENTRY_CONTEXT.md's
+# "Not yet extracted" list) -- panel_radius_x/y below approximate a public
+# RoboMaster Standard-class footprint (~600mm front-back, ~480mm
+# left-right) rather than a single square layout.
+_PANEL_OFFSETS_RAD = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
+_PANEL_NAMES = ('front', 'left', 'back', 'right')
+_PANEL_USES_RADIUS_X = (True, False, True, False)  # front/back vs left/right
+
 
 class CvTargetEmulator(Node):
     def __init__(self):
@@ -94,6 +116,9 @@ class CvTargetEmulator(Node):
         self.declare_parameter('publish_latency_s', 0.0)
         self.declare_parameter('yaw_joint_name', 'headlink')
         self.declare_parameter('pitch_joint_name', 'headpitch')
+        self.declare_parameter('panel_radius_x', 0.30)  # front/back, ~600mm chassis length / 2
+        self.declare_parameter('panel_radius_y', 0.24)  # left/right, ~480mm chassis width / 2
+        self.declare_parameter('panel_view_half_angle', math.radians(75.0))
 
         hfov = self.get_parameter('horizontal_fov').value
         aspect = (self.get_parameter('image_height').value
@@ -107,6 +132,7 @@ class CvTargetEmulator(Node):
         self._head_yaw = 0.0
         self._head_pitch = 0.0
         self._target_pos = None
+        self._target_rot = None
         self._target_frame_id = None
         self._pending = []  # [(publish_ros_time, PointStamped, Detection2D)]
 
@@ -149,8 +175,25 @@ class CvTargetEmulator(Node):
 
     def on_target_odom(self, msg):
         p = msg.pose.pose.position
+        q = msg.pose.pose.orientation
         self._target_pos = np.array([p.x, p.y, p.z])
+        self._target_rot = _rotation_from_quaternion(q.x, q.y, q.z, q.w)
         self._target_frame_id = msg.header.frame_id
+
+    def _panel_poses(self):
+        """World (position, outward_normal_unit_vector) for each of the 4
+        armor panels, chassis yaw applied via the target's own rotation
+        matrix -- see module docstring for the panel layout."""
+        radius_x = self.get_parameter('panel_radius_x').value
+        radius_y = self.get_parameter('panel_radius_y').value
+        poses = []
+        for offset, use_x in zip(_PANEL_OFFSETS_RAD, _PANEL_USES_RADIUS_X):
+            radius = radius_x if use_x else radius_y
+            local_dir = np.array([math.cos(offset), math.sin(offset), 0.0])
+            world_dir = self._target_rot @ local_dir
+            panel_pos = self._target_pos + radius * world_dir
+            poses.append((panel_pos, world_dir))
+        return poses
 
     def _camera_pose(self):
         """World position + rotation of the camera link via the fixed FK
@@ -181,34 +224,53 @@ class CvTargetEmulator(Node):
                 f"-- FK assumes a shared world frame.", throttle_duration_sec=5.0)
 
         cam_pos, cam_rot = self._camera_pose()
-        # REP-103 (fwd, left, up) relative to the camera -- see module
-        # docstring for why this convention, not optical.
-        rel_world = self._target_pos - cam_pos
-        rel_cam = cam_rot.T @ rel_world
-        fwd, left, up = float(rel_cam[0]), float(rel_cam[1]), float(rel_cam[2])
+        panels = self._panel_poses()
+        world_frame = self._target_frame_id or self._root_frame_id or 'odom'
 
         near = self.get_parameter('range_near').value
         far = self.get_parameter('range_far').value
-        in_range = near <= fwd <= far
-        bearing_h = math.atan2(left, fwd) if fwd > 0 else math.pi
-        bearing_v = math.atan2(up, fwd) if fwd > 0 else math.pi
-        in_fov = (abs(bearing_h) <= self.hfov / 2.0
-                  and abs(bearing_v) <= self.vfov / 2.0)
+        max_view_angle = self.get_parameter('panel_view_half_angle').value
 
-        world_frame = self._target_frame_id or self._root_frame_id or 'odom'
-        if not (in_range and in_fov):
+        best = None  # (view_angle, fwd, left, up, panel_pos)
+        for panel_pos, panel_normal in panels:
+            # REP-103 (fwd, left, up) relative to the camera -- see module
+            # docstring for why this convention, not optical.
+            rel_world = panel_pos - cam_pos
+            rel_cam = cam_rot.T @ rel_world
+            fwd, left, up = float(rel_cam[0]), float(rel_cam[1]), float(rel_cam[2])
+
+            in_range = near <= fwd <= far
+            bearing_h = math.atan2(left, fwd) if fwd > 0 else math.pi
+            bearing_v = math.atan2(up, fwd) if fwd > 0 else math.pi
+            in_fov = (abs(bearing_h) <= self.hfov / 2.0
+                      and abs(bearing_v) <= self.vfov / 2.0)
+            if not (in_range and in_fov):
+                continue
+
+            # A panel only "presents" within max_view_angle of head-on --
+            # real armor-panel LEDs/retroreflectors aren't visible edge-on.
+            to_camera = -rel_world / (np.linalg.norm(rel_world) + 1e-9)
+            view_angle = math.acos(np.clip(np.dot(panel_normal, to_camera), -1.0, 1.0))
+            if view_angle > max_view_angle:
+                continue
+
+            if best is None or view_angle < best[0]:
+                best = (view_angle, fwd, left, up, panel_pos)
+
+        if best is None:
             if self._dwell_count > 0:
                 self.get_logger().info(
-                    f"target left frustum after {self._dwell_count} consecutive samples")
+                    f"no panel presenting after {self._dwell_count} consecutive samples")
             self._dwell_count = 0
-            self._publish_markers(world_frame, detected_world=None)
+            self._publish_markers(world_frame, panels, detected_world=None)
             return
 
         if np.random.uniform() < self.get_parameter('dropout_probability').value:
             self._dwell_count = 0  # dropout breaks the dwell run too
-            self._publish_markers(world_frame, detected_world=None)
+            self._publish_markers(world_frame, panels, detected_world=None)
             return
 
+        _, fwd, left, up, panel_pos = best
         stddev = self.get_parameter('noise_pos_stddev').value
         fwd_n = fwd + np.random.normal(0.0, stddev)
         left_n = left + np.random.normal(0.0, stddev)
@@ -219,7 +281,7 @@ class CvTargetEmulator(Node):
         # markers below -- the actual roi_point payload (fwd_n/left_n/up_n)
         # stays camera-relative REP-103, unaffected by this.
         detected_world = cam_pos + cam_rot @ np.array([fwd_n, left_n, up_n])
-        self._publish_markers(world_frame, detected_world)
+        self._publish_markers(world_frame, panels, detected_world)
 
         point = PointStamped()
         point.point.x = fwd_n
@@ -236,11 +298,13 @@ class CvTargetEmulator(Node):
         publish_at = self.get_clock().now() + rclpy.duration.Duration(seconds=latency_s)
         self._pending.append((publish_at, point, detection))
 
-    def _publish_markers(self, frame_id, detected_world):
-        """rviz visualization only -- ground-truth (green) always shown,
-        noisy-detected (yellow) shown only while actually in-frustum and
-        not dropped, so losing track is visible as the yellow sphere
-        disappearing rather than freezing in place."""
+    def _publish_markers(self, frame_id, panels, detected_world):
+        """rviz visualization only -- chassis center (green) always shown,
+        all 4 panels (dim cyan boxes) always shown so spin is visible even
+        when nothing currently presents, noisy-detected (yellow) shown only
+        while a panel actually qualified and wasn't dropped, so losing
+        track is visible as the yellow sphere disappearing rather than
+        freezing in place."""
         now = self.get_clock().now().to_msg()
         markers = MarkerArray()
 
@@ -257,6 +321,26 @@ class CvTargetEmulator(Node):
         gt.color.g = 1.0
         gt.color.a = 0.6
         markers.markers.append(gt)
+
+        for i, (panel_pos, panel_normal) in enumerate(panels):
+            panel = Marker()
+            panel.header.frame_id = frame_id
+            panel.header.stamp = now
+            panel.ns = 'cv_target_panels'
+            panel.id = i
+            panel.type = Marker.CUBE
+            panel.action = Marker.ADD
+            panel.pose.position.x, panel.pose.position.y, panel.pose.position.z = panel_pos.tolist()
+            yaw = math.atan2(panel_normal[1], panel_normal[0])
+            panel.pose.orientation.z = math.sin(yaw / 2.0)
+            panel.pose.orientation.w = math.cos(yaw / 2.0)
+            panel.scale.x = 0.02
+            panel.scale.y = 0.13
+            panel.scale.z = 0.13
+            panel.color.b = 1.0
+            panel.color.g = 1.0
+            panel.color.a = 0.5
+            markers.markers.append(panel)
 
         det = Marker()
         det.header.frame_id = frame_id

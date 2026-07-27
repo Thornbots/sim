@@ -130,7 +130,11 @@ def generate_launch_description():
     )
     target_speed_arg = DeclareLaunchArgument(
         'target_speed', default_value='2.0',
-        description='Target lateral speed (m/s) for target_driver\'s traverse path'
+        description='Target chassis lateral speed (m/s) for target_driver\'s traverse path'
+    )
+    target_spin_hz_arg = DeclareLaunchArgument(
+        'target_spin_hz', default_value='1.5',
+        description='Target chassis spin rate (Hz) -- the "wiggle" defense per ARCC_2026_SENTRY_CONTEXT.md (typically 1-2 Hz)'
     )
     cv_noise_pos_stddev_arg = DeclareLaunchArgument(
         'cv_noise_pos_stddev', default_value='0.03',
@@ -459,6 +463,9 @@ def generate_launch_description():
             'target_speed': ParameterValue(
                 LaunchConfiguration('target_speed'), value_type=float
             ),
+            'spin_hz': ParameterValue(
+                LaunchConfiguration('target_spin_hz'), value_type=float
+            ),
         }],
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
@@ -515,6 +522,7 @@ def generate_launch_description():
         odom_slip_ratio_arg,
         spawn_target_arg,
         target_speed_arg,
+        target_spin_hz_arg,
         cv_noise_pos_stddev_arg,
         cv_dropout_probability_arg,
         cv_publish_latency_s_arg,
