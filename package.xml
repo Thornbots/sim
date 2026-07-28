@@ -17,7 +17,6 @@
   <depend>sensor_msgs</depend>
   <depend>std_srvs</depend>
   <depend>dji_serial_bridge</depend>
-  <depend>vision_msgs</depend>
   <depend>visualization_msgs</depend>
 
   <export>
