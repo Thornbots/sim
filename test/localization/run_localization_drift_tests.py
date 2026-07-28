@@ -6,7 +6,8 @@ Mirrors auto.launch.py's two independent axes: --backend {slam,amcl,none}
 (default amcl, who owns map->odom -- 'mapping' isn't offered, see below)
 and --use-ekf (whether odom->root is EKF-fused, layerable on any backend --
 the old standalone 'ekf' backend is now --backend none --use-ekf).
---scenario NAME; --keep-running; --headless. Scenarios (in order):
+--scenario NAME; --headless (gz-sim GUI + rviz2 on by default);
+--speed M/S. Scenarios (in order):
 baseline, noise_correction, drift_correction, drift_correction_obstacle,
 jerk_with_motion, odom_stuck. See README.md for WHY THIS EXISTS, BACKENDS
 (per-backend TF edge), and SCENARIOS (pass conditions/rationale).
@@ -507,18 +508,15 @@ class Scenario:
 
 def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
               odom_drift_stddev=None, odom_jitter_stddev=None,
-              odom_slip_ratio=0.0, odom_jerk_bias_xy=None):
+              odom_slip_ratio=0.02, odom_jerk_bias_xy=None):
     """Starts sim + sentry_pkg launch trees, waits for the graph to come
     up, returns (sim_tree, sentry_tree, helper_node). Caller must call
-    teardown_stack() when done. odom_slip_ratio defaults to 0.0 -- only
-    the drift scenarios (_run_cornering_loop_scenario, i.e.
-    drift_correction/drift_correction_obstacle) want slip; every other
-    scenario should be testing its own failure mode (noise, jerk, dead
-    odom) in isolation, not that plus incidental slip. Those two pass
-    0.02 explicitly -- this used to be every scenario's shared default
-    (previously 0.15, then briefly 0.25) before being scoped down to
-    just the drift scenarios; see MAX_DELTA_THRESHOLD's comment for that
-    history and for how 0.40m was calibrated against it."""
+    teardown_stack() when done. odom_slip_ratio defaults to 0.02 -- a
+    small amount of slip for every scenario. The drift scenarios
+    (_run_cornering_loop_scenario, i.e. drift_correction/
+    drift_correction_obstacle) pass 0.15 explicitly to isolate their
+    own failure mode; see MAX_DELTA_THRESHOLD's comment for how 0.40m
+    was calibrated against that higher slip value."""
     os.makedirs(LOG_DIR, exist_ok=True)
 
     sim_args = (
@@ -952,10 +950,10 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
 # full-suite runs measured 0.30-0.33m on both scenarios (tight band, not
 # noisy). 0.40 gives ~25% margin over the worst single run observed
 # (0.3261m) and >30% over the ~0.32m typical -- real margin without
-# being toothless. Slip dropped from 0.15 to 0.02 (and scoped to just
-# these two scenarios) after that calibration -- NOT yet re-measured
-# against the lower slip, so 0.40 is likely far looser than needed now;
-# re-tighten once re-calibrated. See README.md.
+# being toothless. Slip was later dropped to 0.02 and scoped to just
+# these two scenarios, then restored to 0.15 for these two (with 0.02
+# as every other scenario's default) -- matches the slip this threshold
+# was calibrated against. See README.md.
 MAX_DELTA_THRESHOLD = 0.40  # meters
 
 
@@ -974,7 +972,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
     try:
         sim_tree, sentry_tree, helper = run_stack(
             gui, backend, use_ekf, odom_noise_enabled=False,
-            odom_slip_ratio=0.02)
+            odom_slip_ratio=0.15)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
                               'in time -- see log above')
