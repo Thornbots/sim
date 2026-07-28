@@ -138,7 +138,7 @@ def generate_launch_description():
     )
     cv_noise_pos_stddev_arg = DeclareLaunchArgument(
         'cv_noise_pos_stddev', default_value='0.03',
-        description='Stddev (m) of Gaussian position noise injected into cv_target_emulator\'s roi_point'
+        description='Stddev (m) of Gaussian position noise injected into cv_target_emulator\'s panel_detection'
     )
     cv_dropout_probability_arg = DeclareLaunchArgument(
         'cv_dropout_probability', default_value='0.0',

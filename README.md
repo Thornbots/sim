@@ -1004,9 +1004,10 @@ vector/bearing check described below, not the GUI.
 Both nodes advance/stamp using `self.get_clock().now()` (which resolves to
 `/clock` under `use_sim_time`), never a wall-clock-derived value:
 `target_driver` integrates position from clock deltas rather than assuming
-the timer's period, and `cv_target_emulator` stamps `roi_point.header.stamp`
-from its own clock at actual publish time rather than forwarding
-`/target/ground_truth_odom`'s stamp. `point_to_cv_target.on_point` derives
+the timer's period, and `cv_target_emulator` stamps
+`panel_detection.header.stamp` from its own clock at actual publish time
+rather than forwarding `/target/ground_truth_odom`'s stamp.
+`point_to_cv_target.on_panel` derives
 its EMA `dt` straight from that header, so either shortcut would silently
 mislabel every downstream velocity/acceleration estimate if sim's
 real-time-factor ever drifts from 1.0.
@@ -1022,7 +1023,7 @@ check: visible half-width at distance `d` is `d·tan(hfov/2)` ≈
 `3.0·tan(1.5184/2)` ≈ 2.85m, comfortably wider than the path's 2.0m
 half-amplitude (≈0.85m margin each side), so the traverse stays in-frustum
 for its whole sweep rather than clipping the edge. A consecutive
-in-frustum `roi_point` count per transit dropping below ~10 samples
+in-frustum `panel_detection` count per transit dropping below ~10 samples
 indicates the EMA velocity filter's warm-up lag rather than real tracking
 degradation, not the geometry above — measured 2026-07-27 (via the
 now-removed `run_cv_detection_tests.py`): min 47 consecutive samples at 8
@@ -1070,8 +1071,9 @@ sign, since `tan(+x)` and `tan(-x)` have equal magnitude.
 **Convention: REP-103, not optical.** Target position is computed relative
 to the camera in REP-103 body convention (x=forward, y=left, z=up) — NOT
 the optical frame (x=right, y=down, z=forward) a real camera driver would
-report. `point_to_cv_target.on_point` (line ~93) converts
-`x=-p.y, y=p.z, z=p.x` — i.e. it expects REP-103 input on `roi_point`.
+report. `point_to_cv_target.on_panel` converts
+`x=-p.y, y=p.z, z=p.x` — i.e. it expects REP-103 input on
+`cv/panel_detection`.
 Computing optical and mislabeling it REP-103 would silently rotate every
 detection by a fixed offset, the same class of bug already hit once with
 rf2o's `angle_min` (see that entry above: 179.81° error, magnitude

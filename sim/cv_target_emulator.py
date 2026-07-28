@@ -11,10 +11,13 @@ being visible only from roughly in front of it -- so as the chassis spins
 (target_driver's spin_hz), which panel presents keeps changing, same as
 ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot characteristics" section
 describes. Among presenting panels also inside the camera's FOV/range, the
-most head-on one is published on roi_point (PointStamped) + roi
-(Detection2D) -- exactly what point_to_cv_target.py subscribes to. Target
-position is REP-103 relative to the camera (x=forward, y=left, z=up), NOT
-optical -- point_to_cv_target.on_point expects that convention. Publishes
+most head-on one is published on cv/panel_detection (PanelDetection) --
+exactly what point_to_cv_target.py subscribes to. Corners are the panel's
+true PANEL_SIZE square (ground truth, not depth-approximated like the
+real roi_depth_node), built from its outward normal so they carry the
+same S122 cant. Target position is REP-103 relative to the camera
+(x=forward, y=left, z=up), NOT optical -- point_to_cv_target.on_panel
+expects that convention. Publishes
 nothing when no panel qualifies (track loss). Also publishes MarkerArray on
 target_markers (world frame: green sphere = chassis center, small cyan
 boxes = all 4 panels, yellow sphere = the currently-selected noisy
@@ -29,8 +32,8 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import Point, PointStamped
-from vision_msgs.msg import Detection2D, ObjectHypothesisWithPose
+from geometry_msgs.msg import Point, Point32
+from dji_serial_bridge.msg import PanelDetection
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -143,15 +146,14 @@ class CvTargetEmulator(Node):
         self._target_pos = None
         self._target_rot = None
         self._target_frame_id = None
-        self._pending = []  # [(publish_ros_time, PointStamped, Detection2D)]
+        self._pending = []  # [(publish_ros_time, PanelDetection)]
 
         # In-frustum dwell tracking (per README.md's dwell-count guard --
-        # the test script counts these via roi_point arrival timing; this
-        # log line is the human-readable equivalent).
+        # the test script counts these via panel_detection arrival timing;
+        # this log line is the human-readable equivalent).
         self._dwell_count = 0
 
-        self.roi_point_pub = self.create_publisher(PointStamped, 'roi_point', 10)
-        self.roi_pub = self.create_publisher(Detection2D, 'roi', 10)
+        self.panel_pub = self.create_publisher(PanelDetection, 'cv/panel_detection', 10)
         self.marker_pub = self.create_publisher(MarkerArray, 'target_markers', 10)
 
         self.create_subscription(Odometry, '/sim/raw_odom', self.on_root_odom, 10)
@@ -190,16 +192,21 @@ class CvTargetEmulator(Node):
         self._target_frame_id = msg.header.frame_id
 
     def _panel_poses(self):
-        """World (position, outward_normal_unit_vector) for each of the 4
-        armor panels, chassis yaw applied via the target's own rotation
-        matrix -- see module docstring for the panel layout.
+        """World (position, outward_normal_unit_vector, right_dir, up_dir)
+        for each of the 4 armor panels, chassis yaw applied via the
+        target's own rotation matrix -- see module docstring for the panel
+        layout.
 
         Position offset stays in the horizontal chassis plane (radius_x/y
         place the panel's center on the correct side face), but the
         outward normal is canted per S122 -- PANEL_NORMAL_ANGLE_FROM_UP
-        from straight-up, not flush-horizontal (z=0)."""
+        from straight-up, not flush-horizontal (z=0). right_dir/up_dir are
+        an orthonormal in-plane basis (built from the normal) used to place
+        the panel's 4 corners -- up_dir inherits the same cant as the
+        normal, matching a real rigid panel."""
         radius_x = self.get_parameter('panel_radius_x').value
         radius_y = self.get_parameter('panel_radius_y').value
+        world_up = np.array([0.0, 0.0, 1.0])
         poses = []
         for offset, use_x in zip(_PANEL_OFFSETS_RAD, _PANEL_USES_RADIUS_X):
             radius = radius_x if use_x else radius_y
@@ -213,7 +220,12 @@ class CvTargetEmulator(Node):
                 math.cos(PANEL_NORMAL_ANGLE_FROM_UP),
             ])
             world_normal = self._target_rot @ local_normal
-            poses.append((panel_pos, world_normal))
+
+            right_dir = np.cross(world_up, world_normal)
+            right_dir /= np.linalg.norm(right_dir)
+            up_dir = np.cross(world_normal, right_dir)
+
+            poses.append((panel_pos, world_normal, right_dir, up_dir))
         return poses
 
     def _camera_pose(self):
@@ -252,8 +264,8 @@ class CvTargetEmulator(Node):
         far = self.get_parameter('range_far').value
         max_view_angle = self.get_parameter('panel_view_half_angle').value
 
-        best = None  # (view_angle, fwd, left, up, panel_pos)
-        for panel_pos, panel_normal in panels:
+        best = None  # (view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir)
+        for panel_pos, panel_normal, right_dir, up_dir in panels:
             # REP-103 (fwd, left, up) relative to the camera -- see module
             # docstring for why this convention, not optical.
             rel_world = panel_pos - cam_pos
@@ -276,7 +288,7 @@ class CvTargetEmulator(Node):
                 continue
 
             if best is None or view_angle < best[0]:
-                best = (view_angle, fwd, left, up, panel_pos)
+                best = (view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir)
 
         if best is None:
             if self._dwell_count > 0:
@@ -291,7 +303,7 @@ class CvTargetEmulator(Node):
             self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world=None)
             return
 
-        _, fwd, left, up, panel_pos = best
+        _, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir = best
         stddev = self.get_parameter('noise_pos_stddev').value
         fwd_n = fwd + np.random.normal(0.0, stddev)
         left_n = left + np.random.normal(0.0, stddev)
@@ -299,25 +311,37 @@ class CvTargetEmulator(Node):
         self._dwell_count += 1
 
         # World-frame position of the noisy detection, purely for the rviz
-        # markers below -- the actual roi_point payload (fwd_n/left_n/up_n)
-        # stays camera-relative REP-103, unaffected by this.
+        # markers below -- the actual panel_detection payload (fwd_n/left_n/
+        # up_n) stays camera-relative REP-103, unaffected by this.
         detected_world = cam_pos + cam_rot @ np.array([fwd_n, left_n, up_n])
         self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world)
 
-        point = PointStamped()
-        point.point.x = fwd_n
-        point.point.y = left_n
-        point.point.z = up_n
+        # True PANEL_SIZE square corners (ground truth, unlike the real
+        # roi_depth_node's single-depth planar approximation), same additive
+        # position noise as the center so the polygon stays rigid.
+        half = PANEL_SIZE / 2.0
+        noise = np.array([fwd_n - fwd, left_n - left, up_n - up])
+        corners_world = [
+            panel_pos - half * right_dir + half * up_dir,  # TL
+            panel_pos + half * right_dir + half * up_dir,  # TR
+            panel_pos + half * right_dir - half * up_dir,  # BR
+            panel_pos - half * right_dir - half * up_dir,  # BL
+        ]
 
-        detection = Detection2D()
-        hyp = ObjectHypothesisWithPose()
-        hyp.hypothesis.class_id = 'target'
-        hyp.hypothesis.score = 1.0
-        detection.results.append(hyp)
+        def to_point32(world_pt):
+            rel_cam = cam_rot.T @ (world_pt - cam_pos) + noise
+            return Point32(x=float(rel_cam[0]), y=float(rel_cam[1]), z=float(rel_cam[2]))
+
+        detection = PanelDetection()
+        detection.corners = [to_point32(c) for c in corners_world]
+        detection.center = Point32(x=fwd_n, y=left_n, z=up_n)
+        detection.depth_m = fwd_n
+        detection.confidence = 1.0
+        detection.class_id = 0
 
         latency_s = self.get_parameter('publish_latency_s').value
         publish_at = self.get_clock().now() + rclpy.duration.Duration(seconds=latency_s)
-        self._pending.append((publish_at, point, detection))
+        self._pending.append((publish_at, detection))
 
     def _publish_markers(self, frame_id, panels, cam_pos, cam_rot, detected_world):
         """rviz visualization only -- chassis center (green) always shown,
@@ -366,7 +390,7 @@ class CvTargetEmulator(Node):
         gt.color.a = 0.6
         markers.markers.append(gt)
 
-        for i, (panel_pos, panel_normal) in enumerate(panels):
+        for i, (panel_pos, panel_normal, _right_dir, _up_dir) in enumerate(panels):
             panel = Marker()
             panel.header.frame_id = frame_id
             panel.header.stamp = now
@@ -409,21 +433,17 @@ class CvTargetEmulator(Node):
     def _flush_pending(self):
         now = self.get_clock().now()
         still_pending = []
-        for publish_at, point, detection in self._pending:
+        for publish_at, detection in self._pending:
             if now >= publish_at:
                 # Stamp from this node's own clock at actual publish time
-                # (sim time under use_sim_time) -- point_to_cv_target.on_point
+                # (sim time under use_sim_time) -- point_to_cv_target.on_panel
                 # derives dt straight from this header, so any other stamp
                 # source (forwarded ground truth, wall time) breaks it.
-                stamp = self.get_clock().now().to_msg()
-                point.header.stamp = stamp
-                point.header.frame_id = 'camera'
-                detection.header.stamp = stamp
+                detection.header.stamp = self.get_clock().now().to_msg()
                 detection.header.frame_id = 'camera'
-                self.roi_point_pub.publish(point)
-                self.roi_pub.publish(detection)
+                self.panel_pub.publish(detection)
             else:
-                still_pending.append((publish_at, point, detection))
+                still_pending.append((publish_at, detection))
         self._pending = still_pending
 
 
