@@ -1042,6 +1042,15 @@ by name, not array position. One easy-to-miss detail: `headlink`'s and
 against the rendered camera feed (see `sentry.urdf.xacro`'s own comment on
 that joint).
 
+**`headlink` is a continuous joint, no yaw limit** — fixed 2026-07-28:
+this xacro previously declared it `type="revolute"` with a `+-pi <limit>`
+(stale; `sentry_pkg`'s own copy of this file already had it right).
+Real hardware's gimbal can spin freely, confirmed by the user while
+watching `cv_head_aim`'s early runaway bug peg exactly at `+-3.14159`
+— that was `cv_head_aim`'s own software clamp saturating, not a real
+physical limit, which was the tell that the xacro's declared limit
+didn't match reality. `headpitch` keeps its real `+-0.6` limit.
+
 The now-removed `run_cv_detection_tests.py`'s independent position-error
 check deliberately did *not* reuse `cv_target_emulator`'s FK matrix (so it
 could catch a sign/rotation bug there independently), but it did apply
@@ -1085,6 +1094,109 @@ queue keyed off `self.get_clock().now()`. All off/zero by default except
 noise, mirroring `pose_emulator.py`'s "off by default, opt-in via
 `sim.launch.py` args" convention — `spawn_target:=false` (the default)
 changes nothing about existing `sim.launch.py` behavior.
+
+### cv_head_aim.py — CV-driven head tracking, gain/sign rationale
+
+Subscribes `sentry_pkg`'s `/cv/target` (`CVTarget`, published by
+`point_to_cv_target` — needs `sentry_pkg`'s `auto.launch.py` running
+alongside `sim.launch.py spawn_target:=true`, same real-hardware/sim split
+the rest of the CV pipeline has) and `/sim/raw_joint_states`, and
+publishes `/head_pan_cmd`/`/head_pitch_cmd` — the same topics
+`head_sweep.py`'s dead placeholder sweep and the gz GUI slider already
+drive. This is the actual reason the head tracks a target during CV
+testing; `head_sweep.py` stays unwired, as before.
+
+`CVTarget`'s x/y/z is relative to the camera's *current* boresight, not
+an absolute world bearing (camera frame sits downstream of both head
+joints in the FK chain `cv_target_emulator.py` documents above), so each
+sample gives an angular offset from wherever the head is already pointed:
+`delta_yaw = atan2(x, z)`, `delta_pitch = atan2(y, hypot(x, z))`, added to
+the current `headlink`/`headpitch` joint angle (read off
+`/sim/raw_joint_states`, not `sentry_pkg`'s own `/joint_states`, so this
+node only depends on sim-internal ground truth, not on `sentry_pkg`'s
+`pose_translator` also being up).
+
+**`control_rate_hz` (default 15) — corrections run off a timer, not
+directly off each `/cv/target` arrival.** First version reacted to every
+message (`cv_target_emulator`'s default publish rate is 60Hz), each one
+adding a fresh `gain*delta` correction onto a `self._head_yaw` feedback
+value that hadn't caught up to the *previous* command yet — this doesn't
+overshoot-and-settle, it races: the commanded setpoint runs ahead of the
+physical joint without bound, confirmed live (2026-07-28) as a genuine
+continuous multi-rotation spin, not a converging oscillation. `on_cv_target`
+now only caches the latest confidence>0 message; `on_control_tick`
+(the timer callback) does the actual gain/delta/publish, decoupling
+correction rate from detection rate so the physical joint has time to
+close each correction before the next is computed off fresh feedback.
+
+**`gain` (default 0.1).** Empirically tuned 2026-07-28 against the real
+closed loop (not derived analytically) — `0.4` diverges even with
+`control_rate_hz` rate-limiting (measured: `headlink` climbing ~20 rad/s,
+sustained, never settling), `0.02` visibly converges but slowly. `0.1`
+was the only value actually tested end-to-end and confirmed both stable
+and reasonably responsive; revisit if a real target's speed needs faster
+tracking than this converges at. Conceptually still "`delta_yaw` measured
+against the camera pose at detection time, added to the joint angle read
+at command time" — `gain < 1` is what keeps that mismatch from compounding
+into oscillation once the rate mismatch above is fixed.
+
+**`sign_yaw` (default `+1.0`) — verified correct, both analytically and
+empirically.** `headlink`'s joint axis is `(0,0,-1)` with a `pi`-rotated
+origin (see `sentry.urdf.xacro`'s FK notes above); working through the
+composed rotation (`headlink` contributes `Rz(-head_yaw)` to the camera's
+world orientation), a target that appears to the right (`msg.x > 0`)
+requires *increasing* `head_yaw` to center it — matches the code as
+written.
+
+**`sign_pitch` (default `-1.0`) — was the actual bug, not yaw.**
+`headpitch`'s axis is `(0,1,0)`; increasing it tilts the camera **down**
+(`Ry(pitch)` maps local +x, i.e. forward, toward `-z` as pitch increases).
+The camera sits above the target's default height (camera ≈0.40m,
+target=0.3m per `target_driver`'s defaults), so `msg.y < 0` (target below
+boresight) — with `sign_pitch=+1.0` (the original default), each
+correction made pitch *more negative*, tilting the camera further **up**,
+pushing the target further below boresight: positive feedback, pegged at
+`headpitch`'s `-0.6` limit every time (confirmed live 2026-07-28: `headpitch`
+sat between -0.44 and -0.60 across every single closed-loop run before
+this fix — that's what "the head is now looking up" looked like from
+outside). This also explains why early yaw-runaway tests were
+inconclusive: once pitch pegged, the target left the vertical FOV,
+detections stopped, and yaw simply coasted on its last command —
+indistinguishable from genuine convergence without checking pitch too.
+Fixed by flipping `sign_pitch` to `-1.0`; verified against the discriminating
+case (`target_driver` defaults, stationary target): `headpitch` settles at
+`+0.036` rad (`atan(0.104/2.9)`, the analytically-expected value for
+that camera-height/target-height/range combination), `headlink` settles
+near a small offset instead of spinning.
+
+**Verifying either sign, if retuning:** `cv_target_emulator`'s
+`target_markers` aim arrow (white, in rviz) is the fastest visual check —
+should point at/through the green target marker cluster once converged,
+not away from it or off at a wild angle. `ros2 topic echo /head_pan_cmd`/
+`/head_pitch_cmd` alongside `/sim/raw_joint_states` is the reliable check —
+watch for the commanded/actual angle *converging* to a stable value over
+several seconds, not just moving in a plausible-looking direction once,
+since a pegged-at-limit joint and a genuinely converged one can look
+similar at a single glance (see the pitch bug above).
+
+Stale-target behavior: stops publishing (holds the last commanded
+position) once `/cv/target`'s `confidence` drops to `0.0` — deliberately
+does not snap back to zero, since a lost target is usually a momentary
+FOV/presentation gap, not a reason to re-home.
+
+### CVTarget velocity/acceleration fields — removed 2026-07-28
+
+`CVTarget` used to carry `v_x/v_y/v_z`/`a_x/a_y/a_z` (finite-differenced
+by `point_to_cv_target`'s EMA filter, `velocity_filter_alpha`/
+`max_extrapolation_gap_s` mentioned above) forwarded byte-for-byte to the
+MCB's `CV_MSG` UART packet. Removed from the message and the UART wire
+struct both (position + confidence only now) — a deliberate, coordinated
+break of the wire format, not a ROS-only trim; see
+`ros2_dji_serial_bridge/README.md` and `sentry_pkg/README.md` for the
+full rationale and the matching MCB-firmware requirement. The dwell-count/
+EMA-warm-up discussion above (`target_driver`'s path geometry) is now
+about historical sizing, not a currently-live filter — `point_to_cv_target`
+no longer estimates velocity at all.
 
 **Environment footguns hit while building/testing this** (distinct from
 the `AMENT_PREFIX_PATH` footgun documented in `SESSION_NOTES.md`): sim's

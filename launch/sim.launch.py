@@ -489,6 +489,21 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
 
+    # --- Turns sentry_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd
+    # so the head actually tracks CV detections (see sim/cv_head_aim.py).
+    # Needs sentry_pkg's auto.launch.py running alongside this (for
+    # point_to_cv_target -> /cv/target) -- same spawn_target gate as
+    # cv_target_emulator above, since aiming only makes sense once a
+    # target exists to aim at.
+    cv_head_aim = Node(
+        package='sim',
+        executable='cv_head_aim',
+        name='cv_head_aim',
+        output='screen',
+        parameters=[{'use_sim_time': True}],
+        condition=IfCondition(LaunchConfiguration('spawn_target')),
+    )
+
     # --- rviz2, using sentry_pkg's config (same one sentry_pkg's own launch
     # files use) so sim and real-hardware runs look the same. use_sim_time
     # matches every other node above since sim's /clock is what's bridged in.
@@ -538,6 +553,7 @@ def generate_launch_description():
         head_slider_relay,
         target_driver,
         cv_target_emulator,
+        cv_head_aim,
         cmd_vel_bridge,
         head_pan_bridge,
         head_pitch_bridge,
