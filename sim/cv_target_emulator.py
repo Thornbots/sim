@@ -50,6 +50,41 @@ def _rotation_from_quaternion(x, y, z, w):
     ])
 
 
+def _quat_from_axes(x_axis, y_axis, z_axis):
+    """Quaternion (x, y, z, w) for the rotation whose local +X/+Y/+Z map to
+    the given orthonormal world-frame axes -- used to orient panel/
+    detection boxes so their thin (normal) axis actually points along
+    panel_normal's real tilt (both azimuth AND the S122 cant), not just
+    yaw, which a flush atan2(normal.y, normal.x) discards."""
+    r = np.column_stack([x_axis, y_axis, z_axis])
+    tr = r[0, 0] + r[1, 1] + r[2, 2]
+    if tr > 0:
+        s = math.sqrt(tr + 1.0) * 2
+        w = 0.25 * s
+        x = (r[2, 1] - r[1, 2]) / s
+        y = (r[0, 2] - r[2, 0]) / s
+        z = (r[1, 0] - r[0, 1]) / s
+    elif r[0, 0] > r[1, 1] and r[0, 0] > r[2, 2]:
+        s = math.sqrt(1.0 + r[0, 0] - r[1, 1] - r[2, 2]) * 2
+        w = (r[2, 1] - r[1, 2]) / s
+        x = 0.25 * s
+        y = (r[0, 1] + r[1, 0]) / s
+        z = (r[0, 2] + r[2, 0]) / s
+    elif r[1, 1] > r[2, 2]:
+        s = math.sqrt(1.0 + r[1, 1] - r[0, 0] - r[2, 2]) * 2
+        w = (r[0, 2] - r[2, 0]) / s
+        x = (r[0, 1] + r[1, 0]) / s
+        y = 0.25 * s
+        z = (r[1, 2] + r[2, 1]) / s
+    else:
+        s = math.sqrt(1.0 + r[2, 2] - r[0, 0] - r[1, 1]) * 2
+        w = (r[1, 0] - r[0, 1]) / s
+        x = (r[0, 2] + r[2, 0]) / s
+        y = (r[1, 2] + r[2, 1]) / s
+        z = 0.25 * s
+    return float(x), float(y), float(z), float(w)
+
+
 def _rotation_from_rpy(roll, pitch, yaw):
     cr, sr = math.cos(roll), math.sin(roll)
     cp, sp = math.cos(pitch), math.sin(pitch)
@@ -123,7 +158,7 @@ class CvTargetEmulator(Node):
         self.declare_parameter('image_height', 480)
         self.declare_parameter('range_near', 0.1)
         self.declare_parameter('range_far', 10.0)
-        self.declare_parameter('noise_pos_stddev', 0.03)
+        self.declare_parameter('noise_pos_stddev', 0.0)  # was 0.03, zeroed for now
         self.declare_parameter('dropout_probability', 0.0)
         self.declare_parameter('publish_latency_s', 0.0)
         self.declare_parameter('yaw_joint_name', 'headlink')
@@ -314,7 +349,9 @@ class CvTargetEmulator(Node):
         # markers below -- the actual panel_detection payload (fwd_n/left_n/
         # up_n) stays camera-relative REP-103, unaffected by this.
         detected_world = cam_pos + cam_rot @ np.array([fwd_n, left_n, up_n])
-        self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world)
+        self._publish_markers(
+            world_frame, panels, cam_pos, cam_rot, detected_world,
+            panel_normal, right_dir, up_dir)
 
         # True PANEL_SIZE square corners (ground truth, unlike the real
         # roi_depth_node's single-depth planar approximation), same additive
@@ -343,15 +380,19 @@ class CvTargetEmulator(Node):
         publish_at = self.get_clock().now() + rclpy.duration.Duration(seconds=latency_s)
         self._pending.append((publish_at, detection))
 
-    def _publish_markers(self, frame_id, panels, cam_pos, cam_rot, detected_world):
+    def _publish_markers(self, frame_id, panels, cam_pos, cam_rot, detected_world,
+                          detected_normal=None, detected_right=None, detected_up=None):
         """rviz visualization only -- chassis center (green) always shown,
         all 4 panels (dim cyan boxes) always shown so spin is visible even
         when nothing currently presents, noisy-detected (yellow) shown only
         while a panel actually qualified and wasn't dropped, so losing
-        track is visible as the yellow sphere disappearing rather than
-        freezing in place. A white arrow from the camera along its current
-        aim direction (cam_rot's local +Z) shows where the head is looking,
-        regardless of whether anything currently presents."""
+        track is visible as the yellow box disappearing rather than
+        freezing in place -- drawn as a PANEL_SIZE box (like the ground
+        truth panels), not a point, since a detection is a panel-sized
+        region, not a single point in space. A white arrow from the camera
+        along its current aim direction (cam_rot's local +Z) shows where
+        the head is looking, regardless of whether anything currently
+        presents."""
         now = self.get_clock().now().to_msg()
         markers = MarkerArray()
 
@@ -390,7 +431,7 @@ class CvTargetEmulator(Node):
         gt.color.a = 0.6
         markers.markers.append(gt)
 
-        for i, (panel_pos, panel_normal, _right_dir, _up_dir) in enumerate(panels):
+        for i, (panel_pos, panel_normal, right_dir, up_dir) in enumerate(panels):
             panel = Marker()
             panel.header.frame_id = frame_id
             panel.header.stamp = now
@@ -399,9 +440,11 @@ class CvTargetEmulator(Node):
             panel.type = Marker.CUBE
             panel.action = Marker.ADD
             panel.pose.position.x, panel.pose.position.y, panel.pose.position.z = panel_pos.tolist()
-            yaw = math.atan2(panel_normal[1], panel_normal[0])
-            panel.pose.orientation.z = math.sin(yaw / 2.0)
-            panel.pose.orientation.w = math.cos(yaw / 2.0)
+            qx, qy, qz, qw = _quat_from_axes(panel_normal, right_dir, up_dir)
+            panel.pose.orientation.x = qx
+            panel.pose.orientation.y = qy
+            panel.pose.orientation.z = qz
+            panel.pose.orientation.w = qw
             panel.scale.x = 0.02
             panel.scale.y = PANEL_SIZE
             panel.scale.z = PANEL_SIZE
@@ -415,14 +458,19 @@ class CvTargetEmulator(Node):
         det.header.stamp = now
         det.ns = 'cv_target'
         det.id = 1
-        det.type = Marker.SPHERE
+        det.type = Marker.CUBE
         if detected_world is None:
             det.action = Marker.DELETE
         else:
             det.action = Marker.ADD
             det.pose.position.x, det.pose.position.y, det.pose.position.z = detected_world.tolist()
-            det.pose.orientation.w = 1.0
-            det.scale.x = det.scale.y = det.scale.z = 0.15
+            qx, qy, qz, qw = _quat_from_axes(detected_normal, detected_right, detected_up)
+            det.pose.orientation.x = qx
+            det.pose.orientation.y = qy
+            det.pose.orientation.z = qz
+            det.pose.orientation.w = qw
+            det.scale.x = 0.02
+            det.scale.y = det.scale.z = PANEL_SIZE
             det.color.r = 1.0
             det.color.g = 1.0
             det.color.a = 0.9

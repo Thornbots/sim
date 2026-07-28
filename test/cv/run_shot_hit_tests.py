@@ -452,18 +452,20 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
 
     # Visualization: sim itself intentionally runs no TF/
     # robot_state_publisher (nodes compute their own FK -- see README.md),
-    # so nothing feeds cv_target.rviz's RobotModel/Map displays without
-    # this. real_hardware:=false skips the real-hardware-only
-    # mcb_relay/point_to_cv_target auto.launch.py would otherwise launch
-    # (no conflict with the ones started above); localization_mode:=amcl
-    # runs map_server + amcl against sentry_localization's default map so
-    # map->odom is actually published (cv_target.rviz's Fixed Frame is
-    # map). Skipped entirely when headless -- nothing to look at, not
-    # worth the extra process tree.
+    # so nothing feeds cv_target.rviz's RobotModel display without this.
+    # real_hardware:=false skips the real-hardware-only mcb_relay/
+    # point_to_cv_target auto.launch.py would otherwise launch (no
+    # conflict with the ones started above); localization_mode:=none
+    # skips map_server/amcl entirely -- odom_tf_broadcaster (always
+    # launched, independent of localization_mode) still publishes
+    # odom->root, which is all cv_target.rviz needs since its Fixed
+    # Frame is odom, not map. Faster startup, no amcl process tree.
+    # Skipped entirely when headless -- nothing to look at, not worth
+    # the extra process tree.
     robot_tf = LaunchTree(
         'robot_tf',
         ['ros2', 'launch', 'sentry_pkg', 'auto.launch.py',
-         'real_hardware:=false', 'localization_mode:=amcl', 'use_ekf:=false'],
+         'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false'],
         os.path.join(log_dir, f'robot_tf_{speed}_spin{spin_hz:.2f}.log'),
     )
 
@@ -479,20 +481,10 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         ready_nodes = ['point_to_cv_target', 'mcb_relay']
         if not headless:
             robot_tf.start()
-            ready_nodes.append('amcl')
+            ready_nodes.append('robot_state_publisher')
         sampler.wait_until(
             lambda: sampler.nodes_up(*ready_nodes),
             timeout=15.0, description=f'{", ".join(ready_nodes)} nodes up')
-        if not headless:
-            # Node presence just means the process is up, not that the
-            # map_server/amcl lifecycle nodes have been auto-activated by
-            # amcl_lifecycle_manager_node yet -- /map is latched
-            # (transient-local) once map_server is actually serving it, a
-            # much better proxy for "map->odom will resolve" than the node
-            # existing.
-            sampler.wait_until(
-                lambda: sampler.count_publishers('/map') > 0,
-                timeout=15.0, description='/map published (map_server activated)')
 
         sampler.spin_for(duration)
     finally:
