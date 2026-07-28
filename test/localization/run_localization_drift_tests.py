@@ -1165,8 +1165,22 @@ def scenario_odom_stuck(gui, backend, use_ekf):
             if p is not None:
                 elapsed = time.monotonic() - t0
                 samples.append(p)
+                # Logging only -- NOT part of the pass/fail criteria below
+                # (which stays a pure liveness check). root_pos/truth_xy
+                # are ground-truth-comparable (see get_root_position's
+                # docstring), so this surfaces actual position error
+                # alongside the liveness spread, without changing what
+                # the scenario asserts.
+                root_pos = helper.get_root_position(timeout=0.5)
+                truth_xy = helper._raw_odom_xy
+                err_str = ''
+                if root_pos is not None and truth_xy is not None:
+                    err = math.hypot(root_pos[0] - truth_xy[0],
+                                      root_pos[1] - truth_xy[1])
+                    err_str = f'  ground_truth_error={err:.4f} m'
                 sc.log(f't={elapsed:5.1f}s  {edge} = '
-                       f'(x={p[0]:.4f}, y={p[1]:.4f}, yaw={p[2]:.4f})')
+                       f'(x={p[0]:.4f}, y={p[1]:.4f}, yaw={p[2]:.4f})'
+                       f'{err_str}')
 
         if len(samples) < 3:
             sc.result(False, f'too few {edge} samples ({len(samples)}) to '
