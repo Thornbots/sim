@@ -26,7 +26,7 @@ Until that node exists this reports zero shots for every speed -- a real
 result (no fire commands were ever sent), not a bug in this script.
 
 Usage: python3 run_shot_hit_tests.py [--speeds 0.5 1 2 4]
-[--duration 12.0] [--hit-radius 0.05] [--headless] [--skip-stationary]
+[--duration 15.0] [--hit-radius 0.05] [--headless] [--skip-stationary]
 
 Runs a completely stationary (speed=0, spin=0) baseline case before the
 speed sweep, unless --skip-stationary -- a working pipeline should hit
@@ -45,10 +45,13 @@ import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
 from dji_serial_bridge.msg import FireCommand
+from geometry_msgs.msg import Point
+from visualization_msgs.msg import Marker, MarkerArray
 
 
 MUZZLE_SPEED = 25.0  # m/s -- ARCC_2026_SENTRY_CONTEXT.md's muzzle-speed cap
@@ -223,11 +226,20 @@ class ShotHitSampler(Node):
     at/after its estimated impact time arrives."""
 
     def __init__(self, hit_radius):
-        super().__init__('shot_hit_test_sampler')
+        # use_sim_time, or marker headers get stamped with wall-clock time
+        # while the rest of the stack (sim, amcl's map->odom TF) runs on
+        # sim time -- rviz then can't resolve the marker's TF at its
+        # timestamp and silently drops it (this was why shot markers
+        # never appeared).
+        super().__init__(
+            'shot_hit_test_sampler',
+            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
+            automatically_declare_parameters_from_overrides=True)
         self.hit_radius = hit_radius
 
         self._root_pos = None
         self._root_rot = None
+        self._root_frame_id = None
         self._head_yaw = 0.0
         self._head_pitch = 0.0
         self._target_pos = None
@@ -237,6 +249,7 @@ class ShotHitSampler(Node):
         self.shots_fired = 0
         self.hits = 0
         self.miss_distances = []
+        self._shot_marker_id = 0
 
         self.create_subscription(Odometry, '/sim/raw_odom', self._on_root_odom, 10)
         self.create_subscription(
@@ -245,6 +258,11 @@ class ShotHitSampler(Node):
             Odometry, '/target/ground_truth_odom', self._on_target_odom, 10)
         self.create_subscription(
             FireCommand, '/dji_serial_bridge/fire_command', self._on_fire_command, 10)
+        # So each shot's straight-line path is visible in rviz
+        # (cv_target.rviz's ShotMarkers display) as it's resolved --
+        # green = hit, red = miss. Not used for hit/miss judging itself,
+        # purely a visualization aid.
+        self.marker_pub = self.create_publisher(MarkerArray, '/shot_markers', 10)
 
     @staticmethod
     def _stamp_s(header_stamp):
@@ -255,6 +273,7 @@ class ShotHitSampler(Node):
         q = msg.pose.pose.orientation
         self._root_pos = np.array([p.x, p.y, p.z])
         self._root_rot = _rotation_from_quaternion(q.x, q.y, q.z, q.w)
+        self._root_frame_id = msg.header.frame_id
 
     def _on_joint_states(self, msg):
         if 'headlink' in msg.name:
@@ -304,7 +323,8 @@ class ShotHitSampler(Node):
         # re-converge on the target's motion during flight -- this test
         # checks the fire decision's lead against ground truth, not full
         # ballistics, so a single-step estimate is enough.
-        flight_time = float(np.linalg.norm(self._target_pos - muzzle_pos)) / MUZZLE_SPEED
+        shot_range = float(np.linalg.norm(self._target_pos - muzzle_pos))
+        flight_time = shot_range / MUZZLE_SPEED
         impact_time = fire_time + flight_time
 
         self.shots_fired += 1
@@ -312,6 +332,7 @@ class ShotHitSampler(Node):
             'impact_time': impact_time,
             'muzzle_pos': muzzle_pos,
             'aim_dir': aim_dir,
+            'shot_range': shot_range,
         })
 
     def _resolve_pending(self, now_s):
@@ -348,7 +369,29 @@ class ShotHitSampler(Node):
             self.miss_distances.append(best_miss)
             if hit:
                 self.hits += 1
+            self._publish_shot_marker(shot, hit)
         self._pending_shots = still_pending
+
+    def _publish_shot_marker(self, shot, hit):
+        end = shot['muzzle_pos'] + shot['aim_dir'] * shot['shot_range']
+        marker = Marker()
+        marker.header.frame_id = self._root_frame_id or 'odom'
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = 'shots'
+        marker.id = self._shot_marker_id
+        self._shot_marker_id += 1
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
+        marker.pose.position = Point(x=float(end[0]), y=float(end[1]), z=float(end[2]))
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = marker.scale.y = marker.scale.z = 0.05
+        marker.color.a = 1.0
+        if hit:
+            marker.color.r, marker.color.g, marker.color.b = 0.0, 1.0, 0.0
+        else:
+            marker.color.r, marker.color.g, marker.color.b = 1.0, 0.0, 0.0
+        marker.lifetime.sec = 5
+        self.marker_pub.publish(MarkerArray(markers=[marker]))
 
     def finish(self):
         """Shots still pending at sampling end (impact time not yet
@@ -362,6 +405,25 @@ class ShotHitSampler(Node):
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             rclpy.spin_once(self, timeout_sec=0.1)
+
+    def wait_until(self, predicate, timeout, description):
+        """Spins until predicate() is true or timeout (s) elapses, so the
+        sampling window starts once the stack is actually publishing
+        instead of after a guessed fixed sleep. Falls back to the full
+        timeout (and a printed warning) if the predicate never fires --
+        the caller still proceeds rather than hanging forever on a
+        genuinely broken launch."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if predicate():
+                return True
+            rclpy.spin_once(self, timeout_sec=0.1)
+        print(f'[wait_until] timed out after {timeout}s waiting for: {description}')
+        return False
+
+    def nodes_up(self, *names):
+        live = {n for n, _ in self.get_node_names_and_namespaces()}
+        return all(n in live for n in names)
 
 
 def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
@@ -388,20 +450,20 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         os.path.join(log_dir, f'mcb_relay_{speed}_spin{spin_hz:.2f}.log'),
     )
 
-    # Visualization only: sim itself intentionally runs no TF/
+    # Visualization: sim itself intentionally runs no TF/
     # robot_state_publisher (nodes compute their own FK -- see README.md),
-    # so nothing feeds cv_target.rviz's RobotModel display without this.
-    # real_hardware:=false + localization_mode:=none skips SLAM/AMCL and
-    # the real-hardware-only mcb_relay/point_to_cv_target it would
-    # otherwise launch (no conflict with the ones started above); it just
-    # gets robot_state_publisher + pose_translator + odom_tf_broadcaster
-    # onto the graph, sourced from sim's own /pose (pose_emulator) and
-    # /sim/raw_joint_states. Skipped entirely when headless -- nothing to
-    # look at, not worth the extra process tree.
+    # so nothing feeds cv_target.rviz's RobotModel/Map displays without
+    # this. real_hardware:=false skips the real-hardware-only
+    # mcb_relay/point_to_cv_target auto.launch.py would otherwise launch
+    # (no conflict with the ones started above); localization_mode:=amcl
+    # runs map_server + amcl against sentry_localization's default map so
+    # map->odom is actually published (cv_target.rviz's Fixed Frame is
+    # map). Skipped entirely when headless -- nothing to look at, not
+    # worth the extra process tree.
     robot_tf = LaunchTree(
         'robot_tf',
         ['ros2', 'launch', 'sentry_pkg', 'auto.launch.py',
-         'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false'],
+         'real_hardware:=false', 'localization_mode:=amcl', 'use_ekf:=false'],
         os.path.join(log_dir, f'robot_tf_{speed}_spin{spin_hz:.2f}.log'),
     )
 
@@ -409,12 +471,28 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
     sampler = ShotHitSampler(hit_radius=hit_radius)
     try:
         sim.start()
-        sampler.spin_for(6.0)
+        sampler.wait_until(
+            lambda: sampler._root_pos is not None and sampler._target_pos is not None,
+            timeout=30.0, description='/sim/raw_odom + /target/ground_truth_odom publishing')
         cv_bridge.start()
         mcb_relay.start()
+        ready_nodes = ['point_to_cv_target', 'mcb_relay']
         if not headless:
             robot_tf.start()
-        sampler.spin_for(2.0)
+            ready_nodes.append('amcl')
+        sampler.wait_until(
+            lambda: sampler.nodes_up(*ready_nodes),
+            timeout=15.0, description=f'{", ".join(ready_nodes)} nodes up')
+        if not headless:
+            # Node presence just means the process is up, not that the
+            # map_server/amcl lifecycle nodes have been auto-activated by
+            # amcl_lifecycle_manager_node yet -- /map is latched
+            # (transient-local) once map_server is actually serving it, a
+            # much better proxy for "map->odom will resolve" than the node
+            # existing.
+            sampler.wait_until(
+                lambda: sampler.count_publishers('/map') > 0,
+                timeout=15.0, description='/map published (map_server activated)')
 
         sampler.spin_for(duration)
     finally:
@@ -446,7 +524,7 @@ def summarize(speed, spin_hz, sampler, dropped):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--speeds', type=float, nargs='+', default=DEFAULT_SPEEDS)
-    parser.add_argument('--duration', type=float, default=12.0,
+    parser.add_argument('--duration', type=float, default=15.0,
                          help='Seconds of steady-state sampling per speed (wall-clock)')
     parser.add_argument('--hit-radius', type=float, default=DEFAULT_HIT_RADIUS,
                          help='Perpendicular miss distance (m) still counted as a hit')

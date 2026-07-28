@@ -362,7 +362,7 @@ class CvTargetEmulator(Node):
         gt.pose.position.x, gt.pose.position.y, gt.pose.position.z = self._target_pos.tolist()
         gt.pose.orientation.w = 1.0
         gt.scale.x = gt.scale.y = gt.scale.z = 0.2
-        gt.color.g = 1.0
+        gt.color.b = 1.0
         gt.color.a = 0.6
         markers.markers.append(gt)
 

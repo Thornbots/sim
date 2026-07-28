@@ -467,8 +467,8 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
         '<collision name="collision"><geometry><box><size>{s} {s} {h}'
         '</size></box></geometry></collision>'
         '<visual name="visual"><geometry><box><size>{s} {s} {h}</size>'
-        '</box></geometry><material><ambient>0.8 0.1 0.1 1</ambient>'
-        '<diffuse>0.8 0.1 0.1 1</diffuse></material></visual>'
+        '</box></geometry><material><ambient>0.1 0.1 0.8 1</ambient>'
+        '<diffuse>0.1 0.1 0.8 1</diffuse></material></visual>'
         '</link></model></sdf>'
     ).format(name=name, x=x, y=y, z=height / 2.0, s=size, h=height)
     cmd = (f'ros2 run ros_gz_sim create -string {shlex.quote(sdf)} '
