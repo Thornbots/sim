@@ -137,7 +137,7 @@ def generate_launch_description():
         description='Target chassis spin rate (Hz) -- the "wiggle" defense per ARCC_2026_SENTRY_CONTEXT.md (typically 1-2 Hz)'
     )
     cv_noise_pos_stddev_arg = DeclareLaunchArgument(
-        'cv_noise_pos_stddev', default_value='0.03',
+        'cv_noise_pos_stddev', default_value='0.0',
         description='Stddev (m) of Gaussian position noise injected into cv_target_emulator\'s panel_detection'
     )
     cv_dropout_probability_arg = DeclareLaunchArgument(
