@@ -1005,12 +1005,11 @@ Both nodes advance/stamp using `self.get_clock().now()` (which resolves to
 `/clock` under `use_sim_time`), never a wall-clock-derived value:
 `target_driver` integrates position from clock deltas rather than assuming
 the timer's period, and `cv_target_emulator` stamps
-`panel_detection.header.stamp` from its own clock at actual publish time
-rather than forwarding `/target/ground_truth_odom`'s stamp.
-`point_to_cv_target.on_panel` derives
-its EMA `dt` straight from that header, so either shortcut would silently
-mislabel every downstream velocity/acceleration estimate if sim's
-real-time-factor ever drifts from 1.0.
+`panel_detection.header.stamp` from its own clock at **sample** time (when
+the candidate panels were evaluated), not flush time -- `publish_latency_s`
+is purely the delivery delay layered on top via a pending queue, so
+`now - header.stamp` downstream actually reflects that latency instead of
+reading ≈0 regardless of it.
 
 **Path geometry and the dwell-count guard.** `target_driver`'s default path
 is a lateral bounce at fixed depth `x=3.0m`, `y∈[-2.0, 2.0]`, `z=0.3m`.
