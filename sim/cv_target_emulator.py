@@ -12,7 +12,11 @@ being visible only from roughly in front of it -- so as the chassis spins
 ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot characteristics" section
 describes. Among presenting panels also inside the camera's FOV/range, the
 most head-on one is published on cv/panel_detection (PanelDetection) --
-exactly what point_to_cv_target.py subscribes to. Corners are the panel's
+exactly what point_to_cv_target.py subscribes to. ALL qualifying panels
+(not just the most head-on) are also published on cv/panel_detections
+(PanelDetectionArray) -- the real roi_depth_node's output shape, kept
+alongside the single-panel topic for the transition (see README.md).
+Corners are the panel's
 true PANEL_SIZE square (ground truth, not depth-approximated like the
 real roi_depth_node), built from its outward normal so they carry the
 same S122 cant. Target position is REP-103 relative to the camera
@@ -33,7 +37,7 @@ from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import Point, Point32
-from dji_serial_bridge.msg import PanelDetection
+from dji_serial_bridge.msg import PanelDetection, PanelDetectionArray
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -181,7 +185,7 @@ class CvTargetEmulator(Node):
         self._target_pos = None
         self._target_rot = None
         self._target_frame_id = None
-        self._pending = []  # [(publish_ros_time, PanelDetection)]
+        self._pending = []  # [dict(publish_at, sample_stamp, single, array)]
 
         # In-frustum dwell tracking (per README.md's dwell-count guard --
         # the test script counts these via panel_detection arrival timing;
@@ -189,6 +193,8 @@ class CvTargetEmulator(Node):
         self._dwell_count = 0
 
         self.panel_pub = self.create_publisher(PanelDetection, 'cv/panel_detection', 10)
+        self.panel_array_pub = self.create_publisher(
+            PanelDetectionArray, 'cv/panel_detections', 10)
         self.marker_pub = self.create_publisher(MarkerArray, 'target_markers', 10)
 
         self.create_subscription(Odometry, '/sim/raw_odom', self.on_root_odom, 10)
@@ -279,6 +285,40 @@ class CvTargetEmulator(Node):
         t_camera = t_head @ t_headpitch
         return t_camera[:3, 3], t_camera[:3, :3]
 
+    def _make_detection(self, cand, cam_pos, cam_rot):
+        """Build one noisy PanelDetection from a qualifying candidate tuple,
+        or None if this draw dropped out. Same noise/corner construction as
+        the single-best path used before this was split out for the array."""
+        _, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir = cand
+        if np.random.uniform() < self.get_parameter('dropout_probability').value:
+            return None
+
+        stddev = self.get_parameter('noise_pos_stddev').value
+        fwd_n = fwd + np.random.normal(0.0, stddev)
+        left_n = left + np.random.normal(0.0, stddev)
+        up_n = up + np.random.normal(0.0, stddev)
+
+        half = PANEL_SIZE / 2.0
+        noise = np.array([fwd_n - fwd, left_n - left, up_n - up])
+        corners_world = [
+            panel_pos - half * right_dir + half * up_dir,  # TL
+            panel_pos + half * right_dir + half * up_dir,  # TR
+            panel_pos + half * right_dir - half * up_dir,  # BR
+            panel_pos - half * right_dir - half * up_dir,  # BL
+        ]
+
+        def to_point32(world_pt):
+            rel_cam = cam_rot.T @ (world_pt - cam_pos) + noise
+            return Point32(x=float(rel_cam[0]), y=float(rel_cam[1]), z=float(rel_cam[2]))
+
+        detection = PanelDetection()
+        detection.corners = [to_point32(c) for c in corners_world]
+        detection.center = Point32(x=fwd_n, y=left_n, z=up_n)
+        detection.depth_m = fwd_n
+        detection.confidence = 1.0
+        detection.class_id = 0
+        return detection
+
     def on_timer(self):
         self._flush_pending()
 
@@ -299,7 +339,11 @@ class CvTargetEmulator(Node):
         far = self.get_parameter('range_far').value
         max_view_angle = self.get_parameter('panel_view_half_angle').value
 
-        best = None  # (view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir)
+        # Every panel that qualifies (in range, in FOV, presenting within
+        # max_view_angle) -- not just the most head-on one, so the array
+        # output below carries all simultaneously-visible panels the way
+        # the real roi_depth_node would from one YOLO frame.
+        qualifying = []  # [(view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir)]
         for panel_pos, panel_normal, right_dir, up_dir in panels:
             # REP-103 (fwd, left, up) relative to the camera -- see module
             # docstring for why this convention, not optical.
@@ -322,10 +366,9 @@ class CvTargetEmulator(Node):
             if view_angle > max_view_angle:
                 continue
 
-            if best is None or view_angle < best[0]:
-                best = (view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir)
+            qualifying.append((view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir))
 
-        if best is None:
+        if not qualifying:
             if self._dwell_count > 0:
                 self.get_logger().info(
                     f"no panel presenting after {self._dwell_count} consecutive samples")
@@ -333,52 +376,42 @@ class CvTargetEmulator(Node):
             self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world=None)
             return
 
-        if np.random.uniform() < self.get_parameter('dropout_probability').value:
+        best = min(qualifying, key=lambda c: c[0])
+        single = self._make_detection(best, cam_pos, cam_rot)
+
+        if single is None:
             self._dwell_count = 0  # dropout breaks the dwell run too
             self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world=None)
-            return
+        else:
+            self._dwell_count += 1
+            _, _, _, _, panel_pos, panel_normal, right_dir, up_dir = best
+            # World-frame position of the noisy detection, purely for the
+            # rviz markers below -- the actual panel_detection payload stays
+            # camera-relative REP-103, unaffected by this.
+            detected_world = cam_pos + cam_rot @ np.array(
+                [single.center.x, single.center.y, single.center.z])
+            self._publish_markers(
+                world_frame, panels, cam_pos, cam_rot, detected_world,
+                panel_normal, right_dir, up_dir)
 
-        _, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir = best
-        stddev = self.get_parameter('noise_pos_stddev').value
-        fwd_n = fwd + np.random.normal(0.0, stddev)
-        left_n = left + np.random.normal(0.0, stddev)
-        up_n = up + np.random.normal(0.0, stddev)
-        self._dwell_count += 1
+        # Independent noise/dropout draw per candidate -- each panel is an
+        # independent detection, same as the real pipeline treating each
+        # YOLO box separately.
+        array_detections = [d for d in
+                             (self._make_detection(c, cam_pos, cam_rot) for c in qualifying)
+                             if d is not None]
 
-        # World-frame position of the noisy detection, purely for the rviz
-        # markers below -- the actual panel_detection payload (fwd_n/left_n/
-        # up_n) stays camera-relative REP-103, unaffected by this.
-        detected_world = cam_pos + cam_rot @ np.array([fwd_n, left_n, up_n])
-        self._publish_markers(
-            world_frame, panels, cam_pos, cam_rot, detected_world,
-            panel_normal, right_dir, up_dir)
-
-        # True PANEL_SIZE square corners (ground truth, unlike the real
-        # roi_depth_node's single-depth planar approximation), same additive
-        # position noise as the center so the polygon stays rigid.
-        half = PANEL_SIZE / 2.0
-        noise = np.array([fwd_n - fwd, left_n - left, up_n - up])
-        corners_world = [
-            panel_pos - half * right_dir + half * up_dir,  # TL
-            panel_pos + half * right_dir + half * up_dir,  # TR
-            panel_pos + half * right_dir - half * up_dir,  # BR
-            panel_pos - half * right_dir - half * up_dir,  # BL
-        ]
-
-        def to_point32(world_pt):
-            rel_cam = cam_rot.T @ (world_pt - cam_pos) + noise
-            return Point32(x=float(rel_cam[0]), y=float(rel_cam[1]), z=float(rel_cam[2]))
-
-        detection = PanelDetection()
-        detection.corners = [to_point32(c) for c in corners_world]
-        detection.center = Point32(x=fwd_n, y=left_n, z=up_n)
-        detection.depth_m = fwd_n
-        detection.confidence = 1.0
-        detection.class_id = 0
-
+        # Stamp at sample time (now), not flush time -- see _flush_pending.
+        # publish_latency_s is purely the delivery delay from here on.
+        sample_stamp = self.get_clock().now().to_msg()
         latency_s = self.get_parameter('publish_latency_s').value
         publish_at = self.get_clock().now() + rclpy.duration.Duration(seconds=latency_s)
-        self._pending.append((publish_at, detection))
+        self._pending.append({
+            'publish_at': publish_at,
+            'sample_stamp': sample_stamp,
+            'single': single,
+            'array': array_detections,
+        })
 
     def _publish_markers(self, frame_id, panels, cam_pos, cam_rot, detected_world,
                           detected_normal=None, detected_right=None, detected_up=None):
@@ -481,17 +514,24 @@ class CvTargetEmulator(Node):
     def _flush_pending(self):
         now = self.get_clock().now()
         still_pending = []
-        for publish_at, detection in self._pending:
-            if now >= publish_at:
-                # Stamp from this node's own clock at actual publish time
-                # (sim time under use_sim_time) -- point_to_cv_target.on_panel
-                # derives dt straight from this header, so any other stamp
-                # source (forwarded ground truth, wall time) breaks it.
-                detection.header.stamp = self.get_clock().now().to_msg()
-                detection.header.frame_id = 'camera'
-                self.panel_pub.publish(detection)
+        for item in self._pending:
+            if now >= item['publish_at']:
+                stamp = item['sample_stamp']  # sample time, not flush time
+                if item['single'] is not None:
+                    item['single'].header.stamp = stamp
+                    item['single'].header.frame_id = 'camera'
+                    self.panel_pub.publish(item['single'])
+
+                array_msg = PanelDetectionArray()
+                array_msg.header.stamp = stamp
+                array_msg.header.frame_id = 'camera'
+                for d in item['array']:
+                    d.header.stamp = stamp
+                    d.header.frame_id = 'camera'
+                array_msg.detections = item['array']
+                self.panel_array_pub.publish(array_msg)
             else:
-                still_pending.append((publish_at, detection))
+                still_pending.append(item)
         self._pending = still_pending
 
 

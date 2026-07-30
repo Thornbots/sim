@@ -450,22 +450,26 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         os.path.join(log_dir, f'mcb_relay_{speed}_spin{spin_hz:.2f}.log'),
     )
 
-    # Visualization: sim itself intentionally runs no TF/
-    # robot_state_publisher (nodes compute their own FK -- see README.md),
-    # so nothing feeds cv_target.rviz's RobotModel display without this.
-    # real_hardware:=false skips the real-hardware-only mcb_relay/
-    # point_to_cv_target auto.launch.py would otherwise launch (no
-    # conflict with the ones started above); localization_mode:=none
-    # skips map_server/amcl entirely -- odom_tf_broadcaster (always
-    # launched, independent of localization_mode) still publishes
-    # odom->root, which is all cv_target.rviz needs since its Fixed
-    # Frame is odom, not map. Faster startup, no amcl process tree.
-    # Skipped entirely when headless -- nothing to look at, not worth
-    # the extra process tree.
+    # TF chain: sim itself intentionally runs no TF/robot_state_publisher
+    # (nodes compute their own FK -- see README.md), so this is what feeds
+    # both cv_target.rviz's RobotModel display AND, once Phase 2 lands,
+    # target_tracker.py's lookupTransform(odom, camera, stamp) -- load-
+    # bearing, not just a visualization aid, hence unconditional (not
+    # gated on `not headless` as it once was). real_hardware:=false skips
+    # the real-hardware-only mcb_relay auto.launch.py would otherwise
+    # launch; enable_cv_target_bridge:=false and enable_target_selector:=
+    # false skip its point_to_cv_target/target_selector instances -- both
+    # already run standalone (cv_bridge above), and auto.launch.py's own
+    # copies would otherwise double-publish /sentry/fire_command and
+    # /cv/panel_detection alongside them. localization_mode:=none skips
+    # map_server/amcl entirely -- odom_tf_broadcaster (always launched,
+    # independent of localization_mode) still publishes odom->root, which
+    # is all cv_target.rviz needs since its Fixed Frame is odom, not map.
     robot_tf = LaunchTree(
         'robot_tf',
         ['ros2', 'launch', 'sentry_pkg', 'auto.launch.py',
-         'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false'],
+         'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false',
+         'enable_cv_target_bridge:=false', 'enable_target_selector:=false'],
         os.path.join(log_dir, f'robot_tf_{speed}_spin{spin_hz:.2f}.log'),
     )
 
@@ -478,10 +482,8 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
             timeout=30.0, description='/sim/raw_odom + /target/ground_truth_odom publishing')
         cv_bridge.start()
         mcb_relay.start()
-        ready_nodes = ['point_to_cv_target', 'mcb_relay']
-        if not headless:
-            robot_tf.start()
-            ready_nodes.append('robot_state_publisher')
+        robot_tf.start()
+        ready_nodes = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher']
         sampler.wait_until(
             lambda: sampler.nodes_up(*ready_nodes),
             timeout=15.0, description=f'{", ".join(ready_nodes)} nodes up')
@@ -491,8 +493,7 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         dropped = sampler.finish()
         cv_bridge.stop()
         mcb_relay.stop()
-        if not headless:
-            robot_tf.stop()
+        robot_tf.stop()
         sim.stop()
         sampler.destroy_node()
         rclpy.shutdown()
