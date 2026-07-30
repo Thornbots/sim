@@ -20,18 +20,35 @@ that panel's 145-degree front exposure cone (ARCC_2026_SENTRY_CONTEXT.md)
 -- geometrically on-target from behind the panel still misses.
 
 Requires mcb_relay.py to actually relay a FireCommand onto
-/dji_serial_bridge/fire_command (wired 2026-07-27) and an upstream
-firing-logic node to publish one (not yet written as of 2026-07-27).
-Until that node exists this reports zero shots for every speed -- a real
-result (no fire commands were ever sent), not a bug in this script.
+/dji_serial_bridge/fire_command (wired 2026-07-27) and point_to_cv_target's
+placeholder fire trigger (fire_rate_hz, no lead/HP/heat/power gating --
+see sentry_pkg/README.md) to publish one. Shots are observed today; a
+"zero shots" result now means something is actually broken in the launched
+stack, not an expected gap.
 
 Usage: python3 run_shot_hit_tests.py [--speeds 0.5 1 2 4]
 [--duration 15.0] [--hit-radius 0.05] [--headless] [--skip-stationary]
+[--lead {off,on,both}] [--head-slew-hz 0.5]
 
 Runs a completely stationary (speed=0, spin=0) baseline case before the
 speed sweep, unless --skip-stationary -- a working pipeline should hit
 this trivially, so a miss there means the harness itself is broken, not
 that tracking/prediction is hard.
+
+--lead (default both) controls point_to_cv_target's lead_enabled param --
+"both" runs every scenario (baseline, sweep, head-slew) twice, once with
+lead off and once on, so the deliverable is a hit-rate table per cell
+(plan Phase 6), not a single number.
+
+--head-slew-hz (default 0.5, 0 to disable) adds one more scenario: a
+stationary, non-spinning target with the head independently oscillating
+at that rate (sim/head_sweep.py, launched instead of cv_head_aim -- see
+sim.launch.py's head_sweep_hz arg) rather than tracking the target. Checks
+target_tracker's TF-based head-motion decoupling in isolation (plan
+verification item 5) -- distinct from every other scenario here, where the
+head also moves, but only because it's tracking the target, so "lead
+works" and "lead works while the head moves" were never actually
+distinguishable before this case existed.
 """
 import argparse
 import math
@@ -67,6 +84,12 @@ POINT_TO_CV_TARGET_BIN = (
 )
 MCB_RELAY_BIN = (
     '/workspaces/isaac_ros-dev/install/sentry_pkg/lib/sentry_pkg/mcb_relay'
+)
+TARGET_SELECTOR_BIN = (
+    '/workspaces/isaac_ros-dev/install/sentry_pkg/lib/sentry_pkg/target_selector'
+)
+TARGET_TRACKER_BIN = (
+    '/workspaces/isaac_ros-dev/install/sentry_pkg/lib/sentry_pkg/target_tracker'
 )
 CV_RVIZ_CONFIG = '/workspaces/isaac_ros-dev/install/sim/share/sim/rviz/cv_target.rviz'
 
@@ -132,10 +155,22 @@ PANEL_RADIUS_Y = 0.24  # chassis-center-to-panel offset, left/right
 # "What an armor panel actually looks like" / cv_target_emulator.PANEL_SIZE).
 PANEL_SIZE = 0.1
 DEFAULT_HIT_RADIUS = PANEL_SIZE / 2.0  # inscribed-circle half-side
-# "front 145 of the panel's exposure surface must stay unblocked"
-# (ARCC_2026_SENTRY_CONTEXT.md line 237) -- a shot arriving outside this
-# cone couldn't have registered on the real panel even if it's
-# geometrically on-target, so the angle check matters as much as distance.
+# Hit-registration cone: a shot arriving from behind this angle couldn't
+# have registered on the real panel even if geometrically on-target.
+# Deliberately NOT the same number as cv_target_emulator.py's
+# panel_view_half_angle (75 deg = 150 deg full) even though both are
+# panel-facing-angle gates -- they answer different physical questions.
+# panel_view_half_angle asks "could YOLO plausibly see this panel at all"
+# (a detection-visibility gate, checked at detection time from the
+# camera's bearing); this asks "did the panel's front face register the
+# hit" (checked at impact time from the projectile's arrival direction).
+# ARCC_2026_SENTRY_CONTEXT.md's 145 deg (line 237) is stated there as a
+# MOUNTING-CLEARANCE requirement ("front 145 of the panel's exposure
+# surface must stay unblocked"), not a hit-registration spec -- reusing it
+# here is a deliberate stand-in, not a literal citation of an authoritative
+# hit-registration cone (no such number exists in the doc). Chosen
+# explicitly rather than left as an unexplained numeric coincidence with
+# the emulator's 72.5 deg-vs-75 deg gap.
 PANEL_EXPOSURE_HALF_ANGLE = math.radians(145.0 / 2.0)
 # S122 (ARCC_2026_SENTRY_CONTEXT.md "Mounting angle"): panel outward normal
 # makes a 75-degree angle with straight-up, i.e. canted ~15 degrees off
@@ -426,42 +461,63 @@ class ShotHitSampler(Node):
         return all(n in live for n in names)
 
 
-def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
+def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
+                   lead_enabled=False, head_sweep_hz=0.0):
+    tag = f'{speed}_spin{spin_hz:.2f}_lead{int(lead_enabled)}_slew{head_sweep_hz:.2f}'
     sim_cmd = [
         'ros2', 'launch', 'sim', 'sim.launch.py',
         'spawn_target:=true', f'target_speed:={speed}',
-        f'target_spin_hz:={spin_hz}',
+        f'target_spin_hz:={spin_hz}', f'head_sweep_hz:={head_sweep_hz}',
     ]
     if headless:
         sim_cmd += ['gui:=false', 'rviz:=false']
     else:
         sim_cmd.append(f'rviz_config:={CV_RVIZ_CONFIG}')
-    sim = LaunchTree(
-        'sim', sim_cmd, os.path.join(log_dir, f'sim_{speed}_spin{spin_hz:.2f}.log'))
+    sim = LaunchTree('sim', sim_cmd, os.path.join(log_dir, f'sim_{tag}.log'))
 
+    # Full production pipeline standalone (mirrors auto.launch.py's node
+    # set minus dji_serial_bridge/lidar/localization, which this test
+    # doesn't need): target_selector groups+picks from the emulator's
+    # panel_detections array, target_tracker estimates the spin-centre in
+    # odom, point_to_cv_target solves the (optional) lead and emits
+    # /cv/target, mcb_relay forwards to /dji_serial_bridge/fire_command.
+    target_selector = LaunchTree(
+        'target_selector',
+        [TARGET_SELECTOR_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
+        os.path.join(log_dir, f'target_selector_{tag}.log'),
+    )
+    target_tracker = LaunchTree(
+        'target_tracker',
+        [TARGET_TRACKER_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
+        os.path.join(log_dir, f'target_tracker_{tag}.log'),
+    )
     cv_bridge = LaunchTree(
         'point_to_cv_target',
-        [POINT_TO_CV_TARGET_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
-        os.path.join(log_dir, f'point_to_cv_target_{speed}_spin{spin_hz:.2f}.log'),
+        [POINT_TO_CV_TARGET_BIN, '--ros-args',
+         '-p', 'use_sim_time:=true',
+         '-p', f'lead_enabled:={"true" if lead_enabled else "false"}'],
+        os.path.join(log_dir, f'point_to_cv_target_{tag}.log'),
     )
     mcb_relay = LaunchTree(
         'mcb_relay',
         [MCB_RELAY_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
-        os.path.join(log_dir, f'mcb_relay_{speed}_spin{spin_hz:.2f}.log'),
+        os.path.join(log_dir, f'mcb_relay_{tag}.log'),
     )
 
     # TF chain: sim itself intentionally runs no TF/robot_state_publisher
     # (nodes compute their own FK -- see README.md), so this is what feeds
-    # both cv_target.rviz's RobotModel display AND, once Phase 2 lands,
-    # target_tracker.py's lookupTransform(odom, camera, stamp) -- load-
-    # bearing, not just a visualization aid, hence unconditional (not
-    # gated on `not headless` as it once was). real_hardware:=false skips
-    # the real-hardware-only mcb_relay auto.launch.py would otherwise
-    # launch; enable_cv_target_bridge:=false and enable_target_selector:=
-    # false skip its point_to_cv_target/target_selector instances -- both
-    # already run standalone (cv_bridge above), and auto.launch.py's own
-    # copies would otherwise double-publish /sentry/fire_command and
-    # /cv/panel_detection alongside them. localization_mode:=none skips
+    # both cv_target.rviz's RobotModel display AND target_tracker.py's
+    # lookupTransform(odom, camera, stamp) / point_to_cv_target.py's
+    # lookupTransform(root, odom, ...) -- load-bearing, not just a
+    # visualization aid, hence unconditional (not gated on `not headless`
+    # as it once was). real_hardware:=false skips the real-hardware-only
+    # mcb_relay auto.launch.py would otherwise launch; enable_cv_target_
+    # bridge:=false, enable_target_selector:=false and
+    # enable_target_tracker:=false skip its point_to_cv_target/
+    # target_selector/target_tracker instances -- all three already run
+    # standalone above, and auto.launch.py's own copies would otherwise
+    # double-publish /sentry/fire_command, /cv/panel_detection and
+    # /cv/target_state alongside them. localization_mode:=none skips
     # map_server/amcl entirely -- odom_tf_broadcaster (always launched,
     # independent of localization_mode) still publishes odom->root, which
     # is all cv_target.rviz needs since its Fixed Frame is odom, not map.
@@ -469,8 +525,9 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         'robot_tf',
         ['ros2', 'launch', 'sentry_pkg', 'auto.launch.py',
          'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false',
-         'enable_cv_target_bridge:=false', 'enable_target_selector:=false'],
-        os.path.join(log_dir, f'robot_tf_{speed}_spin{spin_hz:.2f}.log'),
+         'enable_cv_target_bridge:=false', 'enable_target_selector:=false',
+         'enable_target_tracker:=false'],
+        os.path.join(log_dir, f'robot_tf_{tag}.log'),
     )
 
     rclpy.init()
@@ -480,10 +537,13 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         sampler.wait_until(
             lambda: sampler._root_pos is not None and sampler._target_pos is not None,
             timeout=30.0, description='/sim/raw_odom + /target/ground_truth_odom publishing')
+        robot_tf.start()
+        target_selector.start()
+        target_tracker.start()
         cv_bridge.start()
         mcb_relay.start()
-        robot_tf.start()
-        ready_nodes = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher']
+        ready_nodes = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher',
+                        'target_selector', 'target_tracker']
         sampler.wait_until(
             lambda: sampler.nodes_up(*ready_nodes),
             timeout=15.0, description=f'{", ".join(ready_nodes)} nodes up')
@@ -493,6 +553,8 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
         dropped = sampler.finish()
         cv_bridge.stop()
         mcb_relay.stop()
+        target_tracker.stop()
+        target_selector.stop()
         robot_tf.stop()
         sim.stop()
         sampler.destroy_node()
@@ -501,13 +563,13 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
     return sampler, dropped
 
 
-def summarize(speed, spin_hz, sampler, dropped):
+def summarize(label, sampler, dropped):
     hit_pct = (100.0 * sampler.hits / sampler.shots_fired) if sampler.shots_fired else float('nan')
     miss = sampler.miss_distances
     miss_mean = sum(miss) / len(miss) if miss else float('nan')
     miss_max = max(miss) if miss else float('nan')
     print(
-        f"speed={speed:5.2f} m/s | spin={spin_hz:4.2f} Hz | "
+        f"{label:38s} | "
         f"shots={sampler.shots_fired:4d} | hits={sampler.hits:4d} ({hit_pct:5.1f}%) | "
         f"miss dist mean={miss_mean:6.3f} max={miss_max:6.3f} m | dropped={dropped}"
     )
@@ -526,39 +588,57 @@ def main():
                          help='Skip the speed=0/spin=0 baseline case run before the sweep')
     parser.add_argument('--only-stationary', action='store_true',
                          help='Run only the speed=0/spin=0 baseline case, skip the speed sweep entirely')
+    parser.add_argument('--lead', choices=['off', 'on', 'both'], default='both',
+                         help="point_to_cv_target's lead_enabled -- 'both' runs every "
+                              'scenario twice for a before/after hit-rate table (plan Phase 6)')
+    parser.add_argument('--head-slew-hz', type=float, default=0.5,
+                         help='Stationary-target, head-independently-slewing scenario at this '
+                              'rate (0 to disable) -- see module docstring')
     parser.add_argument('--log-dir', default='/tmp/shot_hit_test_logs')
     args = parser.parse_args()
 
     os.makedirs(args.log_dir, exist_ok=True)
     speed_min, speed_max = min(args.speeds), max(args.speeds)
+    lead_values = [False, True] if args.lead == 'both' else [args.lead == 'on']
 
     any_shots = False
 
-    if not args.skip_stationary:
-        # Completely stationary (speed=0, spin=0) baseline, not part of the
-        # inverse speed<->spin sweep -- a real prediction/aim pipeline
-        # should hit this trivially, so a miss here means the harness
-        # itself is broken, not that tracking/prediction is hard.
-        print('\n=== stationary baseline: speed=0.00 m/s, spin=0.00 Hz ===')
+    def run_and_report(label, speed, spin_hz, lead_enabled, head_sweep_hz=0.0):
+        nonlocal any_shots
+        full_label = f'{label} | lead={"on" if lead_enabled else "off"}'
+        print(f'\n=== {full_label} ===')
         sampler, dropped = run_one_speed(
-            0.0, 0.0, args.duration, args.headless, args.log_dir, args.hit_radius)
-        got_shots = summarize(0.0, 0.0, sampler, dropped)
+            speed, spin_hz, args.duration, args.headless, args.log_dir, args.hit_radius,
+            lead_enabled=lead_enabled, head_sweep_hz=head_sweep_hz)
+        got_shots = summarize(full_label, sampler, dropped)
         any_shots = any_shots or got_shots
         time.sleep(1.0)
 
-    if not args.only_stationary:
-        for speed in args.speeds:
-            spin_hz = spin_hz_for_speed(speed, speed_min, speed_max)
-            print(f'\n=== speed={speed} m/s, spin={spin_hz:.2f} Hz ===')
-            sampler, dropped = run_one_speed(
-                speed, spin_hz, args.duration, args.headless, args.log_dir, args.hit_radius)
-            got_shots = summarize(speed, spin_hz, sampler, dropped)
-            any_shots = any_shots or got_shots
-            time.sleep(1.0)
+    for lead_enabled in lead_values:
+        if not args.skip_stationary:
+            # Completely stationary (speed=0, spin=0) baseline, not part of
+            # the inverse speed<->spin sweep -- a real prediction/aim
+            # pipeline should hit this trivially, so a miss here means the
+            # harness itself is broken, not that tracking/prediction is
+            # hard.
+            run_and_report('stationary baseline: speed=0.00 m/s, spin=0.00 Hz',
+                            0.0, 0.0, lead_enabled)
+
+        if not args.only_stationary:
+            for speed in args.speeds:
+                spin_hz = spin_hz_for_speed(speed, speed_min, speed_max)
+                run_and_report(f'speed={speed} m/s, spin={spin_hz:.2f} Hz',
+                                speed, spin_hz, lead_enabled)
+
+        if args.head_slew_hz > 0.0 and not args.only_stationary:
+            run_and_report(
+                f'head-slew: stationary target, head @ {args.head_slew_hz:.2f} Hz',
+                0.0, 0.0, lead_enabled, head_sweep_hz=args.head_slew_hz)
 
     if not any_shots:
-        print('\nNo shots observed at any speed -- sentry_pkg is not yet publishing on '
-              '/dji_serial_bridge/fire_command (expected until its firing-logic node exists).')
+        print('\nNo shots observed in any scenario -- something in the launched stack is '
+              'broken (mcb_relay not relaying, point_to_cv_target not firing, or a node '
+              'failed to start; check the per-node logs in --log-dir).')
         sys.exit(1)
     print('\nDone.')
 
