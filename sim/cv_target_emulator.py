@@ -141,9 +141,13 @@ _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
 _PANEL_OFFSETS_RAD = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
 _PANEL_NAMES = ('front', 'left', 'back', 'right')
 _PANEL_USES_RADIUS_X = (True, False, True, False)  # front/back vs left/right
-# Small Armor Module (Standard-class, most ARCC opponents per
-# ARCC_2026_SENTRY_CONTEXT.md) is a flat 0.1m x 0.1m square -- confirmed
-# 2026-07-27, supersedes the earlier "not authoritative" hedge above.
+# Small Armor Module (Standard-class, most ARCC opponents) approximated as
+# a flat 0.1m x 0.1m square. NOT sourced from ARCC_2026_SENTRY_CONTEXT.md --
+# that doc gives mounting angle/height/offsets but no panel face dimensions
+# (checked 2026-07-29). This is the pass/fail line for run_shot_hit_tests.py's
+# DEFAULT_HIT_RADIUS = PANEL_SIZE/2, so treat any hit-rate number as
+# calibrated on an approximation, not a confirmed spec, until a real
+# dimension is found.
 PANEL_SIZE = 0.1
 # S122 (ARCC_2026_SENTRY_CONTEXT.md "Mounting angle"): panel outward normal
 # makes a 75-degree angle with straight-up, i.e. canted ~15 degrees off
@@ -162,9 +166,14 @@ class CvTargetEmulator(Node):
         self.declare_parameter('image_height', 480)
         self.declare_parameter('range_near', 0.1)
         self.declare_parameter('range_far', 10.0)
-        self.declare_parameter('noise_pos_stddev', 0.0)  # was 0.03, zeroed for now
-        self.declare_parameter('dropout_probability', 0.0)
-        self.declare_parameter('publish_latency_s', 0.0)
+        # Restored to non-zero (plan Phase 6) so run_shot_hit_tests.py's
+        # hit-rate is transferable rather than a noiseless-sim artifact.
+        # publish_latency_s=0.06 is a placeholder pending a real measurement
+        # from point_to_cv_target's LatencyStat (plan verification item 9) --
+        # the plan's own estimate is pipeline latency ~50-100ms.
+        self.declare_parameter('noise_pos_stddev', 0.03)
+        self.declare_parameter('dropout_probability', 0.1)
+        self.declare_parameter('publish_latency_s', 0.06)
         self.declare_parameter('yaw_joint_name', 'headlink')
         self.declare_parameter('pitch_joint_name', 'headpitch')
         self.declare_parameter('panel_radius_x', 0.30)  # front/back, ~600mm chassis length / 2
@@ -289,7 +298,7 @@ class CvTargetEmulator(Node):
         """Build one noisy PanelDetection from a qualifying candidate tuple,
         or None if this draw dropped out. Same noise/corner construction as
         the single-best path used before this was split out for the array."""
-        _, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir = cand
+        _, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir, panel_idx = cand
         if np.random.uniform() < self.get_parameter('dropout_probability').value:
             return None
 
@@ -316,7 +325,7 @@ class CvTargetEmulator(Node):
         detection.center = Point32(x=fwd_n, y=left_n, z=up_n)
         detection.depth_m = fwd_n
         detection.confidence = 1.0
-        detection.class_id = 0
+        detection.class_id = panel_idx
         return detection
 
     def on_timer(self):
@@ -343,8 +352,16 @@ class CvTargetEmulator(Node):
         # max_view_angle) -- not just the most head-on one, so the array
         # output below carries all simultaneously-visible panels the way
         # the real roi_depth_node would from one YOLO frame.
-        qualifying = []  # [(view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir)]
-        for panel_pos, panel_normal, right_dir, up_dir in panels:
+        # panel_idx (0-3, matching _PANEL_OFFSETS_RAD's front/left/back/right
+        # order) stands in for class_id so a spinning target's visible panel
+        # actually changes id as it rotates -- target_tracker.py's
+        # SpinDetector keys entirely off class_id changes, so without this
+        # every detection would report class_id=0 forever and spin
+        # detection would be silently untestable against this emulator (a
+        # real 8-class team+plate-digit id isn't needed for that, just a
+        # value that changes with which panel is visible).
+        qualifying = []  # [(view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir, panel_idx)]
+        for panel_idx, (panel_pos, panel_normal, right_dir, up_dir) in enumerate(panels):
             # REP-103 (fwd, left, up) relative to the camera -- see module
             # docstring for why this convention, not optical.
             rel_world = panel_pos - cam_pos
@@ -366,7 +383,8 @@ class CvTargetEmulator(Node):
             if view_angle > max_view_angle:
                 continue
 
-            qualifying.append((view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir))
+            qualifying.append((view_angle, fwd, left, up, panel_pos, panel_normal,
+                               right_dir, up_dir, panel_idx))
 
         if not qualifying:
             if self._dwell_count > 0:
@@ -384,7 +402,7 @@ class CvTargetEmulator(Node):
             self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world=None)
         else:
             self._dwell_count += 1
-            _, _, _, _, panel_pos, panel_normal, right_dir, up_dir = best
+            _, _, _, _, panel_pos, panel_normal, right_dir, up_dir, _ = best
             # World-frame position of the noisy detection, purely for the
             # rviz markers below -- the actual panel_detection payload stays
             # camera-relative REP-103, unaffected by this.

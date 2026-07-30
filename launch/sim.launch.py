@@ -22,7 +22,7 @@ from launch.actions import (
 from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -137,16 +137,40 @@ def generate_launch_description():
         description='Target chassis spin rate (Hz) -- the "wiggle" defense per ARCC_2026_SENTRY_CONTEXT.md (typically 1-2 Hz)'
     )
     cv_noise_pos_stddev_arg = DeclareLaunchArgument(
-        'cv_noise_pos_stddev', default_value='0.0',
+        'cv_noise_pos_stddev', default_value='0.03',
         description='Stddev (m) of Gaussian position noise injected into cv_target_emulator\'s panel_detection'
     )
     cv_dropout_probability_arg = DeclareLaunchArgument(
-        'cv_dropout_probability', default_value='0.0',
+        'cv_dropout_probability', default_value='0.1',
         description='Per-sample probability (0-1) cv_target_emulator drops an otherwise-valid detection'
     )
     cv_publish_latency_s_arg = DeclareLaunchArgument(
-        'cv_publish_latency_s', default_value='0.0',
-        description='Fixed publish latency (s) cv_target_emulator adds before publishing a detection'
+        'cv_publish_latency_s', default_value='0.06',
+        description='Fixed publish latency (s) cv_target_emulator adds before publishing a detection -- '
+                     '0.06 is a placeholder pending a real measurement (see point_to_cv_target\'s '
+                     'LatencyStat / plan verification item 9), not a measured number.'
+    )
+    head_sweep_hz_arg = DeclareLaunchArgument(
+        'head_sweep_hz', default_value='0.0',
+        description='If > 0, launches sim/head_sweep.py (a controllable yaw '
+                     'oscillation, period = 1/this value) INSTEAD OF '
+                     'cv_head_aim, so the head moves independent of any CV '
+                     'target -- the plan\'s "head-slew" test case, checking '
+                     'that target_tracker\'s TF-based head-motion decoupling '
+                     'holds a stationary target\'s tracked velocity near '
+                     'zero even while the camera itself is moving. 0.0 '
+                     '(default) keeps the normal cv_head_aim tracking '
+                     'behaviour.'
+    )
+    head_sweep_amplitude_rad_arg = DeclareLaunchArgument(
+        'head_sweep_amplitude_rad', default_value='0.2',
+        description='Amplitude for head_sweep_hz above. Default 0.2 rad is '
+                     'deliberately small (camera horizontal_fov=1.5184 rad, '
+                     'half-angle ~0.76 rad) so a stationary CV-test target '
+                     'stays continuously in frustum through the sweep -- '
+                     'head_sweep.py\'s own SLAM-blind-wedge use case (run '
+                     'standalone, not via this arg) wants the much larger '
+                     '2.5 rad default instead.'
     )
 
     world = LaunchConfiguration('world')
@@ -494,14 +518,41 @@ def generate_launch_description():
     # Needs sentry_pkg's auto.launch.py running alongside this (for
     # point_to_cv_target -> /cv/target) -- same spawn_target gate as
     # cv_target_emulator above, since aiming only makes sense once a
-    # target exists to aim at.
+    # target exists to aim at. Mutually exclusive with head_sweep below --
+    # head_sweep_hz > 0 launches head_sweep INSTEAD, for the head-slew test
+    # case (see head_sweep_hz_arg).
     cv_head_aim = Node(
         package='sim',
         executable='cv_head_aim',
         name='cv_head_aim',
         output='screen',
         parameters=[{'use_sim_time': True}],
-        condition=IfCondition(LaunchConfiguration('spawn_target')),
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration('spawn_target'), "' == 'true' and "
+             "float('", LaunchConfiguration('head_sweep_hz'), "') <= 0.0"])),
+    )
+
+    # --- head-slew test case (plan Phase 6): a controllable yaw oscillation
+    # independent of any CV target, so target_tracker's TF-based head-motion
+    # decoupling can be checked against a moving camera / stationary target
+    # (plan verification item 5). See head_sweep_hz_arg.
+    head_sweep = Node(
+        package='sim',
+        executable='head_sweep',
+        name='head_sweep',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'sweep_hz': ParameterValue(
+                LaunchConfiguration('head_sweep_hz'), value_type=float
+            ),
+            'amplitude_rad': ParameterValue(
+                LaunchConfiguration('head_sweep_amplitude_rad'), value_type=float
+            ),
+        }],
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration('spawn_target'), "' == 'true' and "
+             "float('", LaunchConfiguration('head_sweep_hz'), "') > 0.0"])),
     )
 
     # --- rviz2, using sentry_pkg's config (same one sentry_pkg's own launch
@@ -541,6 +592,8 @@ def generate_launch_description():
         cv_noise_pos_stddev_arg,
         cv_dropout_probability_arg,
         cv_publish_latency_s_arg,
+        head_sweep_hz_arg,
+        head_sweep_amplitude_rad_arg,
         gz_resource_path,
         ign_resource_path,
         gz_sim,
@@ -554,6 +607,7 @@ def generate_launch_description():
         target_driver,
         cv_target_emulator,
         cv_head_aim,
+        head_sweep,
         cmd_vel_bridge,
         head_pan_bridge,
         head_pitch_bridge,
