@@ -1,4 +1,4 @@
-# sim — agent notes
+# sim: agent notes
 
 gz-sim simulation of the `ARCC_Field_2026` world plus the spawned `sentry`
 robot, and the home of the localization integration suite. **Reference docs

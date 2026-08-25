@@ -146,7 +146,7 @@ comments and docstrings across `sim/`, moved here so the code stays
 skimmable. Each subheading names the file/topic; the in-code comment for
 that block usually has a one-line pointer back here.
 
-### run_localization_drift_tests.py — overview, WHY THIS EXISTS, standalone-script rationale
+### run_localization_drift_tests.py: overview, WHY THIS EXISTS, standalone-script rationale
 
 Automated integration suite for `sentry_localization`'s map-relative
 localization drift/jerk correction behavior, exercised against sim's
@@ -200,7 +200,7 @@ process-global, not namespaced per launch, so two stacks would collide;
 stop an interactive stack first or run this in a separate terminal after
 tearing yours down.
 
-### run_localization_drift_tests.py — BACKENDS (per-backend TF edge)
+### run_localization_drift_tests.py: BACKENDS (per-backend TF edge)
 
 Each backend owns a different TF edge as its "correction", so scenarios
 watch whichever edge that backend is responsible for, not literally
@@ -262,7 +262,7 @@ watch whichever edge that backend is responsible for, not literally
   building/refining a map, not evaluating localization accuracy against
   one, so these scenarios have no meaningful reading against it.
 
-### run_localization_drift_tests.py — amcl vs amcl+EKF under slip (measured 2026-07-26)
+### run_localization_drift_tests.py: amcl vs amcl+EKF under slip (measured 2026-07-26)
 
 Manual `--backend amcl` vs `--backend amcl --use-ekf` comparison runs
 (`--scenario drift_correction`), run both at the suite's old zero-slip
@@ -288,7 +288,7 @@ measured evidence that `use_ekf:=true` benefits a map-owning backend (not
 just the standalone `none --use-ekf` case `ekf_ground_truth_diag.py`
 already covered). `slam --use-ekf` under slip remains untested.
 
-### run_localization_drift_tests.py — SCENARIOS
+### run_localization_drift_tests.py: SCENARIOS
 
 Run in this order (`baseline`, `noise_correction`, `drift_correction`,
 `drift_correction_obstacle`, `jerk_with_motion`, `odom_stuck`):
@@ -412,7 +412,7 @@ per the user: this suite's purpose is verifying the robot CAN recover
 from a jerk (`jerk_with_motion`), not also independently re-verifying
 the documented case where it structurally can't without motion.
 
-### run_localization_drift_tests.py — PATROL_LEGS / OBSTACLE_XY / OBSTACLE_LOOP_LEGS / OBSTACLE_LOOP_DWELL_SECONDS
+### run_localization_drift_tests.py: PATROL_LEGS / OBSTACLE_XY / OBSTACLE_LOOP_LEGS / OBSTACLE_LOOP_DWELL_SECONDS
 
 `PATROL_LEGS` is no longer driven by any scenario (`noise_correction` and
 `jerk_with_motion` both switched to the bigger `OBSTACLE_LOOP_LEGS`
@@ -495,7 +495,7 @@ yet re-validated against a real run, so re-derive this value from observed
 behavior if 1.0s doesn't get `max_delta` under `MAX_DELTA_THRESHOLD`,
 same caveat as this file's other tuned constants.
 
-### run_localization_drift_tests.py — wait_for_scans_flowing / call_trigger_jerk_and_get_dxdy / drive() waypoint steering / spawn_box_obstacle
+### run_localization_drift_tests.py: wait_for_scans_flowing / call_trigger_jerk_and_get_dxdy / drive() waypoint steering / spawn_box_obstacle
 
 `wait_for_scans_flowing`: used as the real "is the stack actually up and
 processing lidar data" readiness signal, more reliable than checking
@@ -572,7 +572,7 @@ no physics/inertia needed, it should never move on its own. Torn down
 for free when the scenario's full sim teardown kills the whole gz-sim
 process group afterward, so no separate despawn needed.
 
-### run_localization_drift_tests.py — baseline scenario: nonzero absolute offset is expected
+### run_localization_drift_tests.py, baseline scenario: nonzero absolute offset is expected
 
 For slam/amcl, the correction TF is NOT expected to be near (0,0,0) even
 with zero injected noise. The saved ARCC26 map's origin (see
@@ -585,7 +585,7 @@ motion, that offset should not drift further over time (a growing offset
 here, even with noise disabled, would indicate a real problem in the
 backend's steady-state behavior, unrelated to the noise model).
 
-### run_localization_drift_tests.py — noise_correction: fixed 30s window, shared square
+### run_localization_drift_tests.py, noise_correction: fixed 30s window, shared square
 
 `noise_correction` reuses the same 2m hard-cornering square
 `drift_correction`/`drift_correction_obstacle`/`jerk_with_motion` drive
@@ -598,7 +598,7 @@ early-exit-based loop could if the TF ever stalled (see
 the distance-traveled gate opening throughout the window (a fully
 stationary robot wouldn't exercise periodic correction at all).
 
-### run_localization_drift_tests.py — JERK_WITH_MOTION_REPEATS / scenario_jerk_with_motion loop reuse
+### run_localization_drift_tests.py: JERK_WITH_MOTION_REPEATS / scenario_jerk_with_motion loop reuse
 
 `JERK_WITH_MOTION_REPEATS = 8`: number of independent jerk trials
 `scenario_jerk_with_motion` fires within a single launched stack
@@ -633,7 +633,7 @@ correction-fraction history below), cycling with `% 4`
 the trial loop; the extra lap driven after the trial loop continues the
 same cycle rather than restarting it).
 
-### run_localization_drift_tests.py — correction-fraction threshold calibration history (CORRECTION_FRACTION, the 2026-07-23 gz-sim crash, and the fix)
+### run_localization_drift_tests.py: correction-fraction threshold calibration history (CORRECTION_FRACTION, the 2026-07-23 gz-sim crash, and the fix)
 
 This is the calibration history behind the post-jerk correction
 assertion in `scenario_jerk_with_motion`. Read this before changing
@@ -731,7 +731,7 @@ jerk biasing already guards against for the jerk itself. The fix drives
 so the robot still lands exactly on the next corner regardless of what
 the jerk just did.
 
-### run_localization_drift_tests.py — trial fallback pass condition (MAX_DELTA_THRESHOLD)
+### run_localization_drift_tests.py: trial fallback pass condition (MAX_DELTA_THRESHOLD)
 
 A trial also passes if the end state simply lands within
 `MAX_DELTA_THRESHOLD`, the same flat 40cm bound `drift_correction`/
@@ -743,7 +743,7 @@ that's otherwise perfectly healthy; being within the same bound the rest
 of the suite already accepts as "corrected enough" is a legitimate pass
 on its own.
 
-### run_localization_drift_tests.py — MAX_DELTA_THRESHOLD shared bound
+### run_localization_drift_tests.py: MAX_DELTA_THRESHOLD shared bound
 
 `MAX_DELTA_THRESHOLD = 0.40` (meters -- hardened to 0.20 on 2026-07-26,
 raised to 0.30 later the same day once no backend/config tried against
@@ -765,7 +765,7 @@ accumulated during the hard instant-reversal corners (the loop's real
 robot stops at each leg's dwell (confirmed live in rviz), not
 obstacle-robustness or amcl noise.
 
-### pose_emulator.py — odom noise model (drift, jerk, jerk direction bias, continuous slip)
+### pose_emulator.py: odom noise model (drift, jerk, jerk direction bias, continuous slip)
 
 Real hardware's wheel odometry accumulates drift (wheel slip, encoder
 error -- worse on the arena's "Bumpy Road" zone, see
@@ -829,7 +829,7 @@ every 1m the robot actually moves -- wheel odometry systematically
 under-reports distance traveled, growing in proportion to distance
 traveled, not elapsed time. 0.0 (default) disables this.
 
-### head_slider_relay.py — topic-naming restriction and threading fix for input lag
+### head_slider_relay.py: topic-naming restriction and threading fix for input lag
 
 The GUI slider panel always publishes to gz-transport's own
 auto-generated default topic for a joint,
@@ -868,7 +868,7 @@ the publisher only ever sends the most current position -- values that
 arrive while a publish is in flight are dropped, not queued, matching
 where the slider currently sits rather than replaying its history.
 
-### auto_explore.py — teleport mechanism and WorldReset-before-teleport
+### auto_explore.py: teleport mechanism and WorldReset-before-teleport
 
 "Teleport" means an actual gz-sim world-pose write via the
 `/world/<world>/set_pose` gz-transport service (`gz::sim::systems::
@@ -901,7 +901,7 @@ clears joint state, so it's safe to call unconditionally right before
 position/velocity drift even though headlink no longer has an active
 controller that could reintroduce it (see `sentry.urdf.xacro`).
 
-### auto_explore.py — teleport()'s reset_joints() before-and-after calls
+### auto_explore.py: teleport()'s reset_joints() before-and-after calls
 
 `reset_joints()` runs both before AND after `set_pose`: before, so every
 hop starts from a clean joint state; after, because that's actually when
@@ -914,7 +914,7 @@ resulting angular velocity on root itself (root has no joint, so nothing
 here can reset that directly); this just keeps the joints themselves from
 carrying any residual spin forward into the next hop's reaction.
 
-### sim.launch.py — module docstring usage examples
+### sim.launch.py: module docstring usage examples
 
 Full argument list from the trimmed docstring, kept here for reference
 (see also this README's own "Run"/"Useful arguments" section above,
@@ -934,7 +934,7 @@ call `pose_emulator`'s `trigger_jerk` service once sim is up:
 `ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger`.
 `odom_jerk_stddev:=` controls how large that one-time jump is (meters).
 
-### sim.launch.py — spawn_robot uses -string, not -topic (ros_gz_sim create bug)
+### sim.launch.py: spawn_robot uses -string, not -topic (ros_gz_sim create bug)
 
 Deliberately using `-string` (raw URDF text) here, NOT `-topic
 robot_description`. `-topic` makes `create` subscribe to
@@ -948,7 +948,7 @@ no amount of delay fixes it. `-string` sidesteps ROS entirely for this
 one hand-off: xacro's output is substituted directly into the process
 arguments.
 
-### ekf_ground_truth_diag.py — why this standalone diagnostic exists separately from the drift suite
+### ekf_ground_truth_diag.py: why this standalone diagnostic exists separately from the drift suite
 
 Answers the question `run_localization_drift_tests.py` structurally
 can't: *does fusing `/scan_odom` (rf2o) into `/odom` via `ekf_node`
@@ -984,7 +984,7 @@ Both no longer exist in the current tree (file removed; the
 translucent-ground-truth-RobotModel launch block referenced in the task
 isn't present in `launch/sim.launch.py` any more), so nothing to trim.
 
-### target_driver.py / cv_target_emulator.py — CV target simulation, no gz entity
+### target_driver.py / cv_target_emulator.py: CV target simulation, no gz entity
 
 Per user direction, the fast-moving target is **not** a gz entity/model/
 plugin. `target_driver.py` just integrates its own `(x, y, z)` state in a
@@ -1095,7 +1095,7 @@ noise, mirroring `pose_emulator.py`'s "off by default, opt-in via
 `sim.launch.py` args" convention; `spawn_target:=false` (the default)
 changes nothing about existing `sim.launch.py` behavior.
 
-### cv_head_aim.py — CV-driven head tracking, root-frame IK (plan Phase 5)
+### cv_head_aim.py: CV-driven head tracking, root-frame IK (plan Phase 5)
 
 Subscribes `sentry_pkg`'s `/cv/target` (`CVTarget`, published by
 `point_to_cv_target`, which needs `sentry_pkg`'s `auto.launch.py` running
@@ -1162,7 +1162,7 @@ position) once `/cv/target`'s `confidence` drops to `0.0`. It deliberately
 does not snap back to zero, since a lost target is usually a momentary
 FOV/presentation gap, not a reason to re-home.
 
-### CVTarget velocity/acceleration fields — removed 2026-07-28
+### CVTarget velocity/acceleration fields: removed 2026-07-28
 
 `CVTarget` used to carry `v_x/v_y/v_z`/`a_x/a_y/a_z` (finite-differenced
 by `point_to_cv_target`'s EMA filter, `velocity_filter_alpha`/
