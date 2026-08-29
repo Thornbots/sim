@@ -10,10 +10,11 @@ ROS 2 package that launches `gz sim` (Ignition/Gazebo Sim) with the
 sim/
 ├── launch/sim.launch.py       # main launch file
 ├── urdf/sentry_urdf.xacro     # robot description (uses package://sim/meshes/*.stl)
-├── worlds/ARCC_Field_2026.sdf # world file (uses model://sim/world/*.stl)
 ├── meshes/                    # <-- put the ROBOT meshes here: Body.stl, Head.stl,
 │                               #     Lidar.stl, OdoWheel.stl
-└── world/                     # <-- put the WORLD mesh here: composite_part_1.stl
+└── world/                     # world file ARCC_Field_2026.sdf (uses
+                               #   model://sim/world/*.stl), plus the WORLD
+                               #   mesh: composite_part_1.stl
 ```
 
 **You must drop the mesh files in before building.** They weren't part of
@@ -55,7 +56,7 @@ ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
    Ignition releases) to the installed `share/` directory so that
    `model://sim/world/composite_part_1.stl` resolves correctly.
 2. Includes `ros_gz_sim`'s `gz_sim.launch.py` to start the simulator with
-   `worlds/ARCC_Field_2026.sdf` loaded and running (`-r`).
+   `world/ARCC_Field_2026.sdf` loaded and running (`-r`).
 3. Runs `robot_state_publisher`, feeding it the URDF produced by expanding
    `sentry_urdf.xacro` (this is also what lets rviz/tf resolve
    `package://sim/meshes/...` for the robot's own visuals).
@@ -309,7 +310,7 @@ Run in this order (`baseline`, `noise_correction`, `drift_correction`,
    samples shouldn't be more than 2x the first half's max) rather than
    growing without limit.
 3. **drift_correction** tests lidar relocalization performance against
-   accumulated cornering error: drives a hard-cornering 2m square loop
+   accumulated cornering error: drives a hard-cornering 3m square loop
    (`OBSTACLE_LOOP_LEGS`) with no obstacle spawned. The loop's
    instant-reversal corners at real 4.0 m/s accumulate real
    dead-reckoning error faster than amcl's scan-match gate can track it
@@ -328,7 +329,7 @@ Run in this order (`baseline`, `noise_correction`, `drift_correction`,
    spawned into the running world mid-scenario (not present in
    `ARCC_Field_2026.sdf` or the saved ARCC26 map, so from the backend's
    perspective it's a lidar return with no corresponding map feature),
-   driving the 2m square loop centered on it (`OBSTACLE_LOOP_LEGS`, 1m
+   driving the 3m square loop centered on it (`OBSTACLE_LOOP_LEGS`, 1.5m
    out from the box in every direction) so it's seen from every angle
    but never driven into. Asserts the correction TF stays bounded
    relative to its pre-spawn value (one small unmapped object should
@@ -340,9 +341,9 @@ Run in this order (`baseline`, `noise_correction`, `drift_correction`,
 5. **jerk_with_motion** (slam/amcl only, see BACKENDS above) models
    getting hit by another robot or running into a wall: a discrete
    collision impulse, not gradual wheel slip/bumpy terrain. First
-   repositions to `OBSTACLE_LOOP_LEGS`'s own start corner (-0.5,-1.0),
+   repositions to `OBSTACLE_LOOP_LEGS`'s own start corner (-1.5,-1.5),
    then per trial: fire `trigger_jerk`, then drive a SINGLE
-   bounded leg to the next corner of the same 2m hard-cornering square
+   bounded leg to the next corner of the same 3m hard-cornering square
    (`OBSTACLE_LOOP_LEGS`, centered on `OBSTACLE_XY`, one corner advanced
    per trial) and assert EITHER the correction TF produces a prompt,
    real correction whose magnitude tracks the jerk, OR the end state
@@ -456,30 +457,30 @@ more robust to put the box at the loop's own center and size the loop 1m
 out from it in every direction, so clearance is true by construction
 instead of by a chain of one-off offset corrections.
 
-`OBSTACLE_XY = (0.5, 0.0)` is shifted 0.5m south of `PATROL_LEGS`'s own
-loop center (0.5, 0.5) (2026-07-24, per the user watching a live run) so
-the whole square sits 0.5m further from `upper_mid`'s wall and lands its
-south edge exactly on `PATROL_LEGS`'s own already-validated -1.0 floor
-instead of 0.5m short of it. Still open, already-validated territory
-either way (`jerk_with_motion` drives through this area for tens of
-seconds without incident), not a new, untested spot. Not baked into
-`ARCC_Field_2026.sdf` or the saved ARCC26 map, which is the point: from
-the backend's perspective this is a lidar return with no corresponding
-map feature.
+`OBSTACLE_XY = (0.0, 0.0)` is the world origin, which is where the box
+actually spawns and where the robot itself spawns. It was briefly
+`(0.5, 0.0)` (2026-07-24), offset from `PATROL_LEGS`'s loop center, but
+that never matched the spawn point; recentred on the origin 2026-07-26
+(`4f182e7`) along with widening the loop, so the box's position in the
+world and the loop's centre are the same point by construction rather
+than by a chain of offsets. Not baked into `ARCC_Field_2026.sdf` or the
+saved ARCC26 map, which is the point: from the backend's perspective this
+is a lidar return with no corresponding map feature.
 
-`OBSTACLE_LOOP_LEGS` is a 2m square loop centered on `OBSTACLE_XY`,
-corners at (-0.5,-1.0), (1.5,-1.0), (1.5,1.0), (-0.5,1.0), exactly 1m
-out from the box's center on every side (box half-width 0.15m, so ~0.85m
-from each face). Checked against the file's documented wall clearances
-(y-axis only, no x-axis data exists): north edge y=1.0 is 1.49m clear of
-`upper_mid`'s wall at y=2.49 (more margin than before the 0.5m southward
-shift); south edge y=-1.0 lands exactly on `PATROL_LEGS`'s own documented
--1.0 floor, itself a further 1.11m from `lower_mid`'s wall; x extent -0.5
-to 1.5 is only 0.5m beyond the already-validated x=[0,1] core on each
-side (unlike earlier abandoned +1/+2m east excursions), with no wall data to
-check against but a much smaller, more conservative reach into unknown
-territory. Legs are `(vx, vy, duration)` like `PATROL_LEGS`, but 2m per
-side (0.5s at 4.0 m/s) since this loop's side length is 2m, not 1m.
+`OBSTACLE_LOOP_LEGS` is a 3m square loop centered on `OBSTACLE_XY`,
+corners at (-1.5,-1.5), (1.5,-1.5), (1.5,1.5), (-1.5,1.5), 1.5m out from
+the box's center on every side (box half-width 0.15m, so 1.35m from each
+face). Widened from 2m on 2026-07-26 (`4f182e7`) when the loop was
+recentred on the origin. Checked against the file's documented wall
+clearances (y-axis only, no x-axis data exists): north edge y=1.5 clears
+`upper_mid`'s wall at y=2.49 by 0.99m; south edge y=-1.5 clears
+`lower_mid`'s at y=-2.11 by 0.61m, and is 1.85m clear of `bottom_wall`'s
+ramp-adjacent edge at y=-3.35. Note both y margins are tighter than the
+2m loop's were; 0.61m to `lower_mid` is now the binding constraint, so
+re-derive from here rather than from `PATROL_LEGS` if this loop is
+widened again. x extent is -1.5 to 1.5, with no wall data to check
+against. Legs are `(vx, vy, duration)` like `PATROL_LEGS`, 3m per side
+(0.75s at 4.0 m/s).
 
 `OBSTACLE_LOOP_DWELL_SECONDS = 1.0` is a stationary dwell inserted after
 each leg of the cornering loop (2026-07-22) gives the scan/TF pipeline

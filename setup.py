@@ -26,7 +26,6 @@ data_files = [
     (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
 ]
 data_files += data_files_for_dir('urdf', 'urdf')
-data_files += data_files_for_dir('worlds', 'worlds')
 data_files += data_files_for_dir('meshes', 'meshes')
 data_files += data_files_for_dir('world', 'world')
 data_files += data_files_for_dir('rviz', 'rviz')

@@ -56,8 +56,21 @@ be the user's own work. That grep detects a live session only. To get a PID to
 kill, use `kill_launch.sh -l`, since the grep also matches `dexec.sh`'s own
 bash wrapper. Clean up anything *you* started, in a `finally` block.
 
-GUI is on by default for sim and for the drift suite, a standing rule in
-`../SESSION_NOTES.md`. Use `--headless` only when asked.
+## Standing rules
+
+- **GUI on, not headless**, for both `sim` and the drift suite; the user
+  watches the gz-sim window during testing. Pass `--headless` only when asked
+  (e.g. a quick unattended run). Launch as `-u admin` via `dexec.sh -d`, never
+  a bare `docker exec -d`, or the window fails to open; see the
+  `isaac-ros-docker` skill's "Launching GUI apps".
+- **Always fully restart `sim` (fresh spawn) before restarting SLAM/explorer.**
+  Partial restarts leave stale TF/pose state ("pos desync").
+- **If an edit under `sim/` doesn't take effect** for a `ros2 run`/`ros2
+  launch` node, suspect `install/sim` losing its `--symlink-install` linkage
+  (stale copies instead of symlinks) before assuming the edit is wrong. Fix:
+  `rm -rf build/sim install/sim && colcon build --packages-select sim
+  --symlink-install`. Raw scripts like `run_shot_hit_tests.py` run against
+  `src/` directly and are unaffected, which makes this easy to misread.
 
 ## Scope
 
@@ -67,3 +80,42 @@ GUI is on by default for sim and for the drift suite, a standing rule in
   interface and CV target selection to `../sentry_pkg`.
 - Its own git repo (`Thornbots/sim`), so commits here are separate from the
   workspace.
+
+## Open
+
+- **The chassis has zero collision geometry, deliberately** — no link carries
+  any `<collision>`, so the robot drives straight through walls and through
+  `drift_correction_obstacle`'s spawned box. This was the price of making
+  `root` free-floating so `set_pose` teleporting works for `auto_explore.py`'s
+  grid sweep. The box itself has real collision geometry, so lidar/SLAM still
+  see it; only the body passes through. Undecided whether to add a
+  collision-only proxy that doesn't feed torque back into `root`. Revisit if
+  obstacle *avoidance* (not just mapping) becomes something to demonstrate.
+- **The rotation lock is soft (inertia-based only).** A real wall collision can
+  tumble the robot to extreme angles (~86° roll observed). The user chose to
+  accept occasional flips rather than reintroduce a kinematic constraint.
+  Revisit only if flips start blocking exploration in practice.
+- **The slip model corrupts position but not velocity** — `pose_emulator.py`
+  applies `odom_slip_ratio` to `_slipped_x/y` only, while `vel_x`/`vel_y` pass
+  through as true twist. Velocity-only wheel fusion therefore looks better in
+  sim than it will on hardware, where encoder velocity is also wrong during a
+  slip. Make slip corrupt velocity before trusting the +89% EKF number as a
+  hardware prediction.
+- **`drift_correction`/`drift_correction_obstacle` need an ekf-appropriate
+  metric.** Their `MAX_DELTA_THRESHOLD` is calibrated for `map->odom`'s
+  residual-correction semantics; under `odom->root` the delta is mostly the
+  robot's own motion around the loop, so both reliably FAIL without indicating
+  a problem. `test/localization/ekf_ground_truth_diag.py` scores against
+  `/sim/raw_odom` with slip enabled and should probably become the assertion
+  for `--backend ekf`.
+- **The suite drives at 4.0 m/s, where rf2o degrades** (see
+  `../sentry_localization/AGENTS.md`). Either cap the legs' speed or raise the
+  sim lidar's 10 Hz update rate if scan-matcher accuracy starts mattering to a
+  scenario's pass condition.
+- **Never validate odometry on magnitude alone.** An early speed sweep compared
+  `|displacement|` and scored rf2o healthy at ~1% error while it was pointing
+  exactly backwards. Compare displacement *vectors* — the angle between them is
+  what caught it. Applies to any odometry or detection source.
+- ARCC Battlefield zone coordinates (Figures 3-1–3-9 in
+  `../ARCC_2026_SENTRY_CONTEXT.md`) aren't pulled into the world yet, if a
+  precise arena map is ever needed.

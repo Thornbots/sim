@@ -212,7 +212,12 @@ def main():
     if result is None:
         return 1
     odom_s, ekf_s, n = result
-    improvement = (odom_s['mean'] - ekf_s['mean']) / odom_s['mean'] * 100.0
+    # odom mean error is ~never exactly 0 (noise is always injected), but a
+    # short or degenerate run can produce it; don't die on the report.
+    if odom_s['mean'] > 0.0:
+        improvement = (odom_s['mean'] - ekf_s['mean']) / odom_s['mean'] * 100.0
+    else:
+        improvement = float('nan')
     print()
     print(f'=== {n} samples, slip_ratio={args.slip_ratio}, '
           f'drift_stddev={args.drift_stddev} ===')
