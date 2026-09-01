@@ -104,8 +104,8 @@ cv_publish_latency_s:=0.06    # placeholder, not a measured number
 4. Spawns the robot into the running world via `ros_gz_sim create`, passing
    expanded `sentry.urdf.xacro` text with `-string` (not `-topic`; see the
    `spawn_robot` note below for why). Delayed 2s off `clock_bridge`'s start
-   so gz's entity-creation service is up first. **`sim.launch.py` does not
-   run `robot_state_publisher`** -- `sentry_pkg`'s `auto.launch.py` owns
+   so gz's entity-creation service is up first. `sim.launch.py` does not run
+   `robot_state_publisher`; `sentry_pkg`'s `auto.launch.py` owns
    `robot_state_publisher` and TF now.
 5. Bridges the gz-transport topics the xacro's plugins publish on, none of
    which reach ROS by themselves: `/scan` (remapped to `/scan_raw`, since
@@ -160,7 +160,7 @@ GUI and rviz2 (both on by default, per the standing "watch sim live"
 rule); `--speed` overrides the loop's 4.0 m/s, which nothing else has been
 re-validated against.
 
-**Rebuild after editing a `sentry_localization/config/*.yaml`.** That
+Rebuild after editing a `sentry_localization/config/*.yaml`. That
 package's config/launch/map `data_files` are copied at build time, so an
 edited YAML has no effect on the running container until `install/`
 resyncs:
@@ -205,10 +205,10 @@ of seconds per scenario, must run scenarios strictly sequentially with a
 full teardown between them, and needs its measured numbers printed rather
 than buried in a pytest traceback. It manages its own launch trees end to
 end (same setsid/process-group approach as `dexec.sh -d`) and will not
-attach to a stack you already have running -- ROS topics are
-process-global, so two stacks collide. Stop yours first.
+attach to a stack you already have running, because ROS topics are
+process-global and two stacks collide. Stop yours first.
 
-**Per-backend TF edge.** Scenarios watch whichever edge the backend owns,
+Each scenario watches whichever TF edge the backend owns,
 not literally `map->odom` every time (see `BACKEND_FRAMES`):
 
 | backend | owns | notes |
@@ -232,7 +232,7 @@ case for scan-to-scan matching (there's no map to be missing a feature
 from), so `drift_correction` and `drift_correction_obstacle` should read
 similarly there.
 
-**amcl vs amcl+EKF under slip (measured 2026-07-26).** PASS/FAIL shown
+amcl vs amcl+EKF under slip, measured 2026-07-26. PASS/FAIL shown
 against the current 0.40m `MAX_DELTA_THRESHOLD`; the numbers were taken
 against the 0.30m bound in force then.
 
@@ -255,32 +255,32 @@ plain `slam`; see `sentry_localization/README.md`.
 Run in order: `baseline`, `noise_correction`, `drift_correction`,
 `drift_correction_obstacle`, `jerk_with_motion`, `odom_stuck`.
 
-1. **baseline** (`odom_noise_enabled:=false`) asserts the correction TF
+1. `baseline` (`odom_noise_enabled:=false`) asserts the correction TF
    settles and stays stable, and that no log carries an ERROR. It is NOT
    expected near (0,0,0): the saved ARCC26 map's origin
    (`origin: [-4.3, -6.23, 0]`) doesn't coincide with sim's spawn pose, so
    a consistent ~0.1-0.15m offset is normal and reproducible. Stability is
    the actual check; a growing offset with noise disabled would be a real
    steady-state problem.
-2. **noise_correction** drives the shared 3m cornering square under
+2. `noise_correction` drives the shared 3m cornering square under
    continuous drift/jitter (no slip, no jerks) for a fixed 30s (lowered
    from 60s on 2026-07-27 for faster iteration). Asserts the correction
    stays bounded: the second half's samples must not exceed 2x the first
    half's max. The window is fixed rather than early-exiting, so a stalled
    TF can't turn into an open-ended drive.
-3. **drift_correction** drives the same square with no obstacle. Its
+3. `drift_correction` drives the same square with no obstacle. Its
    instant-reversal corners at a real 4.0 m/s accumulate dead-reckoning
    error faster than the scan-match gate tracks it live, and the measured
    wobble is the backend correcting that error once the robot stops at
-   each leg's dwell -- not a wheel-slip artifact.
-4. **drift_correction_obstacle** is strictly harder: same loop, plus a
+   each leg's dwell, rather than a wheel-slip artifact.
+4. `drift_correction_obstacle` is strictly harder: same loop, plus a
    static box spawned mid-scenario at the loop's centre, absent from both
    `ARCC_Field_2026.sdf` and the saved map, so it's a lidar return with no
    map feature behind it. Shares driving code and threshold with
    `drift_correction` on purpose, so comparing the two isolates whether
    the obstacle compounds the cornering wobble. A PASS here means nothing
    if `drift_correction` (run immediately before) failed.
-5. **jerk_with_motion** (slam/amcl only) models a collision impulse
+5. `jerk_with_motion` (slam/amcl only) models a collision impulse
    rather than gradual slip. Per trial: fire `trigger_jerk`, drive one
    bounded leg to the next corner, then assert either a prompt correction
    tracking the jerk's magnitude, or an end state within
@@ -289,25 +289,26 @@ Run in order: `baseline`, `noise_correction`, `drift_correction`,
    random jerk could push the robot into one. The leg is corrected by the
    jerk's actual (dx, dy), so the robot still lands on the intended corner
    and the loop doesn't walk off its clearance-checked geometry. Runs
-   `JERK_WITH_MOTION_REPEATS` (8) trials in one stack -- each
-   `trigger_jerk` is a fresh `random.gauss()` draw, so relaunching per
+   `JERK_WITH_MOTION_REPEATS` (8) trials in one stack, since each
+   `trigger_jerk` is a fresh `random.gauss()` draw and relaunching per
    trial would add 15-20s of overhead for no coverage. ALL trials must
    pass, so one lucky draw can't flip the result. A closing lap follows.
-6. **odom_stuck** models a dead encoder: a one-shot, permanent
+6. `odom_stuck` models a dead encoder: a one-shot, permanent
    `trigger_odom_stuck` pins `/pose`'s x/y and velocities at zero while
    fresh timestamps keep arriving, so nothing looks stale. This is a
-   LIVENESS check, not a correctness one -- with no valid odometry there's
-   nothing to bound drift against. It asserts scans keep being processed
+   LIVENESS check rather than a correctness one, since with no valid
+   odometry there is nothing to bound drift against. It asserts scans keep
+   being processed
    and corrections keep being attempted (pairwise TF spread exceeds
    `ODOM_STUCK_MIN_TF_SPREAD`, 1cm) rather than latching on one value.
 
-   **Measured 2026-07-27**: `--backend amcl` FAILs, latched at 0.0000m
-   spread for the full 30s -- the scan-match gate is driven by
-   *odom-reported* travel, so frozen odom never re-opens it. That's a real
-   finding about the stack's reliance on odom for liveness, not a test
-   bug. `--backend amcl --use-ekf` PASSes with 1.3071m spread, because
-   the EKF keeps odom reporting travel with the encoder input dead. EKF is
-   a real fix for this failure mode, not just noise smoothing.
+   Measured 2026-07-27: `--backend amcl` FAILs, latched at 0.0000m spread
+   for the full 30s, because the scan-match gate is driven by
+   *odom-reported* travel and frozen odom never re-opens it. That is a real
+   finding about the stack's reliance on odom for liveness rather than a
+   test bug. `--backend amcl --use-ekf` PASSes with 1.3071m spread, since
+   the EKF keeps odom reporting travel with the encoder input dead. EKF
+   genuinely fixes this failure mode; it is not only noise smoothing here.
 
 A former `jerk_stationary` scenario (fire a jerk, never move, assert the
 TF must NOT change) was removed 2026-07-23: it re-verified a documented
@@ -326,9 +327,9 @@ construction rather than through a chain of offsets.
 (+-1.5, +-1.5), widened from 2m on 2026-07-26 (`4f182e7`). Wall
 clearances (y-axis only; no x-axis data exists): north edge clears
 `upper_mid` (y=2.49) by 0.99m, south edge clears `lower_mid` (y=-2.11) by
-0.61m and sits 1.85m off `bottom_wall`'s ramp edge (y=-3.35). **0.61m to
-`lower_mid` is the binding constraint** -- re-derive from here, not from
-`PATROL_LEGS`, if this loop is ever widened again. Legs are
+0.61m and sits 1.85m off `bottom_wall`'s ramp edge (y=-3.35). The 0.61m to
+`lower_mid` is the binding constraint, so re-derive from there rather than
+from `PATROL_LEGS` if this loop is ever widened again. Legs are
 `(vx, vy, duration)`, 3m per side, 0.75s at 4.0 m/s.
 
 `OBSTACLE_LOOP_DWELL_SECONDS = 1.0` is a stationary dwell after each leg,
@@ -374,7 +375,7 @@ Commanded speed is capped at `dist / CONTROL_PERIOD`, tapering as the
 target nears. Held at full nominal speed it visibly oscillated at every
 corner: at 4.0 m/s on a 0.1s tick, one tick covers 0.4m, so anywhere
 inside that distance it overshot `WAYPOINT_TOLERANCE`, flipped direction,
-and repeated -- a bang-bang limit cycle rather than a settle. `duration`
+and repeated, giving a bang-bang limit cycle rather than a settle. `duration`
 survives as a generous wall-clock safety cap (3x, floored at +5s) so an
 unreachable target can't hang a scenario; hitting it logs a warning.
 
@@ -394,8 +395,8 @@ wouldn't hit; landing inside the bound the rest of the suite accepts is a
 legitimate pass). History: hardened to 0.20 on 2026-07-26, raised to 0.30
 later that day when no config could reach 0.20 against the 3m loop at
 0.25 slip, then to 0.40 on 2026-07-27 once the chosen config (tuned
-`--backend slam`, no EKF, at 0.15 slip) measured 0.30-0.33m -- too close
-to the 0.30 bound to pass reliably. Full investigation in
+`--backend slam`, no EKF, at 0.15 slip) measured 0.30-0.33m, too close to
+the 0.30 bound to pass reliably. Full investigation in
 `sentry_localization/README.md`'s Tuning history.
 
 `CORRECTION_FRACTION = 0.3`, not 0.5: slam_toolbox settles into a genuine
@@ -405,16 +406,16 @@ gives it a brief wiggle. 0.5 sat at the edge of that plateau and produced
 borderline false failures; 0.3 keeps margin while staying far above the
 known-broken case (`minimum_travel_distance` reverted to 0.5, which is
 indistinguishable from zero). Never independently re-validated against
-amcl's own plateau -- if amcl runs go flaky, revisit this first.
+amcl's own plateau, so if amcl runs go flaky, revisit this first.
 
 That calibration was done at 0.15 m/s with `JERK_STDDEV=0.3`. Both have
 since changed (4.0 m/s; `JERK_STDDEV` 0.5 -> 0.08 -> 0.24, targeting a
 ~30cm average jerk, since dx/dy are independent N(0, stddev) draws and
-magnitude is Rayleigh with mean `stddev * sqrt(pi/2)`). **Re-derive the
-plateau rather than assuming 0.3 still holds** if this scenario's pass
+magnitude is Rayleigh with mean `stddev * sqrt(pi/2)`). Re-derive the
+plateau rather than assuming 0.3 still holds if this scenario's pass
 rate looks off.
 
-**The 2026-07-23 crash.** The correction step used to be a `while` loop
+The 2026-07-23 crash: the correction step used to be a `while` loop
 driving `PATROL_LEGS` for up to 60s, exiting early once the threshold was
 crossed. When the correction TF stalled for an unrelated reason the exit
 never fired, and 60s of open-loop driving accumulated enough execution
@@ -425,8 +426,8 @@ the thing under test behaving.
 
 This scenario is also sensitive to unrelated CPU contention on the host
 (an rviz2 left running, other agent sessions). Under contention scan
-processing falls behind wall clock -- 2 sensor registrations across a
-~35s run, versus prompt repeated re-registration on a quiet box. The
+processing falls behind wall clock, giving 2 sensor registrations across a
+~35s run versus prompt repeated re-registration on a quiet box. The
 post-drive `get_correction_tf()` sample uses a generous 5s timeout for
 that reason.
 
@@ -451,16 +452,16 @@ unexercised. These params inject it synthetically, all off by default.
 - `odom_slip_ratio`: loses a fixed fraction of every metre actually
   driven, modelling wheels that spin without gripping (the arena's "Bumpy
   Road" zone). 0.5 means `/pose` advances 0.5m per 1m truly moved. Grows
-  with distance travelled, not elapsed time -- unlike drift.
+  with distance travelled rather than elapsed time, unlike drift.
 
-**The jerk does the opposite of what it looks like.** `trigger_jerk()`
+The jerk does the opposite of what it looks like. `trigger_jerk()`
 moves the real simulated robot in gz by a random (dx, dy) *and
 simultaneously cancels that same (dx, dy) out of the drift accumulator*,
 so reported `/pose` does not jump at all at trigger time. That's the
 point: wheel encoders never registered the displacement, so they keep
 reporting what they would have anyway. The discrepancy only surfaces later,
 when the next scan match disagrees with wheel odometry and corrects
-`map->odom` -- which is the behaviour being exercised.
+`map->odom`, which is the behaviour being exercised.
 
 ### head_slider_relay.py: topic naming and the input-lag fix
 
@@ -487,7 +488,7 @@ slider: the reader fed every intermediate value into a blocking
 `subprocess.run`, so slider ticks queued faster than they published and
 the head crawled through the backlog toward where the slider *used to be*.
 Reader and publisher are now separate threads sharing only the latest
-value, with an `Event` coalescing bursts -- values arriving mid-publish
+value, with an `Event` coalescing bursts so that values arriving mid-publish
 are dropped rather than queued.
 
 ### auto_explore.py: teleport mechanism
@@ -513,7 +514,7 @@ unconditionally.
 
 `reset_joints()` runs both before *and* after `set_pose`. Before, so each
 hop starts clean; after, because that's when a bad reaction actually shows
-up -- root's hard position discontinuity can induce a one-step reaction
+up: root's hard position discontinuity can induce a one-step reaction
 impulse through the real joints on body/root, and resetting only
 beforehand doesn't touch what that impulse just produced. Root's own
 inflated rotational inertia is what suppresses angular velocity on root
@@ -525,7 +526,7 @@ hop.
 Deliberately `-string` (raw URDF text), not `-topic robot_description`.
 `-topic` makes `create` subscribe over ROS, and that subscription reliably
 fails to receive the TRANSIENT_LOCAL-cached message from
-`robot_state_publisher` -- confirmed live: `ros2 topic echo
+`robot_state_publisher`. Confirmed live: `ros2 topic echo
 /robot_description` got the message instantly over the same QoS while an
 already-matched `spawn_sentry` sat waiting 30+ seconds. That's a bug in
 `ros_gz_sim create`'s subscription handling, not a startup race, so no
@@ -542,8 +543,8 @@ estimate of where the robot really is?*
 
 The drift scenarios run with `odom_noise_enabled=False`, so only
 `odom_slip_ratio` corrupts `/odom` at all. With noise off and slip at 0.0,
-`pose_emulator`'s `odom_callback` assigns `x, y = true_x, true_y` --
-exactly ground truth, and no EKF beats a perfect input. Historically the
+`pose_emulator`'s `odom_callback` assigns `x, y = true_x, true_y`, exactly
+ground truth, and no EKF beats a perfect input. Historically the
 suite ran at that zero-slip default, which is why "EKF is worse than raw
 /odom" numbers from those runs say nothing about the EKF. Those scenarios
 also assert on a `map->odom` residual, whereas the EKF's relevant edge is
@@ -569,8 +570,8 @@ integrates its own `(x, y, z)` in a timer callback and publishes
 `nav_msgs/Odometry` on `/target/ground_truth_odom`, the same "plain ROS
 node standing in for something more complex" approach `pose_emulator`
 already uses. That sidesteps SDF authoring, a spawn step, and gz-side
-bridges, at the cost of nothing being visible in the gz GUI -- verification
-is topic echoes and the vector checks below.
+bridges, at the cost of nothing being visible in the gz GUI. Verification is
+topic echoes and the vector checks below.
 
 Both nodes stamp off `self.get_clock().now()` (so `/clock` under
 `use_sim_time`), never wall clock. `cv_target_emulator` stamps
@@ -578,7 +579,9 @@ Both nodes stamp off `self.get_clock().now()` (so `/clock` under
 `publish_latency_s` is purely delivery delay layered on top via a pending
 queue and `now - header.stamp` downstream actually reflects it.
 
-**Path geometry.** Default path is a lateral bounce at fixed depth
+#### Path geometry
+
+The default path is a lateral bounce at fixed depth
 `x=3.0m`, `y in [-2.0, 2.0]`, `z=0.3m`. Visible half-width at that depth
 is `3.0*tan(1.5184/2)` ~ 2.85m against the path's 2.0m half-amplitude, so
 the traverse stays in-frustum throughout with ~0.85m margin each side.
@@ -587,7 +590,9 @@ the fastest speed swept. (That measurement originally sized around an EMA
 velocity filter in `point_to_cv_target` that no longer exists; the numbers
 still hold, they just no longer serve that purpose.)
 
-**Camera FK, no TF.** `cv_target_emulator` chains `sentry.urdf.xacro`'s
+#### Camera FK, no TF
+
+`cv_target_emulator` chains `sentry.urdf.xacro`'s
 fixed joint offsets directly (root -> fastened_2 -> body -> headlink(yaw)
 -> head -> headpitch(pitch) -> head_pitch -> cameralink -> camera), the
 same self-contained approach `pose_emulator` uses, since sim runs no
@@ -601,34 +606,36 @@ That sign was verified rather than assumed. Comparing `pos_err` with
 `+0.38885`, `-0.38885`, and `0` applied gave ~2.45m, ~0.13m and ~1.22m
 mean error respectively: only `-0.38885` collapses toward the ~0.03m noise
 floor, which can only happen if the FK sign is right. Same method as the
-rf2o `angle_min` bug -- compare vectors, not magnitudes, since `tan(+x)`
-and `tan(-x)` have equal magnitude and a single error number can't tell a
-correct rotation from a sign-flipped one.
+rf2o `angle_min` bug: compare vectors rather than magnitudes, since
+`tan(+x)` and `tan(-x)` have equal magnitude and a single error number can't
+tell a correct rotation from a sign-flipped one.
 
-**`headlink` is a continuous joint with no yaw limit** (fixed
+`headlink` is a continuous joint with no yaw limit (fixed
 2026-07-28). It was declared `revolute` with a `+-pi` limit, which is
-stale -- real hardware's gimbal spins freely. The tell was `cv_head_aim`'s
+stale, since real hardware's gimbal spins freely. The tell was `cv_head_aim`'s
 early runaway bug pegging at exactly `+-3.14159`, which turned out to be
 its own software clamp saturating rather than a physical limit.
 `headpitch` keeps its real `+-0.6` limit.
 
-**Convention: REP-103, not optical.** Target position is computed relative
+The convention is REP-103 rather than optical. Target position is computed relative
 to the camera as x=forward, y=left, z=up, not the optical convention a
 real driver reports. Computing optical and labelling it REP-103 would
-silently rotate every detection by a fixed offset -- the same bug class as
+silently rotate every detection by a fixed offset, the same bug class as
 rf2o's `angle_min` (179.81 degrees off, magnitude correct, direction
 exactly backwards). Verified 2026-07-27 by comparing `/cv/target`'s
 reported left/right sign against a bearing derived independently from
 `/sim/raw_odom` + `/target/ground_truth_odom`: 20/20 samples agreed.
 
-**Noise model.** Gates on FOV (`horizontal_fov=1.5184` plus a derived
+#### Noise model
+
+It gates on FOV (`horizontal_fov=1.5184` plus a derived
 vertical FOV from the 640x480 aspect) and range (0.1-10.0m, the camera's
 clip planes), publishing nothing outside either, which simulates track
 loss and exercises `point_to_cv_target`'s watchdog. Inside, it adds
 per-axis Gaussian position noise (`noise_pos_stddev`, 0.03m), per-sample
 dropout (`dropout_probability`, 0.1) and fixed latency
-(`publish_latency_s`, 0.06s). **Unlike `pose_emulator`'s model, all three
-are ON by default**, so a `spawn_target:=true` run is degraded unless you
+(`publish_latency_s`, 0.06s). Unlike `pose_emulator`'s model, all three are
+ON by default, so a `spawn_target:=true` run is degraded unless you
 zero them. The 0.06s latency is a placeholder, not a measurement.
 
 ### cv_head_aim.py: CV-driven head tracking, root-frame IK
@@ -636,26 +643,26 @@ zero them. The 0.06s latency is a placeholder, not a measurement.
 Subscribes `/cv/target` (from `sentry_pkg`'s `point_to_cv_target`, so
 `auto.launch.py` has to be running alongside `sim.launch.py
 spawn_target:=true`) plus `/sim/raw_joint_states`, and publishes
-`/head_pan_cmd`/`/head_pitch_cmd` -- the same topics the GUI slider
+`/head_pan_cmd`/`/head_pitch_cmd`, the same topics the GUI slider
 drives. This is the only thing that moves the head during CV testing.
 
-**`CVTarget.x/y/z` is a root-frame position, not a camera-relative
-bearing.** The `atan2(x, z)` bearing-nulling this node used to do is
+`CVTarget.x/y/z` carries a root-frame position rather than a camera-relative
+bearing. The `atan2(x, z)` bearing-nulling this node used to do is
 meaningless against a position, so it was replaced rather than re-tuned.
 
 `cv_head_aim_core.solve_head_angles()` inverts the fixed FK chain (`root
 -> body -> headlink(yaw) -> headpitch(pitch) -> camera`, the same chain
 `cv_target_emulator._camera_pose()` walks forward) to solve for the joint
 angles that point the camera's +X at the target, handling
-`HEADPITCH_ORIGIN_YAW` (-0.38885) correctly as **a yaw baked into the
-joint origin, not a pitch bias**. It ignores the camera's own ~0.35m
+`HEADPITCH_ORIGIN_YAW` (-0.38885) correctly as a yaw baked into the joint
+origin rather than a pitch bias. It ignores the camera's own ~0.35m
 offset from the yaw/pitch axes, the same simplification applied to
 Type-C's muzzle offset. Cross-checked in `test/cv/test_cv_head_aim.py`
 against an independently written from-scratch FK, so a sign error in one
 can't pass by agreeing with itself.
 
-**Closed-loop on that absolute setpoint, deliberately not open-loop
-feedforward**: setpoint-tracking lag against a moving target has to show
+It closes the loop on that absolute setpoint instead of running open-loop
+feedforward, because setpoint-tracking lag against a moving target has to show
 up in sim the way it would on real Type-C, since sim exists to measure
 that lag rather than hide it. Each `control_rate_hz` (15) tick computes
 the wrapped angular error between the IK target and the current joint
@@ -664,7 +671,7 @@ rather than per `/cv/target` arrival avoids the
 setpoint-races-ahead-of-the-joint failure mode from early tuning, since
 the emulator publishes at up to 60Hz.
 
-**`gain` (0.3) is a placeholder.** The old `0.1` plus
+`gain` (0.3) is a placeholder. The old `0.1` plus
 `sign_yaw`/`sign_pitch` were tuned for the bearing-correction design and
 don't carry over; the sign params are gone entirely, since the IK's
 geometry determines sign directly (verified analytically in the test, not
@@ -687,7 +694,9 @@ entirely ROS-internal on `/cv/target_state`, never on the wire.
 `CVTarget`/`CVDataPayload` stayed lean, gaining only a
 `lead_applied`/`track_valid` flags byte.
 
-**Environment footguns.** sim's `gz-sim`/`ros_gz` apt deps aren't in this
+### Environment footguns
+
+sim's `gz-sim`/`ros_gz` apt deps aren't in this
 container by default; see `## Build` for `install-sim.sh`. Separately,
 `sentry_pkg`'s build under `install/` was once a stale colcon
 symlink-install pointing at a deleted git worktree, breaking both `ros2
