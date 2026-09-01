@@ -1,8 +1,8 @@
 """
 Turns sentry_pkg's /cv/target (dji_serial_bridge/msg/CVTarget, a ROOT-FRAME
 aim POSITION as of the plan's Phase 4/5) into /head_pan_cmd + /head_pitch_cmd
-so sim's head joints track it -- the "real" reason the head moves during CV
-testing, as opposed to head_sweep.py's unwired placeholder sweep. Mirrors
+so sim's head joints track it -- the reason the head moves during CV
+testing. Mirrors
 what Type-C actually receives: a position and nothing else, no feedforward,
 so any setpoint-tracking lag against a moving target shows up here too (the
 point, per the plan -- see README.md's ### cv_head_aim.py Notes).

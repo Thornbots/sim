@@ -397,10 +397,11 @@ DRIVE_SPEED = 4.0
 
 def _make_loop_legs(speed):
     """3m x 3m square loop centered on OBSTACLE_XY, corners at (-1.5,-1.5),
-    (1.5,-1.5), (1.5,1.5), (-1.5,1.5) -- 1.35m out from the box on every
-    side. Verified clear of every documented wall (see README.md for the
-    corner-by-corner clearance derivation). Legs are (vx, vy, duration)
-    like PATROL_LEGS, 3m per side."""
+    (1.5,-1.5), (1.5,1.5), (-1.5,1.5) -- 1.5m out from OBSTACLE_XY, so
+    1.35m clear of each box face (half-width 0.15m). Verified clear of
+    every documented wall (see README.md for the corner-by-corner
+    clearance derivation). Legs are (vx, vy, duration) like PATROL_LEGS,
+    3m per side."""
     d = 3.0 / speed
     return [
         (speed, 0.0, d),    # east   (-1.5,-1.5) -> (1.5,-1.5)
@@ -797,7 +798,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
                   f'slip/bumpy terrain. Repositions to OBSTACLE_LOOP_LEGS\'s '
                   f'start corner, then per trial: trigger_jerk (biased inward '
                   f'toward OBSTACLE_XY), then drive a single bounded leg to the '
-                  f'next corner of the 2m hard-cornering square centered on '
+                  f'next corner of the 3m hard-cornering square centered on '
                   f'OBSTACLE_XY -- the drive is corrected by the jerk\'s own '
                   f'real (dx, dy) (see _leg_for_displacement) so the robot '
                   f'still lands exactly on that corner regardless of what '
@@ -959,7 +960,7 @@ MAX_DELTA_THRESHOLD = 0.40  # meters
 
 def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
     """Shared driving logic for scenario_drift_correction_obstacle and
-    scenario_drift_correction -- both drive the identical 2m
+    scenario_drift_correction -- both drive the identical 3m
     hard-cornering loop (OBSTACLE_LOOP_LEGS) with an obstacle either
     spawned or not, so the two scenarios differ only in `spawn_obstacle`
     and can be directly compared against the same MAX_DELTA_THRESHOLD.

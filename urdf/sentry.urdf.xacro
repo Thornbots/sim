@@ -232,7 +232,7 @@
   </gazebo>
   <!-- Self-occlusion (the lidar's own housing mesh, and the head's real
        partial blocking of its own field of view at whatever bearing it
-       currently sits at, see sim/head_sweep.py's docstring) used to be
+       currently sits at) used to be
        modeled here via gz-sim's visibility_mask/visibility_flags, but that
        approach was all-or-nothing per visual: either a visual is fully
        invisible to the lidar (so it also sees straight through the head
@@ -345,7 +345,7 @@
       </ros>
     </plugin>
     <!-- Lets the gz sim GUI's "Joint Position Controller" panel (and
-         sim/head_sweep.py, bridged into ROS) drive the head turn: publish a
+         /head_pan_cmd, bridged into ROS) drive the head turn: publish a
          target angle (rad) on /model/sentry/joint/headlink/cmd_pos and this
          PID controller tracks it.
          Reintroduced after being removed for a while: this plugin holds
@@ -368,8 +368,8 @@
          default is .../headlink/0/cmd_pos) because that "/0/" index segment
          isn't valid as a ROS name token; ros_gz_bridge's remap rule
          parser rejects it outright ("Couldn't parse remap rule"), so
-         bridging the default topic into ROS for head_sweep.py is
-         impossible without overriding it here first. Hardcodes "sentry"
+         bridging the default topic into ROS is impossible without
+         overriding it here first. Hardcodes "sentry"
          since gz's topic templating doesn't reach into plugin params. -->
     <!-- No kinematic "direct set" mode exists for this plugin in the
          installed gz-sim version (checked: the .so exports no
