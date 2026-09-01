@@ -1,40 +1,57 @@
 # sim
 
 ROS 2 package that launches `gz sim` (Ignition/Gazebo Sim) with the
-`ARCC_Field_2026` world and spawns the `sentry` robot (defined in
-`sentry_urdf.xacro`) into it.
+`ARCC_Field_2026` world, spawns the `sentry` robot (defined in
+`sentry.urdf.xacro`) into it, and hosts the localization and CV
+integration suites.
 
 ## Package layout
 
 ```
 sim/
-├── launch/sim.launch.py       # main launch file
-├── urdf/sentry_urdf.xacro     # robot description (uses package://sim/meshes/*.stl)
-├── meshes/                    # <-- put the ROBOT meshes here: Body.stl, Head.stl,
-│                               #     Lidar.stl, OdoWheel.stl
-└── world/                     # world file ARCC_Field_2026.sdf (uses
-                               #   model://sim/world/*.stl), plus the WORLD
-                               #   mesh: composite_part_1.stl
+├── launch/sim.launch.py           # main launch file
+├── urdf/sentry.urdf.xacro         # robot description (package://sim/meshes/*.stl)
+├── meshes/                        # robot meshes: Body, Head, Lidar, OdoWheel
+├── world/                         # ARCC_Field_2026.sdf + composite_part_1.stl
+├── rviz/                          # config.rviz, cv_target.rviz
+├── sim/                           # the nodes (see ## Notes for per-file design history)
+│   ├── pose_emulator.py           # /pose + synthetic odometry noise model
+│   ├── auto_explore.py            # teleporting grid sweep
+│   ├── target_driver.py           # fast-moving CV target ground truth
+│   ├── cv_target_emulator.py      # camera FK + detection noise -> cv/panel_detection
+│   ├── cv_head_aim.py             # CV-driven head tracking (cv_head_aim_core.py: IK)
+│   ├── head_slider_relay.py       # gz GUI slider <-> /head_*_cmd bridge
+│   └── wasd_teleop.py
+└── test/
+    ├── localization/              # run_localization_drift_tests.py,
+    │                              #   ekf_ground_truth_diag.py
+    └── cv/                        # run_shot_hit_tests.py, test_cv_head_aim.py
 ```
 
-**You must drop the mesh files in before building.** They weren't part of
-the uploaded files, only referenced by path:
-
-- `meshes/Body.stl`, `meshes/Head.stl`, `meshes/Lidar.stl`, `meshes/OdoWheel.stl`
-  (referenced by the xacro as `package://sim/meshes/...`)
-- `world/composite_part_1.stl`
-  (referenced by the world file as `model://sim/world/...`)
-
-The package name is `sim` deliberately, to match both of these
-existing `package://` / `model://` references without editing the source files.
+The package name is `sim` deliberately, so the world file's
+`model://sim/world/...` and the xacro's `package://sim/meshes/...`
+references both resolve without editing either source file.
 
 ## Build
 
+Everything runs inside the isaac_ros-dev container. On a fresh or
+recreated container, install gz-sim first: `Dockerfile.thornbots` ships
+neither `ros-humble-ros-gz` nor this package, since real hardware never
+needs them.
+
 ```bash
-cd ~/ros2_ws          # your colcon workspace, with sim under src/
-colcon build --packages-select sim
-source install/setup.bash
+isaac_ros_common/scripts/dexec.sh -r -- \
+  src/isaac_ros_common/docker/scripts/install-sim.sh
+
+isaac_ros_common/scripts/dexec.sh -- \
+  colcon build --packages-select sim --symlink-install
 ```
+
+`--symlink-install` is not optional. Without it `install/sim` holds plain
+copies, and an edit under `sim/` silently has no effect on the next
+`ros2 run`/`ros2 launch` until you rebuild. If a change appears to do
+nothing, check that linkage before assuming the change is wrong; recover
+with `rm -rf build/sim install/sim` and rebuild.
 
 ## Run
 
@@ -45,9 +62,34 @@ ros2 launch sim sim.launch.py
 Useful arguments:
 
 ```bash
-ros2 launch sim sim.launch.py gui:=false          # headless (server only)
-ros2 launch sim sim.launch.py x:=1.0 y:=0.5 z:=0.1
+ros2 launch sim sim.launch.py gui:=false             # no gz GUI (server only)
+ros2 launch sim sim.launch.py rviz:=false            # no rviz2
+ros2 launch sim sim.launch.py x:=1.0 y:=0.5 z:=0.1   # spawn pose (yaw:= too)
 ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
+```
+
+Synthetic wheel-odometry error, all off by default (see the
+`pose_emulator.py` noise-model note below for what each one models):
+
+```bash
+odom_noise_enabled:=true    # master switch for drift + jitter
+odom_drift_stddev:=         # random-walk step, m/callback
+odom_jitter_stddev:=        # per-sample jitter, m
+odom_jerk_stddev:=          # size of a trigger_jerk impulse, m (default 0.2)
+odom_jerk_bias_enabled:=true odom_jerk_bias_x:= odom_jerk_bias_y:=
+odom_slip_ratio:=           # fraction of each driven meter lost from /pose
+```
+
+Fast-moving CV target simulation. `spawn_target` is off by default, but
+once it's on, the three `cv_*` degradations are all active at the defaults
+shown; zero them for a clean run:
+
+```bash
+spawn_target:=true            # target_driver.py + cv_target_emulator.py
+target_speed:=2.0 target_spin_hz:=1.5
+cv_noise_pos_stddev:=0.03     # Gaussian position noise, m
+cv_dropout_probability:=0.1   # per-sample detection drop
+cv_publish_latency_s:=0.06    # placeholder, not a measured number
 ```
 
 ## What the launch file does
@@ -57,13 +99,32 @@ ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
    `model://sim/world/composite_part_1.stl` resolves correctly.
 2. Includes `ros_gz_sim`'s `gz_sim.launch.py` to start the simulator with
    `world/ARCC_Field_2026.sdf` loaded and running (`-r`).
-3. Runs `robot_state_publisher`, feeding it the URDF produced by expanding
-   `sentry_urdf.xacro` (this is also what lets rviz/tf resolve
-   `package://sim/meshes/...` for the robot's own visuals).
-4. Spawns the robot into the running world via `ros_gz_sim create`, reading
-   the description straight from the `/robot_description` topic.
-5. Bridges `/clock` from gz sim to ROS so every node using
+3. Bridges `/clock` from gz sim to ROS so every node using
    `use_sim_time` stays in sync with the simulation clock.
+4. Spawns the robot into the running world via `ros_gz_sim create`, passing
+   expanded `sentry.urdf.xacro` text with `-string` (not `-topic`; see the
+   `spawn_robot` note below for why). Delayed 2s off `clock_bridge`'s start
+   so gz's entity-creation service is up first. **`sim.launch.py` does not
+   run `robot_state_publisher`** -- `sentry_pkg`'s `auto.launch.py` owns
+   `robot_state_publisher` and TF now.
+5. Bridges the gz-transport topics the xacro's plugins publish on, none of
+   which reach ROS by themselves: `/scan` (remapped to `/scan_raw`, since
+   `sentry_pkg`'s `lidar_self_filter` publishes the final `/scan`),
+   the `JointStatePublisher` plugin's output as `/sim/raw_joint_states`,
+   and the `OdometryPublisher` plugin's as `/sim/raw_odom`. Both `/sim/raw_*`
+   topics are ground-truth and sim-internal; real hardware has no equivalent,
+   so nothing outside sim should consume them.
+6. Runs `pose_emulator`, which repackages `/sim/raw_odom` +
+   `/sim/raw_joint_states` into the `dji_serial_bridge/msg/RobotPose`
+   interface real hardware's Type-C board publishes on `/pose`, optionally
+   with the synthetic noise model applied.
+7. Bridges `/cmd_vel`, `/head_pan_cmd`, `/head_pitch_cmd`, and the four
+   camera topics, and runs `head_slider_relay` so the gz GUI slider and
+   `/head_*_cmd` can both drive the same joint controller.
+8. Runs rviz2 unless `rviz:=false`.
+
+With `spawn_target:=true` it also runs `target_driver`,
+`cv_target_emulator`, and `cv_head_aim`.
 
 ## Assumptions / notes
 
@@ -123,22 +184,27 @@ config change you just made, check `diff install/sentry_localization/
 share/sentry_localization/config/amcl.yaml src/sentry_localization/
 config/amcl.yaml` before assuming the change itself didn't work.
 
-Scenarios (`--scenario NAME` to run just one; all five run by default, in
+Scenarios (`--scenario NAME` to run just one; all six run by default, in
 this order): `baseline`, `noise_correction`, `drift_correction`,
-`drift_correction_obstacle`, `jerk_with_motion`. `drift_correction` shares its
-driving loop and threshold with `drift_correction_obstacle` on purpose, so
-compare the two directly before attributing a failure on either to the
-obstacle specifically.
+`drift_correction_obstacle`, `jerk_with_motion`, `odom_stuck`.
+`drift_correction` shares its driving loop and threshold with
+`drift_correction_obstacle` on purpose, so compare the two directly
+before attributing a failure on either to the obstacle specifically.
 
-Other useful flags: `--keep-running` (skip teardown for interactive
-follow-up), `--headless` (skips both gz-sim's GUI and rviz2, both on
-by default per the project's standing "watch sim live" rule, see
-`SESSION_NOTES.md`). Each
+Other flags: `--headless` (skips both gz-sim's GUI and rviz2, both on by
+default per the project's standing "watch sim live" rule) and `--speed`
+(overrides the loop's 4.0 m/s; other speeds have not been re-validated
+against `MAX_DELTA_THRESHOLD` or `jerk_with_motion`'s timing). Each
 scenario's exact pass condition and rationale, the per-backend TF edge
 being watched (`BACKENDS`), and the suite's design history are in
 `## Notes` below. Read that before interpreting a failure, not the
 script's own docstring, whose `SCENARIOS` section is now only a short
 pointer.
+
+`test/cv/` holds the CV-side tests: `run_shot_hit_tests.py` (standalone,
+same launch-a-stack shape as the drift suite) and `test_cv_head_aim.py`
+(pure pytest over `cv_head_aim_core.solve_head_angles()`, no stack
+needed).
 
 ## Notes
 
@@ -168,7 +234,7 @@ sentry_localization stack, firing `ros2 service call
 hand, eyeballing `ros2 run tf2_ros tf2_echo <frames>` in a separate
 shell, then manually tearing both launches down before the next attempt.
 Slow, error-prone (a forgotten teardown leaves orphaned nodes causing
-duplicate-node TF jitter on the next run; see `SESSION_NOTES.md`), and
+duplicate-node TF jitter on the next run), and
 not repeatable enough to trust as a regression check after touching
 `slam.yaml`/`amcl.yaml`/`ekf.yaml`/`pose_emulator.py`'s noise model. This
 script automates that loop: launch stack → drive scenario → sample the
@@ -221,12 +287,13 @@ watch whichever edge that backend is responsible for, not literally
   none`, no `--use-ekf`) this is just raw `/odom` passthrough, not a very
   interesting case; the old standalone `ekf` backend is `--backend none
   --use-ekf`. `jerk_with_motion` is SKIPPED for `--backend none`: `ekf_node`
-  fuses `/odom`'s x/y directly (see `config/ekf.yaml`) with no
-  distance-traveled gate analogous to slam_toolbox/amcl's, so a stationary
+  fuses `/odom`'s velocity only, never its x/y (`config/ekf.yaml`'s
+  `odom0_config`), and applies no distance-traveled gate analogous to
+  slam_toolbox/amcl's, so a stationary
   jerk's effect on `odom->root` isn't characterized the same way, and
   asserting either the "must not change" or "must change to track the
   jerk" expectation would just be a guess. EKF tuning/verification is
-  still open work (see `SESSION_NOTES.md`). `drift_correction` and
+  still open work. `drift_correction` and
   `drift_correction_obstacle` DO run for `--backend none`: `ekf_node` only
   fuses `/odom` + `/scan_odom`, but `/scan_odom` comes from
   `rf2o_laser_odometry` doing real scan-to-scan matching on raw `/scan`
@@ -266,28 +333,30 @@ watch whichever edge that backend is responsible for, not literally
 ### run_localization_drift_tests.py: amcl vs amcl+EKF under slip (measured 2026-07-26)
 
 Manual `--backend amcl` vs `--backend amcl --use-ekf` comparison runs
-(`--scenario drift_correction`), run both at the suite's old zero-slip
-behavior and at the new `odom_slip_ratio=0.25` default (see `run_stack`'s
-docstring). Raw drift numbers measured against the then-current
-`MAX_DELTA_THRESHOLD=0.30m`; PASS/FAIL below re-evaluated against the
-now-hardened `MAX_DELTA_THRESHOLD=0.20m` (numbers themselves unaffected,
-only which side of the bound they land on):
+(`--scenario drift_correction`), run both at zero slip and at
+`odom_slip_ratio=0.25`. PASS/FAIL is against the current
+`MAX_DELTA_THRESHOLD` of 0.40m (the drift numbers themselves were
+measured against a 0.30m bound that has since been raised; see the
+`MAX_DELTA_THRESHOLD` section below for that history):
 
 | `odom_slip_ratio` | `amcl` alone | `amcl` + `use_ekf:=true` |
 |---|---|---|
-| 0.0 (old default) | 0.1478 m (PASS) | 0.2043 m (**FAIL** vs 0.20m; was PASS vs old 0.30m) |
-| 0.25 (new default) | 0.4033 m (**FAIL**) | 0.1642 m (PASS) |
+| 0.0 | 0.1478 m (PASS) | 0.2043 m (PASS) |
+| 0.25 | 0.4033 m (**FAIL**) | 0.1642 m (PASS) |
 
-At zero slip, EKF makes `amcl` measurably worse, since `/odom` is already a
-near-perfect motion-model input in that case (see the
-`ekf_ground_truth_diag.py` section below), so fusing in `rf2o`'s own
-scan-matching noise on top of it can only hurt. Under realistic slip,
-the picture flips: raw `/odom` degrades enough that `amcl` alone fails
-the suite's own threshold, while EKF-fused odometry keeps `amcl` passing
-comfortably under the hardened 0.20m bound too. This is the first
-measured evidence that `use_ekf:=true` benefits a map-owning backend (not
-just the standalone `none --use-ekf` case `ekf_ground_truth_diag.py`
-already covered). `slam --use-ekf` under slip remains untested.
+At zero slip, EKF makes `amcl` measurably worse (0.2043 vs 0.1478),
+though both still pass: `/odom` is already a near-perfect motion-model
+input in that case (see the `ekf_ground_truth_diag.py` section below), so
+fusing in `rf2o`'s own scan-matching noise on top of it can only hurt.
+Under slip the ordering flips, and the gap is large enough to change the
+verdict: raw `/odom` degrades until `amcl` alone misses the bound, while
+EKF-fused odometry keeps `amcl` passing with room to spare. This is the
+first measured evidence that `use_ekf:=true` benefits a map-owning
+backend, not just the standalone `none --use-ekf` case
+`ekf_ground_truth_diag.py` already covered. `slam --use-ekf` under slip
+remains untested. Note 0.25 slip is above the suite's current defaults
+(0.02 generally, 0.15 for the drift scenarios), so this is a harsher
+condition than a normal run.
 
 ### run_localization_drift_tests.py: SCENARIOS
 
@@ -301,7 +370,7 @@ Run in this order (`baseline`, `noise_correction`, `drift_correction`,
    so a consistent ~0.1-0.15m absolute offset is normal. No ERROR in any
    log.
 2. **noise_correction**: `odom_noise_enabled:=true` (drift/jitter only,
-   no slip): drives the same 2m hard-cornering square as
+   no slip): drives the same 3m hard-cornering square as
    `drift_correction`/`drift_correction_obstacle`/`jerk_with_motion`
    (`OBSTACLE_LOOP_LEGS`) for 30s (lowered from 60s on 2026-07-27 for
    faster tuning iteration) under continuous odometry drift/jitter
@@ -453,8 +522,8 @@ scenarios can reuse this constant either way.
 tried placing the box off to the side of `PATROL_LEGS`'s existing loop
 and reusing that loop unshifted, then tried various reposition offsets
 to dodge it after live testing showed collisions/overshoot. It's simpler and
-more robust to put the box at the loop's own center and size the loop 1m
-out from it in every direction, so clearance is true by construction
+more robust to put the box at the loop's own center and size the loop
+1.5m out from it in every direction, so clearance is true by construction
 instead of by a chain of one-off offset corrections.
 
 `OBSTACLE_XY = (0.0, 0.0)` is the world origin, which is where the box
@@ -530,7 +599,7 @@ ground-truth endpoint (`start + (vx, vy) * duration`) at speed
 alone assumed gz-sim's real-time factor is exactly 1.0, so a fixed
 wall-clock timer reliably produced a fixed sim distance in a fixed
 direction. Neither held under load (GPU lidar rendering, the GUI window,
-general container contention; see `SESSION_NOTES.md`): when RTF dipped
+general container contention): when RTF dipped
 below 1.0, less sim time elapsed per wall-clock second, undershooting
 each leg's intended corner. A first fix (2026-07-24) gated on
 ground-truth distance projected onto the commanded heading, fixing that
@@ -588,7 +657,7 @@ backend's steady-state behavior, unrelated to the noise model).
 
 ### run_localization_drift_tests.py, noise_correction: fixed 30s window, shared square
 
-`noise_correction` reuses the same 2m hard-cornering square
+`noise_correction` reuses the same 3m hard-cornering square
 `drift_correction`/`drift_correction_obstacle`/`jerk_with_motion` drive
 (`OBSTACLE_LOOP_LEGS`, real 4.0 m/s) rather than a separate path of its
 own, with a fixed 30s duration (lowered from 60s on 2026-07-27 for faster
@@ -616,7 +685,7 @@ lucky/unlucky draw can't flip the result either way.
 After all trials, one more full lap around `OBSTACLE_LOOP_LEGS` is
 driven as a final closing check.
 
-`scenario_jerk_with_motion` drives the same 2m hard-cornering square
+`scenario_jerk_with_motion` drives the same 3m hard-cornering square
 `drift_correction`/`drift_correction_obstacle` use (`OBSTACLE_LOOP_LEGS`,
 centered on `OBSTACLE_XY`), rather than a separate smaller square of its
 own: this scenario's `trigger_jerk` calls bias inward (toward
@@ -646,7 +715,8 @@ a 0.5s no-motion wait right after the jerk asserting the correction TF
 hadn't moved yet. Removed 2026-07-26 per the user; it was failing
 independently of the actual post-drive correction being tested and had
 started dominating `jerk_with_motion`'s FAIL reasons under the harsher
-0.25-slip/0.20m-threshold defaults.)
+0.25-slip / 0.20m-threshold settings in force that day. Neither of those
+values survived: slip is now 0.02/0.15 and the threshold is 0.40.)
 
 After the jerk, the scenario gives the robot a small
 amount of real motion so the backend's distance-traveled gate opens and
@@ -717,7 +787,7 @@ open-loop driving (fixed velocity/duration, no position feedback) on a
 free-floating chassis, which accumulated enough real execution drift to
 drive the robot out of the field entirely and crash gz-sim's physics
 engine. **The fix**: a single bounded drive to the next corner of
-`OBSTACLE_LOOP_LEGS` (one short leg, 2m) followed by exactly one final TF
+`OBSTACLE_LOOP_LEGS` (one short leg, 3m) followed by exactly one final TF
 sample, bounding the total driven distance per trial by construction
 instead of by a timeout that depends on the correction TF actually
 behaving.
@@ -840,7 +910,7 @@ single-DOF joints) -- not configurable from the GUI side.
 the axis segment (`/model/sentry/joint/headlink/cmd_pos` etc.)
 specifically so `sim.launch.py`'s `ros_gz_bridge` Nodes can remap them to
 clean ROS topics (`/head_pan_cmd`, `/head_pitch_cmd`, used by e.g.
-`head_sweep.py`) -- ROS2 topic names can't have a namespace token
+the head-aim path) -- ROS2 topic names can't have a namespace token
 starting with a digit, so the GUI's own default topic can never be
 bridged into ROS directly (confirmed: `ros_gz_bridge`'s
 `parameter_bridge` raises `InvalidTopicNameError`/
@@ -958,13 +1028,15 @@ actually produce a better estimate of where the robot really is?*
 Why this exists separately:
 
 - The drift suite's `drift_correction` scenarios call `run_stack(...,
-  odom_noise_enabled=False)` and `odom_slip_ratio` defaults to 0.0. Read
-  `sim/pose_emulator.py`'s `odom_callback`: with both off, the reported
-  `/odom` position is assigned `x, y = true_x, true_y` -- it is *exactly*
-  ground truth, bit for bit. An EKF cannot beat a perfect input; fusing a
-  noisy second source into it can only degrade it. Any "EKF is worse than
-  raw /odom" number measured under those settings says nothing about the
-  EKF.
+  odom_noise_enabled=False)`, so the drift random-walk and jitter are
+  both off; only `odom_slip_ratio` (0.15 for those two scenarios, 0.02
+  everywhere else) still corrupts `/odom`. That is a much cleaner input
+  than this diagnostic wants. Read `sim/pose_emulator.py`'s
+  `odom_callback`: with noise disabled and slip at 0.0 the reported
+  `/odom` position is assigned `x, y = true_x, true_y`, exactly ground
+  truth, and an EKF cannot beat a perfect input. Historically the suite
+  ran at that zero-slip default, which is why "EKF is worse than raw
+  /odom" numbers from those runs say nothing about the EKF.
 - Those scenarios also assert on `MAX_DELTA_THRESHOLD` (delta of the
   correction TF from its pre-loop value), a `map->odom` residual-
   correction metric. For `ekf` the relevant edge is `odom->root`, whose
@@ -975,15 +1047,17 @@ So this script instead turns wheel-odometry error ON (drift random walk
 the same cornering loop, and scores both estimators against
 `/sim/raw_odom` (gz-sim's true pose) using mean/RMS/max Euclidean error.
 
-### wasd_teleop.py, head_sweep.py
+### wasd_teleop.py
 
-Plain interface docstrings, no design history, so no README entry needed.
+Plain interface docstring, no design history, so no README entry needed.
 
-### ground_truth_tf_broadcaster.py, sim.launch.py ground-truth-only viz block
-
-Both no longer exist in the current tree (file removed; the
-translucent-ground-truth-RobotModel launch block referenced in the task
-isn't present in `launch/sim.launch.py` any more), so nothing to trim.
+`head_sweep.py` was removed (2026-08-31): a standalone yaw oscillation
+that `sim.launch.py` ran instead of `cv_head_aim` when `head_sweep_hz`
+> 0. It served `run_shot_hit_tests.py`'s head-slew scenario, which
+checked `target_tracker`'s TF-based head-motion decoupling against a
+moving camera and a stationary target. That scenario went with it, so
+head motion is now only ever `cv_head_aim` tracking a target. Restoring
+the decoupling check means rebuilding both.
 
 ### target_driver.py / cv_target_emulator.py: CV target simulation, no gz entity
 
@@ -1089,12 +1163,16 @@ aspect ratio) and range (`0.1`–`10.0m`, `sentry.urdf.xacro`'s camera clip
 planes). Outside either, it publishes nothing (simulates track loss,
 exercises `point_to_cv_target`'s watchdog). Inside, it adds independent
 per-axis Gaussian position noise (`noise_pos_stddev`, default 0.03m),
-optional per-sample detection dropout (`dropout_probability`), and optional
-fixed publish latency (`publish_latency_s`) via a small pending-publish
-queue keyed off `self.get_clock().now()`. All off/zero by default except
-noise, mirroring `pose_emulator.py`'s "off by default, opt-in via
-`sim.launch.py` args" convention; `spawn_target:=false` (the default)
-changes nothing about existing `sim.launch.py` behavior.
+per-sample detection dropout (`dropout_probability`, default 0.1), and a
+fixed publish latency (`publish_latency_s`, default 0.06s) via a small
+pending-publish queue keyed off `self.get_clock().now()`. Unlike
+`pose_emulator.py`'s noise model, all three are ON by default (same values
+in the node and in `sim.launch.py`), so a `spawn_target:=true` run is
+degraded unless you zero them explicitly. The 0.06s latency is a
+placeholder pending a real measurement (see `point_to_cv_target`'s
+`LatencyStat`), not a measured number. `spawn_target:=false` (the default)
+launches neither node, so none of this affects a plain `sim.launch.py`
+run.
 
 ### cv_head_aim.py: CV-driven head tracking, root-frame IK (plan Phase 5)
 
@@ -1102,10 +1180,9 @@ Subscribes `sentry_pkg`'s `/cv/target` (`CVTarget`, published by
 `point_to_cv_target`, which needs `sentry_pkg`'s `auto.launch.py` running
 alongside `sim.launch.py spawn_target:=true`, same real-hardware/sim split
 the rest of the CV pipeline has) and `/sim/raw_joint_states`, and
-publishes `/head_pan_cmd`/`/head_pitch_cmd`, the same topics
-`head_sweep.py`'s dead placeholder sweep and the gz GUI slider already
-drive. This is the actual reason the head tracks a target during CV
-testing; `head_sweep.py` stays unwired, as before.
+publishes `/head_pan_cmd`/`/head_pitch_cmd`, the same topics the gz GUI
+slider already drives. This is the only thing that moves the head during
+CV testing.
 
 **`CVTarget.x/y/z` is a ROOT-FRAME POSITION now, not a camera-relative
 bearing offset** (plan Phase 4). The previous `atan2(x, z)`-style
@@ -1181,17 +1258,14 @@ wire; `CVTarget`/`CVDataPayload` stayed lean, gaining only a `lead_applied`/
 `track_valid` flags byte (plan Phase 4), not velocity fields. See
 `sentry_pkg/README.md`'s `target_tracker.py`/`point_to_cv_target.py` notes.
 
-**Environment footguns hit while building/testing this** (distinct from
-the `AMENT_PREFIX_PATH` footgun documented in `SESSION_NOTES.md`): sim's
-`gz-sim`/`ros_gz` apt deps aren't installed by default in this container
-(`DOCKER.md` already documents the fix: `sudo isaac_ros_common/docker/
-scripts/install-sim.sh`); and `sentry_pkg`'s build under
-`/workspaces/isaac_ros-dev/install` was found to be a stale colcon
+**Environment footguns hit while building/testing this.** sim's
+`gz-sim`/`ros_gz` apt deps aren't installed in this container by default;
+see `## Build` above for `install-sim.sh`. Separately, `sentry_pkg`'s
+build under `/workspaces/isaac_ros-dev/install` was once a stale colcon
 symlink-install pointing at a deleted git worktree from an earlier
-session, breaking both `ros2 run sentry_pkg point_to_cv_target` and a
-plain Python import, fixed by rebuilding
-(`colcon build --packages-select sentry_pkg --symlink-install` after
-removing the stale `build/`/`install/sentry_pkg` dirs). See
-`SESSION_NOTES.md`'s 2026-07-27 section for the full writeup, including
-why the sim/CV test scripts invoke `point_to_cv_target` by absolute
-install path rather than `ros2 run`.
+session, which broke both `ros2 run sentry_pkg point_to_cv_target` and a
+plain Python import. Rebuilding fixed it (`colcon build
+--packages-select sentry_pkg --symlink-install`, after removing the stale
+`build/`/`install/sentry_pkg` dirs). The sim/CV test scripts invoke
+`point_to_cv_target` by absolute install path rather than `ros2 run` to
+sidestep that class of failure.

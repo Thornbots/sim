@@ -28,7 +28,7 @@ stack, not an expected gap.
 
 Usage: python3 run_shot_hit_tests.py [--speeds 0.5 1 2 4]
 [--duration 15.0] [--hit-radius 0.05] [--headless] [--skip-stationary]
-[--lead {off,on,both}] [--head-slew-hz 0.5]
+[--lead {off,on,both}]
 
 Runs a completely stationary (speed=0, spin=0) baseline case before the
 speed sweep, unless --skip-stationary -- a working pipeline should hit
@@ -36,19 +36,9 @@ this trivially, so a miss there means the harness itself is broken, not
 that tracking/prediction is hard.
 
 --lead (default both) controls point_to_cv_target's lead_enabled param --
-"both" runs every scenario (baseline, sweep, head-slew) twice, once with
+"both" runs every scenario (baseline, sweep) twice, once with
 lead off and once on, so the deliverable is a hit-rate table per cell
 (plan Phase 6), not a single number.
-
---head-slew-hz (default 0.5, 0 to disable) adds one more scenario: a
-stationary, non-spinning target with the head independently oscillating
-at that rate (sim/head_sweep.py, launched instead of cv_head_aim -- see
-sim.launch.py's head_sweep_hz arg) rather than tracking the target. Checks
-target_tracker's TF-based head-motion decoupling in isolation (plan
-verification item 5) -- distinct from every other scenario here, where the
-head also moves, but only because it's tracking the target, so "lead
-works" and "lead works while the head moves" were never actually
-distinguishable before this case existed.
 """
 import argparse
 import math
@@ -462,12 +452,12 @@ class ShotHitSampler(Node):
 
 
 def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
-                   lead_enabled=False, head_sweep_hz=0.0):
-    tag = f'{speed}_spin{spin_hz:.2f}_lead{int(lead_enabled)}_slew{head_sweep_hz:.2f}'
+                   lead_enabled=False):
+    tag = f'{speed}_spin{spin_hz:.2f}_lead{int(lead_enabled)}'
     sim_cmd = [
         'ros2', 'launch', 'sim', 'sim.launch.py',
         'spawn_target:=true', f'target_speed:={speed}',
-        f'target_spin_hz:={spin_hz}', f'head_sweep_hz:={head_sweep_hz}',
+        f'target_spin_hz:={spin_hz}',
     ]
     if headless:
         sim_cmd += ['gui:=false', 'rviz:=false']
@@ -591,9 +581,6 @@ def main():
     parser.add_argument('--lead', choices=['off', 'on', 'both'], default='both',
                          help="point_to_cv_target's lead_enabled -- 'both' runs every "
                               'scenario twice for a before/after hit-rate table (plan Phase 6)')
-    parser.add_argument('--head-slew-hz', type=float, default=0.5,
-                         help='Stationary-target, head-independently-slewing scenario at this '
-                              'rate (0 to disable) -- see module docstring')
     parser.add_argument('--log-dir', default='/tmp/shot_hit_test_logs')
     args = parser.parse_args()
 
@@ -603,13 +590,13 @@ def main():
 
     any_shots = False
 
-    def run_and_report(label, speed, spin_hz, lead_enabled, head_sweep_hz=0.0):
+    def run_and_report(label, speed, spin_hz, lead_enabled):
         nonlocal any_shots
         full_label = f'{label} | lead={"on" if lead_enabled else "off"}'
         print(f'\n=== {full_label} ===')
         sampler, dropped = run_one_speed(
             speed, spin_hz, args.duration, args.headless, args.log_dir, args.hit_radius,
-            lead_enabled=lead_enabled, head_sweep_hz=head_sweep_hz)
+            lead_enabled=lead_enabled)
         got_shots = summarize(full_label, sampler, dropped)
         any_shots = any_shots or got_shots
         time.sleep(1.0)
@@ -629,11 +616,6 @@ def main():
                 spin_hz = spin_hz_for_speed(speed, speed_min, speed_max)
                 run_and_report(f'speed={speed} m/s, spin={spin_hz:.2f} Hz',
                                 speed, spin_hz, lead_enabled)
-
-        if args.head_slew_hz > 0.0 and not args.only_stationary:
-            run_and_report(
-                f'head-slew: stationary target, head @ {args.head_slew_hz:.2f} Hz',
-                0.0, 0.0, lead_enabled, head_sweep_hz=args.head_slew_hz)
 
     if not any_shots:
         print('\nNo shots observed in any scenario -- something in the launched stack is '

@@ -11,7 +11,8 @@ launch.** `Dockerfile.thornbots` deliberately installs neither
 `ros-humble-ros-gz` nor this package (real hardware never needs gz-sim):
 
 ```bash
-../isaac_ros_common/scripts/dexec.sh -r -- src/isaac_ros_common/docker/scripts/install-sim.sh
+../isaac_ros_common/scripts/dexec.sh -r -- \
+  src/isaac_ros_common/docker/scripts/install-sim.sh
 ```
 
 **`sim` is the one package with no `/workspaces/ros2_ws` shadow copy.** It isn't
@@ -27,36 +28,43 @@ workaround here; it applies to every _other_ first-party package.
 ```bash
 ../isaac_ros_common/scripts/dexec.sh -d -- python3 \
   /workspaces/isaac_ros-dev/src/sim/test/localization/run_localization_drift_tests.py \
-  --backend slam        # --use-ekf layers EKF on top;
+  --backend slam
 ```
 
-Before launching anything, check for a live session
-(`ps aux | grep -E 'gz
-sim|slam_toolbox|amcl|ros2 launch'`), since a colliding
-stack silently corrupts measurements. If something is running, ask before
-killing it; it may be the user's own work. That grep detects a live session
-only. To get a PID to kill, use `kill_launch.sh -l`, since the grep also matches
-`dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a `finally`
-block.
+`--backend` is `slam`, `amcl`, or `none` (who owns `map->odom`). `--use-ekf` is
+a separate axis and layers EKF fusion of `odom->root` on top of any of them;
+there is no `ekf` backend. `test/cv/` holds the CV-side tests:
+`run_shot_hit_tests.py` (standalone, same shape) and `test_cv_head_aim.py`
+(plain pytest, no stack needed).
+
+Before launching anything, check for a live session:
+
+```bash
+ps aux | grep -E 'gz sim|slam_toolbox|amcl|ros2 launch'
+```
+
+A colliding stack silently corrupts measurements. If something is running, ask
+before killing it; it may be the user's own work. That grep detects a live
+session only. To get a PID to kill, use `kill_launch.sh -l`, since the grep also
+matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
+`finally` block.
 
 ## Standing rules
 
 - **GUI on, not headless**, for both `sim` and the drift suite; the user watches
   the gz-sim window during testing. Pass `--headless` only when asked (e.g. a
-  quick unattended run). Launch as `-u admin` via `dexec.sh -d`, never a bare
-  `docker exec -d`, or the window fails to open; see the `isaac-ros-docker`
-  skill's "Launching GUI apps".
+  quick unattended run). Launch through `dexec.sh -d`, which execs as `admin`,
+  never a bare `docker exec -d`, or the window fails to open; see the
+  `isaac-ros-docker` skill's "Launching GUI apps".
 - **Always fully restart `sim` (fresh spawn) before restarting SLAM/explorer.**
   Partial restarts leave stale TF/pose state ("pos desync").
-- **If an edit under `sim/` doesn't take effect** for a
-  `ros2 run`/`ros2
-  launch` node, suspect `install/sim` losing its
-  `--symlink-install` linkage (stale copies instead of symlinks) before assuming
-  the edit is wrong. Fix:
-  `rm -rf build/sim install/sim && colcon build --packages-select sim
-  --symlink-install`.
-  Raw scripts like `run_shot_hit_tests.py` run against `src/` directly and are
-  unaffected, which makes this easy to misread.
+- **If an edit under `sim/` doesn't take effect** for a `ros2 run` or
+  `ros2 launch` node, suspect `install/sim` losing its `--symlink-install`
+  linkage (stale copies instead of symlinks) before assuming the edit is wrong.
+  Fix with `rm -rf build/sim install/sim`, then
+  `colcon build --packages-select sim --symlink-install`. Raw scripts like
+  `run_shot_hit_tests.py` run against `src/` directly and are unaffected, which
+  makes this easy to misread.
 
 ## Scope
 
@@ -67,8 +75,8 @@ block.
 
 ## Open
 
-- **The chassis has zero collision geometry, deliberately** — no link carries
-  any `<collision>`, so the robot drives straight through walls and through
+- **The chassis has zero collision geometry, deliberately.** No link carries any
+  `<collision>`, so the robot drives straight through walls and through
   `drift_correction_obstacle`'s spawned box. This was the price of making `root`
   free-floating so `set_pose` teleporting works for `auto_explore.py`'s grid
   sweep. The box itself has real collision geometry, so lidar/SLAM still see it;
@@ -79,7 +87,7 @@ block.
   tumble the robot to extreme angles (~86° roll observed). The user chose to
   accept occasional flips rather than reintroduce a kinematic constraint.
   Revisit only if flips start blocking exploration in practice.
-- **The slip model corrupts position but not velocity** — `pose_emulator.py`
+- **The slip model corrupts position but not velocity.** `pose_emulator.py`
   applies `odom_slip_ratio` to `_slipped_x/y` only, while `vel_x`/`vel_y` pass
   through as true twist. Velocity-only wheel fusion therefore looks better in
   sim than it will on hardware, where encoder velocity is also wrong during a
@@ -87,15 +95,16 @@ block.
   hardware prediction.
 - **`drift_correction`/`drift_correction_obstacle` need an ekf-appropriate
   metric.** Their `MAX_DELTA_THRESHOLD` is calibrated for `map->odom`'s
-  residual-correction semantics; under `odom->root` the delta is mostly the
-  robot's own motion around the loop, so both reliably FAIL without indicating a
-  problem. `test/localization/ekf_ground_truth_diag.py` scores against
-  `/sim/raw_odom` with slip enabled and should probably become the assertion for
-  `--backend ekf`.
+  residual-correction semantics. Under `--backend none`, where the watched edge
+  is `odom->root`, the delta is mostly the robot's own motion around the loop,
+  so both reliably FAIL without indicating a problem.
+  `test/localization/ekf_ground_truth_diag.py` scores against `/sim/raw_odom`
+  with slip enabled and should probably become the assertion for
+  `--backend none --use-ekf`.
 - **Never validate odometry on magnitude alone.** An early speed sweep compared
   `|displacement|` and scored rf2o healthy at ~1% error while it was pointing
-  exactly backwards. Compare displacement _vectors_ — the angle between them is
+  exactly backwards. Compare displacement _vectors_; the angle between them is
   what caught it. Applies to any odometry or detection source.
-- ARCC Battlefield zone coordinates (Figures 3-1–3-9 in
+- ARCC Battlefield zone coordinates (Figures 3-1 through 3-9 in
   `../ARCC_2026_SENTRY_CONTEXT.md`) aren't pulled into the world yet, if a
   precise arena map is ever needed.
