@@ -22,8 +22,19 @@ workaround here; it applies to every _other_ first-party package.
 
 ## Testing
 
-`test/localization/run_localization_drift_tests.py` is standalone, not part of
-`colcon test`. It launches `sim` + `sentry_pkg` end to end:
+Everything under `test/` is pytest, collected by `colcon test`. The suites
+that launch `sim` + `sentry_pkg` end to end carry the `integration` marker and
+are deselected by `setup.cfg`, so a plain `colcon test --packages-select sim`
+runs the unit tests only:
+
+```bash
+../isaac_ros_common/scripts/dexec.sh -- colcon test --packages-select sim
+../isaac_ros_common/scripts/dexec.sh -- \
+  colcon test --packages-select sim --pytest-args ' -m integration'
+```
+
+Each suite keeps an argparse wrapper that re-invokes pytest, so the old command
+lines still work and `--help` still lists the per-suite flags:
 
 ```bash
 ../isaac_ros_common/scripts/dexec.sh -d -- python3 \
@@ -33,9 +44,14 @@ workaround here; it applies to every _other_ first-party package.
 
 `--backend` is `slam`, `amcl`, or `none` (who owns `map->odom`). `--use-ekf` is
 a separate axis and layers EKF fusion of `odom->root` on top of any of them;
-there is no `ekf` backend. `test/cv/` holds the CV-side tests:
-`run_shot_hit_tests.py` (standalone, same shape) and `test_cv_head_aim.py`
-(plain pytest, no stack needed).
+there is no `ekf` backend.
+
+`test/localization/` is `test_localization_drift.py` (one test per scenario) and
+`test_ekf_ground_truth.py`, both over `drift_harness.py`/`ekf_diag_harness.py`.
+`test/cv/` is `test_shot_hit.py` (integration, one test per lead/speed cell,
+over `shot_hit_harness.py`) and `test_cv_head_aim.py` (plain pytest, no stack
+needed). Pass `-s` when running pytest directly, or the measured numbers these
+suites print get captured.
 
 Before launching anything, check for a live session:
 
@@ -62,9 +78,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `ros2 launch` node, suspect `install/sim` losing its `--symlink-install`
   linkage (stale copies instead of symlinks) before assuming the edit is wrong.
   Fix with `rm -rf build/sim install/sim`, then
-  `colcon build --packages-select sim --symlink-install`. Raw scripts like
-  `run_shot_hit_tests.py` run against `src/` directly and are unaffected, which
-  makes this easy to misread.
+  `colcon build --packages-select sim --symlink-install`. The `test/` suites run
+  against `src/` directly and are unaffected, which makes this easy to misread.
 
 ## Scope
 
@@ -98,7 +113,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   residual-correction semantics. Under `--backend none`, where the watched edge
   is `odom->root`, the delta is mostly the robot's own motion around the loop,
   so both reliably FAIL without indicating a problem.
-  `test/localization/ekf_ground_truth_diag.py` scores against `/sim/raw_odom`
+  `test/localization/test_ekf_ground_truth.py` scores against `/sim/raw_odom`
   with slip enabled and should probably become the assertion for
   `--backend none --use-ekf`.
 - **Never validate odometry on magnitude alone.** An early speed sweep compared

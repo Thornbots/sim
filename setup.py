@@ -35,17 +35,17 @@ setup(
     version='0.1.0',
     packages=find_packages(exclude=['test']),
     data_files=data_files,
-    # test/localization isn't a package (no __init__.py -- see
-    # ekf_ground_truth_diag.py's importlib comment for why), so these
-    # can't be console_scripts entry points; `scripts=` installs them as
+    # test/ isn't a package (no __init__.py, so pytest puts each test
+    # file's own directory on sys.path), so these argparse wrappers can't
+    # be console_scripts entry points; `scripts=` installs them as
     # standalone executables into lib/sim/ instead, runnable via
-    # `ros2 run sim run_localization_drift_tests.py [args]` /
-    # `ros2 run sim ekf_ground_truth_diag.py [args]`. Both land in the
-    # same installed directory, preserving ekf_ground_truth_diag.py's
-    # same-directory importlib lookup of the other file.
+    # `ros2 run sim <name>.py [args]`. Each one re-invokes pytest against
+    # the test file it wraps, resolved from the source tree -- see their
+    # SOURCE_FALLBACK constant.
     scripts=[
         'test/localization/run_localization_drift_tests.py',
         'test/localization/ekf_ground_truth_diag.py',
+        'test/cv/run_shot_hit_tests.py',
     ],
     install_requires=['setuptools'],
     zip_safe=True,

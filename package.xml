@@ -25,6 +25,10 @@
   <depend>dji_serial_bridge</depend>
   <depend>visualization_msgs</depend>
 
+  <!-- No ament_flake8/ament_pep257 lint tests: the package predates them
+       by ~350 violations under test/ alone. See README.md ## Testing. -->
+  <test_depend>python3-pytest</test_depend>
+
   <export>
     <build_type>ament_python</build_type>
   </export>

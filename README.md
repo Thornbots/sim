@@ -22,10 +22,15 @@ sim/
 │   ├── cv_head_aim.py             # CV-driven head tracking (cv_head_aim_core.py: IK)
 │   ├── head_slider_relay.py       # gz GUI slider <-> /head_*_cmd bridge
 │   └── wasd_teleop.py
-└── test/
-    ├── localization/              # run_localization_drift_tests.py,
-    │                              #   ekf_ground_truth_diag.py
-    └── cv/                        # run_shot_hit_tests.py, test_cv_head_aim.py
+└── test/                          # pytest suites; see ## Testing
+    ├── conftest.py                # shared options (--backend, --headless, ...)
+    ├── localization/              # test_localization_drift.py,
+    │                              #   test_ekf_ground_truth.py,
+    │                              #   drift_harness.py, ekf_diag_harness.py,
+    │                              #   + the two argparse wrappers
+    └── cv/                        # test_cv_head_aim.py, test_shot_hit.py,
+                                   #   shot_hit_harness.py,
+                                   #   run_shot_hit_tests.py
 ```
 
 The package name is `sim` deliberately, so the world file's
@@ -139,11 +144,49 @@ With `spawn_target:=true` it also runs `target_driver`,
 
 ## Testing
 
-`test/localization/run_localization_drift_tests.py` launches `sim` +
-`sentry_pkg` end to end and exercises drift/jerk-correction behaviour
-against this package's noise model. Not part of `colcon test`. Run it
-after tuning `sentry_localization`'s `slam.yaml`/`amcl.yaml`/`ekf.yaml`
-or `pose_emulator.py`'s noise model:
+Everything under `test/` is pytest, collected by `colcon test`, in three
+tiers:
+
+| tier | files | needs |
+|---|---|---|
+| unit | `cv/test_cv_head_aim.py` | bare Python + pytest |
+| integration | `localization/test_localization_drift.py`, `localization/test_ekf_ground_truth.py`, `cv/test_shot_hit.py` | gz-sim + two launch trees |
+
+There are no `ament_flake8`/`ament_pep257` lint tests. The package
+predates both by 268 flake8 and 453 pep257 violations, and `ament_pep257`'s
+D213 contradicts the docstring style already used throughout, so adding
+them means a package-wide reformat first.
+
+The integration tier carries the `integration` marker, and `setup.cfg`'s
+`addopts` deselects it, so a plain `colcon test` runs the unit tier only,
+in seconds:
+
+```bash
+isaac_ros_common/scripts/dexec.sh -- \
+  colcon test --packages-select sim
+```
+
+Opt into the stack-launching tier explicitly. The command line's `-m`
+wins over `setup.cfg`'s:
+
+```bash
+isaac_ros_common/scripts/dexec.sh -- \
+  colcon test --packages-select sim --pytest-args ' -m integration'
+```
+
+Each integration test launches gz-sim and `sentry_pkg`, takes tens of
+seconds, and needs a full teardown before the next one starts. It also
+corrupts its own measurements if a stack is already up, since ROS topics
+are process-global and two stacks collide. Stop yours first, or run a
+single case with `--scenario`.
+
+Each suite also keeps an argparse wrapper that re-invokes pytest, so
+`--help` still lists the per-suite flags and the old command lines still
+work. All three install into `lib/sim/`, so `ros2 run sim
+run_localization_drift_tests.py`, `ros2 run sim ekf_ground_truth_diag.py`
+and `ros2 run sim run_shot_hit_tests.py` work from anywhere. Run the
+drift suite after tuning `sentry_localization`'s
+`slam.yaml`/`amcl.yaml`/`ekf.yaml` or `pose_emulator.py`'s noise model:
 
 ```bash
 isaac_ros_common/scripts/dexec.sh -- python3 \
@@ -151,14 +194,26 @@ isaac_ros_common/scripts/dexec.sh -- python3 \
   --backend slam   # or amcl, none; --use-ekf layers on top of any of them
 ```
 
-Six scenarios run in order (`--scenario NAME` for just one): `baseline`,
-`noise_correction`, `drift_correction`, `drift_correction_obstacle`,
-`jerk_with_motion`, `odom_stuck`. `drift_correction` shares its loop and
-threshold with `drift_correction_obstacle` deliberately, so compare the
-two before blaming the obstacle for either failing. `--headless` skips the
-GUI and rviz2 (both on by default, per the standing "watch sim live"
-rule); `--speed` overrides the loop's 4.0 m/s, which nothing else has been
+Six scenarios run in order, one test each (`--scenario NAME` for just
+one): `baseline`, `noise_correction`, `drift_correction`,
+`drift_correction_obstacle`, `jerk_with_motion`, `odom_stuck`.
+`drift_correction` shares its loop and threshold with
+`drift_correction_obstacle` deliberately, so compare the two before
+blaming the obstacle for either failing. `--headless` skips the GUI and
+rviz2 (both on by default, per the standing "watch sim live" rule);
+`--speed` overrides the loop's 4.0 m/s, which nothing else has been
 re-validated against.
+
+Every flag maps 1:1 onto a pytest option declared in `test/conftest.py`,
+so the same run is available directly:
+
+```bash
+python3 -m pytest test/localization/test_localization_drift.py \
+  -m integration -s --backend slam --scenario drift_correction
+```
+
+`-s` matters: these suites print their measured numbers as they go, and
+pytest captures stdout without it.
 
 Rebuild after editing a `sentry_localization/config/*.yaml`. That
 package's config/launch/map `data_files` are copied at build time, so an
@@ -180,9 +235,14 @@ Each scenario's exact pass condition, the per-backend TF edge it watches,
 and the suite's design history are in `## Notes` below. Read that before
 interpreting a failure, not the script's docstring.
 
-`test/cv/` holds `run_shot_hit_tests.py` (standalone, same shape as the
-drift suite) and `test_cv_head_aim.py` (pure pytest over
-`solve_head_angles()`, no stack needed).
+`test/cv/` holds `test_shot_hit.py` (integration, same shape as the drift
+suite, with `run_shot_hit_tests.py` as its wrapper) and
+`test_cv_head_aim.py` (pure pytest over `solve_head_angles()`, no stack
+needed). The shot-hit suite runs one test per (lead, speed) cell and
+prints a hit-rate line for each, so a full run is the before/after lead
+table. It asserts that shots are observed at all; the stationary
+baseline additionally asserts at least one hit, since a working pipeline
+hits a motionless target trivially.
 
 ## Notes
 
@@ -190,8 +250,9 @@ Design rationale kept out of in-code comments so the code stays skimmable.
 Each subheading names a file; the in-code comment usually points back
 here.
 
-### run_localization_drift_tests.py
+### test_localization_drift.py
 
+(`drift_harness.py` plus the `run_localization_drift_tests.py` wrapper.)
 Integration suite for `sentry_localization`'s map-relative drift/jerk
 correction, driven against sim's synthetic odometry noise model
 (`sim/pose_emulator.py`). Mirrors `auto.launch.py`'s two independent axes:
@@ -199,14 +260,18 @@ correction, driven against sim's synthetic odometry noise model
 (whether `odom->root` is EKF-fused). Loop per scenario: launch stack ->
 drive -> sample the correction TF -> assert -> tear down.
 
-It is a standalone script rather than a `colcon test` file because it
-needs a running container, gz-sim, and two full launch trees, takes tens
-of seconds per scenario, must run scenarios strictly sequentially with a
-full teardown between them, and needs its measured numbers printed rather
-than buried in a pytest traceback. It manages its own launch trees end to
-end (same setsid/process-group approach as `dexec.sh -d`) and will not
-attach to a stack you already have running, because ROS topics are
-process-global and two stacks collide. Stop yours first.
+Structured as `drift_harness.py` (stack lifecycle, driving, scenario
+implementations) plus `test_localization_drift.py` (one parametrized
+test per scenario). The split is what lets the suite be a normal pytest
+file while `ekf_diag_harness.py` still reuses `run_stack`/`drive`, and
+what keeps `Scenario`'s accumulated `details` available to put in the
+assertion message rather than losing them to pytest's capture.
+
+It manages its own launch trees end to end (same setsid/process-group
+approach as `dexec.sh -d`) and will not attach to a stack you already
+have running, because ROS topics are process-global and two stacks
+collide. Stop yours first. It is deselected from a plain `colcon test`
+for the same reason; see `## Testing`.
 
 Each scenario watches whichever TF edge the backend owns,
 not literally `map->odom` every time (see `BACKEND_FRAMES`):
@@ -535,8 +600,9 @@ amount of delay fixes it. `-string` sidesteps ROS for this one hand-off.
 To exercise the jerk mechanism once sim is up:
 `ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger`.
 
-### ekf_ground_truth_diag.py: why it exists separately
+### test_ekf_ground_truth.py: why it exists separately
 
+(`ekf_diag_harness.py` plus the `ekf_ground_truth_diag.py` wrapper.)
 It answers what the drift suite structurally can't: *does fusing
 `/scan_odom` into `/odom` via `ekf_node` actually produce a better
 estimate of where the robot really is?*
@@ -552,7 +618,8 @@ also assert on a `map->odom` residual, whereas the EKF's relevant edge is
 
 So this script turns wheel-odometry error on (drift plus continuous slip),
 drives the same cornering loop, and scores both estimators against
-`/sim/raw_odom` using mean/RMS/max Euclidean error.
+`/sim/raw_odom` using mean/RMS/max Euclidean error. The test asserts the
+EKF's mean error beats raw `/odom`'s.
 
 ### Removed: head_sweep.py (2026-08-31)
 
