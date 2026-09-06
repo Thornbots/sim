@@ -13,9 +13,10 @@
 # limitations under the License.
 
 """
-cv_head_aim_core.py -- pure head-IK math for cv_head_aim.py (no rclpy import), unit-tested standalone in test/test_cv_head_aim.py.
+cv_head_aim_core.py -- pure head-IK math for cv_head_aim.py, no rclpy import.
 
-See README.md's ### cv_head_aim.py Notes for the derivation.
+Unit-tested standalone in test/cv/test_cv_head_aim.py. See README.md's
+### cv_head_aim.py Notes for the derivation.
 """
 import math
 
@@ -31,9 +32,10 @@ def wrap_to_pi(angle):
 
 def solve_head_angles(target_root):
     """
-    Solve absolute (yaw, pitch) for headlink/headpitch that aims the camera's local +X axis at target_root (a root-frame point).
+    Solve absolute (yaw, pitch) for headlink/headpitch aiming the camera at target_root.
 
-    Ignores the camera's small (~0.35m) position offset from the
+    The aim axis is the camera's local +X and target_root is a root-frame
+    point. Ignores the camera's small (~0.35m) position offset from the
     yaw/pitch axes -- same simplification the plan applies to Type-C's
     muzzle offset ("a few cm against metres of range doesn't move t").
     Derived from the fixed FK chain in sentry.urdf.xacro (root -[pi

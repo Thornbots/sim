@@ -13,7 +13,9 @@
 # limitations under the License.
 
 """
-Turns thornbots_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd so sim's head joints track it -- the reason the head moves during CV testing.
+Turns thornbots_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd so the sim head tracks it.
+
+This is why the head moves during CV testing.
 
 /cv/target is dji_serial_bridge/msg/CVTarget, a ROOT-FRAME aim POSITION
 as of the plan's Phase 4/5. Mirrors what Type-C actually receives: a
@@ -26,9 +28,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64
-
 from sim.cv_head_aim_core import solve_head_angles, wrap_to_pi
+from std_msgs.msg import Float64
 
 HEADPITCH_LOWER = -0.6          # sentry.urdf.xacro: headpitch lower
 HEADPITCH_UPPER = 0.6           # sentry.urdf.xacro: headpitch upper

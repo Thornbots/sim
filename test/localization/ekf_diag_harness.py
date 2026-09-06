@@ -13,12 +13,13 @@
 # limitations under the License.
 
 """
-Ground-truth accuracy probe for EKF-fused odometry (backend='none' plus
-use_ekf=True in drift_harness's terms). Answers what the drift suite
-structurally can't (see README.md): does fusing /scan_odom into /odom via
-ekf_node actually beat raw /odom, scored against /sim/raw_odom?
-Importable machinery only -- test_ekf_ground_truth.py holds the
-assertion, ekf_ground_truth_diag.py is the argparse wrapper.
+Ground-truth accuracy probe for EKF-fused odometry.
+
+That is backend='none' plus use_ekf=True in drift_harness's terms. Answers
+what the drift suite structurally can't (see README.md): does fusing
+/scan_odom into /odom via ekf_node actually beat raw /odom, scored against
+/sim/raw_odom? Importable machinery only -- test_ekf_ground_truth.py holds
+the assertion, ekf_ground_truth_diag.py is the argparse wrapper.
 """
 import math
 import statistics
@@ -34,9 +35,12 @@ from tf2_ros import Buffer, TransformListener
 
 
 class GroundTruthProbe(Node):
-    """Samples ground truth, raw wheel odometry, and the EKF's fused
-    `odom->root` TF simultaneously, so all three can be compared at the
-    same instants."""
+    """
+    Samples ground truth, raw wheel odometry, and the EKF's fused TF.
+
+    The `odom->root` TF is read at the same instants as the other two,
+    so all three can be compared directly.
+    """
 
     def __init__(self):
         super().__init__('ekf_ground_truth_probe')
@@ -58,9 +62,11 @@ class GroundTruthProbe(Node):
         self._odom = (p.x, p.y)
 
     def ekf_xy(self, timeout=0.5):
-        """Fused estimate, read off the `odom->root` TF that ekf_node owns
-        under localization_mode:=none (there is no map frame in this
-        mode)."""
+        """
+        Fused estimate, read off the `odom->root` TF that ekf_node owns.
+
+        There is no map frame under localization_mode:=none.
+        """
         try:
             tf = self.tf_buffer.lookup_transform(
                 'odom', 'root', rclpy.time.Time(),
@@ -71,8 +77,7 @@ class GroundTruthProbe(Node):
         return (t.x, t.y)
 
     def sample(self):
-        """One simultaneous (truth, raw odom, ekf) triple, or None if any
-        leg isn't available yet."""
+        """One simultaneous (truth, raw odom, ekf) triple, or None if any is missing."""
         truth, odom, ekf = self._truth, self._odom, self.ekf_xy()
         if truth is None or odom is None or ekf is None:
             return None
@@ -187,9 +192,12 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
 
 
 def improvement_pct(odom_stats, ekf_stats):
-    """EKF's percentage reduction in mean ground-truth error versus raw
-    /odom. NaN if odom's own mean error is zero, which a short or
-    degenerate run can produce even though noise is always injected."""
+    """
+    Percentage reduction in mean ground-truth error, EKF versus raw /odom.
+
+    NaN if odom's own mean error is zero, which a short or degenerate
+    run can produce even though noise is always injected.
+    """
     if odom_stats['mean'] <= 0.0:
         return float('nan')
     return (odom_stats['mean'] - ekf_stats['mean']) / odom_stats['mean'] * 100.0

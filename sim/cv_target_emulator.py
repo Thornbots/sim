@@ -13,7 +13,9 @@
 # limitations under the License.
 
 """
-Ground-truth-plus-noise CV emulator (no YOLOv8 render pipeline) for a 4-armor-panel target *robot*, not a single point.
+Ground-truth-plus-noise CV emulator for a 4-armor-panel target *robot*, not a single point.
+
+No YOLOv8 render pipeline is involved.
 
 Subscribes /sim/raw_odom + /sim/raw_joint_states (camera FK, no TF) and
 /target/ground_truth_odom (chassis center + yaw, see target_driver.py);
@@ -69,8 +71,9 @@ def _rotation_from_quaternion(x, y, z, w):
 
 def _quat_from_axes(x_axis, y_axis, z_axis):
     """
-    Compute the quaternion (x, y, z, w) for the rotation whose local +X/+Y/+Z map to the given orthonormal world-frame axes.
+    Compute the quaternion (x, y, z, w) for a rotation onto the given world-frame axes.
 
+    The rotation maps local +X/+Y/+Z onto the given orthonormal axes.
     Used to orient panel/detection boxes so their thin (normal) axis
     actually points along panel_normal's real tilt (both azimuth AND the
     S122 cant), not just yaw, which a flush atan2(normal.y, normal.x)
@@ -260,7 +263,7 @@ class CvTargetEmulator(Node):
 
     def _panel_poses(self):
         """
-        Compute world (position, outward_normal_unit_vector, right_dir, up_dir) for each of the 4 armor panels.
+        Compute world pose (position, outward normal, right_dir, up_dir) for the 4 panels.
 
         Chassis yaw is applied via the target's own rotation matrix -- see
         module docstring for the panel layout. Position offset stays in
@@ -317,7 +320,7 @@ class CvTargetEmulator(Node):
 
     def _make_detection(self, cand, cam_pos, cam_rot):
         """
-        Build one noisy PanelDetection from a qualifying candidate tuple, or None if this draw dropped out.
+        Build one noisy PanelDetection from a candidate tuple, or None if the draw dropped out.
 
         Same noise/corner construction as the single-best path used before
         this was split out for the array.

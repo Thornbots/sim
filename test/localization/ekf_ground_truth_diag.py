@@ -15,10 +15,12 @@
 # limitations under the License.
 
 """
-argparse wrapper around test_ekf_ground_truth.py, keeping the documented
-`ros2 run sim ekf_ground_truth_diag.py` / `python3 .../
-ekf_ground_truth_diag.py` workflows working now that the assertion lives
-in a standard pytest suite. Exits 0 if EKF beat raw /odom on mean error.
+Argparse wrapper around test_ekf_ground_truth.py.
+
+Keeps the documented `ros2 run sim ekf_ground_truth_diag.py` / `python3
+.../ekf_ground_truth_diag.py` workflows working now that the assertion
+lives in a standard pytest suite. Exits 0 if EKF beat raw /odom on mean
+error.
 """
 import argparse
 import os

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Black-box shot-hit machinery: launches the sim + the production CV pipeline and scores each FireCommand against ground truth.
+Black-box shot-hit machinery: launches the sim plus the production CV pipeline.
 
 Scores each FireCommand on /dji_serial_bridge/fire_command, knowing
 nothing about how thornbots_pkg predicts (see sim/README.md's ## Notes for
@@ -255,7 +255,11 @@ class LaunchTree:
 
 class ShotHitSampler(Node):
     """
-    Subscribes /sim/raw_odom + /sim/raw_joint_states (muzzle FK), /target/ground_truth_odom (impact truth), and /dji_serial_bridge/fire_command (shot events).
+    Subscribes the sim, ground-truth and fire_command topics the scorer needs.
+
+    /sim/raw_odom + /sim/raw_joint_states give the muzzle FK,
+    /target/ground_truth_odom the impact truth, and
+    /dji_serial_bridge/fire_command the shot events.
 
     Each fire_command with fire=True becomes one pending shot, resolved
     once ground-truth data at/after its estimated impact time arrives.
@@ -434,9 +438,10 @@ class ShotHitSampler(Node):
 
     def finish(self):
         """
-        Finish sampling, dropping shots still pending (impact time not yet reached) rather than counting them as misses.
+        Finish sampling, dropping shots still pending rather than counting them as misses.
 
-        There's no ground-truth sample to judge them against.
+        Pending means the impact time has not been reached yet, so there's
+        no ground-truth sample to judge them against.
         """
         dropped = len(self._pending_shots)
         self._pending_shots = []
