@@ -10,9 +10,8 @@ Launches gz-sim and the full sentry stack, so every test here is marked
 --speed M/S (see test/conftest.py). See README.md for WHY THIS EXISTS,
 BACKENDS, and SCENARIOS.
 """
-import pytest
-
 import drift_harness
+import pytest
 
 pytestmark = pytest.mark.integration
 

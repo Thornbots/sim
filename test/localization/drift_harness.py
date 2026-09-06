@@ -1,6 +1,7 @@
 """
-Stack lifecycle + scenario implementations for the localization drift
-suite. Importable machinery only, no CLI and no test collection: the
+Stack lifecycle + scenario implementations for the localization drift suite.
+
+Importable machinery only, no CLI and no test collection: the
 assertions live in test_localization_drift.py, and
 run_localization_drift_tests.py is the argparse wrapper around it.
 ekf_ground_truth_diag.py's harness reuses run_stack/teardown_stack/drive
@@ -22,15 +23,15 @@ import signal
 import subprocess
 import time
 
-import rclpy
 from ament_index_python.packages import get_package_share_directory
-from rclpy.node import Node
-from rclpy.duration import Duration
-from tf2_ros import Buffer, TransformListener, LookupException, ExtrapolationException
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+import rclpy
+from rclpy.duration import Duration
+from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Trigger
+from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformListener
 
 
 # --------------------------------------------------------------------------
@@ -43,14 +44,14 @@ from std_srvs.srv import Trigger
 # --------------------------------------------------------------------------
 
 class LaunchTree:
-    """Launches a `ros2 launch ...` command as its own process group and
-    can tear the whole tree down cleanly with SIGINT (falling back to
-    SIGKILL if it doesn't exit in time). Mirrors kill_launch.sh's
-    "SIGINT the process group, never pkill/killall" approach -- a partial
-    kill that leaves orphaned children running alongside a fresh relaunch
-    causes duplicate-node TF jitter (see SESSION_NOTES.md), which would
-    silently corrupt this suite's own results if it happened between
-    scenarios.
+    """
+    Launches a `ros2 launch ...` command as its own process group and can tear the whole tree down cleanly with SIGINT (falling back to SIGKILL if it doesn't exit in time).
+
+    Mirrors kill_launch.sh's "SIGINT the process group, never
+    pkill/killall" approach -- a partial kill that leaves orphaned
+    children running alongside a fresh relaunch causes duplicate-node TF
+    jitter (see SESSION_NOTES.md), which would silently corrupt this
+    suite's own results if it happened between scenarios.
     """
 
     def __init__(self, name, cmd, log_path):
@@ -108,20 +109,22 @@ class LaunchTree:
 
 
 def check_no_orphans(label):
-    """Sanity check used before/after the whole suite: warns (does not
-    fail) if sim/localization processes are already running that this
-    script did not start itself -- most likely an interactive session's
-    stack left over, or a previous run of this suite that didn't clean
-    up. This script refuses to start its own stack on top of one already
-    running (topics/services are process-global, they WILL collide), it
-    just reports what it sees so a human can decide what to do.
+    """
+    Warn (do not fail) if sim/localization processes this script did not start are already running.
+
+    Sanity check used before/after the whole suite -- most likely an
+    interactive session's stack left over, or a previous run of this
+    suite that didn't clean up. This script refuses to start its own
+    stack on top of one already running (topics/services are
+    process-global, they WILL collide), it just reports what it sees so
+    a human can decide what to do.
     """
     try:
         out = subprocess.run(
             ['bash', '-c',
              "ps aux | grep -E 'ign gazebo|gz sim|slam_toolbox|amcl|"
              "map_server|ekf_filter_node|pose_translator|pose_emulator' | "
-             "grep -v grep | "
+             'grep -v grep | '
              # Excludes the suite's own process, under either entry
              # point: --backend amcl or --use-ekf on the command line
              # would otherwise self-match the amcl/ekf_filter_node
@@ -157,6 +160,7 @@ def check_no_orphans(label):
 # --------------------------------------------------------------------------
 
 class LocalizationTestHelper(Node):
+
     def __init__(self, parent_frame='map', child_frame='odom'):
         super().__init__('localization_drift_test_helper')
         # Which TF edge counts as "the correction" -- see README.md's
@@ -226,7 +230,7 @@ class LocalizationTestHelper(Node):
         t = tf.transform.translation
         q = tf.transform.rotation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
-                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         return (t.x, t.y, yaw)
 
     def get_root_position(self, timeout=2.0):
@@ -457,8 +461,8 @@ def launch_cmd(args_str):
 # --------------------------------------------------------------------------
 
 def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
-                        size=OBSTACLE_SIZE, height=OBSTACLE_HEIGHT,
-                        timeout=15.0):
+                       size=OBSTACLE_SIZE, height=OBSTACLE_HEIGHT,
+                       timeout=15.0):
     """One-shot spawn of a static box into the running gz-sim world (same
     `ros_gz_sim create -string <inline SDF>` mechanism as spawn_robot,
     run as a subprocess so it can fire mid-scenario instead of at stack
@@ -488,6 +492,7 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
 
 
 class Scenario:
+
     def __init__(self, name, description):
         self.name = name
         self.description = description
@@ -514,7 +519,7 @@ class Scenario:
 def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
               odom_drift_stddev=None, odom_jitter_stddev=None,
               odom_slip_ratio=0.02, odom_jerk_bias_xy=None):
-    """Starts sim + sentry_pkg launch trees, waits for the graph to come
+    """Starts sim + thornbots_pkg launch trees, waits for the graph to come
     up, returns (sim_tree, sentry_tree, helper_node). Caller must call
     teardown_stack() when done. odom_slip_ratio defaults to 0.02 -- a
     small amount of slip for every scenario. The drift scenarios
@@ -558,7 +563,7 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
     # forwarded as its own independent arg, same two-axis shape as
     # auto.launch.py/localization.launch.py.
     sentry_args = (
-        'ros2 launch sentry_pkg auto.launch.py real_hardware:=false '
+        'ros2 launch thornbots_pkg auto.launch.py real_hardware:=false '
         f'localization_mode:={backend} '
         f"use_ekf:={'true' if use_ekf else 'false'} load_map:=true"
     )
@@ -574,8 +579,8 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
             'map', 'ARCC26')
         sentry_args += f' map_file:={arcc26_map_file}'
     sentry_tree = LaunchTree(
-        'sentry_pkg', launch_cmd(sentry_args),
-        os.path.join(LOG_DIR, 'sentry_pkg.log'))
+        'thornbots_pkg', launch_cmd(sentry_args),
+        os.path.join(LOG_DIR, 'thornbots_pkg.log'))
     sentry_tree.start()
 
     parent_frame, child_frame = BACKEND_FRAMES[backend]
@@ -586,7 +591,7 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
 def teardown_stack(sim_tree, sentry_tree, helper):
     if helper is not None:
         helper.destroy_node()
-    # sentry_pkg first (consumer of sim's topics), then sim -- avoids
+    # thornbots_pkg first (consumer of sim's topics), then sim -- avoids
     # the localization backend/pose_translator spending their shutdown
     # window complaining about topics that vanished out from under them.
     if sentry_tree is not None:
@@ -642,7 +647,7 @@ def scenario_baseline(gui, backend, use_ekf):
             gui, backend, use_ekf, odom_noise_enabled=False)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
-                              'in time -- see log above')
+                      'in time -- see log above')
             return sc
         pose = helper.wait_for_correction_tf(timeout=45.0)
         if pose is None:
@@ -668,17 +673,17 @@ def scenario_baseline(gui, backend, use_ekf):
                f'drift from first sample = {drift:.4f} m')
 
         sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'sentry_pkg')
+        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
         for e in (sim_errs + sentry_errs)[:10]:
             sc.log(f'log error: {e}')
 
         DRIFT_THRESHOLD = 0.05  # meters, over the 10s stability window
         ok = drift < DRIFT_THRESHOLD and not sim_errs and not sentry_errs
         sc.result(ok,
-                   f'{edge} drift over 10s = {drift:.4f} m (threshold '
-                   f'{DRIFT_THRESHOLD} m; absolute offset {mag:.4f} m is '
-                   f'expected/normal, see note above), '
-                   f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'{edge} drift over 10s = {drift:.4f} m (threshold '
+                  f'{DRIFT_THRESHOLD} m; absolute offset {mag:.4f} m is '
+                  f'expected/normal, see note above), '
+                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
         return sc
     finally:
         teardown_stack(sim_tree, sentry_tree, helper)
@@ -697,7 +702,7 @@ def scenario_noise_correction(gui, backend, use_ekf):
             gui, backend, use_ekf, odom_noise_enabled=True)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
-                              'in time -- see log above')
+                      'in time -- see log above')
             return sc
         pose = helper.wait_for_correction_tf(timeout=45.0)
         if pose is None:
@@ -708,7 +713,7 @@ def scenario_noise_correction(gui, backend, use_ekf):
         # reposition every other scenario driving this square does (see
         # _run_cornering_loop_scenario / scenario_jerk_with_motion).
         _reposition_to_loop_start(helper)
-        sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
+        sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner "
                '(-1.5,-1.5) before tracing it')
 
         samples = []
@@ -734,7 +739,7 @@ def scenario_noise_correction(gui, backend, use_ekf):
 
         if len(samples) < 3:
             sc.result(False, f'too few {edge} samples ({len(samples)}) '
-                              'to assess boundedness')
+                      'to assess boundedness')
             return sc
 
         mags = [m for _, m in samples]
@@ -750,15 +755,15 @@ def scenario_noise_correction(gui, backend, use_ekf):
         growth_ratio = second_half_max / max(first_half_max, 1e-6)
 
         sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'sentry_pkg')
+        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
 
         GROWTH_THRESHOLD = 2.0  # second half shouldn't be >2x first half
         ok = growth_ratio < GROWTH_THRESHOLD and not sim_errs and not sentry_errs
         sc.result(ok,
-                   f'max|xy|={max_mag:.4f} m, first_half_max={first_half_max:.4f}, '
-                   f'second_half_max={second_half_max:.4f}, '
-                   f'growth_ratio={growth_ratio:.2f} (threshold {GROWTH_THRESHOLD}), '
-                   f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'max|xy|={max_mag:.4f} m, first_half_max={first_half_max:.4f}, '
+                  f'second_half_max={second_half_max:.4f}, '
+                  f'growth_ratio={growth_ratio:.2f} (threshold {GROWTH_THRESHOLD}), '
+                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
         return sc
     finally:
         teardown_stack(sim_tree, sentry_tree, helper)
@@ -799,11 +804,11 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
     sc = Scenario('jerk_with_motion',
                   f'models getting hit by another robot or running into a '
                   f'wall -- a discrete collision impulse, not gradual wheel '
-                  f'slip/bumpy terrain. Repositions to OBSTACLE_LOOP_LEGS\'s '
+                  f"slip/bumpy terrain. Repositions to OBSTACLE_LOOP_LEGS's "
                   f'start corner, then per trial: trigger_jerk (biased inward '
                   f'toward OBSTACLE_XY), then drive a single bounded leg to the '
                   f'next corner of the 3m hard-cornering square centered on '
-                  f'OBSTACLE_XY -- the drive is corrected by the jerk\'s own '
+                  f"OBSTACLE_XY -- the drive is corrected by the jerk's own "
                   f'real (dx, dy) (see _leg_for_displacement) so the robot '
                   f'still lands exactly on that corner regardless of what '
                   f'the jerk did, instead of drifting the whole loop off '
@@ -839,7 +844,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
             odom_jerk_stddev=JERK_STDDEV, odom_jerk_bias_xy=OBSTACLE_XY)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
-                              'in time -- see log above')
+                      'in time -- see log above')
             return sc
 
         # Reposition to OBSTACLE_LOOP_LEGS's own start corner -- same
@@ -848,7 +853,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
         # (1.5,-1.5) segment from the wrong starting point, throwing off
         # every corner after it too.
         _reposition_to_loop_start(helper)
-        sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
+        sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner "
                '(-1.5,-1.5) before tracing it')
 
         trial_results = []
@@ -931,16 +936,16 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
         sc.log(f'{edge} after extra lap = {p}')
 
         sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'sentry_pkg')
+        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
 
         n_pass = sum(1 for trial_ok, _ in trial_results if trial_ok)
         ok = (n_pass == JERK_WITH_MOTION_REPEATS
               and not sim_errs and not sentry_errs)
         summary = '; '.join(detail for _, detail in trial_results)
         sc.result(ok,
-                   f'{n_pass}/{JERK_WITH_MOTION_REPEATS} trials passed -- {summary} '
-                   f'-- plus one extra closing lap around the square -- '
-                   f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'{n_pass}/{JERK_WITH_MOTION_REPEATS} trials passed -- {summary} '
+                  f'-- plus one extra closing lap around the square -- '
+                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
         return sc
     finally:
         teardown_stack(sim_tree, sentry_tree, helper)
@@ -980,7 +985,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
             odom_slip_ratio=0.15)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
-                              'in time -- see log above')
+                      'in time -- see log above')
             return sc
         pose_before = helper.wait_for_correction_tf(timeout=45.0)
         if pose_before is None:
@@ -1001,7 +1006,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
         # OBSTACLE_LOOP_LEGS's comment for the loop's full geometry and
         # wall-clearance derivation.
         _reposition_to_loop_start(helper)
-        sc.log('repositioned to the loop\'s start corner (-1.5,-1.5) '
+        sc.log("repositioned to the loop's start corner (-1.5,-1.5) "
                'before tracing its perimeter')
 
         # Drive the loop. Sampling the correction TF each leg.
@@ -1033,26 +1038,26 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
 
         if len(samples) < 3:
             sc.result(False, f'too few {edge} samples ({len(samples)}) to '
-                              'assess boundedness')
+                      'assess boundedness')
             return sc
 
         if helper._scan_count <= scans_before_drive:
             sc.result(False, 'scan count did not advance while driving '
-                              'the loop -- backend may have stalled')
+                      'the loop -- backend may have stalled')
             return sc
 
         max_delta = max(samples)
         sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'sentry_pkg')
+        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
 
         ok = (max_delta < MAX_DELTA_THRESHOLD
               and not sim_errs and not sentry_errs)
         obstacle_note = ' past the obstacle' if spawn_obstacle else ''
         sc.result(ok,
-                   f'max|{edge} - pre-loop {edge}| = {max_delta:.4f} m '
-                   f'over {OBSERVE_SECONDS:.0f}s driving the cornering '
-                   f'loop{obstacle_note} (threshold {MAX_DELTA_THRESHOLD} m), '
-                   f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'max|{edge} - pre-loop {edge}| = {max_delta:.4f} m '
+                  f'over {OBSERVE_SECONDS:.0f}s driving the cornering '
+                  f'loop{obstacle_note} (threshold {MAX_DELTA_THRESHOLD} m), '
+                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
         return sc
     finally:
         teardown_stack(sim_tree, sentry_tree, helper)
@@ -1072,8 +1077,8 @@ def scenario_drift_correction_obstacle(gui, backend, use_ekf):
         'to contend with, a PASS here is only meaningful if drift_correction '
         'also passed -- if drift_correction failed, treat any pass/fail '
         'here as uninformative about the obstacle specifically, since the '
-        'easier no-obstacle case hadn\'t even cleared the bar yet. Runs for '
-        'backend none too: rf2o_laser_odometry\'s scan-to-scan matching '
+        "easier no-obstacle case hadn't even cleared the bar yet. Runs for "
+        "backend none too: rf2o_laser_odometry's scan-to-scan matching "
         '(feeding /scan_odom into ekf_node) has no map to be missing a '
         'feature from, so an unmapped obstacle is not expected to move the '
         'needle versus drift_correction -- see BACKENDS in the module '
@@ -1091,12 +1096,12 @@ def scenario_drift_correction(gui, backend, use_ekf):
         'obstacle spawned -- the hard corners accumulate real '
         'dead-reckoning error faster than amcl can track it live; the '
         'correction TF visibly snaps back onto the map once the robot '
-        'settles at each leg\'s dwell (confirmed live in rviz -- this is '
+        "settles at each leg's dwell (confirmed live in rviz -- this is "
         'the correction being observed, not a wheel-slip artifact), not '
         'response to any mapped/unmapped feature. Asserted '
         'against the same MAX_DELTA_THRESHOLD as drift_correction_obstacle '
         'on purpose: a similar reading on both means an added unmapped '
-        'obstacle isn\'t compounding the cornering-induced wobble. Runs '
+        "obstacle isn't compounding the cornering-induced wobble. Runs "
         'for backend none too: rf2o_laser_odometry does real scan-to-scan '
         'matching on raw /scan, feeding /scan_odom into ekf_node, so lidar '
         'data does drive odom->root here -- see BACKENDS in the module '
@@ -1119,14 +1124,14 @@ def scenario_odom_stuck(gui, backend, use_ekf):
     sc = Scenario(
         'odom_stuck',
         f'models a dead wheel encoder: one-shot, permanent trigger pins '
-        f'/pose\'s x/y at (0, 0) forever (fresh timestamps keep arriving, '
+        f"/pose's x/y at (0, 0) forever (fresh timestamps keep arriving, "
         f'unlike a stalled topic) while the robot keeps being driven. '
         f'Unlike every other scenario here, there is no valid odometry '
         f'left to bound drift against, so this is a LIVENESS check, not a '
         f'correctness one: the backend must keep processing scans and '
         f'keep attempting {edge} corrections (not freeze/latch on one '
         f'value) even though its odom input looks stationary. See '
-        f'README.md for the known risk that amcl/slam\'s '
+        f"README.md for the known risk that amcl/slam's "
         f'update_min_d/minimum_travel_distance gate is driven by odom-'
         f'reported travel and may never re-open once odom is frozen -- a '
         f'failure here is a diagnostic finding about the stack, not '
@@ -1137,7 +1142,7 @@ def scenario_odom_stuck(gui, backend, use_ekf):
             gui, backend, use_ekf, odom_noise_enabled=False)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
-                              'in time -- see log above')
+                      'in time -- see log above')
             return sc
         pose_before = helper.wait_for_correction_tf(timeout=45.0)
         if pose_before is None:
@@ -1149,7 +1154,7 @@ def scenario_odom_stuck(gui, backend, use_ekf):
         # reposition every other scenario driving this square does (see
         # _run_cornering_loop_scenario / scenario_noise_correction).
         _reposition_to_loop_start(helper)
-        sc.log('repositioned to OBSTACLE_LOOP_LEGS\'s start corner '
+        sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner "
                '(-1.5,-1.5) before tracing it')
 
         helper.call_trigger_odom_stuck()
@@ -1179,7 +1184,7 @@ def scenario_odom_stuck(gui, backend, use_ekf):
                 err_str = ''
                 if root_pos is not None and truth_xy is not None:
                     err = math.hypot(root_pos[0] - truth_xy[0],
-                                      root_pos[1] - truth_xy[1])
+                                     root_pos[1] - truth_xy[1])
                     err_str = f'  ground_truth_error={err:.4f} m'
                 sc.log(f't={elapsed:5.1f}s  {edge} = '
                        f'(x={p[0]:.4f}, y={p[1]:.4f}, yaw={p[2]:.4f})'
@@ -1187,12 +1192,12 @@ def scenario_odom_stuck(gui, backend, use_ekf):
 
         if len(samples) < 3:
             sc.result(False, f'too few {edge} samples ({len(samples)}) to '
-                              'assess liveness')
+                      'assess liveness')
             return sc
 
         if helper._scan_count <= scans_before_drive:
             sc.result(False, 'scan count did not advance after odom went '
-                              'stuck -- backend may have stalled')
+                      'stuck -- backend may have stalled')
             return sc
 
         # "Still trying" check: max pairwise distance among post-trigger
@@ -1204,20 +1209,20 @@ def scenario_odom_stuck(gui, backend, use_ekf):
         for j in range(len(samples)):
             for k in range(j + 1, len(samples)):
                 d = math.hypot(samples[j][0] - samples[k][0],
-                                samples[j][1] - samples[k][1])
+                               samples[j][1] - samples[k][1])
                 max_spread = max(max_spread, d)
 
         sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'sentry_pkg')
+        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
 
         ok = (max_spread >= ODOM_STUCK_MIN_TF_SPREAD
               and not sim_errs and not sentry_errs)
         sc.result(ok,
-                   f'max pairwise {edge} spread over {OBSERVE_SECONDS:.0f}s '
-                   f'after odom_stuck = {max_spread:.4f} m (threshold '
-                   f'{ODOM_STUCK_MIN_TF_SPREAD} m -- proves the backend is '
-                   f'still attempting corrections, not latched), '
-                   f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'max pairwise {edge} spread over {OBSERVE_SECONDS:.0f}s '
+                  f'after odom_stuck = {max_spread:.4f} m (threshold '
+                  f'{ODOM_STUCK_MIN_TF_SPREAD} m -- proves the backend is '
+                  f'still attempting corrections, not latched), '
+                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
         return sc
     finally:
         teardown_stack(sim_tree, sentry_tree, helper)

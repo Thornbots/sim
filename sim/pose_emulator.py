@@ -1,25 +1,27 @@
 """
-Emulates the real Type-C board's POSE_MSG interface in sim: republishes
-sim's raw ground-truth /sim/raw_odom + /sim/raw_joint_states (bridged
-from gz, see sim.launch.py) as a dji_serial_bridge/msg/RobotPose on
-/pose -- the same topic/message real hardware's Type-C board sends.
-sentry_pkg's pose_translator is the only downstream consumer for both
+Emulates the real Type-C board's POSE_MSG interface in sim.
+
+Republishes sim's raw ground-truth /sim/raw_odom + /sim/raw_joint_states
+(bridged from gz, see sim.launch.py) as a dji_serial_bridge/msg/RobotPose
+on /pose -- the same topic/message real hardware's Type-C board sends.
+thornbots_pkg's pose_translator is the only downstream consumer for both
 sim and real hardware, so sim's job here is purely wire-format parity.
 """
 import math
 import random
 
+from dji_serial_bridge.msg import RobotPose
+from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
-from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
-from dji_serial_bridge.msg import RobotPose
 
 from sim.auto_explore import teleport
 
 
 class PoseEmulator(Node):
+
     def __init__(self):
         super().__init__('pose_emulator')
 
@@ -122,11 +124,14 @@ class PoseEmulator(Node):
             self.head_pitch = msg.position[msg.name.index(self.pitch_joint_name)]
 
     def trigger_jerk(self):
-        """Fires a one-time position jerk immediately: draws a random
-        (dx, dy), teleports the real sim robot via
+        """
+        Fire a one-time position jerk immediately.
+
+        Draws a random (dx, dy), teleports the real sim robot via
         sim.auto_explore.teleport(), and subtracts the same delta from the
         drift accumulator so REPORTED /pose stays continuous -- only the
-        next scan match should notice. See README.md for the full model."""
+        next scan match should notice. See README.md for the full model.
+        """
         jerk_stddev = self.get_parameter('odom_jerk_stddev').value
 
         if self.get_parameter('odom_jerk_bias_enabled').value:
@@ -136,7 +141,7 @@ class PoseEmulator(Node):
             # so this only reshapes WHERE the jerk points, not how big it
             # typically is.
             magnitude = math.hypot(random.gauss(0.0, jerk_stddev),
-                                    random.gauss(0.0, jerk_stddev))
+                                   random.gauss(0.0, jerk_stddev))
             target_x = self.get_parameter('odom_jerk_bias_x').value
             target_y = self.get_parameter('odom_jerk_bias_y').value
             to_target_x = target_x - self._true_x

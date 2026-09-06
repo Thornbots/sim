@@ -110,11 +110,11 @@ cv_publish_latency_s:=0.06    # placeholder, not a measured number
    expanded `sentry.urdf.xacro` text with `-string` (not `-topic`; see the
    `spawn_robot` note below for why). Delayed 2s off `clock_bridge`'s start
    so gz's entity-creation service is up first. `sim.launch.py` does not run
-   `robot_state_publisher`; `sentry_pkg`'s `auto.launch.py` owns
+   `robot_state_publisher`; `thornbots_pkg`'s `auto.launch.py` owns
    `robot_state_publisher` and TF now.
 5. Bridges the gz-transport topics the xacro's plugins publish on, none of
    which reach ROS by themselves: `/scan` (remapped to `/scan_raw`, since
-   `sentry_pkg`'s `lidar_self_filter` publishes the final `/scan`),
+   `thornbots_pkg`'s `lidar_self_filter` publishes the final `/scan`),
    the `JointStatePublisher` plugin's output as `/sim/raw_joint_states`,
    and the `OdometryPublisher` plugin's as `/sim/raw_odom`. Both `/sim/raw_*`
    topics are ground-truth and sim-internal; real hardware has no equivalent,
@@ -174,7 +174,7 @@ isaac_ros_common/scripts/dexec.sh -- \
   colcon test --packages-select sim --pytest-args ' -m integration'
 ```
 
-Each integration test launches gz-sim and `sentry_pkg`, takes tens of
+Each integration test launches gz-sim and `thornbots_pkg`, takes tens of
 seconds, and needs a full teardown before the next one starts. It also
 corrupts its own measurements if a stack is already up, since ROS topics
 are process-global and two stacks collide. Stop yours first, or run a
@@ -222,7 +222,7 @@ resyncs:
 
 ```bash
 isaac_ros_common/scripts/dexec.sh -- colcon build --symlink-install \
-  --packages-select sentry_localization sentry_pkg
+  --packages-select sentry_localization thornbots_pkg
 ```
 
 `--symlink-install` makes `install/` a symlink chain back to `src/`, so
@@ -707,7 +707,7 @@ zero them. The 0.06s latency is a placeholder, not a measurement.
 
 ### cv_head_aim.py: CV-driven head tracking, root-frame IK
 
-Subscribes `/cv/target` (from `sentry_pkg`'s `point_to_cv_target`, so
+Subscribes `/cv/target` (from `thornbots_pkg`'s `point_to_cv_target`, so
 `auto.launch.py` has to be running alongside `sim.launch.py
 spawn_target:=true`) plus `/sim/raw_joint_states`, and publishes
 `/head_pan_cmd`/`/head_pitch_cmd`, the same topics the GUI slider
@@ -756,7 +756,7 @@ byte-for-byte into the MCB's `CV_MSG` packet. Removed from both the
 message and the UART struct: a deliberate coordinated wire-format break,
 not a ROS-only trim. See `ros2_dji_serial_bridge/README.md`.
 
-Velocity estimation returned later as `sentry_pkg`'s `target_tracker.py`,
+Velocity estimation returned later as `thornbots_pkg`'s `target_tracker.py`,
 entirely ROS-internal on `/cv/target_state`, never on the wire.
 `CVTarget`/`CVDataPayload` stayed lean, gaining only a
 `lead_applied`/`track_valid` flags byte.
@@ -765,7 +765,7 @@ entirely ROS-internal on `/cv/target_state`, never on the wire.
 
 sim's `gz-sim`/`ros_gz` apt deps aren't in this
 container by default; see `## Build` for `install-sim.sh`. Separately,
-`sentry_pkg`'s build under `install/` was once a stale colcon
+`thornbots_pkg`'s build under `install/` was once a stale colcon
 symlink-install pointing at a deleted git worktree, breaking both `ros2
 run` and a plain import; rebuilding fixed it. The sim/CV test scripts
 invoke `point_to_cv_target` by absolute install path rather than `ros2

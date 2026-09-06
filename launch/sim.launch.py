@@ -1,6 +1,5 @@
 """
-Launches gz sim loaded with the ARCC_Field_2026 world and spawns the
-sentry robot (from sentry_urdf.xacro) into it.
+Launches gz sim loaded with the ARCC_Field_2026 world and spawns the sentry robot (from sentry_urdf.xacro) into it.
 
 Usage: `ros2 launch sim sim.launch.py [gui:=false] [rviz:=false]
 [world:=/abs/path.sdf] [odom_noise_enabled:=true]`. To fire a one-time
@@ -66,7 +65,7 @@ def generate_launch_description():
     # otherwise has nothing real to correct against in sim.
     odom_noise_enabled_arg = DeclareLaunchArgument(
         'odom_noise_enabled', default_value='false',
-        description='Enable synthetic position drift/jitter on sim/pose_emulator\'s /pose output'
+        description="Enable synthetic position drift/jitter on sim/pose_emulator's /pose output"
     )
     odom_drift_stddev_arg = DeclareLaunchArgument(
         'odom_drift_stddev', default_value='0.0005',
@@ -94,8 +93,8 @@ def generate_launch_description():
     # behavior is unchanged unless explicitly enabled.
     odom_jerk_bias_enabled_arg = DeclareLaunchArgument(
         'odom_jerk_bias_enabled', default_value='false',
-        description='Bias the jerk\'s direction toward (odom_jerk_bias_x, '
-                     'odom_jerk_bias_y) instead of a uniformly random direction'
+        description="Bias the jerk's direction toward (odom_jerk_bias_x, "
+        'odom_jerk_bias_y) instead of a uniformly random direction'
     )
     odom_jerk_bias_x_arg = DeclareLaunchArgument(
         'odom_jerk_bias_x', default_value='0.0',
@@ -113,14 +112,14 @@ def generate_launch_description():
     odom_slip_ratio_arg = DeclareLaunchArgument(
         'odom_slip_ratio', default_value='0.0',
         description='Fraction (0-1) of true distance traveled lost from '
-                     'reported odometry, e.g. 0.5 = wheels report only '
-                     'half the distance actually driven'
+        'reported odometry, e.g. 0.5 = wheels report only '
+        'half the distance actually driven'
     )
 
     # --- Optional fast-moving-target CV simulation (target_driver.py +
     # cv_target_emulator.py). Off by default -- no new nodes/topics run
     # unless spawn_target:=true is passed, and neither new node depends on
-    # sentry_pkg's SLAM/AMCL/EKF stack (auto.launch.py); both only need
+    # thornbots_pkg's SLAM/AMCL/EKF stack (auto.launch.py); both only need
     # /sim/raw_odom + /sim/raw_joint_states, produced inside sim itself.
     # See README.md's ## Notes for the noise model / FK / dwell-count
     # rationale.
@@ -130,25 +129,29 @@ def generate_launch_description():
     )
     target_speed_arg = DeclareLaunchArgument(
         'target_speed', default_value='2.0',
-        description='Target chassis lateral speed (m/s) for target_driver\'s traverse path'
+        description="Target chassis lateral speed (m/s) for target_driver's traverse path"
     )
     target_spin_hz_arg = DeclareLaunchArgument(
         'target_spin_hz', default_value='1.5',
-        description='Target chassis spin rate (Hz) -- the "wiggle" defense per ARCC_2026_SENTRY_CONTEXT.md (typically 1-2 Hz)'
+        description='Target chassis spin rate (Hz) -- the "wiggle" defense per '
+                    'ARCC_2026_SENTRY_CONTEXT.md (typically 1-2 Hz)'
     )
     cv_noise_pos_stddev_arg = DeclareLaunchArgument(
         'cv_noise_pos_stddev', default_value='0.03',
-        description='Stddev (m) of Gaussian position noise injected into cv_target_emulator\'s panel_detection'
+        description='Stddev (m) of Gaussian position noise injected into '
+                    "cv_target_emulator's panel_detection"
     )
     cv_dropout_probability_arg = DeclareLaunchArgument(
         'cv_dropout_probability', default_value='0.1',
-        description='Per-sample probability (0-1) cv_target_emulator drops an otherwise-valid detection'
+        description='Per-sample probability (0-1) cv_target_emulator drops an '
+                    'otherwise-valid detection'
     )
     cv_publish_latency_s_arg = DeclareLaunchArgument(
         'cv_publish_latency_s', default_value='0.06',
-        description='Fixed publish latency (s) cv_target_emulator adds before publishing a detection -- '
-                     '0.06 is a placeholder pending a real measurement (see point_to_cv_target\'s '
-                     'LatencyStat / plan verification item 9), not a measured number.'
+        description='Fixed publish latency (s) cv_target_emulator adds before '
+        'publishing a detection -- '
+        "0.06 is a placeholder pending a real measurement (see point_to_cv_target's "
+        'LatencyStat / plan verification item 9), not a measured number.'
     )
     world = LaunchConfiguration('world')
     robot_name = LaunchConfiguration('robot_name')
@@ -235,7 +238,7 @@ def generate_launch_description():
     )
     # Keep a short delay before spawning so gz sim's entity-creation service
     # has time to come up first. Triggered off clock_bridge's start (rather
-    # than robot_state_publisher, which sim no longer runs -- sentry_pkg owns
+    # than robot_state_publisher, which sim no longer runs -- thornbots_pkg owns
     # robot_state_publisher/TF now, see auto.launch.py) since clock_bridge
     # always starts regardless of the gui:= setting.
     delayed_spawn_robot = RegisterEventHandler(
@@ -246,7 +249,7 @@ def generate_launch_description():
     )
 
     # --- Bridge the gpu_lidar sensor's /scan topic (defined in sentry.urdf.xacro)
-    # into ROS 2, remapped to scan_raw -- sentry_pkg's lidar_self_filter node
+    # into ROS 2, remapped to scan_raw -- thornbots_pkg's lidar_self_filter node
     # is the only thing that publishes the final /scan (see its docstring),
     # for both sim and real hardware.
     scan_bridge = Node(
@@ -300,11 +303,11 @@ def generate_launch_description():
 
     # --- Repackage /sim/raw_odom + /sim/raw_joint_states into the same
     # dji_serial_bridge/msg/RobotPose interface real hardware's Type-C board
-    # publishes on /pose. sentry_pkg's pose_translator is the only thing
+    # publishes on /pose. thornbots_pkg's pose_translator is the only thing
     # that consumes pose data downstream of this, for both sim and real
     # hardware, so sim's job is purely to speak the same wire format here --
     # that's the "brain" package, sim is not (see
-    # sentry_pkg/launch/auto.launch.py).
+    # thornbots_pkg/launch/auto.launch.py).
     pose_emulator = Node(
         package='sim',
         executable='pose_emulator',
@@ -490,9 +493,9 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
 
-    # --- Turns sentry_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd
+    # --- Turns thornbots_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd
     # so the head actually tracks CV detections (see sim/cv_head_aim.py).
-    # Needs sentry_pkg's auto.launch.py running alongside this (for
+    # Needs thornbots_pkg's auto.launch.py running alongside this (for
     # point_to_cv_target -> /cv/target) -- same spawn_target gate as
     # cv_target_emulator above, since aiming only makes sense once a
     # target exists to aim at.
@@ -505,7 +508,7 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
 
-    # --- rviz2, using sentry_pkg's config (same one sentry_pkg's own launch
+    # --- rviz2, using thornbots_pkg's config (same one thornbots_pkg's own launch
     # files use) so sim and real-hardware runs look the same. use_sim_time
     # matches every other node above since sim's /clock is what's bridged in.
     rviz = Node(

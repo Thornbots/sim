@@ -1,18 +1,18 @@
 """
-Turns sentry_pkg's /cv/target (dji_serial_bridge/msg/CVTarget, a ROOT-FRAME
-aim POSITION as of the plan's Phase 4/5) into /head_pan_cmd + /head_pitch_cmd
-so sim's head joints track it -- the reason the head moves during CV
-testing. Mirrors
-what Type-C actually receives: a position and nothing else, no feedforward,
-so any setpoint-tracking lag against a moving target shows up here too (the
-point, per the plan -- see README.md's ### cv_head_aim.py Notes).
+Turns thornbots_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd so sim's head joints track it -- the reason the head moves during CV testing.
+
+/cv/target is dji_serial_bridge/msg/CVTarget, a ROOT-FRAME aim POSITION
+as of the plan's Phase 4/5. Mirrors what Type-C actually receives: a
+position and nothing else, no feedforward, so any setpoint-tracking lag
+against a moving target shows up here too (the point, per the plan --
+see README.md's ### cv_head_aim.py Notes).
 """
+from dji_serial_bridge.msg import CVTarget
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from std_msgs.msg import Float64
 from sensor_msgs.msg import JointState
-from dji_serial_bridge.msg import CVTarget
+from std_msgs.msg import Float64
 
 from sim.cv_head_aim_core import solve_head_angles, wrap_to_pi
 
@@ -74,7 +74,7 @@ class CvHeadAim(Node):
             f"cv_head_aim ready: {self.get_parameter('cv_target_topic').value}"
             f" (root-frame position) -> {self.get_parameter('pan_cmd_topic').value} /"
             f" {self.get_parameter('pitch_cmd_topic').value}"
-            f" (gain={self.gain}, control_rate_hz={control_rate_hz})"
+            f' (gain={self.gain}, control_rate_hz={control_rate_hz})'
         )
 
     def on_joint_states(self, msg):

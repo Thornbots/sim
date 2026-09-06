@@ -9,9 +9,8 @@ Marked `integration` (launches gz-sim), so a plain `colcon test` skips
 it. Options: --headless, --ekf-slip-ratio, --ekf-drift-stddev,
 --ekf-seconds.
 """
-import pytest
-
 import ekf_diag_harness
+import pytest
 
 pytestmark = pytest.mark.integration
 

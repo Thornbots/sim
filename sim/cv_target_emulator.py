@@ -1,7 +1,7 @@
 """
-Ground-truth-plus-noise CV emulator (no YOLOv8 render pipeline) for a
-4-armor-panel target *robot*, not a single point. Subscribes
-/sim/raw_odom + /sim/raw_joint_states (camera FK, no TF) and
+Ground-truth-plus-noise CV emulator (no YOLOv8 render pipeline) for a 4-armor-panel target *robot*, not a single point.
+
+Subscribes /sim/raw_odom + /sim/raw_joint_states (camera FK, no TF) and
 /target/ground_truth_odom (chassis center + yaw, see target_driver.py);
 derives the 4 panel poses from a fixed layout (panel_radius, spaced 90
 degrees apart) rotated by the chassis yaw. A panel only "presents" (is
@@ -16,13 +16,12 @@ exactly what point_to_cv_target.py subscribes to. ALL qualifying panels
 (not just the most head-on) are also published on cv/panel_detections
 (PanelDetectionArray) -- the real roi_depth_node's output shape, kept
 alongside the single-panel topic for the transition (see README.md).
-Corners are the panel's
-true PANEL_SIZE square (ground truth, not depth-approximated like the
-real roi_depth_node), built from its outward normal so they carry the
-same S122 cant. Target position is REP-103 relative to the camera
-(x=forward, y=left, z=up), NOT optical -- point_to_cv_target.on_panel
-expects that convention. Publishes
-nothing when no panel qualifies (track loss). Also publishes MarkerArray on
+Corners are the panel's true PANEL_SIZE square (ground truth, not
+depth-approximated like the real roi_depth_node), built from its outward
+normal so they carry the same S122 cant. Target position is REP-103
+relative to the camera (x=forward, y=left, z=up), NOT optical --
+point_to_cv_target.on_panel expects that convention. Publishes nothing
+when no panel qualifies (track loss). Also publishes MarkerArray on
 target_markers (world frame: green sphere = chassis center, small cyan
 boxes = all 4 panels, yellow sphere = the currently-selected noisy
 detection, yellow absent when nothing qualifies) for rviz visualization
@@ -31,13 +30,13 @@ the FK chain, dwell-count guard, and REP-103-vs-optical rationale.
 """
 import math
 
+from dji_serial_bridge.msg import PanelDetection, PanelDetectionArray
+from geometry_msgs.msg import Point, Point32
+from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
-from geometry_msgs.msg import Point, Point32
-from dji_serial_bridge.msg import PanelDetection, PanelDetectionArray
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -55,11 +54,14 @@ def _rotation_from_quaternion(x, y, z, w):
 
 
 def _quat_from_axes(x_axis, y_axis, z_axis):
-    """Quaternion (x, y, z, w) for the rotation whose local +X/+Y/+Z map to
-    the given orthonormal world-frame axes -- used to orient panel/
-    detection boxes so their thin (normal) axis actually points along
-    panel_normal's real tilt (both azimuth AND the S122 cant), not just
-    yaw, which a flush atan2(normal.y, normal.x) discards."""
+    """
+    Compute the quaternion (x, y, z, w) for the rotation whose local +X/+Y/+Z map to the given orthonormal world-frame axes.
+
+    Used to orient panel/detection boxes so their thin (normal) axis
+    actually points along panel_normal's real tilt (both azimuth AND the
+    S122 cant), not just yaw, which a flush atan2(normal.y, normal.x)
+    discards.
+    """
     r = np.column_stack([x_axis, y_axis, z_axis])
     tr = r[0, 0] + r[1, 1] + r[2, 2]
     if tr > 0:
@@ -157,6 +159,7 @@ PANEL_NORMAL_ANGLE_FROM_UP = math.radians(75.0)
 
 
 class CvTargetEmulator(Node):
+
     def __init__(self):
         super().__init__('cv_target_emulator')
 
@@ -214,7 +217,7 @@ class CvTargetEmulator(Node):
         self.timer = self.create_timer(1.0 / rate_hz, self.on_timer)
 
         self.get_logger().info(
-            f"cv_target_emulator ready: hfov={self.hfov:.3f} vfov={self.vfov:.3f} "
+            f'cv_target_emulator ready: hfov={self.hfov:.3f} vfov={self.vfov:.3f} '
             f"range=[{self.get_parameter('range_near').value:.2f}, "
             f"{self.get_parameter('range_far').value:.2f}]"
         )
@@ -242,18 +245,19 @@ class CvTargetEmulator(Node):
         self._target_frame_id = msg.header.frame_id
 
     def _panel_poses(self):
-        """World (position, outward_normal_unit_vector, right_dir, up_dir)
-        for each of the 4 armor panels, chassis yaw applied via the
-        target's own rotation matrix -- see module docstring for the panel
-        layout.
+        """
+        Compute world (position, outward_normal_unit_vector, right_dir, up_dir) for each of the 4 armor panels.
 
-        Position offset stays in the horizontal chassis plane (radius_x/y
-        place the panel's center on the correct side face), but the
-        outward normal is canted per S122 -- PANEL_NORMAL_ANGLE_FROM_UP
-        from straight-up, not flush-horizontal (z=0). right_dir/up_dir are
-        an orthonormal in-plane basis (built from the normal) used to place
-        the panel's 4 corners -- up_dir inherits the same cant as the
-        normal, matching a real rigid panel."""
+        Chassis yaw is applied via the target's own rotation matrix -- see
+        module docstring for the panel layout. Position offset stays in
+        the horizontal chassis plane (radius_x/y place the panel's center
+        on the correct side face), but the outward normal is canted per
+        S122 -- PANEL_NORMAL_ANGLE_FROM_UP from straight-up, not
+        flush-horizontal (z=0). right_dir/up_dir are an orthonormal
+        in-plane basis (built from the normal) used to place the panel's 4
+        corners -- up_dir inherits the same cant as the normal, matching a
+        real rigid panel.
+        """
         radius_x = self.get_parameter('panel_radius_x').value
         radius_y = self.get_parameter('panel_radius_y').value
         world_up = np.array([0.0, 0.0, 1.0])
@@ -279,9 +283,12 @@ class CvTargetEmulator(Node):
         return poses
 
     def _camera_pose(self):
-        """World position + rotation of the camera link via the fixed FK
-        chain (root -> fastened_2 -> headlink(yaw) -> headpitch(pitch) ->
-        cameralink), no TF lookup. See README.md for the full derivation."""
+        """
+        Compute the world position + rotation of the camera link via the fixed FK chain.
+
+        Chain: root -> fastened_2 -> headlink(yaw) -> headpitch(pitch) ->
+        cameralink, no TF lookup. See README.md for the full derivation.
+        """
         t_root = _transform(self._root_rot, self._root_pos)
         t_body = t_root @ _T_FASTENED_2
         t_headlink = _transform(
@@ -295,9 +302,12 @@ class CvTargetEmulator(Node):
         return t_camera[:3, 3], t_camera[:3, :3]
 
     def _make_detection(self, cand, cam_pos, cam_rot):
-        """Build one noisy PanelDetection from a qualifying candidate tuple,
-        or None if this draw dropped out. Same noise/corner construction as
-        the single-best path used before this was split out for the array."""
+        """
+        Build one noisy PanelDetection from a qualifying candidate tuple, or None if this draw dropped out.
+
+        Same noise/corner construction as the single-best path used before
+        this was split out for the array.
+        """
         _, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir, panel_idx = cand
         if np.random.uniform() < self.get_parameter('dropout_probability').value:
             return None
@@ -338,7 +348,7 @@ class CvTargetEmulator(Node):
             self.get_logger().warn(
                 f"/sim/raw_odom frame_id='{self._root_frame_id}' != "
                 f"/target/ground_truth_odom frame_id='{self._target_frame_id}' "
-                f"-- FK assumes a shared world frame.", throttle_duration_sec=5.0)
+                f'-- FK assumes a shared world frame.', throttle_duration_sec=5.0)
 
         cam_pos, cam_rot = self._camera_pose()
         panels = self._panel_poses()
@@ -360,7 +370,9 @@ class CvTargetEmulator(Node):
         # detection would be silently untestable against this emulator (a
         # real 8-class team+plate-digit id isn't needed for that, just a
         # value that changes with which panel is visible).
-        qualifying = []  # [(view_angle, fwd, left, up, panel_pos, panel_normal, right_dir, up_dir, panel_idx)]
+        # [(view_angle, fwd, left, up, panel_pos, panel_normal, right_dir,
+        #   up_dir, panel_idx)]
+        qualifying = []
         for panel_idx, (panel_pos, panel_normal, right_dir, up_dir) in enumerate(panels):
             # REP-103 (fwd, left, up) relative to the camera -- see module
             # docstring for why this convention, not optical.
@@ -389,7 +401,7 @@ class CvTargetEmulator(Node):
         if not qualifying:
             if self._dwell_count > 0:
                 self.get_logger().info(
-                    f"no panel presenting after {self._dwell_count} consecutive samples")
+                    f'no panel presenting after {self._dwell_count} consecutive samples')
             self._dwell_count = 0
             self._publish_markers(world_frame, panels, cam_pos, cam_rot, detected_world=None)
             return
@@ -416,8 +428,8 @@ class CvTargetEmulator(Node):
         # independent detection, same as the real pipeline treating each
         # YOLO box separately.
         array_detections = [d for d in
-                             (self._make_detection(c, cam_pos, cam_rot) for c in qualifying)
-                             if d is not None]
+                            (self._make_detection(c, cam_pos, cam_rot) for c in qualifying)
+                            if d is not None]
 
         # Stamp at sample time (now), not flush time -- see _flush_pending.
         # publish_latency_s is purely the delivery delay from here on.
@@ -432,18 +444,21 @@ class CvTargetEmulator(Node):
         })
 
     def _publish_markers(self, frame_id, panels, cam_pos, cam_rot, detected_world,
-                          detected_normal=None, detected_right=None, detected_up=None):
-        """rviz visualization only -- chassis center (green) always shown,
-        all 4 panels (dim cyan boxes) always shown so spin is visible even
-        when nothing currently presents, noisy-detected (yellow) shown only
-        while a panel actually qualified and wasn't dropped, so losing
-        track is visible as the yellow box disappearing rather than
-        freezing in place -- drawn as a PANEL_SIZE box (like the ground
-        truth panels), not a point, since a detection is a panel-sized
-        region, not a single point in space. A white arrow from the camera
-        along its current aim direction (cam_rot's local +Z) shows where
-        the head is looking, regardless of whether anything currently
-        presents."""
+                         detected_normal=None, detected_right=None, detected_up=None):
+        """
+        Publish rviz-only markers for the ground truth, panels, detection, and aim direction.
+
+        Chassis center (green) always shown, all 4 panels (dim cyan boxes)
+        always shown so spin is visible even when nothing currently
+        presents, noisy-detected (yellow) shown only while a panel
+        actually qualified and wasn't dropped, so losing track is visible
+        as the yellow box disappearing rather than freezing in place --
+        drawn as a PANEL_SIZE box (like the ground truth panels), not a
+        point, since a detection is a panel-sized region, not a single
+        point in space. A white arrow from the camera along its current
+        aim direction (cam_rot's local +Z) shows where the head is
+        looking, regardless of whether anything currently presents.
+        """
         now = self.get_clock().now().to_msg()
         markers = MarkerArray()
 
@@ -490,7 +505,8 @@ class CvTargetEmulator(Node):
             panel.id = i
             panel.type = Marker.CUBE
             panel.action = Marker.ADD
-            panel.pose.position.x, panel.pose.position.y, panel.pose.position.z = panel_pos.tolist()
+            (panel.pose.position.x, panel.pose.position.y,
+             panel.pose.position.z) = panel_pos.tolist()
             qx, qy, qz, qw = _quat_from_axes(panel_normal, right_dir, up_dir)
             panel.pose.orientation.x = qx
             panel.pose.orientation.y = qy

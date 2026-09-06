@@ -1,9 +1,9 @@
 """
-Black-box shot-hit machinery: launches the sim + the production CV
-pipeline and scores each FireCommand on
-/dji_serial_bridge/fire_command against ground truth, knowing nothing
-about how sentry_pkg predicts (see sim/README.md's ## Notes for why).
-Importable only -- test_shot_hit.py holds the assertions and
+Black-box shot-hit machinery: launches the sim + the production CV pipeline and scores each FireCommand against ground truth.
+
+Scores each FireCommand on /dji_serial_bridge/fire_command, knowing
+nothing about how thornbots_pkg predicts (see sim/README.md's ## Notes for
+why). Importable only -- test_shot_hit.py holds the assertions and
 run_shot_hit_tests.py is the argparse wrapper.
 
 For each fire_command: computes the muzzle pose (from /sim/raw_odom +
@@ -21,7 +21,7 @@ geometrically on-target from behind the panel still misses.
 Requires mcb_relay.py to relay a FireCommand onto
 /dji_serial_bridge/fire_command (wired 2026-07-27) and
 point_to_cv_target's placeholder fire trigger (fire_rate_hz, no
-lead/HP/heat/power gating -- see sentry_pkg/README.md) to publish one.
+lead/HP/heat/power gating -- see thornbots_pkg/README.md) to publish one.
 Shots are observed today, so "zero shots" means something in the
 launched stack is actually broken.
 """
@@ -32,14 +32,14 @@ import signal
 import subprocess
 import time
 
+from dji_serial_bridge.msg import FireCommand
+from geometry_msgs.msg import Point
+from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
-from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
-from dji_serial_bridge.msg import FireCommand
-from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -60,16 +60,16 @@ SPIN_HZ_AT_MIN_SPEED = 2.0
 SPIN_HZ_AT_MAX_SPEED = 1.0
 
 POINT_TO_CV_TARGET_BIN = (
-    '/workspaces/isaac_ros-dev/install/sentry_pkg/lib/sentry_pkg/point_to_cv_target'
+    '/workspaces/isaac_ros-dev/install/thornbots_pkg/lib/thornbots_pkg/point_to_cv_target'
 )
 MCB_RELAY_BIN = (
-    '/workspaces/isaac_ros-dev/install/sentry_pkg/lib/sentry_pkg/mcb_relay'
+    '/workspaces/isaac_ros-dev/install/thornbots_pkg/lib/thornbots_pkg/mcb_relay'
 )
 TARGET_SELECTOR_BIN = (
-    '/workspaces/isaac_ros-dev/install/sentry_pkg/lib/sentry_pkg/target_selector'
+    '/workspaces/isaac_ros-dev/install/thornbots_pkg/lib/thornbots_pkg/target_selector'
 )
 TARGET_TRACKER_BIN = (
-    '/workspaces/isaac_ros-dev/install/sentry_pkg/lib/sentry_pkg/target_tracker'
+    '/workspaces/isaac_ros-dev/install/thornbots_pkg/lib/thornbots_pkg/target_tracker'
 )
 CV_RVIZ_CONFIG = '/workspaces/isaac_ros-dev/install/sim/share/sim/rviz/cv_target.rviz'
 
@@ -159,10 +159,13 @@ PANEL_NORMAL_ANGLE_FROM_UP = math.radians(75.0)
 
 
 def _panel_poses(target_pos, target_rot):
-    """World (position, outward_normal_unit_vector) for each of the 4 armor
-    panels -- mirrors cv_target_emulator.py's _panel_poses exactly.
-    Position offset stays in the horizontal chassis plane; the outward
-    normal is canted per S122, not flush-horizontal (z=0)."""
+    """
+    Compute world (position, outward_normal_unit_vector) for each of the 4 armor panels.
+
+    Mirrors cv_target_emulator.py's _panel_poses exactly. Position offset
+    stays in the horizontal chassis plane; the outward normal is canted
+    per S122, not flush-horizontal (z=0).
+    """
     poses = []
     for offset, use_x in zip(_PANEL_OFFSETS_RAD, _PANEL_USES_RADIUS_X):
         radius = PANEL_RADIUS_X if use_x else PANEL_RADIUS_Y
@@ -188,9 +191,12 @@ def spin_hz_for_speed(speed, speed_min, speed_max):
 
 
 class LaunchTree:
-    """Launches a command as its own process group; SIGINT (then SIGKILL)
-    the whole group on stop(). Mirrors run_localization_drift_tests.py's
-    LaunchTree -- see that for the orphan-process rationale."""
+    """
+    Launches a command as its own process group; SIGINT (then SIGKILL) the whole group on stop().
+
+    Mirrors run_localization_drift_tests.py's LaunchTree -- see that for
+    the orphan-process rationale.
+    """
 
     def __init__(self, name, cmd, log_path):
         self.name = name
@@ -234,11 +240,12 @@ class LaunchTree:
 
 
 class ShotHitSampler(Node):
-    """Subscribes /sim/raw_odom + /sim/raw_joint_states (muzzle FK),
-    /target/ground_truth_odom (impact truth), and
-    /dji_serial_bridge/fire_command (shot events). Each fire_command with
-    fire=True becomes one pending shot, resolved once ground-truth data
-    at/after its estimated impact time arrives."""
+    """
+    Subscribes /sim/raw_odom + /sim/raw_joint_states (muzzle FK), /target/ground_truth_odom (impact truth), and /dji_serial_bridge/fire_command (shot events).
+
+    Each fire_command with fire=True becomes one pending shot, resolved
+    once ground-truth data at/after its estimated impact time arrives.
+    """
 
     def __init__(self, hit_radius):
         # use_sim_time, or marker headers get stamped with wall-clock time
@@ -297,8 +304,11 @@ class ShotHitSampler(Node):
             self._head_pitch = msg.position[msg.name.index('headpitch')]
 
     def _muzzle_pose(self):
-        """World (position, unit forward direction) of the muzzle via the
-        fixed FK chain, no TF lookup -- see module docstring."""
+        """
+        Compute world (position, unit forward direction) of the muzzle via the fixed FK chain.
+
+        No TF lookup -- see module docstring.
+        """
         t_root = _transform(self._root_rot, self._root_pos)
         t_body = t_root @ _T_FASTENED_2
         t_headlink = _transform(
@@ -409,9 +419,11 @@ class ShotHitSampler(Node):
         self.marker_pub.publish(MarkerArray(markers=[marker]))
 
     def finish(self):
-        """Shots still pending at sampling end (impact time not yet
-        reached) are dropped, not counted as misses -- there's no
-        ground-truth sample to judge them against."""
+        """
+        Finish sampling, dropping shots still pending (impact time not yet reached) rather than counting them as misses.
+
+        There's no ground-truth sample to judge them against.
+        """
         dropped = len(self._pending_shots)
         self._pending_shots = []
         return dropped
@@ -422,12 +434,15 @@ class ShotHitSampler(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
 
     def wait_until(self, predicate, timeout, description):
-        """Spins until predicate() is true or timeout (s) elapses, so the
-        sampling window starts once the stack is actually publishing
-        instead of after a guessed fixed sleep. Falls back to the full
-        timeout (and a printed warning) if the predicate never fires --
-        the caller still proceeds rather than hanging forever on a
-        genuinely broken launch."""
+        """
+        Spin until predicate() is true or timeout (s) elapses.
+
+        So the sampling window starts once the stack is actually
+        publishing instead of after a guessed fixed sleep. Falls back to
+        the full timeout (and a printed warning) if the predicate never
+        fires -- the caller still proceeds rather than hanging forever on
+        a genuinely broken launch.
+        """
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             if predicate():
@@ -442,7 +457,7 @@ class ShotHitSampler(Node):
 
 
 def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
-                   lead_enabled=False):
+                  lead_enabled=False):
     tag = f'{speed}_spin{spin_hz:.2f}_lead{int(lead_enabled)}'
     sim_cmd = [
         'ros2', 'launch', 'sim', 'sim.launch.py',
@@ -503,7 +518,7 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
     # is all cv_target.rviz needs since its Fixed Frame is odom, not map.
     robot_tf = LaunchTree(
         'robot_tf',
-        ['ros2', 'launch', 'sentry_pkg', 'auto.launch.py',
+        ['ros2', 'launch', 'thornbots_pkg', 'auto.launch.py',
          'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false',
          'enable_cv_target_bridge:=false', 'enable_target_selector:=false',
          'enable_target_tracker:=false'],
@@ -524,7 +539,7 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
         cv_bridge.start()
         mcb_relay.start()
         ready_nodes = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher',
-                        'target_selector', 'target_tracker']
+                       'target_selector', 'target_tracker']
         sampler.wait_until(
             lambda: sampler.nodes_up(*ready_nodes),
             timeout=15.0, description=f'{", ".join(ready_nodes)} nodes up')
@@ -549,9 +564,8 @@ def summarize(label, sampler, dropped):
     miss_mean = sum(miss) / len(miss) if miss else float('nan')
     miss_max = max(miss) if miss else float('nan')
     print(
-        f"{label:38s} | "
-        f"shots={sampler.shots_fired:4d} | hits={sampler.hits:4d} ({hit_pct:5.1f}%) | "
-        f"miss dist mean={miss_mean:6.3f} max={miss_max:6.3f} m | dropped={dropped}"
+        f'{label:38s} | '
+        f'shots={sampler.shots_fired:4d} | hits={sampler.hits:4d} ({hit_pct:5.1f}%) | '
+        f'miss dist mean={miss_mean:6.3f} max={miss_max:6.3f} m | dropped={dropped}'
     )
     return sampler.shots_fired > 0
-

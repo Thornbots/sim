@@ -1,10 +1,11 @@
 """
-Simulated fast-moving-*robot* ground truth (chassis + spin, not a single
-point): no gz entity, model, or plugin -- this node just integrates its own
-chassis (x, y, z, yaw) state in a timer callback and publishes
-nav_msgs/Odometry on /target/ground_truth_odom, the same way pose_emulator.py
-stands in for real hardware without touching gz. Models the opponent-robot
-behavior documented in ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot
+Simulated fast-moving-*robot* ground truth (chassis + spin, not a single point): no gz entity, model, or plugin.
+
+This node just integrates its own chassis (x, y, z, yaw) state in a
+timer callback and publishes nav_msgs/Odometry on
+/target/ground_truth_odom, the same way pose_emulator.py stands in for
+real hardware without touching gz. Models the opponent-robot behavior
+documented in ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot
 characteristics" section: chassis translates (lateral bounce, up to 4 m/s
 per that doc) while continuously spinning in place at spin_hz (1-2 Hz
 "wiggle" defense) -- cv_target_emulator.py derives the 4 armor-panel poses
@@ -17,12 +18,13 @@ assumes both ground-truth topics share one world frame with no TF lookup.
 """
 import math
 
+from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
-from nav_msgs.msg import Odometry
 
 
 class TargetDriver(Node):
+
     def __init__(self):
         super().__init__('target_driver')
 
@@ -54,9 +56,9 @@ class TargetDriver(Node):
         self.get_logger().info(
             f"target_driver ready: speed={self.get_parameter('target_speed').value:.2f} m/s, "
             f"spin={self.get_parameter('spin_hz').value:.2f} Hz, "
-            f"path x={self.center_x:.2f} y=[{self.center_y - self.half_width:.2f}, "
-            f"{self.center_y + self.half_width:.2f}] z={self.target_z:.2f}, "
-            f"frame_id={self.frame_id}"
+            f'path x={self.center_x:.2f} y=[{self.center_y - self.half_width:.2f}, '
+            f'{self.center_y + self.half_width:.2f}] z={self.target_z:.2f}, '
+            f'frame_id={self.frame_id}'
         )
 
     def on_timer(self):

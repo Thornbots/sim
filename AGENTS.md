@@ -23,7 +23,7 @@ workaround here; it applies to every _other_ first-party package.
 ## Testing
 
 Everything under `test/` is pytest, collected by `colcon test`. The suites
-that launch `sim` + `sentry_pkg` end to end carry the `integration` marker and
+that launch `sim` + `thornbots_pkg` end to end carry the `integration` marker and
 are deselected by `setup.cfg`, so a plain `colcon test --packages-select sim`
 runs the unit tests only:
 
@@ -86,7 +86,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - Owns the world, the sim URDF, `pose_emulator.py`'s noise model, and the
   localization test suite.
 - Localization backends belong to `../sentry_localization`; hardware interface
-  and CV target selection to `../sentry_pkg`.
+  and CV target selection to `../thornbots_pkg`.
 
 ## Open
 
