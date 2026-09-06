@@ -29,9 +29,8 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_srvs.srv import Trigger
-
 from sim.auto_explore import teleport
+from std_srvs.srv import Trigger
 
 
 class PoseEmulator(Node):

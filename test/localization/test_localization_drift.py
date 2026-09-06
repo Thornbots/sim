@@ -13,16 +13,17 @@
 # limitations under the License.
 
 """
-Integration suite for sentry_localization's map-relative drift/jerk
-correction, against sim's synthetic odom noise model
-(sim/pose_emulator.py). One test per scenario, in suite order; the stack
-lifecycle and the scenarios themselves live in drift_harness.py.
+Integration suite for sentry_localization's map-relative drift/jerk correction.
+
+Scored against sim's synthetic odom noise model (sim/pose_emulator.py). One
+test per scenario, in suite order; the stack lifecycle and the scenarios
+themselves live in drift_harness.py.
 
 Launches gz-sim and the full sentry stack, so every test here is marked
-`integration` and skipped by a plain `colcon test`. Options:
---backend {slam,amcl,none}, --use-ekf, --scenario NAME, --headless,
---speed M/S (see test/conftest.py). See README.md for WHY THIS EXISTS,
-BACKENDS, and SCENARIOS.
+`integration` and skipped by a plain `colcon test`. Options: --backend
+{slam,amcl,none}, --use-ekf, --scenario NAME, --headless, --speed M/S (see
+test/conftest.py). See README.md for WHY THIS EXISTS, BACKENDS and
+SCENARIOS.
 """
 import drift_harness
 import pytest
@@ -43,9 +44,12 @@ def pytest_generate_tests(metafunc):
 
 @pytest.fixture(scope='module', autouse=True)
 def orphan_check():
-    """Warns about a colliding sim/localization stack this suite didn't
-    start. A live session shares topics and services with ours and
-    silently corrupts every measurement below; see sim/AGENTS.md."""
+    """
+    Warn about a colliding sim/localization stack this suite didn't start.
+
+    A live session shares topics and services with ours and silently
+    corrupts every measurement below; see sim/AGENTS.md.
+    """
     drift_harness.check_no_orphans('pre-flight')
     yield
     drift_harness.check_no_orphans(

@@ -13,15 +13,15 @@
 # limitations under the License.
 
 """
-Asserts that EKF fusion of /scan_odom into /odom actually beats raw
-/odom, scored against /sim/raw_odom ground truth -- the question the
-drift suite structurally can't answer (see README.md). Runs the stack at
-backend='none' with use_ekf=True, drives the same cornering loop the
-drift scenarios use, and compares mean position error.
+Asserts that EKF fusion of /scan_odom into /odom actually beats raw /odom.
 
-Marked `integration` (launches gz-sim), so a plain `colcon test` skips
-it. Options: --headless, --ekf-slip-ratio, --ekf-drift-stddev,
---ekf-seconds.
+Scored against /sim/raw_odom ground truth -- the question the drift suite
+structurally can't answer (see README.md). Runs the stack at backend='none'
+with use_ekf=True, drives the same cornering loop the drift scenarios use,
+and compares mean position error.
+
+Marked `integration` (launches gz-sim), so a plain `colcon test` skips it.
+Options: --headless, --ekf-slip-ratio, --ekf-drift-stddev, --ekf-seconds.
 """
 import ekf_diag_harness
 import pytest

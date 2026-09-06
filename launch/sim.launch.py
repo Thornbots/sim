@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Launches gz sim loaded with the ARCC_Field_2026 world and spawns the sentry robot (from sentry_urdf.xacro) into it.
+Launches gz sim with the ARCC_Field_2026 world and spawns the sentry robot (sentry_urdf.xacro).
 
 Usage: `ros2 launch sim sim.launch.py [gui:=false] [rviz:=false]
 [world:=/abs/path.sdf] [odom_noise_enabled:=true]`. To fire a one-time

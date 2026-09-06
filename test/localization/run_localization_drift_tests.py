@@ -15,12 +15,13 @@
 # limitations under the License.
 
 """
-argparse wrapper around test_localization_drift.py, so the documented
-`ros2 run sim run_localization_drift_tests.py --backend slam` and
-`python3 .../run_localization_drift_tests.py` workflows keep working now
-that the suite is a standard pytest suite. Every flag maps 1:1 onto a
-pytest option declared in test/conftest.py; `-m integration` overrides
-setup.cfg's default deselection. Exits with pytest's status.
+Argparse wrapper around test_localization_drift.py.
+
+Keeps the documented `ros2 run sim run_localization_drift_tests.py
+--backend slam` and `python3 .../run_localization_drift_tests.py` workflows
+working now that the suite is a standard pytest suite. Every flag maps 1:1
+onto a pytest option declared in test/conftest.py; `-m integration`
+overrides setup.cfg's default deselection. Exits with pytest's status.
 """
 import os
 import subprocess

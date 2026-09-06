@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-Simulated fast-moving-*robot* ground truth (chassis + spin, not a single point): no gz entity, model, or plugin.
+Simulated fast-moving-*robot* ground truth: chassis plus spin, not a single point.
 
-This node just integrates its own chassis (x, y, z, yaw) state in a
-timer callback and publishes nav_msgs/Odometry on
+There is no gz entity, model, or plugin. This node just integrates its
+own chassis (x, y, z, yaw) state in a timer callback and publishes nav_msgs/Odometry on
 /target/ground_truth_odom, the same way pose_emulator.py stands in for
 real hardware without touching gz. Models the opponent-robot behavior
 documented in ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot

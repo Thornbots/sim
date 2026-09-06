@@ -13,13 +13,16 @@
 # limitations under the License.
 
 """
-Unit test for cv_head_aim_core.py's closed-form head IK, cross-checked against an independent from-scratch FK implementation of the same chain.
+Unit test for cv_head_aim_core.py's closed-form head IK.
 
-The chain is sentry.urdf.xacro's (root -> body -> headlink -> headpitch
--> camera) -- not a copy of cv_target_emulator.py's `_camera_pose`, a
-from-scratch re-derivation, so this actually catches a sign/algebra error
-in either one rather than just checking self-consistency. No rclpy, no
-ROS message packages: run with `python3 -m pytest test/cv/test_cv_head_aim.py`.
+It is cross-checked against an independent from-scratch FK
+implementation of the same chain. The chain is sentry.urdf.xacro's
+(root -> body -> headlink -> headpitch -> camera) -- not a copy of
+cv_target_emulator.py's `_camera_pose` but a from-scratch re-derivation,
+so this actually catches a sign/algebra error in either one rather than
+just checking self-consistency. No rclpy, no
+ROS message packages: run it with
+`python3 -m pytest test/cv/test_cv_head_aim.py`.
 """
 import math
 import os

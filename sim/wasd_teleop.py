@@ -13,7 +13,9 @@
 # limitations under the License.
 
 """
-WASD keyboard teleop for the sim robot's holonomic /cmd_vel (sim-only; real hardware drives via the DJI Type-C board, not ROS).
+WASD keyboard teleop for the sim robot's holonomic /cmd_vel.
+
+Sim-only: real hardware drives via the DJI Type-C board, not ROS.
 
 Talks to the VelocityControl gz plugin (sim/urdf/sentry.urdf.xacro) via
 the /cmd_vel bridge in sim/launch/sim.launch.py.

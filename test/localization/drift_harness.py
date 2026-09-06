@@ -59,13 +59,15 @@ from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformLi
 
 class LaunchTree:
     """
-    Launches a `ros2 launch ...` command as its own process group and can tear the whole tree down cleanly with SIGINT (falling back to SIGKILL if it doesn't exit in time).
+    Launches a `ros2 launch ...` command as its own process group.
 
-    Mirrors kill_launch.sh's "SIGINT the process group, never
-    pkill/killall" approach -- a partial kill that leaves orphaned
-    children running alongside a fresh relaunch causes duplicate-node TF
-    jitter (see SESSION_NOTES.md), which would silently corrupt this
-    suite's own results if it happened between scenarios.
+    Can tear the whole tree down cleanly with SIGINT, falling back to
+    SIGKILL if it doesn't exit in time. Mirrors kill_launch.sh's
+    "SIGINT the process group, never pkill/killall" approach -- a
+    partial kill that leaves orphaned children running alongside a
+    fresh relaunch causes duplicate-node TF jitter (see
+    SESSION_NOTES.md), which would silently corrupt this suite's own
+    results if it happened between scenarios.
     """
 
     def __init__(self, name, cmd, log_path):
@@ -217,12 +219,15 @@ class LocalizationTestHelper(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
 
     def wait_for_scans_flowing(self, min_scans=10, timeout=60.0):
-        """Blocks until `min_scans` /scan messages arrive or `timeout`
-        elapses. More reliable readiness signal than the correction TF's
-        mere existence, since slam_toolbox/amcl broadcast an initial
-        identity transform before processing any real scan. Returns True
-        if the threshold was reached, False on timeout (caller should
-        treat that as an unhealthy stack). See README.md.
+        """
+        Block until `min_scans` /scan messages arrive or `timeout` elapses.
+
+        More reliable readiness signal than the correction TF's
+        mere existence, since slam_toolbox/amcl broadcast an
+        initial identity transform before processing any real scan.
+        Returns True if the threshold was reached, False on timeout
+        (caller should treat that as an unhealthy stack). See
+        README.md.
         """
         self._scan_count = 0
         deadline = time.monotonic() + timeout
@@ -233,8 +238,11 @@ class LocalizationTestHelper(Node):
         return False
 
     def get_correction_tf(self, timeout=2.0):
-        """Returns (x, y, yaw) of self.parent_frame->self.child_frame, or
-        None if unavailable (e.g. the backend hasn't published it yet)."""
+        """
+        Return (x, y, yaw) of self.parent_frame->self.child_frame, or None if unavailable (e.g.
+
+        the backend hasn't published it yet).
+        """
         try:
             tf = self.tf_buffer.lookup_transform(
                 self.parent_frame, self.child_frame, rclpy.time.Time(),
@@ -248,12 +256,16 @@ class LocalizationTestHelper(Node):
         return (t.x, t.y, yaw)
 
     def get_root_position(self, timeout=2.0):
-        """Full (x, y) position estimate -- self.parent_frame->root, e.g.
-        map->root for slam/amcl (chains through the map->odom correction
-        this class otherwise tracks) or odom->root for none (already the
-        whole chain). Comparable directly against _raw_odom_xy (ground
-        truth) to measure actual position error, unlike get_correction_tf
-        which only returns the correction offset. None if unavailable."""
+        """
+        Full (x, y) position estimate -- self.parent_frame->root, e.g.
+
+        map->root for slam/amcl (chains through the map->odom
+        correction this class otherwise tracks) or odom->root for
+        none (already the whole chain). Comparable directly against
+        _raw_odom_xy (ground truth) to measure actual position
+        error, unlike get_correction_tf which only returns the
+        correction offset. None if unavailable.
+        """
         try:
             tf = self.tf_buffer.lookup_transform(
                 self.parent_frame, 'root', rclpy.time.Time(),
@@ -282,13 +294,16 @@ class LocalizationTestHelper(Node):
         return future.result()
 
     def call_trigger_jerk_and_get_dxdy(self, timeout=10.0):
-        """Calls trigger_jerk and returns the actual applied (dx, dy) (m),
-        parsed from the Trigger response's `message` field (no dedicated
-        payload field exists). Uses the real applied value rather than
-        odom_jerk_stddev since a single draw can differ greatly from the
-        distribution parameter -- see README.md. Returns None (caller
-        falls back to a stddev estimate, skips position correction) if
-        the message can't be parsed.
+        """
+        Call trigger_jerk and return the actual applied (dx, dy) in metres.
+
+        Parsed from the Trigger response's `message` field, since
+        no dedicated payload field exists. Uses the real applied
+        value rather than odom_jerk_stddev because a single draw
+        can differ greatly from the distribution parameter -- see
+        README.md. Returns None (caller falls back to a stddev
+        estimate and skips position correction) if the message
+        can't be parsed.
         """
         result = self.call_trigger_jerk(timeout=timeout)
         try:
@@ -300,10 +315,14 @@ class LocalizationTestHelper(Node):
             return None
 
     def call_trigger_odom_stuck(self, timeout=10.0):
-        """Calls /pose_emulator/trigger_odom_stuck, which permanently pins
-        /pose's x/y (and vel_x/vel_y) at (0, 0) from then on -- models a
-        dead wheel encoder, not a recoverable glitch. One-shot, no
-        undo -- see pose_emulator.py's _trigger_odom_stuck_srv."""
+        """
+        Call /pose_emulator/trigger_odom_stuck to pin /pose's x/y at (0, 0).
+
+        The pin is permanent from then on, vel_x/vel_y included: it
+        models a dead wheel encoder, not a recoverable glitch.
+        One-shot, no undo -- see pose_emulator.py's
+        _trigger_odom_stuck_srv.
+        """
         client = self.create_client(
             Trigger, '/pose_emulator/trigger_odom_stuck')
         if not client.wait_for_service(timeout_sec=timeout):
@@ -316,10 +335,14 @@ class LocalizationTestHelper(Node):
         return future.result()
 
     def drive(self, vx, vy, duration):
-        """Steers toward the leg's endpoint, re-aiming every tick off
-        `/sim/raw_odom` until within `WAYPOINT_TOLERANCE`, tapering speed
-        near the target to avoid corner oscillation. `duration` is only a
-        wall-clock safety cap. See README.md for the design history."""
+        """
+        Steer toward the leg's endpoint, re-aiming every tick off /sim/raw_odom.
+
+        Runs until within `WAYPOINT_TOLERANCE`, tapering speed near
+        the target to avoid corner oscillation. `duration` is only
+        a wall-clock safety cap. See README.md for the design
+        history.
+        """
         WAYPOINT_TOLERANCE = 0.03  # meters; matches the lidar noise stddev
         CONTROL_PERIOD = 0.1  # seconds; matches the spin_for() tick below
         speed = math.hypot(vx, vy)
@@ -418,12 +441,15 @@ DRIVE_SPEED = 4.0
 
 
 def _make_loop_legs(speed):
-    """3m x 3m square loop centered on OBSTACLE_XY, corners at (-1.5,-1.5),
-    (1.5,-1.5), (1.5,1.5), (-1.5,1.5) -- 1.5m out from OBSTACLE_XY, so
-    1.35m clear of each box face (half-width 0.15m). Verified clear of
-    every documented wall (see README.md for the corner-by-corner
-    clearance derivation). Legs are (vx, vy, duration) like PATROL_LEGS,
-    3m per side."""
+    """
+    Build the 3m x 3m square loop legs centered on OBSTACLE_XY.
+
+    Corners at (-1.5,-1.5), (1.5,-1.5), (1.5,1.5), (-1.5,1.5) -- 1.5m
+    out from OBSTACLE_XY, so 1.35m clear of each box face (half-width
+    0.15m). Verified clear of every documented wall (see README.md for
+    the corner-by-corner clearance derivation). Legs are (vx, vy,
+    duration) like PATROL_LEGS, 3m per side.
+    """
     d = 3.0 / speed
     return [
         (speed, 0.0, d),    # east   (-1.5,-1.5) -> (1.5,-1.5)
@@ -437,8 +463,12 @@ OBSTACLE_LOOP_LEGS = _make_loop_legs(DRIVE_SPEED)
 
 
 def _reposition_to_loop_start(helper):
-    """Move from spawn (0,0, inside the loop) out to OBSTACLE_LOOP_LEGS's
-    own start corner (-1.5,-1.5) before tracing it, at DRIVE_SPEED."""
+    """
+    Move from spawn out to OBSTACLE_LOOP_LEGS's own start corner.
+
+    Spawn is (0,0), inside the loop; the start corner is (-1.5,-1.5).
+    Driven at DRIVE_SPEED before the loop itself is traced.
+    """
     d = 1.5 / DRIVE_SPEED
     helper.drive(-DRIVE_SPEED, 0.0, d)   # -1.5m west, to x=-1.5
     helper.drive(0.0, -DRIVE_SPEED, d)   # -1.5m south, to y=-1.5
@@ -477,12 +507,14 @@ def launch_cmd(args_str):
 def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
                        size=OBSTACLE_SIZE, height=OBSTACLE_HEIGHT,
                        timeout=15.0):
-    """One-shot spawn of a static box into the running gz-sim world (same
-    `ros_gz_sim create -string <inline SDF>` mechanism as spawn_robot,
-    run as a subprocess so it can fire mid-scenario instead of at stack
-    startup). `size` is the x/y footprint, `height` is z (NOT a cube),
-    based at the ground. Torn down for free with the rest of the stack --
-    no separate despawn needed. See README.md.
+    """
+    Spawn a static box into the running gz-sim world, once.
+
+    Same `ros_gz_sim create -string <inline SDF>` mechanism as
+    spawn_robot, run as a subprocess so it can fire mid-scenario
+    instead of at stack startup. `size` is the x/y footprint, `height`
+    is z (NOT a cube), based at the ground. Torn down for free with the
+    rest of the stack -- no separate despawn needed. See README.md.
     """
     x, y = xy
     sdf = (
@@ -533,14 +565,17 @@ class Scenario:
 def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
               odom_drift_stddev=None, odom_jitter_stddev=None,
               odom_slip_ratio=0.02, odom_jerk_bias_xy=None):
-    """Starts sim + thornbots_pkg launch trees, waits for the graph to come
-    up, returns (sim_tree, sentry_tree, helper_node). Caller must call
-    teardown_stack() when done. odom_slip_ratio defaults to 0.02 -- a
+    """
+    Start the sim + thornbots_pkg launch trees and wait for the graph.
+
+    Returns (sim_tree, sentry_tree, helper_node); the caller must call
+    teardown_stack() when done. odom_slip_ratio defaults to 0.02, a
     small amount of slip for every scenario. The drift scenarios
     (_run_cornering_loop_scenario, i.e. drift_correction/
     drift_correction_obstacle) pass 0.15 explicitly to isolate their
     own failure mode; see MAX_DELTA_THRESHOLD's comment for how 0.40m
-    was calibrated against that higher slip value."""
+    was calibrated against that higher slip value.
+    """
     os.makedirs(LOG_DIR, exist_ok=True)
 
     sim_args = (
@@ -615,14 +650,15 @@ def teardown_stack(sim_tree, sentry_tree, helper):
 
 
 def wait_for_stack_ready(sc, helper, min_scans=10, timeout=60.0):
-    """Common readiness gate for every scenario: block until /scan is
-    actually flowing at a reasonable volume (see
-    LocalizationTestHelper.wait_for_scans_flowing's docstring for why
-    TF's mere existence isn't a sufficient readiness signal on its own).
-    Logs the outcome onto the scenario and returns True/False; scenarios
-    should treat False as a hard failure of that run (an unhealthy/too-
-    slow stack invalidates the scenario's timing-sensitive assertions),
-    not something to silently paper over.
+    """
+    Block until /scan is flowing, the readiness gate every scenario uses.
+
+    See LocalizationTestHelper.wait_for_scans_flowing's docstring for
+    why TF's mere existence isn't a sufficient readiness signal on its
+    own. Logs the outcome onto the scenario and returns True/False;
+    scenarios should treat False as a hard failure of that run (an
+    unhealthy or too-slow stack invalidates the scenario's
+    timing-sensitive assertions), not something to silently paper over.
     """
     ok = helper.wait_for_scans_flowing(min_scans=min_scans, timeout=timeout)
     if ok:
@@ -635,8 +671,11 @@ def wait_for_stack_ready(sc, helper, min_scans=10, timeout=60.0):
 
 
 def scan_log_for_errors(log_text, name):
-    """Returns a list of suspicious lines (ERROR-level, tracebacks,
-    segfault indicators) from a launch tree's combined log."""
+    """
+    Return the suspicious lines from a launch tree's combined log.
+
+    Suspicious means ERROR-level, a traceback, or a segfault indicator.
+    """
     bad = []
     for line in log_text.splitlines():
         low = line.lower()
@@ -798,14 +837,16 @@ JERK_WITH_MOTION_REPEATS = 8
 
 
 def _leg_for_displacement(dx, dy, speed=4.0):
-    """Converts a desired (dx, dy) world-frame displacement into a
-    (vx, vy, duration) drive() call at a fixed real driving speed --
-    same convention as PATROL_LEGS/OBSTACLE_LOOP_LEGS's own legs (speed
-    pinned at the robot's real 4.0 m/s regardless of
-    displacement length/shape). Used by scenario_jerk_with_motion to
-    turn a corrective displacement into an actual drive command. Returns
-    (0.0, 0.0, 0.0) for a near-zero displacement (nothing to drive)
-    rather than dividing by ~zero.
+    """
+    Convert a world-frame (dx, dy) displacement into a drive() leg.
+
+    The leg is (vx, vy, duration) at a fixed real driving speed, same
+    convention as PATROL_LEGS/OBSTACLE_LOOP_LEGS's own legs (speed
+    pinned at the robot's real 4.0 m/s regardless of displacement
+    length or shape). Used by scenario_jerk_with_motion to turn a
+    corrective displacement into an actual drive command. Returns (0.0,
+    0.0, 0.0) for a near-zero displacement (nothing to drive) rather
+    than dividing by ~zero.
     """
     distance = math.hypot(dx, dy)
     if distance < 1e-6:
@@ -982,13 +1023,16 @@ MAX_DELTA_THRESHOLD = 0.40  # meters
 
 
 def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
-    """Shared driving logic for scenario_drift_correction_obstacle and
-    scenario_drift_correction -- both drive the identical 3m
-    hard-cornering loop (OBSTACLE_LOOP_LEGS) with an obstacle either
-    spawned or not, so the two scenarios differ only in `spawn_obstacle`
-    and can be directly compared against the same MAX_DELTA_THRESHOLD.
-    Mutates and returns `sc` (the caller's Scenario) via sc.result()/
-    sc.log(), same convention as every other scenario_* function.
+    """
+    Drive the cornering loop shared by both drift_correction scenarios.
+
+    scenario_drift_correction_obstacle and scenario_drift_correction
+    both drive the identical 3m hard-cornering loop
+    (OBSTACLE_LOOP_LEGS) with an obstacle either spawned or not, so the
+    two differ only in `spawn_obstacle` and can be compared directly
+    against the same MAX_DELTA_THRESHOLD. Mutates and returns `sc` (the
+    caller's Scenario) via sc.result()/sc.log(), same convention as
+    every other scenario_* function.
     """
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
@@ -1253,19 +1297,25 @@ SCENARIOS = {
 
 
 def set_drive_speed(speed):
-    """Repoints DRIVE_SPEED and the loop legs derived from it, for the
-    --speed option. Module-level rather than a parameter because every
-    scenario reads OBSTACLE_LOOP_LEGS directly; see DRIVE_SPEED's comment
-    for why anything other than 4.0 m/s is unvalidated."""
+    """
+    Repoint DRIVE_SPEED and the loop legs derived from it, for the --speed option.
+
+    Module-level rather than a parameter because every scenario reads
+    OBSTACLE_LOOP_LEGS directly; see DRIVE_SPEED's comment for why
+    anything other than 4.0 m/s is unvalidated.
+    """
     global DRIVE_SPEED, OBSTACLE_LOOP_LEGS
     DRIVE_SPEED = speed
     OBSTACLE_LOOP_LEGS = _make_loop_legs(speed)
 
 
 def run_scenario(name, gui, backend, use_ekf):
-    """Runs one scenario by name and returns its Scenario record. The
-    caller owns rclpy.init()/shutdown() (one context for the whole run,
-    not one per scenario)."""
+    """
+    Run one scenario by name and returns its Scenario record.
+
+    The caller owns rclpy.init()/shutdown() (one context for the whole
+    run, not one per scenario).
+    """
     print(f'\n=== Running scenario: {name} (backend={backend}, '
           f'use_ekf={use_ekf}) ===')
     return SCENARIOS[name](gui, backend, use_ekf)
