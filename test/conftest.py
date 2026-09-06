@@ -16,7 +16,7 @@ def pytest_addoption(parser):
     group = parser.getgroup('sim integration')
     group.addoption(
         '--headless', action='store_true',
-        help='skip gz-sim\'s GUI window and rviz2 (both on by default, per '
+        help="skip gz-sim's GUI window and rviz2 (both on by default, per "
              'sim/AGENTS.md\'s standing "watch sim live" rule)')
 
     # test/localization
@@ -32,7 +32,7 @@ def pytest_addoption(parser):
         help='run only this drift scenario (default: all, in suite order)')
     group.addoption(
         '--speed', type=float, default=None,
-        help="m/s for the cornering loop; see drift_harness.DRIVE_SPEED, "
+        help='m/s for the cornering loop; see drift_harness.DRIVE_SPEED, '
              'other speeds are not re-validated against the thresholds')
 
     group.addoption(
@@ -74,10 +74,13 @@ def pytest_addoption(parser):
 
 @pytest.fixture(scope='session')
 def ros_context():
-    """One rclpy context for the whole session, not one per test -- both
-    suites launch and tear down several stacks under a single context.
-    Imported lazily so the pure-Python unit tests still collect on a bare
-    pytest install with no ROS."""
+    """
+    One rclpy context for the whole session, not one per test.
+
+    Both suites launch and tear down several stacks under a single
+    context. Imported lazily so the pure-Python unit tests still collect
+    on a bare pytest install with no ROS.
+    """
     import rclpy
     rclpy.init()
     try:

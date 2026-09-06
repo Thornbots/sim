@@ -1,11 +1,13 @@
 """
-Grid-teleport mapping sweep for sim (sim-only). Visits a fixed (x, y)
-grid in a snake pattern, teleporting the chassis to each point and
-dwelling briefly so SLAM integrates a scan there -- no obstacle
-avoidance/reactive driving, it just jumps regardless of what's there.
-"Teleport" is a `/world/<world>/set_pose` gz-transport call via `ign
-service`; each call is preceded by a model_only WorldReset to zero
-joint state first. See README.md for why/how both are safe here.
+Grid-teleport mapping sweep for sim (sim-only).
+
+Visits a fixed (x, y) grid in a snake pattern, teleporting the chassis
+to each point and dwelling briefly so SLAM integrates a scan there --
+no obstacle avoidance/reactive driving, it just jumps regardless of
+what's there. "Teleport" is a `/world/<world>/set_pose` gz-transport
+call via `ign service`; each call is preceded by a model_only
+WorldReset to zero joint state first. See README.md for why/how both
+are safe here.
 """
 import subprocess
 
@@ -25,13 +27,17 @@ GRID_Y_MAX = 5.0
 GRID_SPACING = 0.5      # m between adjacent grid points
 
 DWELL_SECONDS = 1.0      # s between teleports, so SLAM gets a settled scan
-                         # at each pose before the next jump
+# at each pose before the next jump
 SERVICE_TIMEOUT = 2.0    # s -- ign service call timeout
 
 
 def build_grid():
-    """Snake order (alternating x direction per row) purely for a tidier
-    sweep; teleporting makes travel distance irrelevant either way."""
+    """
+    Build the sweep waypoints in snake order (alternating x direction per row).
+
+    Purely for a tidier sweep; teleporting makes travel distance
+    irrelevant either way.
+    """
     waypoints = []
     y = GRID_Y_MIN
     left_to_right = True
@@ -64,11 +70,14 @@ def _ign_service(service, reqtype, reptype, req):
 
 
 def reset_joints():
-    """model_only WorldReset: snaps headlink/odowheel_x/odowheel_y back to
-    their SDF-declared zero positions/velocities. Confirmed empirically
-    that this does NOT touch root's own pose (it has no parent joint, so
-    there's no "initial joint state" for it to reset to), only actual
-    joints get reset."""
+    """
+    Reset headlink/odowheel_x/odowheel_y to their SDF-declared zero positions/velocities.
+
+    Uses a model_only WorldReset. Confirmed empirically that this does
+    NOT touch root's own pose (it has no parent joint, so there's no
+    "initial joint state" for it to reset to) -- only actual joints get
+    reset.
+    """
     return _ign_service(
         'control', 'ignition.msgs.WorldControl', 'ignition.msgs.Boolean',
         'reset: {model_only: true}',
@@ -76,16 +85,19 @@ def reset_joints():
 
 
 def teleport(x, y, z=Z):
-    """True gz world-pose write via UserCommands' set_pose service; returns
-    whether gz reported success, doesn't raise on a bad entity name.
-    Orientation pinned to identity each call. reset_joints() runs both
-    before AND after -- see README.md for why the after-call is needed
-    (a reaction-impulse artifact from root's position discontinuity)."""
+    """
+    Write x, y, z to gz world pose via UserCommands' set_pose service.
+
+    Returns whether gz reported success; doesn't raise on a bad entity
+    name. Orientation pinned to identity each call. reset_joints() runs
+    both before AND after -- see README.md for why the after-call is
+    needed (a reaction-impulse artifact from root's position discontinuity).
+    """
     reset_joints()
     req = (
         f"name: '{ENTITY_NAME}', "
-        f"position: {{x: {x}, y: {y}, z: {z}}}, "
-        f"orientation: {{x: 0, y: 0, z: 0, w: 1}}"
+        f'position: {{x: {x}, y: {y}, z: {z}}}, '
+        f'orientation: {{x: 0, y: 0, z: 0, w: 1}}'
     )
     ok = _ign_service(
         'set_pose', 'ignition.msgs.Pose', 'ignition.msgs.Boolean', req,
@@ -95,6 +107,7 @@ def teleport(x, y, z=Z):
 
 
 class AutoExplore(Node):
+
     def __init__(self):
         super().__init__('auto_explore')
         self.waypoints = build_grid()
@@ -108,7 +121,7 @@ class AutoExplore(Node):
         )
         self.timer = self.create_timer(DWELL_SECONDS, self.tick)
         self.tick()  # go to the first waypoint immediately instead of
-                     # waiting one full dwell period first
+        # waiting one full dwell period first
 
     def tick(self):
         if self.done:

@@ -11,13 +11,12 @@ import statistics
 import threading
 import time
 
-import rclpy
+import drift_harness as _drift
 from nav_msgs.msg import Odometry
+import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from tf2_ros import Buffer, TransformListener
-
-import drift_harness as _drift
 
 
 class GroundTruthProbe(Node):
@@ -171,7 +170,6 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
                 pass
             probe.destroy_node()
         _drift.teardown_stack(sim_tree, sentry_tree, helper)
-
 
 
 def improvement_pct(odom_stats, ekf_stats):

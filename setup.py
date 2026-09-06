@@ -1,13 +1,17 @@
-import os
 from glob import glob
-from setuptools import setup, find_packages
+import os
+
+from setuptools import find_packages, setup
 
 package_name = 'sim'
 
 
 def data_files_for_dir(src_dir, dest_prefix):
-    """Recursively map every file under src_dir to share/<package>/<dest_prefix>/<relpath>,
-    preserving subdirectory structure (needed for STL meshes in nested folders)."""
+    """
+    Recursively map every file under src_dir to share/<package>/<dest_prefix>/<relpath>.
+
+    Preserves subdirectory structure (needed for STL meshes in nested folders).
+    """
     entries = []
     for root, _dirs, files in os.walk(src_dir):
         if not files:

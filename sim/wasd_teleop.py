@@ -1,8 +1,8 @@
 """
-WASD keyboard teleop for the sim robot's holonomic /cmd_vel (sim-only;
-real hardware drives via the DJI Type-C board, not ROS). Talks to the
-VelocityControl gz plugin (sim/urdf/sentry.urdf.xacro) via the /cmd_vel
-bridge in sim/launch/sim.launch.py.
+WASD keyboard teleop for the sim robot's holonomic /cmd_vel (sim-only; real hardware drives via the DJI Type-C board, not ROS).
+
+Talks to the VelocityControl gz plugin (sim/urdf/sentry.urdf.xacro) via
+the /cmd_vel bridge in sim/launch/sim.launch.py.
 
   w/s forward/back  a/d strafe  space stop  x quit
 
@@ -16,9 +16,9 @@ import sys
 import termios
 import tty
 
+from geometry_msgs.msg import Twist
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
 
 BINDINGS = {
     'w': (1, 0, 0),

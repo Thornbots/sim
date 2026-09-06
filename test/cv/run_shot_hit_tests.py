@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-argparse wrapper around test_shot_hit.py, keeping the documented
-`python3 .../run_shot_hit_tests.py` / `ros2 run sim
-run_shot_hit_tests.py` workflows working now that the suite is a
-standard pytest suite. Every flag maps 1:1 onto a pytest option declared
-in test/conftest.py. Exits with pytest's status.
+Wrap test_shot_hit.py in an argparse CLI now that the suite is a standard pytest suite.
+
+Keeps the documented `python3 .../run_shot_hit_tests.py` / `ros2 run
+sim run_shot_hit_tests.py` workflows working. Every flag maps 1:1 onto
+a pytest option declared in test/conftest.py. Exits with pytest's
+status.
 """
 import argparse
 import os

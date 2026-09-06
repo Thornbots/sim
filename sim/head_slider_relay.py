@@ -1,11 +1,12 @@
 """
-Relays gz sim GUI's fixed-name joint-slider topic
-(/model/<model>/joint/<joint>/0/cmd_pos, not ROS-bridgeable) into the
-custom topics headlink/headpitch's JointPositionController plugins
-listen on (see sentry.urdf.xacro), so both the GUI slider and
-/head_pan_cmd|/head_pitch_cmd can drive the same controller. Shells out
-to `ign topic` (no gz-transport Python bindings here); reader/publisher
-run on separate threads to avoid input lag -- see README.md for why.
+Relays gz sim GUI's fixed-name joint-slider topic into the custom topics headlink/headpitch's JointPositionController plugins listen on.
+
+The GUI topic is /model/<model>/joint/<joint>/0/cmd_pos, not
+ROS-bridgeable; the custom topics are declared in sentry.urdf.xacro, so
+both the GUI slider and /head_pan_cmd|/head_pitch_cmd can drive the
+same controller. Shells out to `ign topic` (no gz-transport Python
+bindings here); reader/publisher run on separate threads to avoid
+input lag -- see README.md for why.
 """
 import re
 import subprocess

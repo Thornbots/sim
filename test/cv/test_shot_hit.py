@@ -1,9 +1,10 @@
 """
-Black-box shot-hit test: scores sentry_pkg's fire decisions against
-ground truth, consuming only the final FireCommand on
-/dji_serial_bridge/fire_command (the topic that would reach the real
-launcher per mcb_relay.py's "sole relay" design). Scoring geometry and
-stack lifecycle live in shot_hit_harness.py.
+Black-box shot-hit test: scores thornbots_pkg's fire decisions against ground truth.
+
+Consumes only the final FireCommand on /dji_serial_bridge/fire_command
+(the topic that would reach the real launcher per mcb_relay.py's "sole
+relay" design). Scoring geometry and stack lifecycle live in
+shot_hit_harness.py.
 
 One test per (lead, case) cell, printing a hit-rate line each, so a full
 run is the before/after lead table. The assertion is that shots are

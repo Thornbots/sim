@@ -1,8 +1,8 @@
 """
-Unit test for cv_head_aim_core.py's closed-form head IK, cross-checked
-against an independent from-scratch forward-kinematics implementation of
-the same sentry.urdf.xacro chain (root -> body -> headlink -> headpitch ->
-camera) -- not a copy of cv_target_emulator.py's `_camera_pose`, a
+Unit test for cv_head_aim_core.py's closed-form head IK, cross-checked against an independent from-scratch FK implementation of the same chain.
+
+The chain is sentry.urdf.xacro's (root -> body -> headlink -> headpitch
+-> camera) -- not a copy of cv_target_emulator.py's `_camera_pose`, a
 from-scratch re-derivation, so this actually catches a sign/algebra error
 in either one rather than just checking self-consistency. No rclpy, no
 ROS message packages: run with `python3 -m pytest test/cv/test_cv_head_aim.py`.
@@ -30,10 +30,14 @@ def _ry(a):
 
 
 def _camera_forward(theta_y, theta_p):
-    """Independent FK: root->body (Rz(pi)) -> headlink origin (Rz(pi)) *
-    rotate(-z axis, theta_y) -> headpitch origin (Rz(HEADPITCH_ORIGIN_YAW))
-    * rotate(y axis, theta_p) -> camera (identity). rotate about -z by
-    theta_y equals Rz(-theta_y)."""
+    """
+    Compute the camera forward direction via an independent, from-scratch FK chain.
+
+    root->body (Rz(pi)) -> headlink origin (Rz(pi)) * rotate(-z axis,
+    theta_y) -> headpitch origin (Rz(HEADPITCH_ORIGIN_YAW)) * rotate(y
+    axis, theta_p) -> camera (identity). rotate about -z by theta_y
+    equals Rz(-theta_y).
+    """
     R = (_rz(math.pi) @ _rz(math.pi) @ _rz(-theta_y)
          @ _rz(HEADPITCH_ORIGIN_YAW) @ _ry(theta_p))
     return R @ np.array([1.0, 0.0, 0.0])
