@@ -8,7 +8,7 @@ the operating contract for working here.
 
 **On a fresh or recreated container, run `install-sim.sh` before the first sim
 launch.** `Dockerfile.thornbots` deliberately installs neither
-`ros-humble-ros-gz` nor this package (real hardware never needs gz-sim):
+`ros_gz` nor this package (real hardware never needs gz-sim):
 
 ```bash
 ../isaac_ros_common/scripts/dexec.sh -r -- \
@@ -16,7 +16,7 @@ launch.** `Dockerfile.thornbots` deliberately installs neither
 ```
 
 **`sim` is the one package with no `/workspaces/ros2_ws` shadow copy.** It isn't
-cloned during the Docker build, so `src/sim` edits are live immediately,
+copied in during the Docker build, so `src/sim` edits are live immediately,
 including from the user's terminal. Don't apply the `ros2_ws` shadowing
 workaround here; it applies to every _other_ first-party package.
 
