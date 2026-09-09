@@ -42,6 +42,18 @@ pytestmark = pytest.mark.integration
 STATIONARY = 'stationary'
 
 
+@pytest.fixture(autouse=True)
+def settle_between_cases():
+    """
+    Let a case's stack fully release its topics/services before the next launches.
+
+    Teardown rather than test body, so it still runs when a case fails
+    and the next case starts against a clean graph either way.
+    """
+    yield
+    time.sleep(1.0)
+
+
 def _speeds(config):
     raw = config.getoption('--shot-speeds')
     if not raw:
@@ -93,9 +105,6 @@ def test_shot_hit(lead_enabled, case, request, gui, ros_context):
         speed, spin_hz, duration, not gui, log_dir, hit_radius,
         lead_enabled=lead_enabled)
     harness.summarize(label, sampler, dropped)
-    # Let the previous case's stack fully release its topics/services
-    # before the next one launches its own.
-    time.sleep(1.0)
 
     assert sampler.shots_fired > 0, (
         f'no shots observed in {label} -- something in the launched stack is '
