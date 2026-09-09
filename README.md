@@ -722,11 +722,36 @@ meaningless against a position, so it was replaced rather than re-tuned.
 `cv_target_emulator._camera_pose()` walks forward) to solve for the joint
 angles that point the camera's +X at the target, handling
 `HEADPITCH_ORIGIN_YAW` (-0.38885) correctly as a yaw baked into the joint
-origin rather than a pitch bias. It ignores the camera's own ~0.35m
-offset from the yaw/pitch axes, the same simplification applied to
-Type-C's muzzle offset. Cross-checked in `test/cv/test_cv_head_aim.py`
-against an independently written from-scratch FK, so a sign error in one
-can't pass by agreeing with itself.
+origin rather than a pitch bias. Cross-checked in
+`test/cv/test_cv_head_aim.py` against an independently written
+from-scratch FK, so a sign error in one can't pass by agreeing with
+itself.
+
+It solves for the ray leaving the **muzzle**, not the root origin. Until
+2026-09-09 it aimed the root-origin bearing instead, on the argument that
+a ~0.35m offset is negligible "against metres of range" — the same
+argument the plan makes for Type-C's muzzle offset. That argument is
+sound for flight *time* and wrong for *direction*: a parallel offset
+between the line you aim and the line you shoot doesn't shrink with
+range, so the shot lands a fixed distance off no matter how far away the
+target is. Here the head sits `MUZZLE_Z` = 0.374m above root, against a
+0.05m hit radius, and every stationary shot missed by a constant ~0.33m
+(CV_TEST_GAPS.md gap 7).
+
+The correction is closed-form, not iterative, even though the muzzle
+position depends on the yaw being solved. The muzzle rides round the yaw
+axis at radius `MUZZLE_RADIUS` = 0.1m, so all but a fixed
+`MUZZLE_PERP` = `MUZZLE_RADIUS * sin(HEADPITCH_ORIGIN_YAW)` = 0.038m of
+that offset stays *along* the shot and cancels: the required azimuth is
+`atan2(y, x) + asin(MUZZLE_PERP / horizontal_range)`, and pitch then
+falls out of the elevation from the resulting muzzle point. Pitch needs
+no such treatment — the pitch axis passes through the muzzle.
+
+**Type-C has the same offset and, as far as this repo knows, the same
+bug.** It receives a root-frame position on `CVTarget` and does its own
+gimbal solve; nothing here can compensate for it, because the correction
+depends on where the real barrel sits relative to the gimbal axes. Flag
+it with firmware — see `ros2_dji_serial_bridge/README.md`.
 
 It closes the loop on that absolute setpoint instead of running open-loop
 feedforward, because setpoint-tracking lag against a moving target has to show
