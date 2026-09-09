@@ -64,10 +64,48 @@ DEFAULT_DURATION = 15.0  # seconds of steady-state sampling per case
 DEFAULT_LOG_DIR = '/tmp/shot_hit_test_logs'
 # The stationary case (speed=0, spin=0) is the harness's own sanity
 # check, not a tracking/prediction difficulty: a working pipeline hits a
-# motionless target trivially, so zero hits there means the harness is
-# broken. Asserted only for that case; the moving sweep's hit rate is a
-# reported measurement, not a pass condition.
+# motionless target trivially.
+#
+# Asserted as a RATE, not a count: "at least one hit" passes a pipeline
+# landing 1 shot in 200 at a target that isn't moving, which is broken by
+# any reading. 0.5 is deliberately far below what a working stack does
+# here -- it's a floor that catches gross breakage, not a tuned figure.
+#
+# Measured 2026-09-09, headless, lead off: 27 shots, 0 hits, miss distance
+# mean == max == 0.884m, identical with lead on and off. A constant
+# offset, not scatter -- the aim is systematically wrong, so BOTH this
+# floor and STATIONARY_MIN_HITS below fail today, and the stationary
+# cells of test_shot_hit are already red for it. Do not lower this number
+# to make the suite green; the 0.884m offset is the thing to fix. See
+# CV_TEST_GAPS.md gap 7.
+STATIONARY_MIN_HIT_RATE = 0.5
+# Retained so an aiming regression can't hide behind a low shot count in
+# a run that barely fired at all. Also currently failing -- see above.
 STATIONARY_MIN_HITS = 1
+# The moving sweep is what this bench exists for: CV aiming at a moving,
+# spinning target. Asserted only on the lead=ON cells -- lead=OFF is the
+# control leg and is *expected* to aim worse at speed, so holding it to
+# the same floor would be asserting the control works.
+#
+# NOT a measurement, unlike every other threshold in this file. The aim
+# path is known-wrong today (CV_TEST_GAPS.md gap 7) so there is no working
+# baseline to measure against; 0.25 is a deliberately low placeholder that
+# states the intent in code. Re-derive it from a real sweep once aiming
+# lands, and expect it to go UP, not down.
+MOVING_MIN_HIT_RATE = 0.25
+# Lead is compared against no-lead at the SLOWEST moving speed, where the
+# hit rate is highest and run-to-run variance lowest. The assertion is
+# one-sided and slack: lead must not be materially WORSE than no-lead.
+# Pinning "lead is better by X" would be pinning sim noise -- at 0.5 m/s
+# a shot leads by only a few cm, comparable to the panel half-width.
+#
+# Measured 2026-09-09, headless, 0.5 m/s / 2.0 Hz spin: lead off 0/22
+# shots, lead on 0/23 -- both legs at a 0% hit rate, so the comparison is
+# vacuously satisfied and says nothing yet. It is the pass condition that
+# starts doing work the moment the aim offset is fixed, not a passing
+# test today. (Note the moving case DOES scatter -- miss mean 0.72m, max
+# 2.26m -- unlike the stationary case's constant 0.884m.)
+LEAD_REGRESSION_MARGIN = 0.15
 # Spin rate swept inversely to speed, spanning ARCC's documented
 # "typically 1-2 Hz" range (ARCC_2026_SENTRY_CONTEXT.md).
 SPIN_HZ_AT_MIN_SPEED = 2.0
