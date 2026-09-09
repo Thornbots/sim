@@ -42,7 +42,9 @@ import pytest
 SIM_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, SIM_DIR)
 
-from sim.cv_head_aim_core import HEADPITCH_ORIGIN_YAW  # noqa: E402
+from sim.cv_head_aim_core import (  # noqa: E402
+    HEADLINK_ORIGIN_Z, HEADPITCH_ORIGIN_X, HEADPITCH_ORIGIN_YAW, HEADPITCH_ORIGIN_Z,
+)
 
 WORKSPACE_SRC = os.path.dirname(SIM_DIR)
 SIM_XACRO = os.path.join(SIM_DIR, 'urdf', 'sentry.urdf.xacro')
@@ -142,6 +144,16 @@ def test_head_aim_core_yaw_matches_xacro():
     # because it imports it from the module under test.
     joints = _joint_origins(SIM_XACRO)
     assert HEADPITCH_ORIGIN_YAW == pytest.approx(joints['headpitch'][1][2], abs=EXACT_TOL)
+
+
+def test_head_aim_core_muzzle_offsets_match_xacro():
+    # The parallax solve's lever arms. Same blind spot as the yaw above:
+    # test_cv_head_aim.py's round-trip imports MUZZLE_Z/MUZZLE_RADIUS from
+    # the module under test, so only the xacro can catch drift here.
+    joints = _joint_origins(SIM_XACRO)
+    assert HEADLINK_ORIGIN_Z == pytest.approx(joints['headlink'][0][2], abs=EXACT_TOL)
+    assert HEADPITCH_ORIGIN_X == pytest.approx(joints['headpitch'][0][0], abs=EXACT_TOL)
+    assert HEADPITCH_ORIGIN_Z == pytest.approx(joints['headpitch'][0][2], abs=EXACT_TOL)
 
 
 def test_emulator_fk_constants_match_xacro():
