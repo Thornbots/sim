@@ -28,17 +28,20 @@ sim/
 
 ## Build
 
-Run everything in the isaac_ros-dev container. `Dockerfile.thornbots` installs
-neither `ros-humble-ros-gz` nor this package, so on a fresh container install
-them first:
+In a container terminal. `Dockerfile.thornbots` installs neither
+`ros-humble-ros-gz` nor this package, so on a fresh container run
+`install-sim.sh` once; it installs the deps and builds `sim`:
 
 ```bash
-isaac_ros_common/scripts/dexec.sh -r -- \
-  src/isaac_ros_common/docker/scripts/install-sim.sh
+cd /workspaces/isaac_ros-dev
+sudo src/isaac_ros_common/docker/scripts/install-sim.sh
 
-isaac_ros_common/scripts/dexec.sh -- \
-  colcon build --packages-select sim --symlink-install
+colcon build --symlink-install --packages-select sim   # after later edits
+source install/setup.bash
 ```
+
+Unlike the other packages, `sim` has no baked copy in `/workspaces/ros2_ws`,
+but a fresh shell still needs `source install/setup.bash` to find it.
 
 Keep `--symlink-install`. Without it `install/sim` holds copies and edits
 under `sim/` do nothing until the next rebuild. If a change seems to have no
@@ -120,9 +123,9 @@ Everything under `test/` is pytest, collected by `colcon test`.
 the unit tier in seconds. A `-m` on the command line overrides it:
 
 ```bash
-isaac_ros_common/scripts/dexec.sh -- colcon test --packages-select sim
-isaac_ros_common/scripts/dexec.sh -- \
-  colcon test --packages-select sim --pytest-args ' -m integration'
+colcon test --packages-select sim
+colcon test --packages-select sim --pytest-args ' -m integration'
+colcon test-result --verbose
 ```
 
 Each integration test launches gz-sim and `thornbots_pkg`, takes tens of
@@ -137,15 +140,14 @@ Rerun the drift suite after tuning `slam.yaml`, `amcl.yaml`, `ekf.yaml` or
 the noise model:
 
 ```bash
-isaac_ros_common/scripts/dexec.sh -- python3 \
-  /workspaces/isaac_ros-dev/src/sim/test/localization/run_localization_drift_tests.py \
-  --backend slam   # or amcl, none; --use-ekf layers on any of them
+ros2 run sim run_localization_drift_tests.py --backend slam
+# --backend amcl or none; --use-ekf layers on any of them
 ```
 
 `--scenario NAME` runs one scenario. `--headless` skips the GUI and rviz2
 (both on by default). `--speed` overrides the 4.0 m/s loop speed, which
 nothing has been re-validated against. Each flag maps to a pytest option in
-`test/conftest.py`:
+`test/conftest.py`, so from `src/sim` this is the same run:
 
 ```bash
 python3 -m pytest test/localization/test_localization_drift.py \
@@ -159,8 +161,7 @@ After editing its YAML, rebuild with `--symlink-install` so later edits link
 through:
 
 ```bash
-isaac_ros_common/scripts/dexec.sh -- colcon build --symlink-install \
-  --packages-select sentry_localization thornbots_pkg
+colcon build --symlink-install --packages-select sentry_localization thornbots_pkg
 ```
 
 If results look unaffected by a change, `diff` the installed YAML against
@@ -188,7 +189,7 @@ correction TF, assert, tear down.
 `test_localization_drift.py` is one parametrized test per scenario. That split
 lets `ekf_diag_harness.py` reuse `run_stack`/`drive` and puts `Scenario`'s
 `details` into the assertion message instead of pytest's capture. The harness
-owns its launch trees (setsid process groups, like `dexec.sh -d`) and won't
+owns its launch trees (each in its own process group) and won't
 attach to a running stack.
 
 Each scenario watches the edge the backend owns (`BACKEND_FRAMES`):
