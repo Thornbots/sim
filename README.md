@@ -1,53 +1,117 @@
 # sim
 
-Launches `gz sim` with the `ARCC_Field_2026` world, spawns the `sentry` robot
-from `urdf/sentry.urdf.xacro`, and hosts the localization and CV integration
-suites. The package is named `sim` so the world's `model://sim/world/...` and
-the xacro's `package://sim/meshes/...` resolve unedited.
+sim holds the robot's integration tests. The localization drift suite and the
+CV shot-hit bench each start a `gz sim` model of the `ARCC_Field_2026` field,
+spawn the `sentry` robot from `urdf/sentry.urdf.xacro`, and run the real
+`thornbots_pkg` stack against it.
 
+## Run the tests
+
+Build first on a fresh container (see Build), and source
+`/workspaces/isaac_ros-dev/install/setup.bash` in the terminal. Each test starts
+its own sim and `thornbots_pkg` stacks, so stop anything you already have
+running.
+
+The localization suite runs `amcl` with the EKF, the configuration the robot
+is targeting. All six drift scenarios take several minutes:
+
+```bash
+ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
 ```
-sim/
-├── launch/sim.launch.py
-├── urdf/sentry.urdf.xacro
-├── meshes/                        # Body, Head, Lidar, OdoWheel
-├── world/                         # ARCC_Field_2026.sdf, composite_part_1.stl
-├── rviz/                          # config.rviz, cv_target.rviz
-├── sim/
-│   ├── pose_emulator.py           # /pose + odometry noise model
-│   ├── auto_explore.py            # teleporting grid sweep
-│   ├── target_driver.py           # CV target ground truth
-│   ├── cv_target_emulator.py      # camera FK + detection noise
-│   ├── cv_head_aim.py             # CV head tracking (IK in cv_head_aim_core.py)
-│   ├── head_slider_relay.py       # gz GUI slider <-> /head_*_cmd
-│   └── wasd_teleop.py
-└── test/
-    ├── conftest.py                # shared pytest options
-    ├── localization/              # drift and EKF ground-truth suites
-    └── cv/                        # head-aim, URDF-constant and shot-hit suites
+
+The CV bench runs the shot-hit tests with lead on, seven tests in all. Expect
+it to fail. Aiming is known to be wrong, and the tests describe what it has to
+do (see `CV_TEST_GAPS.md`). On 2026-09-14 the stationary target took 0 hits in
+28 shots, and every shot missed by 0.884m.
+
+```bash
+ros2 run sim run_shot_hit_tests.py --lead on
 ```
+
+Add an option to run part of a suite. `--scenario odom_stuck` runs one drift
+scenario, `-k test_stationary_hit_rate_meets_floor` runs the stationary floor,
+and `-k lead-on-speed` runs the four moving-target cells.
 
 ## Build
 
-In a container terminal. `Dockerfile.thornbots` installs neither
-`ros-humble-ros-gz` nor this package, so on a fresh container run
-`install-sim.sh` once; it installs the deps and builds `sim`:
+`Dockerfile.thornbots` installs neither `ros-humble-ros-gz` nor this package.
+On a fresh container, run `install-sim.sh` once from a container terminal. It
+installs the dependencies and builds `sim`:
 
 ```bash
 cd /workspaces/isaac_ros-dev
 sudo src/isaac_ros_common/docker/scripts/install-sim.sh
-
-colcon build --symlink-install --packages-select sim   # after later edits
-source install/setup.bash
 ```
 
-Unlike the other packages, `sim` has no baked copy in `/workspaces/ros2_ws`,
-but a fresh shell still needs `source install/setup.bash` to find it.
+Rebuild after you edit the package:
 
-Keep `--symlink-install`. Without it `install/sim` holds copies and edits
+```bash
+cd /workspaces/isaac_ros-dev
+colcon build --symlink-install --packages-select sim
+```
+
+Source the workspace in every new terminal. `sim` has no copy baked into
+`/workspaces/ros2_ws`, so without this `ros2` can't find it:
+
+```bash
+source /workspaces/isaac_ros-dev/install/setup.bash
+```
+
+Keep `--symlink-install`. Without it `install/sim` holds copies, and your edits
 under `sim/` do nothing until the next rebuild. If a change seems to have no
-effect, check that first; `rm -rf build/sim install/sim` and rebuild.
+effect, check this before anything else, then `rm -rf build/sim install/sim`
+and rebuild.
 
-## Run
+## More on the tests
+
+Everything under `test/` is pytest, and `colcon test` collects it.
+
+| Tier | Files | Needs |
+| --- | --- | --- |
+| unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, ament copyright/flake8/pep257 | Python + pytest |
+| integration | `localization/test_localization_drift.py`, `localization/test_ekf_ground_truth.py`, `cv/test_shot_hit.py` | gz-sim + two launch trees |
+
+`setup.cfg` deselects the `integration` marker, so a plain `colcon test` runs
+only the unit tests and finishes in seconds. A `-m` on the command line
+overrides that:
+
+```bash
+colcon test --packages-select sim
+colcon test --packages-select sim --pytest-args ' -m integration'
+colcon test-result --verbose
+```
+
+Each integration test launches gz-sim and `thornbots_pkg`, runs for tens of
+seconds, and shuts both down before the next test starts. ROS topics are shared
+across every process on the machine, so a stack you left running will corrupt
+the measurements.
+
+Rerun the drift suite whenever you tune `slam.yaml`, `amcl.yaml`, `ekf.yaml` or
+the noise model. `ros2 run sim ekf_ground_truth_diag.py` runs the EKF
+ground-truth test. Every wrapper accepts `--help` and passes unknown arguments
+such as `-k` through to pytest.
+
+`--headless` turns off the gz GUI and rviz2, which are on by default. `--speed`
+changes the 4.0 m/s loop speed, but nobody has re-validated the thresholds at
+other speeds.
+`sentry_localization` copies its config, launch and map files into `install/`
+at build time. After you edit its YAML, rebuild with `--symlink-install` so
+later edits go straight through:
+
+```bash
+colcon build --symlink-install --packages-select sentry_localization thornbots_pkg
+```
+
+If a result looks unaffected by your change, `diff` the installed YAML against
+the source copy.
+
+Before you interpret a drift failure, read the notes below rather than the
+script docstrings. The shot-hit suite runs one test per (lead, speed) cell and
+prints a hit rate for each, so a full run gives you the before/after lead
+table. Its pass conditions are in the `test/cv/test_shot_hit.py` docstring and
+`CV_TEST_GAPS.md`.
+
+## Launch sim by hand
 
 ```bash
 ros2 launch sim sim.launch.py
@@ -56,8 +120,8 @@ ros2 launch sim sim.launch.py x:=1.0 y:=0.5 yaw:=0.0     # spawn pose (z:= too)
 ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
 ```
 
-Synthetic wheel-odometry error, off by default (see the `pose_emulator.py`
-note):
+These add synthetic wheel-odometry error. All are off by default; the
+`pose_emulator.py` note explains each one:
 
 ```bash
 odom_noise_enabled:=true    # master switch for drift + jitter
@@ -68,8 +132,9 @@ odom_jerk_bias_enabled:=true odom_jerk_bias_x:= odom_jerk_bias_y:=
 odom_slip_ratio:=           # fraction of each driven metre lost from /pose (0.0)
 ```
 
-CV target simulation. `spawn_target` is off by default, but once on, all three
-`cv_*` degradations apply at these defaults; zero them for a clean run:
+`spawn_target` adds the moving CV target. It is off by default, but when you
+turn it on, all three `cv_*` degradations apply at the defaults below. Set them
+to zero for a clean run:
 
 ```bash
 spawn_target:=true            # target_driver, cv_target_emulator, cv_head_aim
@@ -79,111 +144,25 @@ cv_dropout_probability:=0.1   # per-sample detection drop
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
 
-## What the launch file does
-
-1. Sets `GZ_SIM_RESOURCE_PATH` (and `IGN_GAZEBO_RESOURCE_PATH`) to the
-   installed `share/` so `model://sim/world/composite_part_1.stl` resolves.
-2. Starts `ros_gz_sim`'s `gz_sim.launch.py` with `world/ARCC_Field_2026.sdf`,
-   running (`-r`).
-3. Bridges `/clock` for `use_sim_time` nodes.
-4. Spawns the robot with `ros_gz_sim create -string` (see the `sim.launch.py`
-   note), 2s after `clock_bridge` starts so gz's create service is up. It runs
-   no `robot_state_publisher`; `thornbots_pkg`'s `auto.launch.py` owns that
-   and TF.
-5. Bridges the xacro plugins' gz topics: `/scan` as `/scan_raw` (for
-   `thornbots_pkg`'s `lidar_self_filter`), `/sim/raw_joint_states` and
-   `/sim/raw_odom`. The `/sim/raw_*` topics are ground truth with no hardware
-   equivalent; nothing outside sim should read them.
-6. Runs `pose_emulator`, which turns `/sim/raw_odom` and
-   `/sim/raw_joint_states` into the `RobotPose` the Type-C board publishes on
-   `/pose`, with the optional noise model.
-7. Bridges `/cmd_vel`, `/head_pan_cmd`, `/head_pitch_cmd` and the four camera
-   topics, and runs `head_slider_relay`.
-8. Runs rviz2 unless `rviz:=false`.
-
-With `spawn_target:=true` it also runs `target_driver`, `cv_target_emulator`
-and `cv_head_aim`.
-
-Compatibility: it needs `ros_gz_sim` and `ros_gz_bridge`. On Fortress-era
-installs with `ros_ign_gazebo`, swap the package name in `sim.launch.py` and
-use `ign_gazebo.launch.py`. The world uses `gz-sim-*` plugin names and the
-xacro uses `ignition-gazebo-*`; current builds alias both. The robot spawns as
-a dynamic model.
-
-## Testing
-
-Everything under `test/` is pytest, collected by `colcon test`.
-
-| Tier | Files | Needs |
-| --- | --- | --- |
-| unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, ament copyright/flake8/pep257 | Python + pytest |
-| integration | `localization/test_localization_drift.py`, `localization/test_ekf_ground_truth.py`, `cv/test_shot_hit.py` | gz-sim + two launch trees |
-
-`setup.cfg` deselects the `integration` marker, so a plain `colcon test` runs
-the unit tier in seconds. A `-m` on the command line overrides it:
-
-```bash
-colcon test --packages-select sim
-colcon test --packages-select sim --pytest-args ' -m integration'
-colcon test-result --verbose
-```
-
-Each integration test launches gz-sim and `thornbots_pkg`, takes tens of
-seconds, and tears down fully before the next. ROS topics are process-global,
-so a stack you already have up corrupts the measurements. Stop it first.
-
-Each suite keeps an argparse wrapper that re-invokes pytest, so old command
-lines and `--help` still work. The wrappers install to `lib/sim/`:
-`ros2 run sim run_localization_drift_tests.py`,
-`ros2 run sim ekf_ground_truth_diag.py`, `ros2 run sim run_shot_hit_tests.py`.
-Rerun the drift suite after tuning `slam.yaml`, `amcl.yaml`, `ekf.yaml` or
-the noise model:
-
-```bash
-ros2 run sim run_localization_drift_tests.py --backend slam
-# --backend amcl or none; --use-ekf layers on any of them
-```
-
-`--scenario NAME` runs one scenario. `--headless` skips the GUI and rviz2
-(both on by default). `--speed` overrides the 4.0 m/s loop speed, which
-nothing has been re-validated against. Each flag maps to a pytest option in
-`test/conftest.py`, so from `src/sim` this is the same run:
-
-```bash
-python3 -m pytest test/localization/test_localization_drift.py \
-  -m integration -s --backend slam --scenario drift_correction
-```
-
-Pass `-s`, or pytest swallows the numbers the suites print.
-
-`sentry_localization` copies its config, launch and map files at build time.
-After editing its YAML, rebuild with `--symlink-install` so later edits link
-through:
-
-```bash
-colcon build --symlink-install --packages-select sentry_localization thornbots_pkg
-```
-
-If results look unaffected by a change, `diff` the installed YAML against
-source.
-
-Read the notes below, not the script docstrings, before interpreting a drift
-failure. The shot-hit suite runs one test per (lead, speed) cell and prints a
-hit rate for each, so a full run is the before/after lead table. Its pass
-conditions are in `test/cv/test_shot_hit.py`'s docstring and
-`CV_TEST_GAPS.md`.
+`sim.launch.py` starts gz, spawns the robot, bridges its lidar, joint, odometry,
+camera and head-command topics to ROS, and runs `pose_emulator`, which
+publishes `/pose` the way the Type-C board does. It runs no
+`robot_state_publisher`, so TF comes from `thornbots_pkg`'s `auto.launch.py`.
+`/sim/raw_odom` and `/sim/raw_joint_states` are ground truth that real hardware
+doesn't have; only sim and its tests should read them.
 
 ## Notes
 
-Design rationale, kept out of in-code comments. Each heading names a file.
+These notes explain why the code looks the way it does, so the in-code
+comments can stay short. Each heading names a file.
 
 ### test_localization_drift.py
 
 Integration suite for `sentry_localization`'s drift and jerk correction
 against `pose_emulator.py`'s noise model. It mirrors `auto.launch.py`'s two
 axes: `--backend slam/amcl/none` (who owns `map->odom`) and `--use-ekf`
-(whether `odom->root` is EKF-fused). Per scenario: launch, drive, sample the
-correction TF, assert, tear down.
+(whether `odom->root` is EKF-fused). For each scenario it launches the stack,
+drives, samples the correction TF, asserts, and tears down.
 
 `drift_harness.py` holds stack lifecycle, driving and scenarios;
 `test_localization_drift.py` is one parametrized test per scenario. That split
@@ -219,14 +198,14 @@ bound; verdicts shown against today's 0.40m `MAX_DELTA_THRESHOLD`:
 | 0.25 | 0.4033 m (**FAIL**) | 0.1642 m (PASS) |
 
 At zero slip `/odom` is near perfect and fusing rf2o's noise only hurts.
-Under slip the EKF flips the verdict, the first evidence it helps a
-map-owning backend. 0.25 is harsher than the defaults (0.02, or 0.15 in drift
+Under slip the EKF turns a fail into a pass. That was the first sign it helps
+a backend that owns a map. 0.25 is harsher than the defaults (0.02, or 0.15 in drift
 scenarios). `slam --use-ekf` measured worse than plain `slam`; see
 `sentry_localization/README.md`.
 
 #### Scenarios
 
-Run in this order:
+The suite runs them in this order.
 
 1. `baseline` (noise off) asserts the correction TF settles and stays stable,
    with no ERROR in any log. A steady ~0.1-0.15m offset is normal, because the
@@ -257,12 +236,12 @@ Run in this order:
    and pairwise TF spread exceeds `ODOM_STUCK_MIN_TF_SPREAD` (1cm).
    Measured 2026-07-27: `amcl` fails, stuck at 0.0000m for 30s, because the
    scan-match gate runs on odom-reported travel and frozen odom never reopens
-   it. That is a real stack finding. `amcl --use-ekf` passes at 1.3071m,
-   because the EKF keeps reporting travel.
+   it. The stack really does depend on odometry to stay live. `amcl --use-ekf`
+   passes at 1.3071m, because the EKF keeps reporting travel.
 
-Removed: `jerk_stationary` (2026-07-23), which re-verified a documented limit
-of the travel gate instead of testing recovery, and a no-leak-before-motion
-check in `jerk_with_motion` (2026-07-26), which failed independently of the
+Two checks were removed. `jerk_stationary` (2026-07-23) re-verified a documented limit
+of the travel gate instead of testing recovery. A no-leak-before-motion check
+in `jerk_with_motion` (2026-07-26) failed for reasons unrelated to the
 correction.
 
 #### Geometry constants
@@ -274,20 +253,21 @@ spawn, so loop centre and box coincide by construction.
 from 2m on 2026-07-26 (`4f182e7`). Legs are `(vx, vy, duration)`, 0.75s at
 4.0 m/s. Wall clearances are known on y only: north clears `upper_mid`
 (y=2.49) by 0.99m, south clears `lower_mid` (y=-2.11) by 0.61m and
-`bottom_wall`'s ramp edge (y=-3.35) by 1.85m. `lower_mid` binds; re-derive
-from it if the loop grows.
+`bottom_wall`'s ramp edge (y=-3.35) by 1.85m. `lower_mid` is the tightest, so
+start from it if you widen the loop.
 
 `OBSTACLE_LOOP_DWELL_SECONDS = 1.0` lets scan and TF settle after each
-reversal. Speed is fixed at 4.0 m/s, so this is the knob. It hasn't been
-validated; change it if `max_delta` won't get under threshold.
+reversal. Speed stays at 4.0 m/s, so the dwell is what you can adjust. Nobody
+has validated 1.0s; change it if `max_delta` won't get under the threshold.
 
-`PATROL_LEGS` is no longer driven, only kept as the geometry the above came
-from. A 6-leg field tour that cleared every wall AABB by ~0.77m still hit one
-after ~10 open-loop cycles as per-leg error piled up. A smaller loop fixed it.
+No scenario drives `PATROL_LEGS` any more; it stays as the geometry the loop
+above came from. A 6-leg field tour that cleared every wall's bounding box by
+~0.77m still hit a wall after ~10 open-loop laps, as small per-leg errors added
+up, which is why the suite switched to the smaller loop.
 
 #### Helpers
 
-`wait_for_scans_flowing` is the readiness signal. slam_toolbox and amcl
+`wait_for_scans_flowing` decides when the stack is ready. slam_toolbox and amcl
 publish an identity TF at startup before any scan, so waiting on TF can start
 assertions on a cold stack. Once, under load, slam_toolbox registered 2 scans
 in 30+ seconds.
@@ -295,8 +275,8 @@ in 30+ seconds.
 `call_trigger_jerk_and_get_dxdy` parses the applied (dx, dy) from the
 `Trigger` response instead of assuming `odom_jerk_stddev`, since one draw can
 land far under its stddev and the corrective leg needs the real vector. It
-returns `None` if parsing fails, so a message format change degrades instead
-of crashing.
+returns `None` if parsing fails, so a change to the message format weakens the
+check instead of crashing it.
 
 `drive()` re-aims every tick at the leg's ground-truth endpoint from
 `/sim/raw_odom` until within `WAYPOINT_TOLERANCE` (0.03m). A fixed Twist for a
@@ -320,7 +300,7 @@ day when no config reached 0.20 at 0.25 slip, and 0.40 on 2026-07-27 once the
 chosen config (tuned `slam`, no EKF, 0.15 slip) measured 0.30-0.33m. See
 `sentry_localization/README.md`'s tuning history.
 
-`CORRECTION_FRACTION = 0.3`. slam_toolbox plateaus at a partial correction,
+`CORRECTION_FRACTION` is 0.3. slam_toolbox plateaus at a partial correction,
 typically 40-70% of the jerk, because scan matching corrects the pose graph
 incrementally. 0.5 sat at that plateau's edge and flaked; 0.3 keeps margin
 and still catches the known-broken case (`minimum_travel_distance` at 0.5,
@@ -335,9 +315,10 @@ m/s, and `JERK_STDDEV` 0.5, then 0.08, now 0.24 for a ~30cm mean jerk
 On 2026-07-23 the correction step was a `while` loop driving `PATROL_LEGS`
 for up to 60s until the threshold was crossed. The TF stalled for an unrelated
 reason, the loop never exited, and open-loop drift took the robot off the field
-and crashed gz physics. It is now one bounded drive plus one TF sample.
+and crashed gz physics. The step now drives one bounded leg and takes one TF
+sample.
 
-CPU contention (a stray rviz2, other agent sessions) slows scan processing to
+CPU contention from a stray rviz2 or other sessions slows scan processing to
 about 2 registrations in a ~35s run, so the post-drive `get_correction_tf()`
 uses a 5s timeout.
 
@@ -361,7 +342,8 @@ correction. These params add it, all off by default:
 `trigger_jerk()` moves the gz robot by a random (dx, dy) and subtracts the
 same (dx, dy) from the drift accumulator, so `/pose` doesn't jump. The encoders
 never saw the move. The error appears when the next scan match disagrees and
-corrects `map->odom`, which is what the jerk tests. To fire one:
+corrects `map->odom`, and that correction is what the jerk tests. Fire one by
+hand with
 `ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger`.
 
 ### head_slider_relay.py
@@ -406,7 +388,8 @@ seconds. That's a `ros_gz_sim create` bug, not a race, so delays don't help.
 
 ### test_ekf_ground_truth.py
 
-(`ekf_diag_harness.py` plus the `ekf_ground_truth_diag.py` wrapper.) It asks
+This suite (`ekf_diag_harness.py` plus the `ekf_ground_truth_diag.py` wrapper)
+asks
 whether fusing `/scan_odom` into `/odom` through `ekf_node` gets closer to
 where the robot really is, which the drift suite can't answer. Drift scenarios
 run with noise off, so only slip corrupts `/odom`; at zero slip
@@ -415,13 +398,13 @@ worse than raw /odom" numbers came from that setup and say nothing about the
 EKF. Those scenarios also score `map->odom`, while the EKF's edge is
 `odom->root`, dominated by the robot's own motion.
 
-This suite enables drift and continuous slip, drives the same loop, scores both
+It turns on drift and continuous slip, drives the same loop, scores both
 estimators against `/sim/raw_odom` (mean, RMS, max Euclidean error), and
 asserts the EKF's mean error beats raw `/odom`'s.
 
 ### target_driver.py / cv_target_emulator.py
 
-The target is not a gz entity. `target_driver` integrates `(x, y, z)` on a timer
+The target doesn't exist in gz. `target_driver` integrates `(x, y, z)` on a timer
 and publishes `nav_msgs/Odometry` on `/target/ground_truth_odom`, the same
 stand-in approach as `pose_emulator`. That skips SDF, spawning and bridges, but
 the target is invisible in the gz GUI; check it with topic echoes.
@@ -443,8 +426,9 @@ headpitch(pitch) -> head_pitch -> cameralink -> camera), since sim runs no
 name. `headlink`'s and `fastened_2`'s pi yaws cancel at `head_yaw=0`, but
 `headpitch` carries a fixed -0.38885 rad yaw that never cancels. Mean `pos_err`
 was ~2.45m with +0.38885, ~1.22m with 0, and ~0.13m with -0.38885, near the
-0.03m noise floor, which confirms the sign. As with rf2o's `angle_min` bug,
-compare vectors: `tan(+x)` and `tan(-x)` have the same magnitude.
+0.03m noise floor, so -0.38885 is the right sign. Compare vectors rather than
+magnitudes, as with rf2o's `angle_min` bug, because `tan(+x)` and `tan(-x)` have
+the same magnitude.
 
 `headlink` has been a continuous joint since 2026-07-28, matching the
 free-spinning real gimbal. It used to be `revolute` with a +-pi limit;
@@ -477,9 +461,9 @@ walks (root -> body -> headlink(yaw) -> headpitch(pitch) -> camera), treating
 bias. `test/cv/test_cv_head_aim.py` checks it against a separately written FK,
 and `test_urdf_constants.py` pins the duplicated constants to the xacro.
 
-It aims the ray from the muzzle, not root. Before 2026-09-09 it aimed from
-root on the theory that ~0.35m is negligible at range. That holds for flight
-time but not direction: a parallel offset doesn't shrink with range. The
+It aims along the ray from the muzzle. Before 2026-09-09 it aimed from root,
+assuming a ~0.35m offset wouldn't matter at range. That's true for flight time,
+but a parallel offset in direction stays the same size at any range. The
 muzzle sits `MUZZLE_Z` = 0.374m above root against a 0.05m hit radius, and
 every stationary shot missed by ~0.33m (`CV_TEST_GAPS.md` gap 7).
 
@@ -490,38 +474,17 @@ the shot line. Azimuth is `atan2(y, x) + asin(MUZZLE_PERP / horizontal_range)`,
 and pitch follows from the elevation at that muzzle point. The pitch axis
 passes through the muzzle, so pitch needs no correction.
 
-**Type-C likely has the same bug.** It gets a root-frame position and does its
-own gimbal solve, and only firmware knows where the real barrel sits. Raise it
-with firmware; see `ros2_dji_serial_bridge/README.md`.
+Type-C probably has the same bug. It receives a root-frame position and runs its
+own gimbal solve, and only the firmware knows where the real barrel sits, so
+raise it with the firmware team (see `ros2_dji_serial_bridge/README.md`).
 
 Control is closed-loop on the IK setpoint so that tracking lag shows up in sim
 as it would on Type-C. Every `control_rate_hz` (15) tick it commands
 `current + gain * wrapped_error`. A timer, not `/cv/target` arrival (up to
 60Hz), drives it; per-message updates let the setpoint race ahead of the joint
 in early tuning. `gain` (0.3) is a placeholder that still needs an empirical
-pass. The old `sign_yaw`/`sign_pitch` params are gone because the IK fixes
-sign, as the test checks analytically.
+pass. The old `sign_yaw`/`sign_pitch` params are gone, because the IK geometry
+sets the sign and the test checks it analytically.
 
 When `/cv/target` confidence reaches 0.0 it stops publishing and holds
 position, without re-homing, since a lost target is usually a brief FOV gap.
-
-### Removed
-
-- `head_sweep.py` (2026-08-31): a yaw oscillation that replaced `cv_head_aim`
-  when `head_sweep_hz > 0`, for `run_shot_hit_tests.py`'s head-slew scenario
-  (checking `target_tracker`'s TF decoupling with a moving camera and still
-  target). The scenario went with it; restoring the check means rebuilding
-  both.
-- `CVTarget` `v_x/v_y/v_z` and `a_x/a_y/a_z` (2026-07-28): EMA
-  finite-differences from `point_to_cv_target`, sent into the MCB's `CV_MSG`.
-  They were removed from the message and the UART struct together, a
-  wire-format break (see `ros2_dji_serial_bridge/README.md`). Velocity came
-  back as `thornbots_pkg`'s `target_tracker` on `/cv/target_state`, ROS-only.
-  `CVTarget` gained only a `lead_applied`/`track_valid` flags byte.
-
-### Environment
-
-`thornbots_pkg`'s `install/` was once a stale symlink-install pointing at a
-deleted git worktree, breaking `ros2 run` and imports until a rebuild. The
-sim and CV test scripts call `point_to_cv_target` by absolute install path to
-avoid that class of failure.
