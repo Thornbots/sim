@@ -6,6 +6,10 @@ in `README.md`**, in particular its `## Notes` section, which holds the
 drift-suite design history and per-scenario pass conditions. This file is only
 the operating contract for working here.
 
+`README.md` commands are written for a human in a container terminal. You run
+them from the host through `../isaac_ros_common/scripts/dexec.sh` (load the
+`isaac-ros-docker` skill first); the equivalents are below.
+
 **On a fresh or recreated container, run `install-sim.sh` before the first sim
 launch.** `Dockerfile.thornbots` deliberately installs neither
 `ros_gz` nor this package (real hardware never needs gz-sim):
