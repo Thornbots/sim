@@ -41,10 +41,14 @@ Each suite keeps an argparse wrapper that re-invokes pytest, so the old command
 lines still work and `--help` still lists the per-suite flags:
 
 ```bash
-../isaac_ros_common/scripts/dexec.sh -d -- python3 \
-  /workspaces/isaac_ros-dev/src/sim/test/localization/run_localization_drift_tests.py \
-  --backend slam
+../isaac_ros_common/scripts/dexec.sh -- \
+  ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
 ```
+
+Every scenario failing "stack NOT ready" means the container has the old
+discovery-server DDS profile; see the `isaac-ros-docker` skill. The
+target configs are `--backend amcl --use-ekf` for drift and `--lead on` for
+shot-hit; `README.md`'s "Running the current target tests" lists the commands.
 
 `--backend` is `slam`, `amcl`, or `none` (who owns `map->odom`). `--use-ekf` is
 a separate axis and layers EKF fusion of `odom->root` on top of any of them;
