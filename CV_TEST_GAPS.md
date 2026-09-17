@@ -16,11 +16,14 @@ Already fixed, not listed below: the URDF-constant pin
 the in-body settle sleep, and the tautological intercept tests (gap 1).
 
 What's already solid and should stay that way:
-`test_lagged_measurement_time_recovers_true_velocity`,
-`test_kf_predicted_extrapolates_without_mutating`,
-`test_corrected_centre_extends_along_off_axis_bearing`, and
-`test_random_angles_round_trip` all encode real past bugs in physics terms
-rather than restating the implementation.
+`test_random_angles_round_trip`, and in `test_target_tracker.py` the armor
+model's `test_spin_in_place_recovers_rate_centre_and_both_radii` and
+`test_tracker_bank_recovers_the_spin_after_a_bad_first_second`, all of which
+check physics rather than restating the implementation.
+
+On 2026-09-17 the armor-model tracker replaced `SpinDetector`,
+`KalmanFilter6D` and `corrected_centre`, and their tests went with them.
+Gaps 3 and 6 below describe those removed tests; they are kept as history.
 
 ## 1. Tautological intercept tests — FIXED 2026-09-09
 
@@ -68,9 +71,6 @@ from the muzzle position at impact (`s + sv*t`). Dropping three moving rows
 into the table passes all four table-driven tests unchanged, at 0.076%
 flight-time and 0.3mm aim error. So closing this gap is adding rows — no new
 math, no test changes.
-
-One fixture trap worth knowing: `n_handoffs` and the `2.0`-second probe time
-matter. See gap 6's `SpinDetector` note.
 
 ## 3. `KalmanFilter6D.predicted()` aliasing — FIXED 2026-09-09
 

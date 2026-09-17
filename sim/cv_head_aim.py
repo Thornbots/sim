@@ -46,8 +46,8 @@ class CvHeadAim(Node):
         self.declare_parameter('pitch_cmd_topic', '/head_pitch_cmd')
         self.declare_parameter('yaw_joint_name', 'headlink')
         self.declare_parameter('pitch_joint_name', 'headpitch')
-        self.declare_parameter('gain', 0.3)
-        self.declare_parameter('control_rate_hz', 15.0)
+        self.declare_parameter('gain', 1.0)
+        self.declare_parameter('control_rate_hz', 30.0)
 
         self.yaw_joint_name = self.get_parameter('yaw_joint_name').value
         self.pitch_joint_name = self.get_parameter('pitch_joint_name').value
