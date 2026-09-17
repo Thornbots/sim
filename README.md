@@ -410,7 +410,7 @@ stand-in approach as `pose_emulator`. That skips SDF, spawning and bridges, but
 the target is invisible in the gz GUI; check it with topic echoes.
 
 Both stamp from `self.get_clock().now()` (sim `/clock`). `cv_target_emulator`
-stamps `panel_detection.header.stamp` at sample time and holds messages in a
+stamps `panel_detections` headers at sample time and holds messages in a
 queue for `publish_latency_s`, so downstream `now - header.stamp` shows the
 delay.
 
