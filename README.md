@@ -20,9 +20,9 @@ ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
 ```
 
 The CV bench runs the shot-hit tests with lead on, seven tests in all. Expect
-it to fail. Aiming is known to be wrong, and the tests describe what it has to
-do (see `CV_TEST_GAPS.md`). On 2026-09-14 the stationary target took 0 hits in
-28 shots, and every shot missed by 0.884m.
+the four moving-target cells to fail; the stationary tests pass. Nothing times
+shots to the target's spin yet (see `CV_TEST_GAPS.md` gap 8). On 2026-09-17 the
+stationary target took 11 hits in 14 shots, and moving hit rates were 0-22%.
 
 ```bash
 ros2 run sim run_shot_hit_tests.py --lead on
