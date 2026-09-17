@@ -59,6 +59,9 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 MUZZLE_SPEED = 25.0  # m/s -- ARCC_2026_SENTRY_CONTEXT.md's muzzle-speed cap
 TRUTH_HISTORY_S = 1.0  # ground truth kept for interpolating impact-time poses
+# Static delay from a FireCommand's fire time (stamp + delay_ms) to the
+# projectile leaving the muzzle; flight time at MUZZLE_SPEED comes on top.
+FIRE_LATENCY_S = 0.05
 
 DEFAULT_SPEEDS = [0.5, 1.0, 2.0, 4.0]
 DEFAULT_DURATION = 15.0  # seconds of steady-state sampling per case
@@ -315,6 +318,7 @@ class ShotHitSampler(Node):
         self._target_rot = None
 
         self._pending_shots = []
+        self._unlaunched = []  # [exit_time] of commands still inside FIRE_LATENCY_S
         self.shots_fired = 0
         self.hits = 0
         self.miss_distances = []
@@ -349,6 +353,26 @@ class ShotHitSampler(Node):
             self._head_yaw = msg.position[msg.name.index('headlink')]
         if 'headpitch' in msg.name:
             self._head_pitch = msg.position[msg.name.index('headpitch')]
+        self._launch_due(self._stamp_s(msg.header.stamp))
+
+    def _launch_due(self, now_s):
+        """Launch commanded shots whose exit time has come, from the muzzle pose then."""
+        due = [t for t in self._unlaunched if t <= now_s]
+        if not due or self._root_pos is None or self._target_pos is None:
+            return
+        self._unlaunched = [t for t in self._unlaunched if t > now_s]
+        muzzle_pos, aim_dir = self._muzzle_pose()
+        shot_range = float(np.linalg.norm(self._target_pos - muzzle_pos))
+        for exit_time in due:
+            # Resolved once truth covers the latest plausible impact; each
+            # panel is then judged at its own arrival time (see _resolve_pending).
+            self._pending_shots.append({
+                'fire_time': exit_time,
+                'impact_time': exit_time + (shot_range + 1.0) / MUZZLE_SPEED,
+                'muzzle_pos': muzzle_pos,
+                'aim_dir': aim_dir,
+                'shot_range': shot_range,
+            })
 
     def _muzzle_pose(self):
         """
@@ -408,22 +432,11 @@ class ShotHitSampler(Node):
         if self._root_pos is None or self._target_pos is None:
             return  # no muzzle pose / ground truth yet to evaluate against
 
-        fire_time = self._stamp_s(msg.header.stamp) + msg.delay_ms / 1000.0
-        muzzle_pos, aim_dir = self._muzzle_pose()
-
-        # Resolved once truth covers the latest plausible impact; each
-        # panel is then judged at its own arrival time (see _resolve_pending).
-        shot_range = float(np.linalg.norm(self._target_pos - muzzle_pos))
-        impact_time = fire_time + (shot_range + 1.0) / MUZZLE_SPEED
-
+        # The projectile leaves FIRE_LATENCY_S after the commanded fire
+        # time, aimed wherever the muzzle points then (_launch_due).
         self.shots_fired += 1
-        self._pending_shots.append({
-            'fire_time': fire_time,
-            'impact_time': impact_time,
-            'muzzle_pos': muzzle_pos,
-            'aim_dir': aim_dir,
-            'shot_range': shot_range,
-        })
+        self._unlaunched.append(
+            self._stamp_s(msg.header.stamp) + msg.delay_ms / 1000.0 + FIRE_LATENCY_S)
 
     def _resolve_pending(self, now_s):
         still_pending = []
@@ -499,8 +512,9 @@ class ShotHitSampler(Node):
         Pending means the impact time has not been reached yet, so there's
         no ground-truth sample to judge them against.
         """
-        dropped = len(self._pending_shots)
+        dropped = len(self._pending_shots) + len(self._unlaunched)
         self._pending_shots = []
+        self._unlaunched = []
         return dropped
 
     def spin_for(self, seconds):
