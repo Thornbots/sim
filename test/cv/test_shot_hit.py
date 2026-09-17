@@ -33,8 +33,8 @@ Two tests outside the parameterization carry the real aiming pass
 conditions, each launching its own stacks:
 test_stationary_hit_rate_meets_floor (a hit RATE, not a count) and
 test_lead_does_not_regress_hit_rate_at_slowest_speed (lead compared
-against no-lead within one test). Both are red today -- see
-CV_TEST_GAPS.md gap 7, and do not relax the thresholds to green them.
+against no-lead within one test). Both passed on 2026-09-17; the moving
+lead=ON cells are red (CV_TEST_GAPS.md gap 8). Do not relax thresholds.
 
 Launches gz-sim, so marked `integration` and skipped by a plain
 `colcon test`. Options: --shot-speeds, --shot-duration, --hit-radius,
@@ -161,13 +161,9 @@ def test_stationary_hit_rate_meets_floor(request, gui, ros_context):
     test_shot_hit's stationary cell asserts >= 1 hit, which a pipeline
     landing 1 shot in 200 at a target that isn't moving would pass.
 
-    This FAILS today, deliberately and unmarked. Measured 2026-09-09: 0
-    hits in 27 shots, miss distance mean == max == 0.884m. The stationary
-    cells of test_shot_hit are already red for the same reason, so this
-    is not new breakage -- it is the same breakage stated as a rate. It
-    carries no xfail on purpose: `xfail` would assert the miss is
-    expected forever, when it is a live aim bug (CV_TEST_GAPS.md gap 7).
-    See shot_hit_harness.STATIONARY_MIN_HIT_RATE.
+    Measured 2026-09-17: 78.6% (11/14). Before the gap 7 fix it was 0/27
+    with every shot missing by 0.884m. See
+    shot_hit_harness.STATIONARY_MIN_HIT_RATE.
     """
     rate = _run_case(request, gui, 0.0, 0.0, False,
                      'stationary hit-rate floor')

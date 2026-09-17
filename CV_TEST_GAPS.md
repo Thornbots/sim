@@ -3,14 +3,13 @@
 Open gaps found reviewing the CV test suites on 2026-09-09. Spans two
 submodules, so it lives here rather than in either one.
 
-Gaps 1, 3, 5 and 6 are closed. Gap 2 is half closed and half deliberately
+Gaps 1, 3, 5, 6 and 7 are closed. Gap 2 is half closed and half deliberately
 deferred (the moving-shooter case, with the scaffolding for it in place).
-Gap 7 is new: strengthening gap 5's assertions surfaced a real aim bug.
+Gap 8, moving-target hit rate, is open.
 
-**The shot-hit suite is red, and that is the intended state.** The aiming
-and firing code is known-wrong and is being left that way until someone
-works on it; these tests describe what it must do, not what it does. Do
-not relax a threshold to green them.
+**The moving lead=on shot-hit cells are red, and that is the intended
+state** until shot timing exists (gap 8). Do not relax a threshold to
+green them.
 
 Already fixed, not listed below: the URDF-constant pin
 (`sim/test/cv/test_urdf_constants.py`), the duplicated docstring summaries,
@@ -99,11 +98,8 @@ Both upgrades landed, and running them turned up gap 7 below.
   The condition is one-sided — `lead_on >= lead_off - 0.15` — because
   pinning "lead is better by X" at 0.5 m/s would be pinning sim noise.
 
-Neither does useful work yet, and that is gap 7's fault rather than
-theirs. The rate test fails outright. The lead comparison *passes*, but
-vacuously — measured 2026-09-09 at 0.5 m/s / 2.0 Hz spin, lead off hit
-0/22 and lead on 0/23, so `0.0 >= 0.0 - 0.15` holds and tells you nothing.
-It starts discriminating the moment the aim offset is fixed.
+Both discriminate now that gap 7 is fixed. On 2026-09-17 the stationary
+rate was 78.6% and the lead comparison at 0.5 m/s was off 5.6%, on 18.2%.
 
 Beyond the two gap-5 upgrades, the moving sweep now has a pass condition
 of its own (`MOVING_MIN_HIT_RATE`), because aiming at a moving, spinning
@@ -114,9 +110,8 @@ worse at speed, so holding it to the same floor would be asserting that
 the control works.
 
 `MOVING_MIN_HIT_RATE = 0.25` is the one threshold in this suite that is
-**not** measured. Gap 7 means there is no working baseline to measure
-against; it states the intent in code and should be re-derived from a
-real sweep once aiming lands. Expect it to go up.
+**not** measured against a working stack. It states the intent in code;
+re-derive it once shot timing lands (gap 8). Expect it to go up.
 
 ## 6. Smaller coverage gaps — FIXED 2026-09-09
 
@@ -154,44 +149,47 @@ Two fixture traps this cost, both worth keeping:
   Probing with a different id registers a *fresh handoff*, which resets
   `since_last` and reads a phase of 0 no matter what.
 
-## 7. The stack misses a stationary target by a constant 0.884 m
+## 7. The stack missed a stationary target by a constant 0.884 m — FIXED 2026-09-17
 
-Found 2026-09-09 running gap 5's new assertions, headless, in the dev
-container. Not a test gap — an aim bug the tests were previously too weak
-to show. **Known and deliberately unfixed**: the aiming and firing code is
-being left as-is until it's worked on, so this section is a starting point
-for whoever picks that up, not an open action item.
+Not a geometry offset. The head never moved. Three bugs stacked:
+
+- `target_tracker` called `lookup_transform(timeout=0.05)` in its detection
+  callback. The wait sleeps on wall time, and `/tf` shares the node's
+  executor, so at ~60Hz detections the TF buffer fell 0.6-1.7s behind and
+  nearly every detection was dropped as "TF behind". A separate listener in
+  the same run stayed within 50ms. Lookups are non-blocking now.
+- `cv_target_emulator` still published `/cv/panel_detection` (track id 0)
+  alongside `target_selector` (track id 1), so the tracker reset on every
+  message. The emulator now publishes only the array, like `roi_depth_node`.
+- `point_to_cv_target`'s fire trigger ignored the aim, so shots kept firing
+  from a head at its rest pose. 0.884 m is that rest pose's miss to the
+  nearest panel. It now fires only after a tick that emitted an aim point.
+
+Headless sweep, `--lead both`, 2026-09-17 (8 passed, 4 failed):
 
 ```
-stationary, lead=off | shots= 28 | hits= 0 (0.0%) | miss mean= 0.884 max= 0.884 m
-stationary, lead=on  | shots= 26 | hits= 0 (0.0%) | miss mean= 0.884 max= 0.884 m
+stationary  lead=off | shots= 17 | hits= 12 (70.6%) | miss mean= 0.024
+stationary  lead=on  | shots= 14 | hits= 11 (78.6%) | miss mean= 0.027
+0.5 m/s     lead=off | shots= 11 | hits=  0 ( 0.0%) | miss mean= 0.097
+0.5 m/s     lead=on  | shots= 18 | hits=  4 (22.2%) | miss mean= 0.125
+1.0 m/s     lead=off | shots= 19 | hits=  0 ( 0.0%) | miss mean= 0.232
+1.0 m/s     lead=on  | shots= 15 | hits=  1 ( 6.7%) | miss mean= 0.144
+2.0 m/s     lead=off | shots= 15 | hits=  0 ( 0.0%) | miss mean= 0.554
+2.0 m/s     lead=on  | shots= 19 | hits=  0 ( 0.0%) | miss mean= 0.457
+4.0 m/s     lead=off | shots= 17 | hits=  0 ( 0.0%) | miss mean= 1.230
+4.0 m/s     lead=on  | shots= 19 | hits=  0 ( 0.0%) | miss mean= 1.011
+lead comparison 0.5 m/s: off 1/18 (5.6%), on 2/11 (18.2%)
 ```
 
-`mean == max` across every shot, and the figure is *identical* with lead on
-and off. So it is not scatter, not tracking error, and not the intercept
-solve — it looks like a fixed geometric offset in the aim path or in the
-harness's duplicated FK chain. The target is motionless, so prediction is
-not involved at all.
+The four failures are the moving lead=on cells against the placeholder
+`MOVING_MIN_HIT_RATE` (0.25). What's left is gap 8.
 
-The moving cases *do* scatter (0.5 m/s: miss mean 0.72 m, max 2.26 m), so
-the constancy is specific to the motionless target and there is plausibly
-a second, motion-dependent error stacked on the fixed one. Fix the
-constant offset first and re-measure before chasing that.
+## 8. Moving, spinning targets are mostly missed
 
-Both stationary cells of `test_shot_hit` were already failing on the older
-`hits >= 1` assertion before any of this work, so the suite was red on
-arrival. Nothing here is marked `xfail`: the miss is a live bug, and
-`xfail` would encode it as expected forever.
-
-Worth checking first, in rough order of suspicion: the `corrected_centre`
-radius push (`target_tracker_core.py`), the `head_link`/`head_pitch` FK
-constants duplicated between `shot_hit_harness.py` and
-`cv_target_emulator.py`, and the panel-centre-vs-chassis-centre convention
-where `target_selector` hands off to `target_tracker`.
-
-0.884 m matches no single constant in the chain. Searching sums of the five
-(`PANEL_RADIUS_X` 0.30, `PANEL_RADIUS_Y` 0.24, `head_link` z 0.252215,
-`head_pitch` x 0.1 and z 0.1218) turns up exactly one near-match,
-0.8922 m — 8 mm off, and four terms drawn from five is enough freedom that
-this is a lead to check, not evidence. Measure the offset direction in the
-odom frame before trusting any of it.
+Open. The aim point is the chassis centre, and a hit needs the ray within
+0.05 m of a panel that faces the shooter. Against a 1-2Hz spin, centre aim
+only lands when a panel happens to face the muzzle at impact, and nothing
+times shots to the spin phase (firing logic is out of scope). Lead does
+help: mean miss drops 18-38% at 1-4 m/s. Samples are 11-19 shots per cell,
+so single-cell rates are noisy. Re-derive `MOVING_MIN_HIT_RATE` once shot
+timing exists.
