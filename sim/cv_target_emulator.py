@@ -26,12 +26,10 @@ panel_view_half_angle, matching a real armor panel's LED/retroreflector
 being visible only from roughly in front of it -- so as the chassis spins
 (target_driver's spin_hz), which panel presents keeps changing, same as
 ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot characteristics" section
-describes. Among presenting panels also inside the camera's FOV/range, the
-most head-on one is published on cv/panel_detection (PanelDetection) --
-exactly what point_to_cv_target.py subscribes to. ALL qualifying panels
-(not just the most head-on) are also published on cv/panel_detections
-(PanelDetectionArray) -- the real roi_depth_node's output shape, kept
-alongside the single-panel topic for the transition (see README.md).
+describes. Among presenting panels also inside the camera's FOV/range, ALL are
+published on cv/panel_detections (PanelDetectionArray), the real
+roi_depth_node's output shape; target_selector alone publishes the pick on
+cv/panel_detection. The most head-on one only drives the rviz markers.
 Corners are the panel's true PANEL_SIZE square (ground truth, not
 depth-approximated like the real roi_depth_node), built from its outward
 normal so they carry the same S122 cant. Target position is REP-103
@@ -214,14 +212,13 @@ class CvTargetEmulator(Node):
         self._target_pos = None
         self._target_rot = None
         self._target_frame_id = None
-        self._pending = []  # [dict(publish_at, sample_stamp, single, array)]
+        self._pending = []  # [dict(publish_at, sample_stamp, array)]
 
         # In-frustum dwell tracking (per README.md's dwell-count guard --
-        # the test script counts these via panel_detection arrival timing;
+        # the test script counts these via panel_detections arrival timing;
         # this log line is the human-readable equivalent).
         self._dwell_count = 0
 
-        self.panel_pub = self.create_publisher(PanelDetection, 'cv/panel_detection', 10)
         self.panel_array_pub = self.create_publisher(
             PanelDetectionArray, 'cv/panel_detections', 10)
         self.marker_pub = self.create_publisher(MarkerArray, 'target_markers', 10)
@@ -456,7 +453,6 @@ class CvTargetEmulator(Node):
         self._pending.append({
             'publish_at': publish_at,
             'sample_stamp': sample_stamp,
-            'single': single,
             'array': array_detections,
         })
 
@@ -568,11 +564,6 @@ class CvTargetEmulator(Node):
         for item in self._pending:
             if now >= item['publish_at']:
                 stamp = item['sample_stamp']  # sample time, not flush time
-                if item['single'] is not None:
-                    item['single'].header.stamp = stamp
-                    item['single'].header.frame_id = 'camera'
-                    self.panel_pub.publish(item['single'])
-
                 array_msg = PanelDetectionArray()
                 array_msg.header.stamp = stamp
                 array_msg.header.frame_id = 'camera'
