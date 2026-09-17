@@ -197,6 +197,8 @@ class CvTargetEmulator(Node):
         self.declare_parameter('panel_radius_x', 0.30)  # front/back, ~600mm chassis length / 2
         self.declare_parameter('panel_radius_y', 0.24)  # left/right, ~480mm chassis width / 2
         self.declare_parameter('panel_view_half_angle', math.radians(75.0))
+        # One team+plate class for the whole robot, as YOLO reports it.
+        self.declare_parameter('class_id', 2)
 
         hfov = self.get_parameter('horizontal_fov').value
         aspect = (self.get_parameter('image_height').value
@@ -212,6 +214,7 @@ class CvTargetEmulator(Node):
         self._target_pos = None
         self._target_rot = None
         self._target_frame_id = None
+        self._target_stamp = None
         self._pending = []  # [dict(publish_at, sample_stamp, array)]
 
         # In-frustum dwell tracking (per README.md's dwell-count guard --
@@ -257,6 +260,7 @@ class CvTargetEmulator(Node):
         self._target_pos = np.array([p.x, p.y, p.z])
         self._target_rot = _rotation_from_quaternion(q.x, q.y, q.z, q.w)
         self._target_frame_id = msg.header.frame_id
+        self._target_stamp = msg.header.stamp
 
     def _panel_poses(self):
         """
@@ -349,7 +353,7 @@ class CvTargetEmulator(Node):
         detection.center = Point32(x=fwd_n, y=left_n, z=up_n)
         detection.depth_m = fwd_n
         detection.confidence = 1.0
-        detection.class_id = panel_idx
+        detection.class_id = self.get_parameter('class_id').value
         return detection
 
     def on_timer(self):
@@ -376,14 +380,9 @@ class CvTargetEmulator(Node):
         # max_view_angle) -- not just the most head-on one, so the array
         # output below carries all simultaneously-visible panels the way
         # the real roi_depth_node would from one YOLO frame.
-        # panel_idx (0-3, matching _PANEL_OFFSETS_RAD's front/left/back/right
-        # order) stands in for class_id so a spinning target's visible panel
-        # actually changes id as it rotates -- target_tracker.py's
-        # SpinDetector keys entirely off class_id changes, so without this
-        # every detection would report class_id=0 forever and spin
-        # detection would be silently untestable against this emulator (a
-        # real 8-class team+plate-digit id isn't needed for that, just a
-        # value that changes with which panel is visible).
+        # panel_idx is 0-3 in _PANEL_OFFSETS_RAD's front/left/back/right
+        # order. It is NOT the class_id: all 4 real panels carry the robot's
+        # one team+plate class, so detections use the class_id param.
         # [(view_angle, fwd, left, up, panel_pos, panel_normal, right_dir,
         #   up_dir, panel_idx)]
         qualifying = []
@@ -445,9 +444,11 @@ class CvTargetEmulator(Node):
                             (self._make_detection(c, cam_pos, cam_rot) for c in qualifying)
                             if d is not None]
 
-        # Stamp at sample time (now), not flush time -- see _flush_pending.
+        # Stamp with the time the sampled target pose describes, not now:
+        # that pose is up to one target_driver period old, which at 1.5Hz
+        # spin is ~9 deg of yaw the stamp would otherwise hide.
         # publish_latency_s is purely the delivery delay from here on.
-        sample_stamp = self.get_clock().now().to_msg()
+        sample_stamp = self._target_stamp
         latency_s = self.get_parameter('publish_latency_s').value
         publish_at = self.get_clock().now() + rclpy.duration.Duration(seconds=latency_s)
         self._pending.append({

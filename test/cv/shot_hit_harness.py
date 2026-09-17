@@ -58,6 +58,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 
 MUZZLE_SPEED = 25.0  # m/s -- ARCC_2026_SENTRY_CONTEXT.md's muzzle-speed cap
+TRUTH_HISTORY_S = 1.0  # ground truth kept for interpolating impact-time poses
 
 DEFAULT_SPEEDS = [0.5, 1.0, 2.0, 4.0]
 DEFAULT_DURATION = 15.0  # seconds of steady-state sampling per case
@@ -310,6 +311,7 @@ class ShotHitSampler(Node):
         self._head_yaw = 0.0
         self._head_pitch = 0.0
         self._target_pos = None
+        self._truth_history = []  # [(stamp_s, pos, yaw)], last TRUTH_HISTORY_S
         self._target_rot = None
 
         self._pending_shots = []
@@ -377,7 +379,28 @@ class ShotHitSampler(Node):
         q = msg.pose.pose.orientation
         self._target_pos = np.array([p.x, p.y, p.z])
         self._target_rot = _rotation_from_quaternion(q.x, q.y, q.z, q.w)
-        self._resolve_pending(self._stamp_s(msg.header.stamp))
+        stamp = self._stamp_s(msg.header.stamp)
+        yaw = 2.0 * math.atan2(q.z, q.w)  # target_driver publishes yaw-only
+        if self._truth_history:
+            prev_yaw = self._truth_history[-1][2]
+            yaw = prev_yaw + math.atan2(math.sin(yaw - prev_yaw), math.cos(yaw - prev_yaw))
+        self._truth_history.append((stamp, self._target_pos.copy(), yaw))
+        self._truth_history = [h for h in self._truth_history if stamp - h[0] <= TRUTH_HISTORY_S]
+        self._resolve_pending(stamp)
+
+    def _truth_at(self, t):
+        """Target (position, rotation) linearly interpolated to time t from the history."""
+        hist = self._truth_history
+        if t <= hist[0][0]:
+            _, pos, yaw = hist[0]
+        elif t >= hist[-1][0]:
+            _, pos, yaw = hist[-1]
+        else:
+            i = next(k for k in range(1, len(hist)) if hist[k][0] >= t)
+            (t0, p0, y0), (t1, p1, y1) = hist[i - 1], hist[i]
+            a = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+            pos, yaw = p0 + a * (p1 - p0), y0 + a * (y1 - y0)
+        return pos, _rotation_from_rpy(0.0, 0.0, yaw)
 
     def _on_fire_command(self, msg):
         if not msg.fire:
@@ -388,17 +411,14 @@ class ShotHitSampler(Node):
         fire_time = self._stamp_s(msg.header.stamp) + msg.delay_ms / 1000.0
         muzzle_pos, aim_dir = self._muzzle_pose()
 
-        # First-order flight-time estimate: distance to the target's
-        # position *at fire time*, at the muzzle speed cap. Does not
-        # re-converge on the target's motion during flight -- this test
-        # checks the fire decision's lead against ground truth, not full
-        # ballistics, so a single-step estimate is enough.
+        # Resolved once truth covers the latest plausible impact; each
+        # panel is then judged at its own arrival time (see _resolve_pending).
         shot_range = float(np.linalg.norm(self._target_pos - muzzle_pos))
-        flight_time = shot_range / MUZZLE_SPEED
-        impact_time = fire_time + flight_time
+        impact_time = fire_time + (shot_range + 1.0) / MUZZLE_SPEED
 
         self.shots_fired += 1
         self._pending_shots.append({
+            'fire_time': fire_time,
             'impact_time': impact_time,
             'muzzle_pos': muzzle_pos,
             'aim_dir': aim_dir,
@@ -414,11 +434,20 @@ class ShotHitSampler(Node):
 
             # Check all 4 panels, not just the chassis center -- a shot can
             # be close to the chassis but still miss every physical panel,
-            # or land on whichever panel happens to be facing away.
-            panels = _panel_poses(self._target_pos, self._target_rot)
+            # or land on whichever panel happens to be facing away. Each
+            # panel is judged against interpolated truth at the moment the
+            # projectile reaches it along the ray: at 1-2Hz spin, the
+            # nearest truth sample (60Hz) is up to ~9 deg of yaw off.
+            pos, rot = self._truth_at(shot['fire_time'] + shot['shot_range'] / MUZZLE_SPEED)
+            arrivals = []
+            for panel_pos, _ in _panel_poses(pos, rot):
+                along = float(np.dot(panel_pos - shot['muzzle_pos'], shot['aim_dir']))
+                arrivals.append(shot['fire_time'] + max(along, 0.0) / MUZZLE_SPEED)
             best_miss = None
             hit = False
-            for panel_pos, panel_normal in panels:
+            for k, t_arrive in enumerate(arrivals):
+                pos, rot = self._truth_at(t_arrive)
+                panel_pos, panel_normal = _panel_poses(pos, rot)[k]
                 to_panel = panel_pos - shot['muzzle_pos']
                 along = float(np.dot(to_panel, shot['aim_dir']))
                 closest_on_ray = shot['muzzle_pos'] + along * shot['aim_dir']

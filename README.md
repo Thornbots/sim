@@ -478,12 +478,12 @@ Type-C probably has the same bug. It receives a root-frame position and runs its
 own gimbal solve, and only the firmware knows where the real barrel sits, so
 raise it with the firmware team (see `ros2_dji_serial_bridge/README.md`).
 
-Control is closed-loop on the IK setpoint so that tracking lag shows up in sim
-as it would on Type-C. Every `control_rate_hz` (15) tick it commands
-`current + gain * wrapped_error`. A timer, not `/cv/target` arrival (up to
-60Hz), drives it; per-message updates let the setpoint race ahead of the joint
-in early tuning. `gain` (0.3) is a placeholder that still needs an empirical
-pass. The old `sign_yaw`/`sign_pitch` params are gone, because the IK geometry
+Every `control_rate_hz` (30) tick it commands `current + gain *
+wrapped_error`. A timer, not `/cv/target` arrival (up to 60Hz), drives it;
+per-message updates let the setpoint race ahead of the joint in early tuning.
+`gain` is 1.0, the IK angle itself, leaving tracking to gz's joint PID. At the
+old 0.3 and 15Hz the head trailed a 0.5 m/s target by 9.4cm against a 5cm hit
+radius (2026-09-17), a lag no 1kHz gimbal loop would have. The old `sign_yaw`/`sign_pitch` params are gone, because the IK geometry
 sets the sign and the test checks it analytically.
 
 When `/cv/target` confidence reaches 0.0 it stops publishing and holds
