@@ -52,7 +52,8 @@ shot-hit; `README.md`'s "Running the current target tests" lists the commands.
 
 `--backend` is `slam`, `amcl`, or `none` (who owns `map->odom`). `--use-ekf` is
 a separate axis and layers EKF fusion of `odom->root` on top of any of them;
-there is no `ekf` backend.
+there is no `ekf` backend. It is on by default, matching `auto.launch.py`;
+`--no-use-ekf` is the way back to raw `/odom` passthrough.
 
 `test/localization/` is `test_localization_drift.py` (one test per scenario) and
 `test_ekf_ground_truth.py`, both over `drift_harness.py`/`ekf_diag_harness.py`.
@@ -123,7 +124,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   so both reliably FAIL without indicating a problem.
   `test/localization/test_ekf_ground_truth.py` scores against `/sim/raw_odom`
   with slip enabled and should probably become the assertion for
-  `--backend none --use-ekf`.
+  `--backend none` (EKF on by default).
 - **Never validate odometry on magnitude alone.** An early speed sweep compared
   `|displacement|` and scored rf2o healthy at ~1% error while it was pointing
   exactly backwards. Compare displacement _vectors_; the angle between them is

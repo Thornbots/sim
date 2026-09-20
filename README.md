@@ -160,8 +160,9 @@ comments can stay short. Each heading names a file.
 
 Integration suite for `sentry_localization`'s drift and jerk correction
 against `pose_emulator.py`'s noise model. It mirrors `auto.launch.py`'s two
-axes: `--backend slam/amcl/none` (who owns `map->odom`) and `--use-ekf`
-(whether `odom->root` is EKF-fused). For each scenario it launches the stack,
+axes: `--backend slam/amcl/none` (who owns `map->odom`) and `--use-ekf` /
+`--no-use-ekf` (whether `odom->root` is EKF-fused; on by default, matching
+`auto.launch.py`). For each scenario it launches the stack,
 drives, samples the correction TF, asserts, and tears down.
 
 `drift_harness.py` holds stack lifecycle, driving and scenarios;
@@ -177,7 +178,7 @@ Each scenario watches the edge the backend owns (`BACKEND_FRAMES`):
 | --- | --- | --- |
 | `slam` | `map->odom` | distance since last scan (`minimum_travel_distance`) |
 | `amcl` | `map->odom` | `update_min_d`/`update_min_a` |
-| `none` | `odom->root` | no map node; raw `/odom` passthrough unless `--use-ekf` |
+| `none` | `odom->root` | no map node; `ekf_node` unless `--no-use-ekf`, then raw `/odom` |
 
 `--use-ekf` swaps `odom->root`'s source to `ekf_node` and leaves `map->odom`
 alone. `mapping` isn't offered, since it builds a map rather than being scored

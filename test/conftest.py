@@ -38,9 +38,14 @@ def pytest_addoption(parser):
         '--backend', choices=['slam', 'amcl', 'none'], default='amcl',
         help="auto.launch.py's localization_mode -- who owns map->odom")
     group.addoption(
-        '--use-ekf', action='store_true',
-        help='forward use_ekf:=true to auto.launch.py (independent axis; '
-             "the old standalone 'ekf' backend is --backend none --use-ekf)")
+        '--use-ekf', action='store_true', dest='use_ekf', default=True,
+        help="auto.launch.py's use_ekf, on by default to match its default "
+             '(independent axis; the old standalone \'ekf\' backend is '
+             '--backend none)')
+    group.addoption(
+        '--no-use-ekf', action='store_false', dest='use_ekf',
+        help='forward use_ekf:=false instead -- raw /odom passthrough, no '
+             'ekf_node and no rf2o')
     group.addoption(
         '--scenario', default=None,
         help='run only this drift scenario (default: all, in suite order)')
