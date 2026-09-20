@@ -132,3 +132,10 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - ARCC Battlefield zone coordinates (Figures 3-1 through 3-9 in
   `../ARCC_2026_SENTRY_CONTEXT.md`) aren't pulled into the world yet, if a
   precise arena map is ever needed.
+
+## Committing
+
+This package is a submodule of `thornbots_workspace`, on branch `main`. Commit
+and push here first, then bump this gitlink in `../` — one logical change, one
+bump, never a gitlink pointing at an unpushed commit. Full rule in
+`../CLAUDE.md` § Packages.
