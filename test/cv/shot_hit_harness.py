@@ -15,12 +15,12 @@
 """
 Black-box shot-hit machinery: launches the sim plus the production CV pipeline.
 
-Scores each FireCommand on /dji_serial_bridge/fire_command, knowing
+Scores each firing CVTarget on /dji_serial_bridge/cv_target, knowing
 nothing about how thornbots_pkg predicts (see sim/README.md's ## Notes for
 why). Importable only -- test_shot_hit.py holds the assertions and
 run_shot_hit_tests.py is the argparse wrapper.
 
-For each fire_command: computes the muzzle pose (from /sim/raw_odom +
+For each shot: computes the muzzle pose (from /sim/raw_odom +
 /sim/raw_joint_states, the same fixed FK chain cv_target_emulator.py
 uses, duplicated here rather than imported so this doesn't silently
 start passing/failing from an unrelated emulator refactor), simulates a
@@ -32,10 +32,11 @@ flight path to pass within hit_radius of a panel's 0.1m x 0.1m face AND
 to arrive within that panel's 145-degree front exposure cone --
 geometrically on-target from behind the panel still misses.
 
-Requires mcb_relay.py to relay a FireCommand onto
-/dji_serial_bridge/fire_command (wired 2026-07-27) and
-point_to_cv_target's placeholder fire trigger (fire_rate_hz, no
-lead/HP/heat/power gating -- see thornbots_pkg/README.md) to publish one.
+Requires mcb_relay.py to relay /cv/target onto
+/dji_serial_bridge/cv_target (wired 2026-07-27, fire decision merged into
+CVTarget 2026-09-20) and point_to_cv_target's placeholder fire trigger
+(fire_rate_hz, no lead/HP/heat/power gating -- see
+thornbots_pkg/README.md) to set fire=True on one.
 Shots are observed today, so "zero shots" means something in the
 launched stack is actually broken.
 """
@@ -46,20 +47,21 @@ import signal
 import subprocess
 import time
 
-from dji_serial_bridge.msg import FireCommand
+from dji_serial_bridge.msg import CVTarget
 from geometry_msgs.msg import Point
 from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
 from visualization_msgs.msg import Marker, MarkerArray
 
 
 MUZZLE_SPEED = 25.0  # m/s -- ARCC_2026_SENTRY_CONTEXT.md's muzzle-speed cap
 TRUTH_HISTORY_S = 1.0  # ground truth kept for interpolating impact-time poses
-# Static delay from a FireCommand's fire time (stamp + delay_ms) to the
+# Static delay from a shot's fire time (CVTarget stamp + delay_ms) to the
 # projectile leaving the muzzle; flight time at MUZZLE_SPEED comes on top.
 FIRE_LATENCY_S = 0.05
 
@@ -286,13 +288,14 @@ class LaunchTree:
 
 class ShotHitSampler(Node):
     """
-    Subscribes the sim, ground-truth and fire_command topics the scorer needs.
+    Subscribes the sim, ground-truth and cv_target topics the scorer needs.
 
     /sim/raw_odom + /sim/raw_joint_states give the muzzle FK,
     /target/ground_truth_odom the impact truth, and
-    /dji_serial_bridge/fire_command the shot events.
+    /dji_serial_bridge/cv_target the aim points that carry the fire
+    decision.
 
-    Each fire_command with fire=True becomes one pending shot, resolved
+    Each CVTarget with fire=True becomes one pending shot, resolved
     once ground-truth data at/after its estimated impact time arrives.
     """
 
@@ -318,7 +321,7 @@ class ShotHitSampler(Node):
         self._target_rot = None
 
         self._pending_shots = []
-        self._unlaunched = []  # [exit_time] of commands still inside FIRE_LATENCY_S
+        self._unlaunched = []  # [exit_time] of shots still inside FIRE_LATENCY_S
         self.shots_fired = 0
         self.hits = 0
         self.miss_distances = []
@@ -329,8 +332,10 @@ class ShotHitSampler(Node):
             JointState, '/sim/raw_joint_states', self._on_joint_states, 10)
         self.create_subscription(
             Odometry, '/target/ground_truth_odom', self._on_target_odom, 10)
+        # Best-effort, matching mcb_relay's cv_target publisher.
         self.create_subscription(
-            FireCommand, '/dji_serial_bridge/fire_command', self._on_fire_command, 10)
+            CVTarget, '/dji_serial_bridge/cv_target', self._on_cv_target,
+            qos_profile_sensor_data)
         # So each shot's straight-line path is visible in rviz
         # (cv_target.rviz's ShotMarkers display) as it's resolved --
         # green = hit, red = miss. Not used for hit/miss judging itself,
@@ -426,7 +431,7 @@ class ShotHitSampler(Node):
             pos, yaw = p0 + a * (p1 - p0), y0 + a * (y1 - y0)
         return pos, _rotation_from_rpy(0.0, 0.0, yaw)
 
-    def _on_fire_command(self, msg):
+    def _on_cv_target(self, msg):
         if not msg.fire:
             return
         if self._root_pos is None or self._target_pos is None:
@@ -564,7 +569,7 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
     # doesn't need): target_selector groups+picks from the emulator's
     # panel_detections array, target_tracker estimates the spin-centre in
     # odom, point_to_cv_target solves the (optional) lead and emits
-    # /cv/target, mcb_relay forwards to /dji_serial_bridge/fire_command.
+    # /cv/target, mcb_relay forwards it to /dji_serial_bridge/cv_target.
     target_selector = LaunchTree(
         'target_selector',
         [TARGET_SELECTOR_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
@@ -600,7 +605,7 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
     # enable_target_tracker:=false skip its point_to_cv_target/
     # target_selector/target_tracker instances -- all three already run
     # standalone above, and auto.launch.py's own copies would otherwise
-    # double-publish /sentry/fire_command, /cv/panel_detection and
+    # double-publish /cv/target, /cv/panel_detection and
     # /cv/target_state alongside them. localization_mode:=none skips
     # map_server/amcl entirely -- odom_tf_broadcaster (always launched,
     # independent of localization_mode) still publishes odom->root, which
