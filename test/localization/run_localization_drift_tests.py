@@ -50,11 +50,15 @@ def main():
                         help="auto.launch.py's localization_mode -- who owns "
                              "map->odom (default: amcl). 'mapping' isn't "
                              'offered; see README.md BACKENDS.')
-    parser.add_argument('--use-ekf', action='store_true',
+    parser.add_argument('--use-ekf', dest='use_ekf', action='store_true',
+                        default=True,
                         help='EKF-fuse odom->root instead of passing /odom '
-                             'through raw. Independent of --backend; the old '
-                             'standalone ekf backend is --backend none '
-                             '--use-ekf.')
+                             'through raw (default). Independent of '
+                             '--backend; the old standalone ekf backend is '
+                             '--backend none.')
+    parser.add_argument('--no-use-ekf', dest='use_ekf', action='store_false',
+                        help='raw /odom passthrough instead -- no ekf_node '
+                             'and no rf2o.')
     parser.add_argument('--scenario',
                         help='run only this scenario (default: all, in suite '
                              'order)')
@@ -70,8 +74,7 @@ def main():
     cmd = [sys.executable, '-m', 'pytest', os.path.join(test_dir(), TEST_FILE),
            '-m', 'integration', '-v', '-s',
            '--backend', args.backend]
-    if args.use_ekf:
-        cmd.append('--use-ekf')
+    cmd.append('--use-ekf' if args.use_ekf else '--no-use-ekf')
     if args.scenario:
         cmd += ['--scenario', args.scenario]
     if args.headless:
