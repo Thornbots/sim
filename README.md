@@ -20,8 +20,11 @@ ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
 ```
 
 The CV bench runs five shot-hit cases, all with lead on: a stationary target,
-then 0.5, 1, 2 and 4 m/s. Each samples 25s of sim time. On 2026-09-21 the
-stationary target took 90-96% of shots and the 0.5 m/s target 73-80%.
+then 0.5, 1, 2 and 4 m/s. It launches the stack once and only changes how the
+target moves between cases; each case settles for 3s, then scores 30s of sim
+time. The bench fires at up to 40 Hz, far above the real launcher, and scores
+each case on hit rate and hits per expected shot equally (`score()` in
+`test/cv/shot_hit_harness.py`), so falling behind 40 Hz costs points.
 
 ```bash
 ros2 run sim run_shot_hit_tests.py
@@ -80,8 +83,9 @@ colcon test --packages-select sim --pytest-args ' -m integration'
 colcon test-result --verbose
 ```
 
-Each integration test launches gz-sim and `thornbots_pkg`, runs for tens of
-seconds, and shuts both down before the next test starts. ROS topics are shared
+Each drift test launches gz-sim and `thornbots_pkg`, runs for tens of seconds,
+and shuts both down before the next test starts. The shot-hit suite launches
+them once for all its cases. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
 the measurements.
 

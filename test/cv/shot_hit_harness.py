@@ -51,6 +51,7 @@ from dji_serial_bridge.msg import CVTarget
 from geometry_msgs.msg import Point
 from nav_msgs.msg import Odometry
 import numpy as np
+from rcl_interfaces.srv import SetParameters
 import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
@@ -67,7 +68,12 @@ TRUTH_HISTORY_S = 1.0  # ground truth kept for interpolating impact-time poses
 FIRE_LATENCY_S = 0.05
 
 DEFAULT_SPEEDS = [0.5, 1.0, 2.0, 4.0]
-DEFAULT_DURATION = 25.0  # sim-time seconds of steady-state sampling per case
+DEFAULT_DURATION = 30.0  # sim-time seconds of steady-state sampling per case
+SETTLE_S = 3.0  # sim-time seconds after a motion change before scoring starts
+# The bench fires far faster than the real launcher to stress tracking.
+# point_to_cv_target fires at most once per publish tick, so the publish rate
+# sets it; fire_rate_hz sits above so a tick a millisecond early still fires.
+TEST_FIRE_HZ = 40.0
 DEFAULT_LOG_DIR = '/tmp/shot_hit_test_logs'
 # The stationary case (speed=0, spin=0) is the harness's own sanity
 # check: a working pipeline hits a motionless target trivially. 0.5 is far
@@ -319,6 +325,7 @@ class ShotHitSampler(Node):
         # green = hit, red = miss. Not used for hit/miss judging itself,
         # purely a visualization aid.
         self.marker_pub = self.create_publisher(MarkerArray, '/shot_markers', 10)
+        self.create_timer(1.0 / 30.0, self._publish_in_flight)
 
     @staticmethod
     def _stamp_s(header_stamp):
@@ -469,6 +476,26 @@ class ShotHitSampler(Node):
             self._publish_shot_marker(hit, best_ray_pt, best_panel_pt)
         self._pending_shots = still_pending
 
+    def _publish_in_flight(self):
+        """Draw every airborne shot as a yellow dot at its current position."""
+        now = self.get_clock().now().nanoseconds / 1e9
+        marker = Marker()
+        marker.header.frame_id = self._root_frame_id or 'odom'
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = 'in_flight'
+        marker.id = 0
+        marker.type = Marker.SPHERE_LIST
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = marker.scale.y = marker.scale.z = 0.02
+        marker.color.r, marker.color.g, marker.color.b, marker.color.a = 1.0, 1.0, 0.0, 1.0
+        for shot in self._pending_shots:
+            flown = MUZZLE_SPEED * (now - shot['fire_time'])
+            if 0.0 <= flown <= shot['shot_range']:
+                p = shot['muzzle_pos'] + shot['aim_dir'] * flown
+                marker.points.append(Point(x=float(p[0]), y=float(p[1]), z=float(p[2])))
+        marker.action = Marker.ADD if marker.points else Marker.DELETE
+        self.marker_pub.publish(MarkerArray(markers=[marker]))
+
     def _publish_shot_marker(self, hit, ray_pt, panel_pt):
         """
         Sphere where the shot passed nearest a facing panel (green hit, red miss).
@@ -517,6 +544,14 @@ class ShotHitSampler(Node):
 
         self._shot_marker_id += 1
         self.marker_pub.publish(MarkerArray(markers=markers))
+
+    def reset_score(self):
+        """Forget every shot so far, scored or in flight; ground truth is kept."""
+        self.shots_fired = 0
+        self.hits = 0
+        self.miss_distances = []
+        self._pending_shots = []
+        self._unlaunched = []
 
     def finish(self):
         """
@@ -571,115 +606,149 @@ class ShotHitSampler(Node):
         return all(n in live for n in names)
 
 
-def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
-    tag = f'{speed}_spin{spin_hz:.2f}'
-    sim_cmd = [
-        'ros2', 'launch', 'sim', 'sim.launch.py',
-        'spawn_target:=true', f'target_speed:={speed}',
-        f'target_spin_hz:={spin_hz}',
-    ]
-    if headless:
-        sim_cmd += ['gui:=false', 'rviz:=false']
-    else:
-        sim_cmd.append(f'rviz_config:={CV_RVIZ_CONFIG}')
-    sim = LaunchTree('sim', sim_cmd, os.path.join(log_dir, f'sim_{tag}.log'))
+class CvStack:
+    """
+    The sim plus the production CV pipeline, launched once and reused for every case.
 
-    # Full production pipeline standalone (mirrors auto.launch.py's node
-    # set minus dji_serial_bridge/lidar/localization, which this test
-    # doesn't need): target_selector groups+picks from the emulator's
-    # panel_detections array, target_tracker estimates the spin-centre in
-    # odom, point_to_cv_target solves the lead and emits
-    # /cv/target, mcb_relay forwards it to /dji_serial_bridge/cv_target.
-    target_selector = LaunchTree(
-        'target_selector',
-        [TARGET_SELECTOR_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
-        os.path.join(log_dir, f'target_selector_{tag}.log'),
-    )
-    target_tracker = LaunchTree(
-        'target_tracker',
-        [TARGET_TRACKER_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
-        os.path.join(log_dir, f'target_tracker_{tag}.log'),
-    )
-    cv_bridge = LaunchTree(
-        'point_to_cv_target',
-        [POINT_TO_CV_TARGET_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
-        os.path.join(log_dir, f'point_to_cv_target_{tag}.log'),
-    )
-    mcb_relay = LaunchTree(
-        'mcb_relay',
-        [MCB_RELAY_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
-        os.path.join(log_dir, f'mcb_relay_{tag}.log'),
-    )
+    Between cases only target_driver's target_speed/spin_hz change (it reads
+    both every tick), so the target keeps its place and the stack its state.
+    """
 
-    # TF chain: sim itself intentionally runs no TF/robot_state_publisher
-    # (nodes compute their own FK -- see README.md), so this is what feeds
-    # both cv_target.rviz's RobotModel display AND target_tracker.py's
-    # lookupTransform(odom, camera, stamp) / point_to_cv_target.py's
-    # lookupTransform(root, odom, ...) -- load-bearing, not just a
-    # visualization aid, hence unconditional (not gated on `not headless`
-    # as it once was). real_hardware:=false skips the real-hardware-only
-    # mcb_relay auto.launch.py would otherwise launch; enable_cv_target_
-    # bridge:=false, enable_target_selector:=false and
-    # enable_target_tracker:=false skip its point_to_cv_target/
-    # target_selector/target_tracker instances -- all three already run
-    # standalone above, and auto.launch.py's own copies would otherwise
-    # double-publish /cv/target, /cv/panel_detection and
-    # /cv/target_state alongside them. localization_mode:=none skips
-    # map_server/amcl entirely -- odom_tf_broadcaster (always launched,
-    # independent of localization_mode) still publishes odom->root, which
-    # is all cv_target.rviz needs since its Fixed Frame is odom, not map.
-    robot_tf = LaunchTree(
-        'robot_tf',
-        ['ros2', 'launch', 'thornbots_pkg', 'auto.launch.py',
-         'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false',
-         'enable_cv_target_bridge:=false', 'enable_target_selector:=false',
-         'enable_target_tracker:=false'],
-        os.path.join(log_dir, f'robot_tf_{tag}.log'),
-    )
+    def __init__(self, headless, log_dir):
+        sim_cmd = ['ros2', 'launch', 'sim', 'sim.launch.py', 'spawn_target:=true',
+                   'target_speed:=0.0', 'target_spin_hz:=0.0']
+        if headless:
+            sim_cmd += ['gui:=false', 'rviz:=false']
+        else:
+            sim_cmd.append(f'rviz_config:={CV_RVIZ_CONFIG}')
 
-    # rclpy.init()/shutdown() is the caller's (the `ros_context`
-    # fixture's), so several cases can run under one context.
-    # Fast targets scatter shots across the view, so their markers expire sooner.
+        def log(name):
+            return os.path.join(log_dir, f'{name}.log')
+
+        def node(name, binary):
+            return LaunchTree(name, [binary, '--ros-args', '-p', 'use_sim_time:=true'],
+                              log(name))
+
+        self.sim = LaunchTree('sim', sim_cmd, log('sim'))
+        # Full production pipeline standalone (auto.launch.py's CV node set
+        # without dji_serial_bridge/lidar/localization): target_selector groups
+        # and picks from the emulator's panel_detections, target_tracker
+        # estimates the spin centre in odom, point_to_cv_target solves the lead
+        # and emits /cv/target, mcb_relay forwards it to
+        # /dji_serial_bridge/cv_target.
+        self.pipeline = [
+            node('target_selector', TARGET_SELECTOR_BIN),
+            node('target_tracker', TARGET_TRACKER_BIN),
+            LaunchTree('point_to_cv_target',
+                       [POINT_TO_CV_TARGET_BIN, '--ros-args', '-p', 'use_sim_time:=true',
+                        '-p', f'cv_target_publish_rate_hz:={TEST_FIRE_HZ}',
+                        '-p', f'fire_rate_hz:={TEST_FIRE_HZ + 10.0}'],
+                       log('point_to_cv_target')),
+            node('mcb_relay', MCB_RELAY_BIN),
+        ]
+        # TF chain: sim runs no robot_state_publisher, and target_tracker's and
+        # point_to_cv_target's TF lookups need one. The enable_*:=false args
+        # skip auto.launch.py's own copies of the three CV nodes above, which
+        # would double-publish; localization_mode:=none skips map_server/amcl.
+        self.robot_tf = LaunchTree(
+            'robot_tf',
+            ['ros2', 'launch', 'thornbots_pkg', 'auto.launch.py',
+             'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false',
+             'enable_cv_target_bridge:=false', 'enable_target_selector:=false',
+             'enable_target_tracker:=false'],
+            log('robot_tf'))
+        self.node = rclpy.create_node(
+            'shot_hit_stack',
+            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
+        self._set_params = self.node.create_client(
+            SetParameters, '/target_driver/set_parameters')
+
+    def start(self):
+        probe = ShotHitSampler(hit_radius=0.0)
+        try:
+            self.sim.start()
+            probe.wait_until(
+                lambda: probe._root_pos is not None and probe._target_pos is not None,
+                timeout=30.0,
+                description='/sim/raw_odom + /target/ground_truth_odom publishing')
+            self.robot_tf.start()
+            for tree in self.pipeline:
+                tree.start()
+            ready = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher',
+                     'target_selector', 'target_tracker']
+            probe.wait_until(lambda: probe.nodes_up(*ready), timeout=15.0,
+                             description=f'{", ".join(ready)} nodes up')
+        finally:
+            probe.destroy_node()
+
+    def set_target_motion(self, speed, spin_hz):
+        """Set target_driver's speed and spin rate; raise if it doesn't take them."""
+        if not self._set_params.wait_for_service(timeout_sec=10.0):
+            raise RuntimeError('/target_driver/set_parameters not available')
+        req = SetParameters.Request(parameters=[
+            Parameter('target_speed', Parameter.Type.DOUBLE, float(speed)).to_parameter_msg(),
+            Parameter('spin_hz', Parameter.Type.DOUBLE, float(spin_hz)).to_parameter_msg(),
+        ])
+        future = self._set_params.call_async(req)
+        rclpy.spin_until_future_complete(self.node, future, timeout_sec=10.0)
+        result = future.result()
+        if result is None or not all(r.successful for r in result.results):
+            raise RuntimeError(f'target_driver rejected speed={speed} spin={spin_hz}')
+        print(f'[stack] target_driver set to speed={speed} m/s, spin={spin_hz:.2f} Hz')
+
+    def stop(self):
+        for tree in reversed(self.pipeline):
+            tree.stop()
+        self.robot_tf.stop()
+        self.sim.stop()
+        self.node.destroy_node()
+
+
+def run_case(stack, speed, spin_hz, duration, hit_radius):
+    """
+    Switch the target to (speed, spin_hz), let the tracker settle, then score.
+
+    Shots fired during the SETTLE_S window are discarded.
+    """
+    stack.set_target_motion(speed, spin_hz)
+    # At TEST_FIRE_HZ a 1s lifetime keeps ~40 markers; fast targets scatter
+    # shots across the view, so theirs expire sooner still.
     sampler = ShotHitSampler(hit_radius=hit_radius,
-                             marker_lifetime_s=5.0 / max(1.0, speed))
+                             marker_lifetime_s=1.0 / max(1.0, speed))
     try:
-        sim.start()
-        sampler.wait_until(
-            lambda: sampler._root_pos is not None and sampler._target_pos is not None,
-            timeout=30.0, description='/sim/raw_odom + /target/ground_truth_odom publishing')
-        robot_tf.start()
-        target_selector.start()
-        target_tracker.start()
-        cv_bridge.start()
-        mcb_relay.start()
-        ready_nodes = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher',
-                       'target_selector', 'target_tracker']
-        sampler.wait_until(
-            lambda: sampler.nodes_up(*ready_nodes),
-            timeout=15.0, description=f'{", ".join(ready_nodes)} nodes up')
-
+        sampler.spin_for(SETTLE_S)
+        sampler.reset_score()
         sampler.spin_for(duration)
     finally:
         dropped = sampler.finish()
-        cv_bridge.stop()
-        mcb_relay.stop()
-        target_tracker.stop()
-        target_selector.stop()
-        robot_tf.stop()
-        sim.stop()
         sampler.destroy_node()
-
     return sampler, dropped
 
 
-def summarize(label, sampler, dropped):
+def score(sampler, duration):
+    """
+    Return (score, hits_per_expected, keep_up) for one case.
+
+    Expects TEST_FIRE_HZ * duration shots. score is the mean of the hit rate
+    and hits per expected shot, so hitting often counts as much as hitting
+    accurately, and firing below TEST_FIRE_HZ costs points.
+    """
+    expected = TEST_FIRE_HZ * duration
+    hit_rate = sampler.hits / sampler.shots_fired if sampler.shots_fired else 0.0
+    hits_per_expected = sampler.hits / expected
+    return (0.5 * (hit_rate + hits_per_expected), hits_per_expected,
+            sampler.shots_fired / expected)
+
+
+def summarize(label, sampler, dropped, duration):
     hit_pct = (100.0 * sampler.hits / sampler.shots_fired) if sampler.shots_fired else float('nan')
     miss = sampler.miss_distances
     miss_mean = sum(miss) / len(miss) if miss else float('nan')
-    miss_max = max(miss) if miss else float('nan')
+    total, per_expected, keep_up = score(sampler, duration)
     print(
-        f'{label:38s} | '
-        f'shots={sampler.shots_fired:4d} | hits={sampler.hits:4d} ({hit_pct:5.1f}%) | '
-        f'miss dist mean={miss_mean:6.3f} max={miss_max:6.3f} m | dropped={dropped}'
+        f'{label:30s} | score={total:5.1%} | '
+        f'shots={sampler.shots_fired:4d}/{int(TEST_FIRE_HZ * duration)} ({keep_up:5.1%}) | '
+        f'hits={sampler.hits:4d} ({hit_pct:5.1f}% of fired, {per_expected:5.1%} of expected) | '
+        f'miss mean={miss_mean:6.3f} m | dropped={dropped}'
     )
-    return sampler.shots_fired > 0
+    return total
