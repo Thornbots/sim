@@ -422,10 +422,12 @@ stamps `panel_detections` headers at sample time and holds messages in a
 queue for `publish_latency_s`, so downstream `now - header.stamp` shows the
 delay.
 
-The default path bounces laterally at `x=3.0m`, `y in [-2.0, 2.0]`, `z=0.3m`.
-Visible half-width at 3m is `3.0*tan(1.5184/2)` ~ 2.85m, leaving ~0.85m margin
-each side. On 2026-07-27, 8 m/s (the fastest tested) gave at least 47
-consecutive in-frustum samples.
+The default path runs laterally at `x=3.0m`, `y in [-2.4, 2.4]`, `z=0.3m`.
+Visible half-width at 3m is `3.0*tan(1.5184/2)` ~ 2.85m, so the outer panels
+(0.3m out) keep ~0.15m margin with the head straight ahead. `max_accel`
+(6 m/s^2) brakes the target to a stop at each end and ramps any change of
+`target_speed`, and `max_spin_accel` (20 rad/s^2) does the same for `spin_hz`;
+both are estimates. It used to reverse and change speed instantly.
 
 `cv_target_emulator` computes camera pose by chaining the xacro's fixed joint
 offsets (root -> fastened_2 -> body -> headlink(yaw) -> head ->

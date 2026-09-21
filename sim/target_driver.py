@@ -47,9 +47,13 @@ class TargetDriver(Node):
         self.declare_parameter('publish_rate_hz', 60.0)
         self.declare_parameter('center_x', 3.0)
         self.declare_parameter('center_y', 0.0)
-        self.declare_parameter('half_width', 2.0)
+        self.declare_parameter('half_width', 2.4)
         self.declare_parameter('target_z', 0.3)
         self.declare_parameter('frame_id', 'odom')
+        # Acceleration limits, so the target brakes into each end of its path
+        # and ramps to a new target_speed/spin_hz instead of jumping. Estimates.
+        self.declare_parameter('max_accel', 6.0)  # m/s^2
+        self.declare_parameter('max_spin_accel', 20.0)  # rad/s^2
 
         self.center_x = self.get_parameter('center_x').value
         self.center_y = self.get_parameter('center_y').value
@@ -58,8 +62,10 @@ class TargetDriver(Node):
         self.frame_id = self.get_parameter('frame_id').value
 
         self.y = self.center_y
+        self.vy = 0.0
         self.direction = 1.0
         self.yaw = 0.0
+        self.omega = 0.0
         self._last_time = None
 
         self.pub = self.create_publisher(Odometry, '/target/ground_truth_odom', 10)
@@ -92,28 +98,25 @@ class TargetDriver(Node):
         if dt <= 0.0:
             return
 
-        speed = self.get_parameter('target_speed').value
-        vy = self.direction * speed
-        self.y += vy * dt
-        # Reflect any overshoot past the bound back into range (rather than
-        # clamping it away) so true average speed matches target_speed --
-        # clamping silently loses up to speed*dt of travel per bounce.
         upper = self.center_y + self.half_width
         lower = self.center_y - self.half_width
-        if self.y >= upper:
-            self.y = upper - (self.y - upper)
-            self.direction = -1.0
-            vy = self.direction * speed
-        elif self.y <= lower:
-            self.y = lower + (lower - self.y)
-            self.direction = 1.0
-            vy = self.direction * speed
+        accel = self.get_parameter('max_accel').value
+        speed = self.get_parameter('target_speed').value
+        # Brake so the target stops at the end it is heading for, then turn.
+        to_end = upper - self.y if self.direction > 0 else self.y - lower
+        if to_end <= 1e-3 and abs(self.vy) <= accel * dt:
+            self.direction = -self.direction
+            to_end = upper - self.y if self.direction > 0 else self.y - lower
+        want = self.direction * min(speed, math.sqrt(2.0 * accel * max(to_end, 0.0)))
+        self.vy += max(-accel * dt, min(accel * dt, want - self.vy))
+        self.y = max(lower, min(upper, self.y + self.vy * dt))
 
-        spin_hz = self.get_parameter('spin_hz').value
-        omega = 2.0 * math.pi * spin_hz
-        self.yaw = (self.yaw + omega * dt + math.pi) % (2.0 * math.pi) - math.pi
+        spin_accel = self.get_parameter('max_spin_accel').value
+        want_omega = 2.0 * math.pi * self.get_parameter('spin_hz').value
+        self.omega += max(-spin_accel * dt, min(spin_accel * dt, want_omega - self.omega))
+        self.yaw = (self.yaw + self.omega * dt + math.pi) % (2.0 * math.pi) - math.pi
 
-        self._publish(vy, omega)
+        self._publish(self.vy, self.omega)
 
     def _publish(self, vy, omega):
         msg = Odometry()
