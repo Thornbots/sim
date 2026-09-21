@@ -146,7 +146,7 @@ to zero for a clean run:
 ```bash
 spawn_target:=true            # target_driver, cv_target_emulator, cv_head_aim
 target_speed:=2.0 target_spin_hz:=1.5
-cv_noise_pos_stddev:=0.01     # Gaussian position noise, m
+cv_noise_pos_stddev:=0.005    # Gaussian position noise, m
 cv_dropout_probability:=0.1   # per-sample detection drop
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
@@ -454,7 +454,7 @@ matched an independent bearing from `/sim/raw_odom` and
 
 Detections outside the FOV (`horizontal_fov=1.5184`, vertical from 640x480) or
 range (0.1-10.0m) aren't published, which exercises `point_to_cv_target`'s
-watchdog. Inside, `noise_pos_stddev` (0.01m), `dropout_probability` (0.1) and
+watchdog. Inside, `noise_pos_stddev` (0.005m), `dropout_probability` (0.1) and
 `publish_latency_s` (0.06s, a placeholder) all default on.
 
 ### cv_head_aim.py
