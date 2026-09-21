@@ -48,11 +48,17 @@ class CvHeadAim(Node):
         self.declare_parameter('pitch_joint_name', 'headpitch')
         self.declare_parameter('gain', 1.0)
         self.declare_parameter('control_rate_hz', 30.0)
+        # Slew limits (rad/s) so the sim head can't turn faster than a real
+        # gimbal; estimates, not measured.
+        self.declare_parameter('max_yaw_rate', 10.0)
+        self.declare_parameter('max_pitch_rate', 6.0)
 
         self.yaw_joint_name = self.get_parameter('yaw_joint_name').value
         self.pitch_joint_name = self.get_parameter('pitch_joint_name').value
         self.gain = self.get_parameter('gain').value
         control_rate_hz = self.get_parameter('control_rate_hz').value
+        self.max_yaw_step = self.get_parameter('max_yaw_rate').value / control_rate_hz
+        self.max_pitch_step = self.get_parameter('max_pitch_rate').value / control_rate_hz
 
         self._head_yaw = 0.0
         self._head_pitch = 0.0
@@ -89,7 +95,9 @@ class CvHeadAim(Node):
             f"cv_head_aim ready: {self.get_parameter('cv_target_topic').value}"
             f" (root-frame position) -> {self.get_parameter('pan_cmd_topic').value} /"
             f" {self.get_parameter('pitch_cmd_topic').value}"
-            f' (gain={self.gain}, control_rate_hz={control_rate_hz})'
+            f' (gain={self.gain}, control_rate_hz={control_rate_hz}, max rate'
+            f" yaw={self.get_parameter('max_yaw_rate').value} "
+            f"pitch={self.get_parameter('max_pitch_rate').value} rad/s)"
         )
 
     def on_joint_states(self, msg):
@@ -117,8 +125,11 @@ class CvHeadAim(Node):
         error_yaw = wrap_to_pi(target_yaw - self._head_yaw)
         error_pitch = target_pitch - self._head_pitch
 
-        new_yaw = self._head_yaw + self.gain * error_yaw
-        new_pitch = self._head_pitch + self.gain * error_pitch
+        step_yaw = max(-self.max_yaw_step, min(self.max_yaw_step, self.gain * error_yaw))
+        step_pitch = max(-self.max_pitch_step,
+                         min(self.max_pitch_step, self.gain * error_pitch))
+        new_yaw = self._head_yaw + step_yaw
+        new_pitch = self._head_pitch + step_pitch
         new_pitch = max(HEADPITCH_LOWER, min(HEADPITCH_UPPER, new_pitch))
 
         self.pan_pub.publish(Float64(data=new_yaw))
