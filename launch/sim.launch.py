@@ -162,6 +162,11 @@ def generate_launch_description():
         description='Stddev (m) of Gaussian position noise injected into '
                     "cv_target_emulator's panel_detections"
     )
+    cv_panel_stagger_m_arg = DeclareLaunchArgument(
+        'cv_panel_stagger_m', default_value='0.0',
+        description='Height difference (m) between neighbouring target panels; '
+                    'front/back sit half above centre, left/right half below'
+    )
     cv_dropout_probability_arg = DeclareLaunchArgument(
         'cv_dropout_probability', default_value='0.1',
         description='Per-sample probability (0-1) cv_target_emulator drops an '
@@ -508,6 +513,9 @@ def generate_launch_description():
             'noise_pos_stddev': ParameterValue(
                 LaunchConfiguration('cv_noise_pos_stddev'), value_type=float
             ),
+            'panel_stagger_m': ParameterValue(
+                LaunchConfiguration('cv_panel_stagger_m'), value_type=float
+            ),
             'dropout_probability': ParameterValue(
                 LaunchConfiguration('cv_dropout_probability'), value_type=float
             ),
@@ -570,6 +578,7 @@ def generate_launch_description():
         target_spin_hz_arg,
         cv_noise_pos_stddev_arg,
         cv_dropout_probability_arg,
+        cv_panel_stagger_m_arg,
         cv_publish_latency_s_arg,
         gz_resource_path,
         ign_resource_path,

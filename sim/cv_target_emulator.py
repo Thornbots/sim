@@ -196,6 +196,9 @@ class CvTargetEmulator(Node):
         self.declare_parameter('pitch_joint_name', 'headpitch')
         self.declare_parameter('panel_radius_x', 0.30)  # front/back, ~600mm chassis length / 2
         self.declare_parameter('panel_radius_y', 0.24)  # left/right, ~480mm chassis width / 2
+        # Height difference (m) between neighbouring panels: front/back sit
+        # half of it above the chassis centre, left/right half below.
+        self.declare_parameter('panel_stagger_m', 0.0)
         self.declare_parameter('panel_view_half_angle', math.radians(75.0))
         # One team+plate class for the whole robot, as YOLO reports it.
         self.declare_parameter('class_id', 2)
@@ -278,6 +281,7 @@ class CvTargetEmulator(Node):
         """
         radius_x = self.get_parameter('panel_radius_x').value
         radius_y = self.get_parameter('panel_radius_y').value
+        half_stagger = self.get_parameter('panel_stagger_m').value / 2.0
         world_up = np.array([0.0, 0.0, 1.0])
         poses = []
         for offset, use_x in zip(_PANEL_OFFSETS_RAD, _PANEL_USES_RADIUS_X):
@@ -285,6 +289,7 @@ class CvTargetEmulator(Node):
             horiz_dir = np.array([math.cos(offset), math.sin(offset), 0.0])
             world_horiz = self._target_rot @ horiz_dir
             panel_pos = self._target_pos + radius * world_horiz
+            panel_pos[2] += half_stagger if use_x else -half_stagger
 
             local_normal = np.array([
                 math.sin(PANEL_NORMAL_ANGLE_FROM_UP) * math.cos(offset),

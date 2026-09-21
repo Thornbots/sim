@@ -167,6 +167,8 @@ PANEL_RADIUS_Y = 0.24  # chassis-center-to-panel offset, left/right
 # "What an armor panel actually looks like" / cv_target_emulator.PANEL_SIZE).
 PANEL_SIZE = 0.1
 DEFAULT_HIT_RADIUS = PANEL_SIZE / 2.0  # inscribed-circle half-side
+# The staggered layout: neighbouring panels 90% of a panel's height apart.
+STAGGERED_PANEL_M = 0.9 * PANEL_SIZE
 # Hit-registration cone: a shot arriving from behind this angle couldn't
 # have registered on the real panel even if geometrically on-target.
 # Deliberately NOT the same number as cv_target_emulator.py's
@@ -190,7 +192,7 @@ PANEL_EXPOSURE_HALF_ANGLE = math.radians(145.0 / 2.0)
 PANEL_NORMAL_ANGLE_FROM_UP = math.radians(75.0)
 
 
-def _panel_poses(target_pos, target_rot):
+def _panel_poses(target_pos, target_rot, stagger=0.0):
     """
     Compute world (position, outward_normal_unit_vector) for each of the 4 armor panels.
 
@@ -204,6 +206,7 @@ def _panel_poses(target_pos, target_rot):
         horiz_dir = np.array([math.cos(offset), math.sin(offset), 0.0])
         world_horiz = target_rot @ horiz_dir
         panel_pos = target_pos + radius * world_horiz
+        panel_pos[2] += stagger / 2.0 if use_x else -stagger / 2.0
 
         local_normal = np.array([
             math.sin(PANEL_NORMAL_ANGLE_FROM_UP) * math.cos(offset),
@@ -284,7 +287,7 @@ class ShotHitSampler(Node):
     once ground-truth data at/after its estimated impact time arrives.
     """
 
-    def __init__(self, hit_radius, marker_lifetime_s=5.0):
+    def __init__(self, hit_radius, marker_lifetime_s=5.0, panel_stagger=0.0):
         # use_sim_time, or marker headers get stamped with wall-clock time
         # while the rest of the stack (sim, amcl's map->odom TF) runs on
         # sim time -- rviz then can't resolve the marker's TF at its
@@ -295,6 +298,7 @@ class ShotHitSampler(Node):
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
             automatically_declare_parameters_from_overrides=True)
         self.hit_radius = hit_radius
+        self.panel_stagger = panel_stagger  # must match cv_target_emulator's panel_stagger_m
         self.marker_lifetime = Duration(seconds=marker_lifetime_s).to_msg()
 
         self._root_pos = None
@@ -456,7 +460,7 @@ class ShotHitSampler(Node):
             # nearest truth sample (60Hz) is up to ~9 deg of yaw off.
             pos, rot = self._truth_at(shot['fire_time'] + shot['shot_range'] / MUZZLE_SPEED)
             arrivals = []
-            for panel_pos, _ in _panel_poses(pos, rot):
+            for panel_pos, _ in _panel_poses(pos, rot, self.panel_stagger):
                 along = float(np.dot(panel_pos - shot['muzzle_pos'], shot['aim_dir']))
                 arrivals.append(shot['fire_time'] + max(along, 0.0) / MUZZLE_SPEED)
             # Nearest panel among those facing the muzzle (within the front
@@ -466,7 +470,7 @@ class ShotHitSampler(Node):
             nearest_facing = nearest_any = None
             for k, t_arrive in enumerate(arrivals):
                 pos, rot = self._truth_at(t_arrive)
-                panel_pos, panel_normal = _panel_poses(pos, rot)[k]
+                panel_pos, panel_normal = _panel_poses(pos, rot, self.panel_stagger)[k]
                 to_panel = panel_pos - shot['muzzle_pos']
                 along = float(np.dot(to_panel, shot['aim_dir']))
                 closest_on_ray = shot['muzzle_pos'] + along * shot['aim_dir']
@@ -719,6 +723,8 @@ class CvStack:
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
         self._set_params = self.node.create_client(
             SetParameters, '/target_driver/set_parameters')
+        self._set_emulator_params = self.node.create_client(
+            SetParameters, '/cv_target_emulator/set_parameters')
 
     def start(self):
         open(self.shots_path, 'w').close()
@@ -740,20 +746,26 @@ class CvStack:
         finally:
             probe.destroy_node()
 
-    def set_target_motion(self, speed, spin_hz):
-        """Set target_driver's speed and spin rate; raise if it doesn't take them."""
-        if not self._set_params.wait_for_service(timeout_sec=10.0):
-            raise RuntimeError('/target_driver/set_parameters not available')
+    def _set(self, client, name, params):
+        if not client.wait_for_service(timeout_sec=10.0):
+            raise RuntimeError(f'/{name}/set_parameters not available')
         req = SetParameters.Request(parameters=[
-            Parameter('target_speed', Parameter.Type.DOUBLE, float(speed)).to_parameter_msg(),
-            Parameter('spin_hz', Parameter.Type.DOUBLE, float(spin_hz)).to_parameter_msg(),
-        ])
-        future = self._set_params.call_async(req)
+            Parameter(k, Parameter.Type.DOUBLE, float(v)).to_parameter_msg()
+            for k, v in params.items()])
+        future = client.call_async(req)
         rclpy.spin_until_future_complete(self.node, future, timeout_sec=10.0)
         result = future.result()
         if result is None or not all(r.successful for r in result.results):
-            raise RuntimeError(f'target_driver rejected speed={speed} spin={spin_hz}')
-        print(f'[stack] target_driver set to speed={speed} m/s, spin={spin_hz:.2f} Hz')
+            raise RuntimeError(f'{name} rejected {params}')
+
+    def set_target(self, speed, spin_hz, stagger):
+        """Set the target's speed, spin rate and panel stagger; raise if refused."""
+        self._set(self._set_params, 'target_driver',
+                  {'target_speed': speed, 'spin_hz': spin_hz})
+        self._set(self._set_emulator_params, 'cv_target_emulator',
+                  {'panel_stagger_m': stagger})
+        print(f'[stack] target set to speed={speed} m/s, spin={spin_hz:.2f} Hz, '
+              f'panel stagger={stagger:.3f} m')
 
     def stop(self):
         for tree in reversed(self.pipeline):
@@ -763,17 +775,18 @@ class CvStack:
         self.node.destroy_node()
 
 
-def run_case(stack, speed, spin_hz, duration, hit_radius):
+def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0):
     """
-    Switch the target to (speed, spin_hz), let the tracker settle, then score.
+    Switch the target to (speed, spin_hz, stagger), let the tracker settle, then score.
 
     Shots fired during the SETTLE_S window are discarded.
     """
-    stack.set_target_motion(speed, spin_hz)
+    stack.set_target(speed, spin_hz, stagger)
     # At TEST_FIRE_HZ a 1s lifetime keeps ~40 markers; fast targets scatter
     # shots across the view, so theirs expire sooner still.
     sampler = ShotHitSampler(hit_radius=hit_radius,
-                             marker_lifetime_s=1.0 / max(1.0, speed))
+                             marker_lifetime_s=1.0 / max(1.0, speed),
+                             panel_stagger=stagger)
     try:
         sampler.spin_for(SETTLE_S)
         sampler.reset_score()
@@ -783,10 +796,11 @@ def run_case(stack, speed, spin_hz, duration, hit_radius):
         sampler.destroy_node()
     with open(stack.shots_path, 'a') as f:
         for rec in sampler.shot_records:
-            f.write(json.dumps({'speed': speed, 'spin_hz': round(spin_hz, 3), **rec}) + '\n')
+            f.write(json.dumps({'speed': speed, 'spin_hz': round(spin_hz, 3),
+                                'panel_stagger_m': stagger, **rec}) + '\n')
     with open(stack.panel_hits_path, 'a') as f:
         f.write(json.dumps({'speed': speed, 'spin_hz': round(spin_hz, 3),
-                            'panels': list(PANEL_NAMES),
+                            'panel_stagger_m': stagger, 'panels': list(PANEL_NAMES),
                             'hits_per_rotation': panel_hits_per_rotation(sampler)}) + '\n')
     return sampler, dropped
 

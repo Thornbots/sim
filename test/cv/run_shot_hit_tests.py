@@ -56,6 +56,10 @@ def main():
                         help='skip the speed=0/spin=0 baseline case')
     parser.add_argument('--only-stationary', action='store_true',
                         help='run only the speed=0/spin=0 baseline case')
+    parser.add_argument('--panel-layout', choices=['flat', 'staggered', 'both'],
+                        default='both',
+                        help='target panel heights: flat, staggered by 90%% of '
+                             'a panel, or both')
     parser.add_argument('--log-dir', default='/tmp/shot_hit_test_logs')
     args, extra = parser.parse_known_args()
 
@@ -63,7 +67,7 @@ def main():
            '-m', 'integration', '-v', '-s']
     if args.speeds:
         cmd += ['--shot-speeds', ','.join(str(v) for v in args.speeds)]
-    cmd += ['--log-dir', args.log_dir]
+    cmd += ['--log-dir', args.log_dir, '--panel-layout', args.panel_layout]
     if args.duration is not None:
         cmd += ['--shot-duration', str(args.duration)]
     if args.hit_radius is not None:
