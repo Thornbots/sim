@@ -52,6 +52,7 @@ from geometry_msgs.msg import Point
 from nav_msgs.msg import Odometry
 import numpy as np
 import rclpy
+from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
@@ -299,7 +300,7 @@ class ShotHitSampler(Node):
     once ground-truth data at/after its estimated impact time arrives.
     """
 
-    def __init__(self, hit_radius, marker_every=1):
+    def __init__(self, hit_radius, marker_lifetime_s=5.0):
         # use_sim_time, or marker headers get stamped with wall-clock time
         # while the rest of the stack (sim, amcl's map->odom TF) runs on
         # sim time -- rviz then can't resolve the marker's TF at its
@@ -310,7 +311,7 @@ class ShotHitSampler(Node):
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
             automatically_declare_parameters_from_overrides=True)
         self.hit_radius = hit_radius
-        self.marker_every = marker_every  # draw every Nth shot; all are scored
+        self.marker_lifetime = Duration(seconds=marker_lifetime_s).to_msg()
 
         self._root_pos = None
         self._root_rot = None
@@ -488,8 +489,7 @@ class ShotHitSampler(Node):
             self.miss_distances.append(best_miss)
             if hit:
                 self.hits += 1
-            if (len(self.miss_distances) - 1) % self.marker_every == 0:
-                self._publish_shot_marker(hit, best_ray_pt, best_panel_pt)
+            self._publish_shot_marker(hit, best_ray_pt, best_panel_pt)
         self._pending_shots = still_pending
 
     def _publish_shot_marker(self, hit, ray_pt, panel_pt):
@@ -518,7 +518,7 @@ class ShotHitSampler(Node):
             marker.color.r, marker.color.g, marker.color.b = 0.0, 1.0, 0.0
         else:
             marker.color.r, marker.color.g, marker.color.b = 1.0, 0.0, 0.0
-        marker.lifetime.sec = 5
+        marker.lifetime = self.marker_lifetime
         markers = [marker]
 
         if not hit:
@@ -535,7 +535,7 @@ class ShotHitSampler(Node):
             # shaft diameter, head diameter, head length
             arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.01, 0.03, 0.05
             arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = 1.0, 0.5, 0.0, 1.0
-            arrow.lifetime.sec = 5
+            arrow.lifetime = self.marker_lifetime
             markers.append(arrow)
 
         self._shot_marker_id += 1
@@ -665,8 +665,9 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
 
     # rclpy.init()/shutdown() is the caller's (the `ros_context`
     # fixture's), so several cases can run under one context.
-    # Fast targets fire more shots across a wider area; thin their rviz markers.
-    sampler = ShotHitSampler(hit_radius=hit_radius, marker_every=max(1, round(speed)))
+    # Fast targets scatter shots across the view, so their markers expire sooner.
+    sampler = ShotHitSampler(hit_radius=hit_radius,
+                             marker_lifetime_s=5.0 / max(1.0, speed))
     try:
         sim.start()
         sampler.wait_until(
