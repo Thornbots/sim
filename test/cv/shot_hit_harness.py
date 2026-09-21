@@ -66,7 +66,7 @@ TRUTH_HISTORY_S = 1.0  # ground truth kept for interpolating impact-time poses
 FIRE_LATENCY_S = 0.05
 
 DEFAULT_SPEEDS = [0.5, 1.0, 2.0, 4.0]
-DEFAULT_DURATION = 15.0  # sim-time seconds of steady-state sampling per case
+DEFAULT_DURATION = 25.0  # sim-time seconds of steady-state sampling per case
 DEFAULT_LOG_DIR = '/tmp/shot_hit_test_logs'
 # The stationary case (speed=0, spin=0) is the harness's own sanity
 # check, not a tracking/prediction difficulty: a working pipeline hits a
