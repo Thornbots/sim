@@ -40,6 +40,7 @@ thornbots_pkg/README.md) to set fire=True on one.
 Shots are observed today, so "zero shots" means something in the
 launched stack is actually broken.
 """
+import json
 import math
 import os
 import shlex
@@ -159,6 +160,7 @@ _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
 # the FK constants above.
 _PANEL_OFFSETS_RAD = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
 _PANEL_USES_RADIUS_X = (True, False, True, False)
+PANEL_NAMES = ('front', 'left', 'back', 'right')  # _PANEL_OFFSETS_RAD order
 PANEL_RADIUS_X = 0.30  # chassis-center-to-panel offset, front/back
 PANEL_RADIUS_Y = 0.24  # chassis-center-to-panel offset, left/right
 # Small Armor Module is a flat 0.1m x 0.1m square (ARCC_2026_SENTRY_CONTEXT.md
@@ -305,10 +307,11 @@ class ShotHitSampler(Node):
         self._target_rot = None
 
         self._pending_shots = []
-        self._unlaunched = []  # [exit_time] of shots still inside FIRE_LATENCY_S
+        self._unlaunched = []  # fire info of shots still inside FIRE_LATENCY_S
         self.shots_fired = 0
         self.hits = 0
         self.miss_distances = []
+        self.shot_records = []  # one dict per scored shot; see _shot_record
         self._shot_marker_id = 0
 
         self.create_subscription(Odometry, '/sim/raw_odom', self._on_root_odom, 10)
@@ -347,21 +350,22 @@ class ShotHitSampler(Node):
 
     def _launch_due(self, now_s):
         """Launch commanded shots whose exit time has come, from the muzzle pose then."""
-        due = [t for t in self._unlaunched if t <= now_s]
+        due = [f for f in self._unlaunched if f['exit_time'] <= now_s]
         if not due or self._root_pos is None or self._target_pos is None:
             return
-        self._unlaunched = [t for t in self._unlaunched if t > now_s]
+        self._unlaunched = [f for f in self._unlaunched if f['exit_time'] > now_s]
         muzzle_pos, aim_dir = self._muzzle_pose()
         shot_range = float(np.linalg.norm(self._target_pos - muzzle_pos))
-        for exit_time in due:
+        for fire in due:
             # Resolved once truth covers the latest plausible impact; each
             # panel is then judged at its own arrival time (see _resolve_pending).
             self._pending_shots.append({
-                'fire_time': exit_time,
-                'impact_time': exit_time + (shot_range + 1.0) / MUZZLE_SPEED,
+                'fire_time': fire['exit_time'],
+                'impact_time': fire['exit_time'] + (shot_range + 1.0) / MUZZLE_SPEED,
                 'muzzle_pos': muzzle_pos,
                 'aim_dir': aim_dir,
                 'shot_range': shot_range,
+                'fire': fire,
             })
 
     def _muzzle_pose(self):
@@ -404,6 +408,11 @@ class ShotHitSampler(Node):
 
     def _truth_at(self, t):
         """Target (position, rotation) linearly interpolated to time t from the history."""
+        pos, yaw = self._truth_pos_yaw(t)
+        return pos, _rotation_from_rpy(0.0, 0.0, yaw)
+
+    def _truth_pos_yaw(self, t):
+        """Target position and unwrapped yaw linearly interpolated to time t."""
         hist = self._truth_history
         if t <= hist[0][0]:
             _, pos, yaw = hist[0]
@@ -414,7 +423,7 @@ class ShotHitSampler(Node):
             (t0, p0, y0), (t1, p1, y1) = hist[i - 1], hist[i]
             a = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
             pos, yaw = p0 + a * (p1 - p0), y0 + a * (y1 - y0)
-        return pos, _rotation_from_rpy(0.0, 0.0, yaw)
+        return pos, yaw
 
     def _on_cv_target(self, msg):
         if not msg.fire:
@@ -425,8 +434,12 @@ class ShotHitSampler(Node):
         # The projectile leaves FIRE_LATENCY_S after the commanded fire
         # time, aimed wherever the muzzle points then (_launch_due).
         self.shots_fired += 1
-        self._unlaunched.append(
-            self._stamp_s(msg.header.stamp) + msg.delay_ms / 1000.0 + FIRE_LATENCY_S)
+        self._unlaunched.append({
+            'exit_time': self._stamp_s(msg.header.stamp) + msg.delay_ms / 1000.0 + FIRE_LATENCY_S,
+            'delay_ms': int(msg.delay_ms),
+            'lead_applied': bool(msg.lead_applied),
+            'track_valid': bool(msg.track_valid),
+        })
 
     def _resolve_pending(self, now_s):
         still_pending = []
@@ -461,20 +474,59 @@ class ShotHitSampler(Node):
                 to_muzzle = shot['muzzle_pos'] - panel_pos
                 to_muzzle_norm = to_muzzle / (np.linalg.norm(to_muzzle) + 1e-9)
                 incidence = math.acos(np.clip(np.dot(panel_normal, to_muzzle_norm), -1.0, 1.0))
-                cand = (miss, closest_on_ray, panel_pos)
+                cand = (miss, closest_on_ray, panel_pos, k, incidence, t_arrive)
                 if nearest_any is None or miss < nearest_any[0]:
                     nearest_any = cand
                 if incidence <= PANEL_EXPOSURE_HALF_ANGLE and (
                         nearest_facing is None or miss < nearest_facing[0]):
                     nearest_facing = cand
 
-            best_miss, best_ray_pt, best_panel_pt = nearest_facing or nearest_any
+            best = nearest_facing or nearest_any
+            best_miss, best_ray_pt, best_panel_pt = best[:3]
             hit = nearest_facing is not None and best_miss <= self.hit_radius
             self.miss_distances.append(best_miss)
             if hit:
                 self.hits += 1
+            self.shot_records.append(
+                self._shot_record(shot, best, hit, nearest_facing is not None))
             self._publish_shot_marker(hit, best_ray_pt, best_panel_pt)
         self._pending_shots = still_pending
+
+    def _shot_record(self, shot, best, hit, any_facing):
+        """
+        Describe one scored shot for shots.jsonl: how far and which way it missed.
+
+        panel_*_of_shot_m split the miss (panel minus nearest ray point) into
+        the shooter's right, up, and the target's direction of travel, so a
+        positive panel_ahead_of_shot_m means the shot trailed a moving target.
+        """
+        miss, ray_pt, panel_pt, k, incidence, t_arrive = best
+        miss_vec = panel_pt - ray_pt
+        right = np.cross(shot['aim_dir'], np.array([0.0, 0.0, 1.0]))
+        right /= np.linalg.norm(right) + 1e-9
+        p0, _ = self._truth_at(t_arrive - 0.02)
+        p1, _ = self._truth_at(t_arrive + 0.02)
+        vel = (p1 - p0) / 0.04
+        speed = float(np.linalg.norm(vel))
+        # Full target turns since this sampler's first truth sample.
+        rotation = int(math.floor(
+            (self._truth_pos_yaw(t_arrive)[1] - self._truth_history[0][2]) / (2.0 * math.pi)))
+        ahead = float(np.dot(miss_vec, vel / speed)) if speed > 0.05 else 0.0
+        return {
+            't_fire': round(shot['fire_time'], 4),
+            'hit': hit,
+            'miss_m': round(miss, 4),
+            'panel_right_of_shot_m': round(float(np.dot(miss_vec, right)), 4),
+            'panel_above_shot_m': round(float(miss_vec[2]), 4),
+            'panel_ahead_of_shot_m': round(ahead, 4),
+            'any_panel_facing': any_facing,
+            'panel': k,
+            'rotation': rotation,
+            'incidence_deg': round(math.degrees(incidence), 1),
+            'range_m': round(shot['shot_range'], 3),
+            'target_vel': [round(float(v), 3) for v in vel[:2]],
+            **{k: v for k, v in shot['fire'].items() if k != 'exit_time'},
+        }
 
     def _publish_in_flight(self):
         """Draw every airborne shot as a yellow dot at its current position."""
@@ -550,6 +602,7 @@ class ShotHitSampler(Node):
         self.shots_fired = 0
         self.hits = 0
         self.miss_distances = []
+        self.shot_records = []
         self._pending_shots = []
         self._unlaunched = []
 
@@ -630,6 +683,10 @@ class CvStack:
                               log(name))
 
         self.sim = LaunchTree('sim', sim_cmd, log('sim'))
+        # One JSON line per scored shot, across the whole run; see _shot_record.
+        self.shots_path = os.path.join(log_dir, 'shots.jsonl')
+        # Per case, hits on each panel in each target rotation (info only).
+        self.panel_hits_path = os.path.join(log_dir, 'panel_hits.jsonl')
         # Full production pipeline standalone (auto.launch.py's CV node set
         # without dji_serial_bridge/lidar/localization): target_selector groups
         # and picks from the emulator's panel_detections, target_tracker
@@ -664,6 +721,8 @@ class CvStack:
             SetParameters, '/target_driver/set_parameters')
 
     def start(self):
+        open(self.shots_path, 'w').close()
+        open(self.panel_hits_path, 'w').close()
         probe = ShotHitSampler(hit_radius=0.0)
         try:
             self.sim.start()
@@ -722,7 +781,27 @@ def run_case(stack, speed, spin_hz, duration, hit_radius):
     finally:
         dropped = sampler.finish()
         sampler.destroy_node()
+    with open(stack.shots_path, 'a') as f:
+        for rec in sampler.shot_records:
+            f.write(json.dumps({'speed': speed, 'spin_hz': round(spin_hz, 3), **rec}) + '\n')
+    with open(stack.panel_hits_path, 'a') as f:
+        f.write(json.dumps({'speed': speed, 'spin_hz': round(spin_hz, 3),
+                            'panels': list(PANEL_NAMES),
+                            'hits_per_rotation': panel_hits_per_rotation(sampler)}) + '\n')
     return sampler, dropped
+
+
+def panel_hits_per_rotation(sampler):
+    """Return [[front, left, back, right] hits] for each target rotation with a scored shot."""
+    rotations = [r['rotation'] for r in sampler.shot_records]
+    if not rotations:
+        return []
+    first = min(rotations)
+    table = [[0] * 4 for _ in range(max(rotations) - first + 1)]
+    for r in sampler.shot_records:
+        if r['hit']:
+            table[r['rotation'] - first][r['panel']] += 1
+    return table
 
 
 def score(sampler, duration):
@@ -751,4 +830,19 @@ def summarize(label, sampler, dropped, duration):
         f'hits={sampler.hits:4d} ({hit_pct:5.1f}% of fired, {per_expected:5.1%} of expected) | '
         f'miss mean={miss_mean:6.3f} m | dropped={dropped}'
     )
+    misses = [r for r in sampler.shot_records if not r['hit']]
+    if misses:
+        def mean(key):
+            return sum(r[key] for r in misses) / len(misses)
+        no_facing = sum(not r['any_panel_facing'] for r in misses) / len(misses)
+        print(f'{"":30s} | misses: panel right {mean("panel_right_of_shot_m"):+.3f} m, '
+              f'above {mean("panel_above_shot_m"):+.3f} m, '
+              f'ahead {mean("panel_ahead_of_shot_m"):+.3f} m of the shot; '
+              f'{no_facing:.0%} with no panel facing')
+    table = panel_hits_per_rotation(sampler)
+    if table:
+        totals = [sum(row[k] for row in table) for k in range(4)]
+        per_rot = ', '.join(f'{name} {n} ({n / len(table):.2f}/rot)'
+                            for name, n in zip(PANEL_NAMES, totals))
+        print(f'{"":30s} | panel hits over {len(table)} rotations: {per_rot}')
     return total
