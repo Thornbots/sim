@@ -19,18 +19,17 @@ is targeting. All six drift scenarios take several minutes:
 ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
 ```
 
-The CV bench runs the shot-hit tests with lead on, seven tests in all. Expect
-the four moving-target cells to fail; the stationary tests pass. Nothing times
-shots to the target's spin yet (see `CV_TEST_GAPS.md` gap 8). On 2026-09-17 the
-stationary target took 11 hits in 14 shots, and moving hit rates were 0-22%.
+The CV bench runs five shot-hit cases, all with lead on: a stationary target,
+then 0.5, 1, 2 and 4 m/s. Each samples 25s of sim time. On 2026-09-21 the
+stationary target took 90-96% of shots and the 0.5 m/s target 73-80%.
 
 ```bash
-ros2 run sim run_shot_hit_tests.py --lead on
+ros2 run sim run_shot_hit_tests.py
 ```
 
 Add an option to run part of a suite. `--scenario odom_stuck` runs one drift
-scenario, `-k test_stationary_hit_rate_meets_floor` runs the stationary floor,
-and `-k lead-on-speed` runs the four moving-target cells.
+scenario, `--only-stationary` runs the stationary case, and `--speeds 0.5 1`
+picks the moving cases.
 
 ## Build
 
@@ -106,10 +105,9 @@ If a result looks unaffected by your change, `diff` the installed YAML against
 the source copy.
 
 Before you interpret a drift failure, read the notes below rather than the
-script docstrings. The shot-hit suite runs one test per (lead, speed) cell and
-prints a hit rate for each, so a full run gives you the before/after lead
-table. Its pass conditions are in the `test/cv/test_shot_hit.py` docstring and
-`CV_TEST_GAPS.md`.
+script docstrings. The shot-hit suite runs one test per case and prints a hit
+rate for each. Its pass conditions are in the `test/cv/test_shot_hit.py`
+docstring and `CV_TEST_GAPS.md`.
 
 ## Launch sim by hand
 

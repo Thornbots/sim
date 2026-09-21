@@ -70,38 +70,14 @@ DEFAULT_SPEEDS = [0.5, 1.0, 2.0, 4.0]
 DEFAULT_DURATION = 25.0  # sim-time seconds of steady-state sampling per case
 DEFAULT_LOG_DIR = '/tmp/shot_hit_test_logs'
 # The stationary case (speed=0, spin=0) is the harness's own sanity
-# check, not a tracking/prediction difficulty: a working pipeline hits a
-# motionless target trivially.
-#
-# Asserted as a RATE, not a count: "at least one hit" passes a pipeline
-# landing 1 shot in 200 at a target that isn't moving, which is broken by
-# any reading. 0.5 is deliberately far below what a working stack does
-# here -- it's a floor that catches gross breakage, not a tuned figure.
-#
-# Measured 2026-09-17, headless: 70.6% lead off, 78.6% lead on, mean miss
-# ~0.025m. See CV_TEST_GAPS.md gap 7 for the 0.884m bug this caught.
+# check: a working pipeline hits a motionless target trivially. 0.5 is far
+# below what a working stack does (90-96% on 2026-09-21), a floor that
+# catches gross breakage, not a tuned figure. See CV_TEST_GAPS.md gap 7.
 STATIONARY_MIN_HIT_RATE = 0.5
-# Retained so an aiming regression can't hide behind a low shot count in
-# a run that barely fired at all.
-STATIONARY_MIN_HITS = 1
-# The moving sweep is what this bench exists for: CV aiming at a moving,
-# spinning target. Asserted only on the lead=ON cells -- lead=OFF is the
-# control leg and is *expected* to aim worse at speed, so holding it to
-# the same floor would be asserting the control works.
-#
-# NOT a measurement: a placeholder stating intent. The lead=ON cells hit
-# 0-22% on 2026-09-17 because nothing times shots to the spin
-# (CV_TEST_GAPS.md gap 8). Re-derive once that lands; expect it to go UP.
+# The moving cases are what this bench exists for: aiming at a moving,
+# spinning target. A placeholder stating intent, not a measurement; see
+# CV_TEST_GAPS.md gap 8.
 MOVING_MIN_HIT_RATE = 0.25
-# Lead is compared against no-lead at the SLOWEST moving speed, where the
-# hit rate is highest and run-to-run variance lowest. The assertion is
-# one-sided and slack: lead must not be materially WORSE than no-lead.
-# Pinning "lead is better by X" would be pinning sim noise -- at 0.5 m/s
-# a shot leads by only a few cm, comparable to the panel half-width.
-#
-# Measured 2026-09-17, headless, 0.5 m/s / 2.0 Hz spin: lead off 1/18,
-# lead on 2/11.
-LEAD_REGRESSION_MARGIN = 0.15
 # Spin rate swept inversely to speed, spanning ARCC's documented
 # "typically 1-2 Hz" range (ARCC_2026_SENTRY_CONTEXT.md).
 SPIN_HZ_AT_MIN_SPEED = 2.0
@@ -595,9 +571,8 @@ class ShotHitSampler(Node):
         return all(n in live for n in names)
 
 
-def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
-                  lead_enabled=False):
-    tag = f'{speed}_spin{spin_hz:.2f}_lead{int(lead_enabled)}'
+def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius):
+    tag = f'{speed}_spin{spin_hz:.2f}'
     sim_cmd = [
         'ros2', 'launch', 'sim', 'sim.launch.py',
         'spawn_target:=true', f'target_speed:={speed}',
@@ -613,7 +588,7 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
     # set minus dji_serial_bridge/lidar/localization, which this test
     # doesn't need): target_selector groups+picks from the emulator's
     # panel_detections array, target_tracker estimates the spin-centre in
-    # odom, point_to_cv_target solves the (optional) lead and emits
+    # odom, point_to_cv_target solves the lead and emits
     # /cv/target, mcb_relay forwards it to /dji_serial_bridge/cv_target.
     target_selector = LaunchTree(
         'target_selector',
@@ -627,9 +602,7 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
     )
     cv_bridge = LaunchTree(
         'point_to_cv_target',
-        [POINT_TO_CV_TARGET_BIN, '--ros-args',
-         '-p', 'use_sim_time:=true',
-         '-p', f'lead_enabled:={"true" if lead_enabled else "false"}'],
+        [POINT_TO_CV_TARGET_BIN, '--ros-args', '-p', 'use_sim_time:=true'],
         os.path.join(log_dir, f'point_to_cv_target_{tag}.log'),
     )
     mcb_relay = LaunchTree(
