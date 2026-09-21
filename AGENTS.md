@@ -37,12 +37,14 @@ runs the unit tests only:
   colcon test --packages-select sim --pytest-args ' -m integration'
 ```
 
-Each suite keeps an argparse wrapper that re-invokes pytest, so the old command
-lines still work and `--help` still lists the per-suite flags:
+The drift suite keeps an argparse wrapper that re-invokes pytest. The
+shot-hit bench is a launch file that runs the stack and pytest as one tree, so
+`kill_launch.sh <pid>` on it stops everything (`--show-args` lists its flags):
 
 ```bash
 ../isaac_ros_common/scripts/dexec.sh -- \
   ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
+../isaac_ros_common/scripts/dexec.sh -d -- ros2 launch sim shot_hit.launch.py
 ```
 
 Every scenario failing "stack NOT ready" means the container has the old

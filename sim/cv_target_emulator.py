@@ -161,7 +161,7 @@ _PANEL_USES_RADIUS_X = (True, False, True, False)  # front/back vs left/right
 # Small Armor Module (Standard-class, most ARCC opponents) approximated as
 # a flat 0.1m x 0.1m square. NOT sourced from ARCC_2026_SENTRY_CONTEXT.md --
 # that doc gives mounting angle/height/offsets but no panel face dimensions
-# (checked 2026-07-29). This is the pass/fail line for run_shot_hit_tests.py's
+# (checked 2026-07-29). This is the pass/fail line for shot_hit_harness.py's
 # DEFAULT_HIT_RADIUS = PANEL_SIZE/2, so treat any hit-rate number as
 # calibrated on an approximation, not a confirmed spec, until a real
 # dimension is found.
@@ -184,7 +184,7 @@ class CvTargetEmulator(Node):
         self.declare_parameter('image_height', 480)
         self.declare_parameter('range_near', 0.1)
         self.declare_parameter('range_far', 10.0)
-        # Restored to non-zero (plan Phase 6) so run_shot_hit_tests.py's
+        # Restored to non-zero (plan Phase 6) so shot_hit_harness.py's
         # hit-rate is transferable rather than a noiseless-sim artifact.
         # publish_latency_s=0.06 is a placeholder pending a real measurement
         # from point_to_cv_target's LatencyStat (plan verification item 9) --

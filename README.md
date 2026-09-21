@@ -38,12 +38,16 @@ left, back, right) in each target rotation. It is for reading, not scoring.
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash
-ros2 run sim run_shot_hit_tests.py
+ros2 launch sim shot_hit.launch.py
 ```
 
+The bench is one launch tree: the sim, the CV pipeline and the pytest that
+scores it. It shuts down when the tests finish, and Ctrl-C stops all of it.
+
 Add an option to run part of a suite. `--scenario odom_stuck` runs one drift
-scenario, `--only-stationary` runs the stationary case, and `--speeds 0.5 1`
-picks the moving cases.
+scenario. For the bench, `only_stationary:=true` runs the stationary case,
+`speeds:='0.5 1'` picks the moving cases, and `headless:=true` drops the gz
+GUI and rviz. `ros2 launch sim shot_hit.launch.py --show-args` lists the rest.
 
 ## Build
 
@@ -96,7 +100,8 @@ colcon test-result --verbose
 
 Each drift test launches gz-sim and `thornbots_pkg`, runs for tens of seconds,
 and shuts both down before the next test starts. The shot-hit suite launches
-them once for all its cases. ROS topics are shared
+them once for all its cases, through `shot_hit.launch.py run_tests:=false`
+when pytest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
 the measurements.
 

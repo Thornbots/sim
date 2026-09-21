@@ -18,7 +18,7 @@ Black-box shot-hit machinery: launches the sim plus the production CV pipeline.
 Scores each firing CVTarget on /dji_serial_bridge/cv_target, knowing
 nothing about how thornbots_pkg predicts (see sim/README.md's ## Notes for
 why). Importable only -- test_shot_hit.py holds the assertions and
-run_shot_hit_tests.py is the argparse wrapper.
+launch/shot_hit.launch.py defines the stack and runs them.
 
 For each shot: computes the muzzle pose (from /sim/raw_odom +
 /sim/raw_joint_states, the same fixed FK chain cv_target_emulator.py
@@ -89,20 +89,6 @@ MOVING_MIN_HIT_RATE = 0.25
 # "typically 1-2 Hz" range (ARCC_2026_SENTRY_CONTEXT.md).
 SPIN_HZ_AT_MIN_SPEED = 2.0
 SPIN_HZ_AT_MAX_SPEED = 1.0
-
-POINT_TO_CV_TARGET_BIN = (
-    '/workspaces/isaac_ros-dev/install/thornbots_pkg/lib/thornbots_pkg/point_to_cv_target'
-)
-MCB_RELAY_BIN = (
-    '/workspaces/isaac_ros-dev/install/thornbots_pkg/lib/thornbots_pkg/mcb_relay'
-)
-TARGET_SELECTOR_BIN = (
-    '/workspaces/isaac_ros-dev/install/thornbots_pkg/lib/thornbots_pkg/target_selector'
-)
-TARGET_TRACKER_BIN = (
-    '/workspaces/isaac_ros-dev/install/thornbots_pkg/lib/thornbots_pkg/target_tracker'
-)
-CV_RVIZ_CONFIG = '/workspaces/isaac_ros-dev/install/sim/share/sim/rviz/cv_target.rviz'
 
 
 # Same fixed FK chain as cv_target_emulator.py's _camera_pose (root -> body
@@ -667,57 +653,25 @@ class CvStack:
     """
     The sim plus the production CV pipeline, launched once and reused for every case.
 
+    launch/shot_hit.launch.py defines the stack. With external=True that launch
+    is already running (it started this pytest) and this only waits for it;
+    otherwise this starts it with run_tests:=false as one process group.
     Between cases only target_driver's target_speed/spin_hz change (it reads
     both every tick), so the target keeps its place and the stack its state.
     """
 
-    def __init__(self, headless, log_dir):
-        sim_cmd = ['ros2', 'launch', 'sim', 'sim.launch.py', 'spawn_target:=true',
-                   'target_speed:=0.0', 'target_spin_hz:=0.0']
-        if headless:
-            sim_cmd += ['gui:=false', 'rviz:=false']
-        else:
-            sim_cmd.append(f'rviz_config:={CV_RVIZ_CONFIG}')
-
-        def log(name):
-            return os.path.join(log_dir, f'{name}.log')
-
-        def node(name, binary):
-            return LaunchTree(name, [binary, '--ros-args', '-p', 'use_sim_time:=true'],
-                              log(name))
-
-        self.sim = LaunchTree('sim', sim_cmd, log('sim'))
+    def __init__(self, headless, log_dir, external=False):
+        self.launch = None
+        if not external:
+            self.launch = LaunchTree(
+                'stack',
+                ['ros2', 'launch', 'sim', 'shot_hit.launch.py', 'run_tests:=false',
+                 f'headless:={str(headless).lower()}'],
+                os.path.join(log_dir, 'stack.log'))
         # One JSON line per scored shot, across the whole run; see _shot_record.
         self.shots_path = os.path.join(log_dir, 'shots.jsonl')
         # Per case, hits on each panel in each target rotation (info only).
         self.panel_hits_path = os.path.join(log_dir, 'panel_hits.jsonl')
-        # Full production pipeline standalone (auto.launch.py's CV node set
-        # without dji_serial_bridge/lidar/localization): target_selector groups
-        # and picks from the emulator's panel_detections, target_tracker
-        # estimates the spin centre in odom, point_to_cv_target solves the lead
-        # and emits /cv/target, mcb_relay forwards it to
-        # /dji_serial_bridge/cv_target.
-        self.pipeline = [
-            node('target_selector', TARGET_SELECTOR_BIN),
-            node('target_tracker', TARGET_TRACKER_BIN),
-            LaunchTree('point_to_cv_target',
-                       [POINT_TO_CV_TARGET_BIN, '--ros-args', '-p', 'use_sim_time:=true',
-                        '-p', f'cv_target_publish_rate_hz:={TEST_FIRE_HZ}',
-                        '-p', f'fire_rate_hz:={TEST_FIRE_HZ + 10.0}'],
-                       log('point_to_cv_target')),
-            node('mcb_relay', MCB_RELAY_BIN),
-        ]
-        # TF chain: sim runs no robot_state_publisher, and target_tracker's and
-        # point_to_cv_target's TF lookups need one. The enable_*:=false args
-        # skip auto.launch.py's own copies of the three CV nodes above, which
-        # would double-publish; localization_mode:=none skips map_server/amcl.
-        self.robot_tf = LaunchTree(
-            'robot_tf',
-            ['ros2', 'launch', 'thornbots_pkg', 'auto.launch.py',
-             'real_hardware:=false', 'localization_mode:=none', 'use_ekf:=false',
-             'enable_cv_target_bridge:=false', 'enable_target_selector:=false',
-             'enable_target_tracker:=false'],
-            log('robot_tf'))
         self.node = rclpy.create_node(
             'shot_hit_stack',
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
@@ -729,16 +683,14 @@ class CvStack:
     def start(self):
         open(self.shots_path, 'w').close()
         open(self.panel_hits_path, 'w').close()
+        if self.launch is not None:
+            self.launch.start()
         probe = ShotHitSampler(hit_radius=0.0)
         try:
-            self.sim.start()
             probe.wait_until(
                 lambda: probe._root_pos is not None and probe._target_pos is not None,
-                timeout=30.0,
+                timeout=60.0,
                 description='/sim/raw_odom + /target/ground_truth_odom publishing')
-            self.robot_tf.start()
-            for tree in self.pipeline:
-                tree.start()
             ready = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher',
                      'target_selector', 'target_tracker']
             probe.wait_until(lambda: probe.nodes_up(*ready), timeout=15.0,
@@ -768,10 +720,8 @@ class CvStack:
               f'panel stagger={stagger:.3f} m')
 
     def stop(self):
-        for tree in reversed(self.pipeline):
-            tree.stop()
-        self.robot_tf.stop()
-        self.sim.stop()
+        if self.launch is not None:
+            self.launch.stop()
         self.node.destroy_node()
 
 
