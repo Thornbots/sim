@@ -457,6 +457,7 @@ class ShotHitSampler(Node):
             # projectile reaches it along the ray: at 1-2Hz spin, the
             # nearest truth sample (60Hz) is up to ~9 deg of yaw off.
             pos, rot = self._truth_at(shot['fire_time'] + shot['shot_range'] / MUZZLE_SPEED)
+            centre_at_impact = pos
             arrivals = []
             for panel_pos, _ in _panel_poses(pos, rot):
                 along = float(np.dot(panel_pos - shot['muzzle_pos'], shot['aim_dir']))
@@ -486,20 +487,24 @@ class ShotHitSampler(Node):
             self.miss_distances.append(best_miss)
             if hit:
                 self.hits += 1
-            self._publish_shot_marker(shot, hit)
+            self._publish_shot_marker(shot, hit, centre_at_impact)
         self._pending_shots = still_pending
 
-    def _publish_shot_marker(self, shot, hit):
+    def _publish_shot_marker(self, shot, hit, centre_at_impact):
+        """Sphere where the shot ended (green hit, red miss); a miss adds an arrow to centre."""
         end = shot['muzzle_pos'] + shot['aim_dir'] * shot['shot_range']
+        end_pt = Point(x=float(end[0]), y=float(end[1]), z=float(end[2]))
+        header_frame = self._root_frame_id or 'odom'
+        stamp = self.get_clock().now().to_msg()
+
         marker = Marker()
-        marker.header.frame_id = self._root_frame_id or 'odom'
-        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.header.frame_id = header_frame
+        marker.header.stamp = stamp
         marker.ns = 'shots'
         marker.id = self._shot_marker_id
-        self._shot_marker_id += 1
         marker.type = Marker.SPHERE
         marker.action = Marker.ADD
-        marker.pose.position = Point(x=float(end[0]), y=float(end[1]), z=float(end[2]))
+        marker.pose.position = end_pt
         marker.pose.orientation.w = 1.0
         marker.scale.x = marker.scale.y = marker.scale.z = 0.05
         marker.color.a = 1.0
@@ -508,7 +513,27 @@ class ShotHitSampler(Node):
         else:
             marker.color.r, marker.color.g, marker.color.b = 1.0, 0.0, 0.0
         marker.lifetime.sec = 5
-        self.marker_pub.publish(MarkerArray(markers=[marker]))
+        markers = [marker]
+
+        if not hit:
+            arrow = Marker()
+            arrow.header.frame_id = header_frame
+            arrow.header.stamp = stamp
+            arrow.ns = 'miss_to_centre'
+            arrow.id = self._shot_marker_id
+            arrow.type = Marker.ARROW
+            arrow.action = Marker.ADD
+            arrow.pose.orientation.w = 1.0
+            c = centre_at_impact
+            arrow.points = [end_pt, Point(x=float(c[0]), y=float(c[1]), z=float(c[2]))]
+            # shaft diameter, head diameter, head length
+            arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.01, 0.03, 0.05
+            arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = 1.0, 0.5, 0.0, 1.0
+            arrow.lifetime.sec = 5
+            markers.append(arrow)
+
+        self._shot_marker_id += 1
+        self.marker_pub.publish(MarkerArray(markers=markers))
 
     def finish(self):
         """
