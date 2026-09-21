@@ -20,8 +20,8 @@ Both stack-launching suites (test/localization, test/cv) carry the
 so a plain `colcon test --packages-select sim` stays fast and doesn't
 collide with a live sim session. Opt in with
 `colcon test --packages-select sim --pytest-args ' -m integration'`, or
-use the drift suite's argparse wrapper or `ros2 launch sim
-shot_hit.launch.py`, whose flags map onto the options declared here.
+use `ros2 launch sim localization_tests.launch.py` or `ros2 launch sim
+shot_hit.launch.py`, whose args map onto the options declared here.
 """
 import pytest
 
@@ -32,6 +32,11 @@ def pytest_addoption(parser):
         '--headless', action='store_true',
         help="skip gz-sim's GUI window and rviz2 (both on by default, per "
              'sim/AGENTS.md\'s standing "watch sim live" rule)')
+    group.addoption(
+        '--real-time-factor', default='0',
+        help="sim.launch.py's real_time_factor for every stack a suite "
+             'launches; 0 (default) runs unthrottled, the suites time in sim '
+             'seconds')
 
     # test/localization
     group.addoption(
@@ -63,7 +68,7 @@ def pytest_addoption(parser):
         help='per-sample stddev of the odometry drift random walk')
     group.addoption(
         '--ekf-seconds', type=float, default=45.0,
-        help='how long test_ekf_ground_truth.py drives the cornering loop')
+        help='sim seconds test_ekf_ground_truth.py drives the cornering loop')
 
     # test/cv
     group.addoption(

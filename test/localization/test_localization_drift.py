@@ -20,10 +20,11 @@ test per scenario, in suite order; the stack lifecycle and the scenarios
 themselves live in drift_harness.py.
 
 Launches gz-sim and the full sentry stack, so every test here is marked
-`integration` and skipped by a plain `colcon test`. Options: --backend
-{slam,amcl,none}, --use-ekf, --scenario NAME, --headless, --speed M/S (see
-test/conftest.py). See README.md for WHY THIS EXISTS, BACKENDS and
-SCENARIOS.
+`integration` and skipped by a plain `colcon test`;
+`ros2 launch sim localization_tests.launch.py` runs it. Options: --backend
+{slam,amcl,none}, --use-ekf, --scenario NAME, --headless, --speed M/S,
+--real-time-factor (see test/conftest.py). See README.md for WHY THIS
+EXISTS, BACKENDS and SCENARIOS.
 """
 import drift_harness
 import pytest
@@ -61,6 +62,11 @@ def drive_speed(request):
     speed = request.config.getoption('--speed')
     if speed is not None:
         drift_harness.set_drive_speed(speed)
+
+
+@pytest.fixture(scope='module', autouse=True)
+def real_time_factor(request):
+    drift_harness.set_real_time_factor(request.config.getoption('--real-time-factor'))
 
 
 def test_scenario(scenario_name, request, gui, ros_context):

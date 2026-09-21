@@ -16,11 +16,13 @@
 Launches gz sim with the ARCC_Field_2026 world and spawns the sentry robot (sentry_urdf.xacro).
 
 Usage: `ros2 launch sim sim.launch.py [gui:=false] [rviz:=false]
-[world:=/abs/path.sdf] [odom_noise_enabled:=true]`. To fire a one-time
+[world:=/abs/path.sdf] [real_time_factor:=0] [odom_noise_enabled:=true]`. To fire a one-time
 odom "jerk" (odom_jerk_stddev:= sets its size in meters), once sim is up:
 `ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger`.
 """
 import os
+import re
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -28,8 +30,10 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
+    OpaqueFunction,
     RegisterEventHandler,
     SetEnvironmentVariable,
+    SetLaunchConfiguration,
     TimerAction,
 )
 from launch.conditions import IfCondition, UnlessCondition
@@ -38,6 +42,27 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+
+RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
+
+
+def _world_with_rtf(context):
+    """Point `world` at a /tmp copy with real_time_factor:= applied; empty keeps the file's."""
+    rtf = context.launch_configurations['real_time_factor']
+    if not rtf:
+        return []
+    rtf = str(float(rtf))  # reject a typo before gz sees it
+    world = context.launch_configurations['world']
+    with open(world) as f:
+        sdf = f.read()
+    if not RTF_TAG.search(sdf):
+        raise RuntimeError('real_time_factor:= needs a <real_time_factor> tag in the world')
+    stem = os.path.splitext(os.path.basename(world))[0]
+    path = os.path.join(tempfile.gettempdir(), f'{stem}_rtf{rtf}.sdf')
+    with open(path, 'w') as f:
+        f.write(RTF_TAG.sub(f'<real_time_factor>{rtf}</real_time_factor>', sdf))
+    return [SetLaunchConfiguration('world', path)]
 
 
 def generate_launch_description():
@@ -78,6 +103,11 @@ def generate_launch_description():
                     'the images, and they are the heaviest thing it publishes'
     )
     camera_on = IfCondition(LaunchConfiguration('camera'))
+    real_time_factor_arg = DeclareLaunchArgument(
+        'real_time_factor', default_value='',
+        description="Override the world's <real_time_factor>; 0 runs as fast as "
+                    "the machine can, empty keeps the world file's value"
+    )
 
     # --- Optional synthetic wheel-odometry drift injection (pose_emulator.py).
     # Off by default -- sim's /pose stays exact ground truth unless explicitly
@@ -565,6 +595,7 @@ def generate_launch_description():
         rviz_arg,
         rviz_config_arg,
         camera_arg,
+        real_time_factor_arg,
         odom_noise_enabled_arg,
         odom_drift_stddev_arg,
         odom_jitter_stddev_arg,
@@ -582,6 +613,7 @@ def generate_launch_description():
         cv_publish_latency_s_arg,
         gz_resource_path,
         ign_resource_path,
+        OpaqueFunction(function=_world_with_rtf),
         gz_sim,
         gz_sim_headless,
         clock_bridge,

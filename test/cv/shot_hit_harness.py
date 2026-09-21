@@ -673,13 +673,14 @@ class CvStack:
     both every tick), so the target keeps its place and the stack its state.
     """
 
-    def __init__(self, headless, log_dir, external=False):
+    def __init__(self, headless, log_dir, external=False, real_time_factor='0'):
         self.launch = None
         if not external:
             self.launch = LaunchTree(
                 'stack',
                 ['ros2', 'launch', 'sim', 'shot_hit.launch.py', 'run_tests:=false',
-                 f'headless:={str(headless).lower()}'],
+                 f'headless:={str(headless).lower()}',
+                 f'real_time_factor:={real_time_factor}'],
                 os.path.join(log_dir, 'stack.log'))
         # One JSON line per scored shot, across the whole run; see _shot_record.
         self.shots_path = os.path.join(log_dir, 'shots.jsonl')
