@@ -77,10 +77,6 @@ def pytest_addoption(parser):
         '--hit-radius', type=float, default=None,
         help='perpendicular miss distance (m) still counted as a hit')
     group.addoption(
-        '--lead', choices=['off', 'on', 'both'], default='both',
-        help="point_to_cv_target's lead_enabled; 'both' runs every case "
-             'twice for a before/after hit-rate table')
-    group.addoption(
         '--skip-stationary', action='store_true',
         help='skip the speed=0/spin=0 baseline case')
     group.addoption(

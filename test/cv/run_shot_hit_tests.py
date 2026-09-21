@@ -56,11 +56,6 @@ def main():
                         help='skip the speed=0/spin=0 baseline case')
     parser.add_argument('--only-stationary', action='store_true',
                         help='run only the speed=0/spin=0 baseline case')
-    parser.add_argument('--lead', choices=['off', 'on', 'both'],
-                        default='both',
-                        help="point_to_cv_target's lead_enabled -- 'both' "
-                             'runs every case twice for a before/after '
-                             'hit-rate table')
     parser.add_argument('--log-dir', default='/tmp/shot_hit_test_logs')
     args, extra = parser.parse_known_args()
 
@@ -68,7 +63,7 @@ def main():
            '-m', 'integration', '-v', '-s']
     if args.speeds:
         cmd += ['--shot-speeds', ','.join(str(v) for v in args.speeds)]
-    cmd += ['--lead', args.lead, '--log-dir', args.log_dir]
+    cmd += ['--log-dir', args.log_dir]
     if args.duration is not None:
         cmd += ['--shot-duration', str(args.duration)]
     if args.hit_radius is not None:

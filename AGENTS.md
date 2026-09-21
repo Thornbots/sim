@@ -47,7 +47,7 @@ lines still work and `--help` still lists the per-suite flags:
 
 Every scenario failing "stack NOT ready" means the container has the old
 discovery-server DDS profile; see the `isaac-ros-docker` skill. The
-target configs are `--backend amcl --use-ekf` for drift and `--lead on` for
+target configs are `--backend amcl --use-ekf` for drift and the defaults for
 shot-hit; `README.md`'s "Running the current target tests" lists the commands.
 
 `--backend` is `slam`, `amcl`, or `none` (who owns `map->odom`). `--use-ekf` is

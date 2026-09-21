@@ -101,6 +101,10 @@ Both upgrades landed, and running them turned up gap 7 below.
 Both discriminate now that gap 7 is fixed. On 2026-09-17 the stationary
 rate was 78.6% and the lead comparison at 0.5 m/s was off 5.6%, on 18.2%.
 
+On 2026-09-21 the lead-off leg was dropped: the bench runs lead on only, so
+`test_lead_does_not_regress_hit_rate_at_slowest_speed` went with it, and the
+stationary floor moved into the stationary case of `test_shot_hit`.
+
 Beyond the two gap-5 upgrades, the moving sweep now has a pass condition
 of its own (`MOVING_MIN_HIT_RATE`), because aiming at a moving, spinning
 target is what this bench exists for and asserting only `shots_fired > 0`
