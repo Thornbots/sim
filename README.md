@@ -26,6 +26,15 @@ time. The bench fires at up to 40 Hz, far above the real launcher, and scores
 each case on hit rate and hits per expected shot equally (`score()` in
 `test/cv/shot_hit_harness.py`), so falling behind 40 Hz costs points.
 
+Every scored shot goes to `shots.jsonl` in `--log-dir`, one JSON object per
+line: the case, whether it hit, the miss distance split into the panel's
+offset right of, above and ahead of the shot (ahead is along the target's
+travel, so positive means the shot trailed), the panel and incidence angle,
+the target's velocity, the target rotation it arrived in, and the `CVTarget`
+fire fields. Each case also prints the mean of those offsets over its misses.
+`panel_hits.jsonl` holds one line per case with the hits on each panel (front,
+left, back, right) in each target rotation. It is for reading, not scoring.
+
 ```bash
 ros2 run sim run_shot_hit_tests.py
 ```
