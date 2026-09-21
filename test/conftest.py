@@ -20,8 +20,8 @@ Both stack-launching suites (test/localization, test/cv) carry the
 so a plain `colcon test --packages-select sim` stays fast and doesn't
 collide with a live sim session. Opt in with
 `colcon test --packages-select sim --pytest-args ' -m integration'`, or
-use the argparse wrappers next to each suite, whose flags map 1:1 onto
-the options declared here.
+use the drift suite's argparse wrapper or `ros2 launch sim
+shot_hit.launch.py`, whose flags map onto the options declared here.
 """
 import pytest
 
@@ -87,7 +87,11 @@ def pytest_addoption(parser):
         help='run only the speed=0/spin=0 baseline case')
     group.addoption(
         '--log-dir', default=None,
-        help='where per-node launch logs are written')
+        help='where the stack log, shots.jsonl and panel_hits.jsonl are written')
+    group.addoption(
+        '--external-stack', action='store_true',
+        help='the stack is already up (shot_hit.launch.py started this pytest); '
+             'wait for it instead of launching one')
 
 
 @pytest.fixture(scope='session')

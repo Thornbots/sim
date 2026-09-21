@@ -31,8 +31,9 @@ falling behind 40 Hz costs points. Floors: STATIONARY_MIN_HIT_RATE for the
 stationary case, MOVING_MIN_HIT_RATE for the moving ones. Do not relax them.
 
 Launches gz-sim, so marked `integration` and skipped by a plain
-`colcon test`. Options: --shot-speeds, --shot-duration, --hit-radius,
---panel-layout, --skip-stationary, --only-stationary, --headless, --log-dir.
+`colcon test`; `ros2 launch sim shot_hit.launch.py` runs it. Options:
+--shot-speeds, --shot-duration, --hit-radius, --panel-layout,
+--skip-stationary, --only-stationary, --headless, --log-dir, --external-stack.
 """
 import os
 
@@ -51,7 +52,8 @@ def cv_stack(request, ros_context):
     config = request.config
     log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
-    stack = harness.CvStack(config.getoption('--headless'), log_dir)
+    stack = harness.CvStack(config.getoption('--headless'), log_dir,
+                            external=config.getoption('--external-stack'))
     try:
         stack.start()
         yield stack
@@ -111,7 +113,8 @@ def test_shot_hit(layout, case, request, cv_stack):
     assert sampler.shots_fired > 0, (
         f'no shots observed in {label} -- something in the launched stack is '
         'broken (mcb_relay not relaying, point_to_cv_target not firing, or a '
-        'node failed to start; check the per-node logs in --log-dir)')
+        'node failed to start; check stack.log in --log-dir, or the launch log '
+        'under ~/.ros/log when run from shot_hit.launch.py)')
     assert total >= floor, (
         f'score {total:.0%} ({label}: {sampler.hits} hits from '
         f'{sampler.shots_fired} shots), below {floor:.0%}; see {floor_name} '

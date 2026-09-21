@@ -63,7 +63,6 @@ setup(
     scripts=[
         'test/localization/run_localization_drift_tests.py',
         'test/localization/ekf_ground_truth_diag.py',
-        'test/cv/run_shot_hit_tests.py',
     ],
     install_requires=['setuptools'],
     zip_safe=True,
