@@ -72,7 +72,7 @@ def pytest_addoption(parser):
              'e.g. 0.5,1,2,4')
     group.addoption(
         '--shot-duration', type=float, default=None,
-        help='seconds of steady-state sampling per shot-hit case')
+        help='seconds of steady-state sampling per shot-hit case (sim time)')
     group.addoption(
         '--hit-radius', type=float, default=None,
         help='perpendicular miss distance (m) still counted as a hit')

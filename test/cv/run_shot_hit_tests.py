@@ -47,7 +47,7 @@ def main():
                         help='target speeds (m/s) for the sweep')
     parser.add_argument('--duration', type=float,
                         help='seconds of steady-state sampling per case '
-                             '(wall-clock)')
+                             '(sim time)')
     parser.add_argument('--hit-radius', type=float,
                         help='perpendicular miss distance (m) still counted '
                              'as a hit')
