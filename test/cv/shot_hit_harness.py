@@ -542,8 +542,8 @@ class ShotHitSampler(Node):
         """
         Sphere where the shot passed nearest a facing panel (green hit, red miss).
 
-        A miss adds an arrow from there to that panel as the shot reached it;
-        its length is the miss distance.
+        An arrow runs from there to that panel's center as the shot reached
+        it (green hit, orange miss); its length is the miss distance.
         """
         end_pt = Point(x=float(ray_pt[0]), y=float(ray_pt[1]), z=float(ray_pt[2]))
         header_frame = self._root_frame_id or 'odom'
@@ -565,27 +565,28 @@ class ShotHitSampler(Node):
         else:
             marker.color.r, marker.color.g, marker.color.b = 1.0, 0.0, 0.0
         marker.lifetime = self.marker_lifetime
-        markers = [marker]
 
-        if not hit:
-            arrow = Marker()
-            arrow.header.frame_id = header_frame
-            arrow.header.stamp = stamp
-            arrow.ns = 'miss_to_panel'
-            arrow.id = self._shot_marker_id
-            arrow.type = Marker.ARROW
-            arrow.action = Marker.ADD
-            arrow.pose.orientation.w = 1.0
-            c = panel_pt
-            arrow.points = [end_pt, Point(x=float(c[0]), y=float(c[1]), z=float(c[2]))]
-            # shaft diameter, head diameter, head length
-            arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.006, 0.02, 0.03
-            arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = 1.0, 0.5, 0.0, 1.0
-            arrow.lifetime = self.marker_lifetime
-            markers.append(arrow)
+        arrow = Marker()
+        arrow.header.frame_id = header_frame
+        arrow.header.stamp = stamp
+        arrow.ns = 'shot_to_panel'
+        arrow.id = self._shot_marker_id
+        arrow.type = Marker.ARROW
+        arrow.action = Marker.ADD
+        arrow.pose.orientation.w = 1.0
+        c = panel_pt
+        arrow.points = [end_pt, Point(x=float(c[0]), y=float(c[1]), z=float(c[2]))]
+        # shaft diameter, head diameter, head length
+        arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.006, 0.02, 0.03
+        if hit:
+            arrow.color.r, arrow.color.g, arrow.color.b = 0.0, 0.6, 0.0
+        else:
+            arrow.color.r, arrow.color.g, arrow.color.b = 1.0, 0.5, 0.0
+        arrow.color.a = 1.0
+        arrow.lifetime = self.marker_lifetime
 
         self._shot_marker_id += 1
-        self.marker_pub.publish(MarkerArray(markers=markers))
+        self.marker_pub.publish(MarkerArray(markers=[marker, arrow]))
 
     def reset_score(self):
         """Forget every shot so far, scored or in flight; ground truth is kept."""
