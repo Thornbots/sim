@@ -7,15 +7,14 @@ spawn the `sentry` robot from `urdf/sentry.urdf.xacro`, and run the real
 
 ## Run the tests
 
-Build first on a fresh container (see Build), and source
-`/workspaces/isaac_ros-dev/install/setup.bash` in the terminal. Each test starts
-its own sim and `thornbots_pkg` stacks, so stop anything you already have
-running.
+Build first on a fresh container (see Build). Each test starts its own sim and
+`thornbots_pkg` stacks, so stop anything you already have running.
 
 The localization suite runs `amcl` with the EKF, the configuration the robot
 is targeting. All six drift scenarios take several minutes:
 
 ```bash
+source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
 ```
 
@@ -38,6 +37,7 @@ fire fields. Each case also prints the mean of those offsets over its misses.
 left, back, right) in each target rotation. It is for reading, not scoring.
 
 ```bash
+source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 run sim run_shot_hit_tests.py
 ```
 
@@ -127,6 +127,7 @@ docstring and `CV_TEST_GAPS.md`.
 ## Launch sim by hand
 
 ```bash
+source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 launch sim sim.launch.py
 ros2 launch sim sim.launch.py gui:=false rviz:=false     # server only
 ros2 launch sim sim.launch.py x:=1.0 y:=0.5 yaw:=0.0     # spawn pose (z:= too)
