@@ -19,9 +19,9 @@
   </link>
   <link name="head">
     <inertial>
-      <mass value="0.00414744"/>
+      <mass value="0.00103686"/>
       <origin xyz="-0.00211769 -0.00164536 0.0741316" rpy="0 -0 1.18195"/>
-      <inertia ixx="2.08028e-05" ixy="-3.50322e-06" ixz="-4.24357e-08" iyy="1.60288e-05" iyz="-3.29709e-08" izz="2.21034e-05"/>
+      <inertia ixx="5.2007e-06" ixy="-8.75805e-07" ixz="-1.06089e-08" iyy="4.0072e-06" iyz="-8.24272e-09" izz="5.52585e-06"/>
     </inertial>
     <visual>
       <origin xyz="-2.54975e-18 1.04465e-18 0" rpy="0 -0 1.18195"/>
@@ -35,9 +35,9 @@
   </link>
   <link name="lidar">
     <inertial>
-      <mass value="0.00018588"/>
+      <mass value="4.647e-05"/>
       <origin xyz="2.43997e-19 -6.96211e-19 0.02065" rpy="0 -0 1.90788"/>
-      <inertia ixx="9.29949e-08" ixy="0" ixz="0" iyy="9.29949e-08" iyz="0" izz="1.33148e-07"/>
+      <inertia ixx="2.32487e-08" ixy="0" ixz="0" iyy="2.32487e-08" iyz="0" izz="3.3287e-08"/>
     </inertial>
     <visual>
       <origin xyz="2.18721e-18 7.6654e-19 0" rpy="0 -0 1.90788"/>
@@ -54,18 +54,18 @@
        own, just a bare kinematic link the camera is fastened to. -->
   <link name="head_pitch">
     <inertial>
-      <mass value="0.005"/>
+      <mass value="0.00125"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <inertia ixx="1e-06" ixy="0" ixz="0" iyy="1e-06" iyz="0" izz="1e-06"/>
+      <inertia ixx="2.5e-07" ixy="0" ixz="0" iyy="2.5e-07" iyz="0" izz="2.5e-07"/>
     </inertial>
   </link>
   <!-- Approximates a RealSense D435 (90x25x25mm, 72g); no mesh exists for
        it yet so a plain box visual stands in until one is added. -->
   <link name="camera">
     <inertial>
-      <mass value="0.072"/>
+      <mass value="0.018"/>
       <origin xyz="0 0 0" rpy="0 0 0"/>
-      <inertia ixx="1.05e-05" ixy="0" ixz="0" iyy="5.4e-05" iyz="0" izz="5.4e-05"/>
+      <inertia ixx="2.625e-06" ixy="0" ixz="0" iyy="1.35e-05" iyz="0" izz="1.35e-05"/>
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -152,7 +152,8 @@
        active force control. -->
   <link name="root">
     <inertial>
-      <mass value="0.0507536"/>
+      <!-- ~9 kg, the real robot's mass, so the head's reaction barely moves it. -->
+      <mass value="8.9"/>
       <origin xyz="-2.33205e-05 -3.02404e-05 0.160359" rpy="0 -0 0"/>
       <inertia ixx="2.26416" ixy="0" ixz="0" iyy="2.26416" iyz="0" izz="2.26416"/>
     </inertial>
@@ -384,13 +385,13 @@
     <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
       <joint_name>headlink</joint_name>
       <topic>/model/sentry/joint/headlink/cmd_pos</topic>
-      <p_gain>300.0</p_gain>
+      <p_gain>75</p_gain>
       <i_gain>0.0</i_gain>
-      <d_gain>0.5</d_gain>
+      <d_gain>0.125</d_gain>
       <i_max>0</i_max>
       <i_min>0</i_min>
-      <cmd_max>200</cmd_max>
-      <cmd_min>-200</cmd_min>
+      <cmd_max>50</cmd_max>
+      <cmd_min>-50</cmd_min>
     </plugin>
     <!-- Same idea as headlink's controller above: publish a target angle
          (rad, within headpitch's +/-0.6 limit) on
@@ -399,13 +400,13 @@
     <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
       <joint_name>headpitch</joint_name>
       <topic>/model/sentry/joint/headpitch/cmd_pos</topic>
-      <p_gain>300.0</p_gain>
+      <p_gain>75</p_gain>
       <i_gain>0.0</i_gain>
-      <d_gain>0.5</d_gain>
+      <d_gain>0.125</d_gain>
       <i_max>0</i_max>
       <i_min>0</i_min>
-      <cmd_max>200</cmd_max>
-      <cmd_min>-200</cmd_min>
+      <cmd_max>50</cmd_max>
+      <cmd_min>-50</cmd_min>
     </plugin>
     <!-- Lets the chassis actually be driven around in sim manually (e.g.
          sim/wasd_teleop.py). Real hardware moves via the DJI Type-C board
