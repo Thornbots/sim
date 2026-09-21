@@ -463,9 +463,11 @@ class ShotHitSampler(Node):
             for panel_pos, _ in _panel_poses(pos, rot):
                 along = float(np.dot(panel_pos - shot['muzzle_pos'], shot['aim_dir']))
                 arrivals.append(shot['fire_time'] + max(along, 0.0) / MUZZLE_SPEED)
-            best_miss = None
-            best_ray_pt = best_panel_pt = None
-            hit = False
+            # Nearest panel among those facing the muzzle (within the front
+            # 145 degrees, PANEL_EXPOSURE_HALF_ANGLE); the far side can line
+            # up behind a hit but could never register one. Falls back to the
+            # nearest panel of any facing only if none face the shooter.
+            nearest_facing = nearest_any = None
             for k, t_arrive in enumerate(arrivals):
                 pos, rot = self._truth_at(t_arrive)
                 panel_pos, panel_normal = _panel_poses(pos, rot)[k]
@@ -473,19 +475,18 @@ class ShotHitSampler(Node):
                 along = float(np.dot(to_panel, shot['aim_dir']))
                 closest_on_ray = shot['muzzle_pos'] + along * shot['aim_dir']
                 miss = float(np.linalg.norm(panel_pos - closest_on_ray))
-                if best_miss is None or miss < best_miss:
-                    best_miss, best_ray_pt, best_panel_pt = miss, closest_on_ray, panel_pos
-
-                # Exposure-cone check: the shot must also arrive from
-                # within the panel's front 145 degrees, or it couldn't have
-                # registered even if geometrically on-target (see
-                # PANEL_EXPOSURE_HALF_ANGLE).
                 to_muzzle = shot['muzzle_pos'] - panel_pos
                 to_muzzle_norm = to_muzzle / (np.linalg.norm(to_muzzle) + 1e-9)
                 incidence = math.acos(np.clip(np.dot(panel_normal, to_muzzle_norm), -1.0, 1.0))
-                if miss <= self.hit_radius and incidence <= PANEL_EXPOSURE_HALF_ANGLE:
-                    hit = True
+                cand = (miss, closest_on_ray, panel_pos)
+                if nearest_any is None or miss < nearest_any[0]:
+                    nearest_any = cand
+                if incidence <= PANEL_EXPOSURE_HALF_ANGLE and (
+                        nearest_facing is None or miss < nearest_facing[0]):
+                    nearest_facing = cand
 
+            best_miss, best_ray_pt, best_panel_pt = nearest_facing or nearest_any
+            hit = nearest_facing is not None and best_miss <= self.hit_radius
             self.miss_distances.append(best_miss)
             if hit:
                 self.hits += 1
@@ -494,7 +495,7 @@ class ShotHitSampler(Node):
 
     def _publish_shot_marker(self, hit, ray_pt, panel_pt):
         """
-        Sphere where the shot passed nearest a panel (green hit, red miss).
+        Sphere where the shot passed nearest a facing panel (green hit, red miss).
 
         A miss adds an arrow from there to that panel as the shot reached it;
         its length is the miss distance.
@@ -512,7 +513,7 @@ class ShotHitSampler(Node):
         marker.action = Marker.ADD
         marker.pose.position = end_pt
         marker.pose.orientation.w = 1.0
-        marker.scale.x = marker.scale.y = marker.scale.z = 0.05
+        marker.scale.x = marker.scale.y = marker.scale.z = 0.03
         marker.color.a = 1.0
         if hit:
             marker.color.r, marker.color.g, marker.color.b = 0.0, 1.0, 0.0
@@ -533,7 +534,7 @@ class ShotHitSampler(Node):
             c = panel_pt
             arrow.points = [end_pt, Point(x=float(c[0]), y=float(c[1]), z=float(c[2]))]
             # shaft diameter, head diameter, head length
-            arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.01, 0.03, 0.05
+            arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.006, 0.02, 0.03
             arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = 1.0, 0.5, 0.0, 1.0
             arrow.lifetime = self.marker_lifetime
             markers.append(arrow)
