@@ -299,7 +299,7 @@ class ShotHitSampler(Node):
     once ground-truth data at/after its estimated impact time arrives.
     """
 
-    def __init__(self, hit_radius):
+    def __init__(self, hit_radius, marker_every=1):
         # use_sim_time, or marker headers get stamped with wall-clock time
         # while the rest of the stack (sim, amcl's map->odom TF) runs on
         # sim time -- rviz then can't resolve the marker's TF at its
@@ -310,6 +310,7 @@ class ShotHitSampler(Node):
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
             automatically_declare_parameters_from_overrides=True)
         self.hit_radius = hit_radius
+        self.marker_every = marker_every  # draw every Nth shot; all are scored
 
         self._root_pos = None
         self._root_rot = None
@@ -457,12 +458,12 @@ class ShotHitSampler(Node):
             # projectile reaches it along the ray: at 1-2Hz spin, the
             # nearest truth sample (60Hz) is up to ~9 deg of yaw off.
             pos, rot = self._truth_at(shot['fire_time'] + shot['shot_range'] / MUZZLE_SPEED)
-            centre_at_impact = pos
             arrivals = []
             for panel_pos, _ in _panel_poses(pos, rot):
                 along = float(np.dot(panel_pos - shot['muzzle_pos'], shot['aim_dir']))
                 arrivals.append(shot['fire_time'] + max(along, 0.0) / MUZZLE_SPEED)
             best_miss = None
+            best_ray_pt = best_panel_pt = None
             hit = False
             for k, t_arrive in enumerate(arrivals):
                 pos, rot = self._truth_at(t_arrive)
@@ -472,7 +473,7 @@ class ShotHitSampler(Node):
                 closest_on_ray = shot['muzzle_pos'] + along * shot['aim_dir']
                 miss = float(np.linalg.norm(panel_pos - closest_on_ray))
                 if best_miss is None or miss < best_miss:
-                    best_miss = miss
+                    best_miss, best_ray_pt, best_panel_pt = miss, closest_on_ray, panel_pos
 
                 # Exposure-cone check: the shot must also arrive from
                 # within the panel's front 145 degrees, or it couldn't have
@@ -487,13 +488,18 @@ class ShotHitSampler(Node):
             self.miss_distances.append(best_miss)
             if hit:
                 self.hits += 1
-            self._publish_shot_marker(shot, hit, centre_at_impact)
+            if (len(self.miss_distances) - 1) % self.marker_every == 0:
+                self._publish_shot_marker(hit, best_ray_pt, best_panel_pt)
         self._pending_shots = still_pending
 
-    def _publish_shot_marker(self, shot, hit, centre_at_impact):
-        """Sphere where the shot ended (green hit, red miss); a miss adds an arrow to centre."""
-        end = shot['muzzle_pos'] + shot['aim_dir'] * shot['shot_range']
-        end_pt = Point(x=float(end[0]), y=float(end[1]), z=float(end[2]))
+    def _publish_shot_marker(self, hit, ray_pt, panel_pt):
+        """
+        Sphere where the shot passed nearest a panel (green hit, red miss).
+
+        A miss adds an arrow from there to that panel as the shot reached it;
+        its length is the miss distance.
+        """
+        end_pt = Point(x=float(ray_pt[0]), y=float(ray_pt[1]), z=float(ray_pt[2]))
         header_frame = self._root_frame_id or 'odom'
         stamp = self.get_clock().now().to_msg()
 
@@ -519,12 +525,12 @@ class ShotHitSampler(Node):
             arrow = Marker()
             arrow.header.frame_id = header_frame
             arrow.header.stamp = stamp
-            arrow.ns = 'miss_to_centre'
+            arrow.ns = 'miss_to_panel'
             arrow.id = self._shot_marker_id
             arrow.type = Marker.ARROW
             arrow.action = Marker.ADD
             arrow.pose.orientation.w = 1.0
-            c = centre_at_impact
+            c = panel_pt
             arrow.points = [end_pt, Point(x=float(c[0]), y=float(c[1]), z=float(c[2]))]
             # shaft diameter, head diameter, head length
             arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.01, 0.03, 0.05
@@ -659,7 +665,8 @@ def run_one_speed(speed, spin_hz, duration, headless, log_dir, hit_radius,
 
     # rclpy.init()/shutdown() is the caller's (the `ros_context`
     # fixture's), so several cases can run under one context.
-    sampler = ShotHitSampler(hit_radius=hit_radius)
+    # Fast targets fire more shots across a wider area; thin their rviz markers.
+    sampler = ShotHitSampler(hit_radius=hit_radius, marker_every=max(1, round(speed)))
     try:
         sim.start()
         sampler.wait_until(
