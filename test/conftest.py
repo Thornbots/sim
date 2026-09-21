@@ -40,7 +40,7 @@ def pytest_addoption(parser):
     group.addoption(
         '--use-ekf', action='store_true', dest='use_ekf', default=True,
         help="auto.launch.py's use_ekf, on by default to match its default "
-             '(independent axis; the old standalone \'ekf\' backend is '
+             "(independent axis; the old standalone 'ekf' backend is "
              '--backend none)')
     group.addoption(
         '--no-use-ekf', action='store_false', dest='use_ekf',
