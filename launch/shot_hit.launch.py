@@ -19,6 +19,8 @@ Shot-hit bench: the sim, the production CV pipeline and the scoring pytest in on
 Stops when the tests finish; Ctrl-C (or SIGINT/SIGTERM to this launch) stops
 the whole stack. `run_tests:=false` brings up the stack alone, which is how
 test_shot_hit.py's cv_stack fixture launches it under a bare pytest/colcon test.
+real_time_factor:=0 (the default) runs the sim unthrottled; cases are scored in
+sim time.
 """
 import os
 import sys
@@ -65,7 +67,8 @@ def _stack(context):
     import shot_hit_harness as harness
 
     headless = _is_true(context, 'headless')
-    sim_args = {'spawn_target': 'true', 'target_speed': '0.0', 'target_spin_hz': '0.0'}
+    sim_args = {'spawn_target': 'true', 'target_speed': '0.0', 'target_spin_hz': '0.0',
+                'real_time_factor': context.launch_configurations['real_time_factor']}
     if headless:
         sim_args.update(gui='false', rviz='false')
     else:
@@ -139,6 +142,8 @@ def generate_launch_description():
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('headless', default_value='false',
                               description='skip the gz GUI and rviz2'),
+        DeclareLaunchArgument('real_time_factor', default_value='0',
+                              description='sim speed cap; 0 = as fast as it runs'),
         DeclareLaunchArgument('speeds', default_value='',
                               description="target speeds (m/s), e.g. '0.5 1'; "
                                           'empty = the harness default sweep'),

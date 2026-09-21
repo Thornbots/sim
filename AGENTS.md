@@ -37,15 +37,17 @@ runs the unit tests only:
   colcon test --packages-select sim --pytest-args ' -m integration'
 ```
 
-The drift suite keeps an argparse wrapper that re-invokes pytest. The
-shot-hit bench is a launch file that runs the stack and pytest as one tree, so
-`kill_launch.sh <pid>` on it stops everything (`--show-args` lists its flags):
+Both suites run from a launch file, so `kill_launch.sh <pid>` on the outer
+launch stops everything, per-scenario stacks included (`--show-args` lists
+each one's args):
 
 ```bash
-../isaac_ros_common/scripts/dexec.sh -- \
-  ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
+../isaac_ros_common/scripts/dexec.sh -d -- ros2 launch sim localization_tests.launch.py
 ../isaac_ros_common/scripts/dexec.sh -d -- ros2 launch sim shot_hit.launch.py
 ```
+
+Both default to `real_time_factor:=0` (unthrottled) and time everything in sim
+seconds; `real_time_factor:=1` is the control when a result looks off.
 
 Every scenario failing "stack NOT ready" means the container has the old
 discovery-server DDS profile; see the `isaac-ros-docker` skill. The
@@ -104,6 +106,20 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Open
 
+- **Test results at `real_time_factor:=0` vs 1 (2026-09-21).** Both suites
+  run 2-3x real time with the GUI. `drift_correction` (amcl, no EKF, 3 runs
+  each) read 0.348 m mean unthrottled vs 0.338 m at 1x. The CV pipeline adds
+  36 ms of sim-time latency unthrottled vs 26 ms at 1x, on top of the
+  emulator's 60 ms. Rerun at 1x before trusting a small CV score change.
+- **The EKF path is broken, so `use_ekf:=true` fails (2026-09-21).**
+  `suite:=ekf` at 1x: `odom->root` x runs backwards on eastward legs (truth
+  +1.49 m, EKF -0.78 m over the first leg); y and westward legs track. EKF
+  mean error 7.4 m vs raw `/odom` 0.16 m. `noise_correction` diverges to
+  7-15 m with it, passes at 0.14 m without. Suspect rf2o's `/scan_odom` sign;
+  compare its displacement vector to truth first.
+- **Shot-hit stationary cases are bimodal (2026-09-21).** Two runs swapped
+  results: flat 98%/1% and staggered 2%/84%. The bad mode misses by
+  0.149 m every time, the panel 15-20 cm right of the shot.
 - **Shot-hit bench state (2026-09-21).** One stack per run, 10 cases (flat and
   staggered x stationary, 0.5, 1, 2, 4 m/s), 3s settle + 30s scored each, ~5.5
   min. Results and the stack's failures are in `../thornbots_pkg/AGENTS.md`.

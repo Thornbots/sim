@@ -20,9 +20,12 @@ structurally can't answer (see README.md). Runs the stack at backend='none'
 with use_ekf=True, drives the same cornering loop the drift scenarios use,
 and compares mean position error.
 
-Marked `integration` (launches gz-sim), so a plain `colcon test` skips it.
-Options: --headless, --ekf-slip-ratio, --ekf-drift-stddev, --ekf-seconds.
+Marked `integration` (launches gz-sim), so a plain `colcon test` skips it;
+`ros2 launch sim localization_tests.launch.py suite:=ekf` runs it. Options:
+--headless, --ekf-slip-ratio, --ekf-drift-stddev, --ekf-seconds (sim
+seconds), --real-time-factor.
 """
+import drift_harness
 import ekf_diag_harness
 import pytest
 
@@ -33,6 +36,7 @@ def test_ekf_beats_raw_odom(request, gui, ros_context):
     slip_ratio = request.config.getoption('--ekf-slip-ratio')
     drift_stddev = request.config.getoption('--ekf-drift-stddev')
     seconds = request.config.getoption('--ekf-seconds')
+    drift_harness.set_real_time_factor(request.config.getoption('--real-time-factor'))
 
     result = ekf_diag_harness.run(gui, slip_ratio, drift_stddev, seconds)
     assert result is not None, \

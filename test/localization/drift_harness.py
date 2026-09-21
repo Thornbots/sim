@@ -16,10 +16,10 @@
 Stack lifecycle + scenario implementations for the localization drift suite.
 
 Importable machinery only, no CLI and no test collection: the
-assertions live in test_localization_drift.py, and
-run_localization_drift_tests.py is the argparse wrapper around it.
-ekf_ground_truth_diag.py's harness reuses run_stack/teardown_stack/drive
-from here.
+assertions live in test_localization_drift.py, which
+launch/localization_tests.launch.py runs. ekf_diag_harness.py reuses
+run_stack/teardown_stack/drive from here. Every duration here is sim
+time, so the stack can run at any real_time_factor.
 
 Two independent axes, mirroring auto.launch.py: backend
 {slam,amcl,none} (who owns map->odom -- 'mapping' isn't offered, see
@@ -30,6 +30,7 @@ drift_correction, drift_correction_obstacle, jerk_with_motion,
 odom_stuck. See README.md for WHY THIS EXISTS, BACKENDS (per-backend TF
 edge), and SCENARIOS (pass conditions/rationale).
 """
+import ctypes
 import math
 import os
 import shlex
@@ -37,12 +38,12 @@ import signal
 import subprocess
 import time
 
-from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from sensor_msgs.msg import LaserScan
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformListener
@@ -56,6 +57,24 @@ from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformLi
 # group not just the launch PID" logic applies and is just as load-bearing
 # here as it is for those host-side scripts).
 # --------------------------------------------------------------------------
+
+PR_SET_PDEATHSIG = 1
+_prctl = ctypes.CDLL(None, use_errno=True).prctl
+
+
+def interrupt_with_parent():
+    """Popen preexec_fn: SIGINT this child when the process that started it dies."""
+    _prctl(PR_SET_PDEATHSIG, int(signal.SIGINT))
+
+
+def signal_group(pgid, sig):
+    """Send sig to process group pgid; return False if the group is gone."""
+    try:
+        os.killpg(pgid, sig)
+        return True
+    except ProcessLookupError:
+        return False
+
 
 class LaunchTree:
     """
@@ -82,38 +101,39 @@ class LaunchTree:
         # start_new_session=True == setsid: makes this process its own
         # process group leader, so signaling -pgid reaches every child
         # node the launch spawns, not just the launch process itself.
+        # interrupt_with_parent: if pytest dies without reaching stop(),
+        # the launch still gets its SIGINT and shuts its tree down.
         self.proc = subprocess.Popen(
             self.cmd,
             stdout=self.log_file,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            preexec_fn=interrupt_with_parent,
         )
         print(f'[{self.name}] started pid={self.proc.pid} '
               f'log={self.log_path} cmd={shlex.join(self.cmd)}')
 
     def stop(self, timeout=15.0):
-        if self.proc is None or self.proc.poll() is not None:
+        if self.proc is None:
             return
-        pgid = os.getpgid(self.proc.pid)
-        print(f'[{self.name}] sending SIGINT to process group {pgid}...')
-        try:
-            os.killpg(pgid, signal.SIGINT)
-        except ProcessLookupError:
-            return
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
+        pgid = self.proc.pid  # session leader, so its pid is the group id
+        if self.proc.poll() is None:
+            print(f'[{self.name}] sending SIGINT to process group {pgid}...')
+            signal_group(pgid, signal.SIGINT)
+            try:
+                self.proc.wait(timeout=timeout)
                 print(f'[{self.name}] exited cleanly.')
-                self.log_file.close()
-                return
-            time.sleep(0.2)
-        print(f'[{self.name}] did not exit within {timeout}s, SIGKILLing '
-              f'process group {pgid}.')
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                print(f'[{self.name}] did not exit within {timeout}s, '
+                      f'SIGKILLing process group {pgid}.')
+                signal_group(pgid, signal.SIGKILL)
+                self.proc.wait(timeout=10)
+        # Launch signals only its direct children, so a grandchild can
+        # outlive it in the group (head_slider_relay's `ign topic` did).
+        if signal_group(pgid, 0):
+            print(f'[{self.name}] processes outlived the launch in group '
+                  f'{pgid}; SIGKILLing them.')
+            signal_group(pgid, signal.SIGKILL)
         self.log_file.close()
 
     def log_text(self):
@@ -141,13 +161,10 @@ def check_no_orphans(label):
              "ps aux | grep -E 'ign gazebo|gz sim|slam_toolbox|amcl|"
              "map_server|ekf_filter_node|pose_translator|pose_emulator' | "
              'grep -v grep | '
-             # Excludes the suite's own process, under either entry
-             # point: --backend amcl or --use-ekf on the command line
-             # would otherwise self-match the amcl/ekf_filter_node
-             # patterns above. `pytest` covers the direct
-             # `python3 -m pytest --backend amcl` invocation, which
-             # carries no script filename to match on.
-             "grep -vE 'run_localization_drift_tests\\.py|pytest'"],
+             # Excludes the suite's own processes: `--backend amcl` on
+             # pytest's command line and `backend:=amcl` on the
+             # launch's would otherwise self-match the amcl pattern.
+             "grep -vE 'localization_tests\\.launch\\.py|pytest'"],
             capture_output=True, text=True, timeout=10,
         ).stdout.strip()
     except Exception as e:
@@ -178,7 +195,13 @@ def check_no_orphans(label):
 class LocalizationTestHelper(Node):
 
     def __init__(self, parent_frame='map', child_frame='odom'):
-        super().__init__('localization_drift_test_helper')
+        # Sim time throughout: spin_for, drive() and every observe window
+        # count /clock seconds, so a real_time_factor above 1 doesn't
+        # shorten them. Wall clock only guards against a stalled stack.
+        super().__init__(
+            'localization_drift_test_helper',
+            parameter_overrides=[
+                Parameter('use_sim_time', Parameter.Type.BOOL, True)])
         # Which TF edge counts as "the correction" -- see README.md's
         # BACKENDS section: (map, odom) for slam/amcl, (odom, root) for
         # none (no map layer at all).
@@ -210,13 +233,36 @@ class LocalizationTestHelper(Node):
         while time.monotonic() < deadline:
             if self._raw_odom_xy is not None:
                 return True
-            self.spin_for(0.1)
+            self._spin_wall(0.1)
         return False
 
-    def spin_for(self, seconds):
+    def now_s(self):
+        """Sim time in seconds; 0.0 until the first /clock message."""
+        return self.get_clock().now().nanoseconds / 1e9
+
+    def _spin_wall(self, seconds):
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             rclpy.spin_once(self, timeout_sec=0.1)
+
+    def spin_for(self, seconds):
+        """
+        Spin for `seconds` of sim time.
+
+        Wall-clock cap of 3x (at least +5s) in case /clock stalls, as in
+        shot_hit_harness's spin_for.
+        """
+        wall_end = time.monotonic() + max(3.0 * seconds, seconds + 5.0)
+        start = None
+        while time.monotonic() < wall_end:
+            rclpy.spin_once(self, timeout_sec=0.01)
+            now = self.now_s()
+            if start is None and now > 0.0:
+                start = now
+            if start is not None and now - start >= seconds:
+                return
+        self.get_logger().warning(
+            f'spin_for: wall-clock cap hit before {seconds}s of sim time')
 
     def wait_for_scans_flowing(self, min_scans=10, timeout=60.0):
         """
@@ -234,7 +280,7 @@ class LocalizationTestHelper(Node):
         while time.monotonic() < deadline:
             if self._scan_count >= min_scans:
                 return True
-            self.spin_for(0.5)
+            self._spin_wall(0.5)
         return False
 
     def get_correction_tf(self, timeout=2.0):
@@ -281,7 +327,7 @@ class LocalizationTestHelper(Node):
             v = self.get_correction_tf(timeout=0.5)
             if v is not None:
                 return v
-            self.spin_for(poll)
+            self._spin_wall(poll)
         return None
 
     def call_trigger_jerk(self, timeout=10.0):
@@ -339,24 +385,24 @@ class LocalizationTestHelper(Node):
         Steer toward the leg's endpoint, re-aiming every tick off /sim/raw_odom.
 
         Runs until within `WAYPOINT_TOLERANCE`, tapering speed near
-        the target to avoid corner oscillation. `duration` is only
-        a wall-clock safety cap. See README.md for the design
+        the target to avoid corner oscillation. `duration` (sim
+        seconds) is only a safety cap. See README.md for the design
         history.
         """
         WAYPOINT_TOLERANCE = 0.03  # meters; matches the lidar noise stddev
         CONTROL_PERIOD = 0.1  # seconds; matches the spin_for() tick below
         speed = math.hypot(vx, vy)
-        safety_deadline = time.monotonic() + max(duration * 3.0, duration + 5.0)
+        safety_deadline = self.now_s() + max(duration * 3.0, duration + 5.0)
 
         if speed <= 1e-6 or not self.wait_for_raw_odom():
             # No direction to aim toward, or ground-truth odom never
-            # showed up -- fall back to the old wall-clock behavior rather
+            # showed up -- fall back to driving blind for `duration` rather
             # than spinning forever or dividing by zero.
             msg = Twist()
             msg.linear.x = vx
             msg.linear.y = vy
-            end = time.monotonic() + duration
-            while time.monotonic() < end:
+            end = self.now_s() + duration
+            while self.now_s() < end:
                 self.cmd_vel_pub.publish(msg)
                 self.spin_for(0.1)
             self.cmd_vel_pub.publish(Twist())
@@ -365,7 +411,7 @@ class LocalizationTestHelper(Node):
 
         start_x, start_y = self._raw_odom_xy
         target_x, target_y = start_x + vx * duration, start_y + vy * duration
-        while time.monotonic() < safety_deadline:
+        while self.now_s() < safety_deadline:
             cur_x, cur_y = self._raw_odom_xy
             dx, dy = target_x - cur_x, target_y - cur_y
             dist = math.hypot(dx, dy)
@@ -392,7 +438,6 @@ class LocalizationTestHelper(Node):
 # Scenario plumbing
 # --------------------------------------------------------------------------
 
-WORKSPACE = '/workspaces/isaac_ros-dev'
 LOG_DIR = '/tmp/localization_drift_tests'
 
 # Which TF edge each backend's "correction" actually shows up on -- see
@@ -439,6 +484,10 @@ OBSTACLE_HEIGHT = 0.8  # meters, based at the ground (z=[0, OBSTACLE_HEIGHT])
 # timing and may need those re-tuned.
 DRIVE_SPEED = 4.0
 
+# sim.launch.py's real_time_factor for every stack; '0' = unthrottled. Set
+# from --real-time-factor by set_real_time_factor().
+REAL_TIME_FACTOR = '0'
+
 
 def _make_loop_legs(speed):
     """
@@ -482,24 +531,6 @@ def _reposition_to_loop_start(helper):
 OBSTACLE_LOOP_DWELL_SECONDS = 1.0
 
 
-def source_prefix():
-    return (
-        f'source /opt/ros/humble/setup.bash && '
-        f'source {WORKSPACE}/../ros2_ws/install/setup.bash 2>/dev/null; '
-        f'source {WORKSPACE}/install/setup.bash && '
-    )
-
-
-def launch_cmd(args_str):
-    # Wrapped in bash -lc so the sourced environment (both workspace
-    # installs) is present, matching what dexec.sh's SOURCE_ENV does for
-    # host-side invocations -- this script runs inside the container
-    # already, so no docker exec layer, but the workspace sourcing is
-    # still required since this process wasn't necessarily started from
-    # an interactive login shell.
-    return ['bash', '-lc', source_prefix() + args_str]
-
-
 # --------------------------------------------------------------------------
 # Obstacle spawning (mid-scenario, drift_correction_obstacle scenario only).
 # --------------------------------------------------------------------------
@@ -527,10 +558,9 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
         '<diffuse>0.1 0.1 0.8 1</diffuse></material></visual>'
         '</link></model></sdf>'
     ).format(name=name, x=x, y=y, z=height / 2.0, s=size, h=height)
-    cmd = (f'ros2 run ros_gz_sim create -string {shlex.quote(sdf)} '
-           f'-name {name} -allow_renaming false')
-    result = subprocess.run(
-        launch_cmd(cmd), capture_output=True, text=True, timeout=timeout)
+    cmd = ['ros2', 'run', 'ros_gz_sim', 'create', '-string', sdf,
+           '-name', name, '-allow_renaming', 'false']
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise RuntimeError(
             f'spawning obstacle {name!r} failed (rc={result.returncode}): '
@@ -566,87 +596,48 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
               odom_drift_stddev=None, odom_jitter_stddev=None,
               odom_slip_ratio=0.02, odom_jerk_bias_xy=None):
     """
-    Start the sim + thornbots_pkg launch trees and wait for the graph.
+    Start one scenario's stack (localization_tests.launch.py run_tests:=false).
 
-    Returns (sim_tree, sentry_tree, helper_node); the caller must call
-    teardown_stack() when done. odom_slip_ratio defaults to 0.02, a
-    small amount of slip for every scenario. The drift scenarios
-    (_run_cornering_loop_scenario, i.e. drift_correction/
-    drift_correction_obstacle) pass 0.15 explicitly to isolate their
-    own failure mode; see MAX_DELTA_THRESHOLD's comment for how 0.40m
-    was calibrated against that higher slip value.
+    Returns (stack, helper_node); the caller must call teardown_stack()
+    when done. odom_slip_ratio defaults to 0.02, a small amount of slip
+    for every scenario. The drift scenarios (_run_cornering_loop_scenario,
+    i.e. drift_correction/drift_correction_obstacle) pass 0.15 explicitly
+    to isolate their own failure mode; see MAX_DELTA_THRESHOLD's comment
+    for how 0.40m was calibrated against that higher slip value.
     """
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    sim_args = (
-        f"ros2 launch sim sim.launch.py gui:={'true' if gui else 'false'} "
-        f"rviz:={'true' if gui else 'false'} "
-        f"odom_noise_enabled:={'true' if odom_noise_enabled else 'false'}"
-    )
-    if odom_jerk_stddev is not None:
-        sim_args += f' odom_jerk_stddev:={odom_jerk_stddev}'
-    if odom_drift_stddev is not None:
-        sim_args += f' odom_drift_stddev:={odom_drift_stddev}'
-    if odom_jitter_stddev is not None:
-        sim_args += f' odom_jitter_stddev:={odom_jitter_stddev}'
-    if odom_slip_ratio is not None:
-        sim_args += f' odom_slip_ratio:={odom_slip_ratio}'
+    args = {
+        'run_tests': 'false',
+        'headless': str(not gui).lower(),
+        'real_time_factor': REAL_TIME_FACTOR,
+        'backend': backend,
+        'use_ekf': str(use_ekf).lower(),
+        'odom_noise_enabled': str(odom_noise_enabled).lower(),
+        'odom_jerk_stddev': odom_jerk_stddev,
+        'odom_drift_stddev': odom_drift_stddev,
+        'odom_jitter_stddev': odom_jitter_stddev,
+        'odom_slip_ratio': odom_slip_ratio,
+    }
     if odom_jerk_bias_xy is not None:
-        bias_x, bias_y = odom_jerk_bias_xy
-        sim_args += (f' odom_jerk_bias_enabled:=true '
-                     f'odom_jerk_bias_x:={bias_x} odom_jerk_bias_y:={bias_y}')
+        args['odom_jerk_bias_enabled'] = 'true'
+        args['odom_jerk_bias_x'], args['odom_jerk_bias_y'] = odom_jerk_bias_xy
+    cmd = ['ros2', 'launch', 'sim', 'localization_tests.launch.py']
+    cmd += [f'{k}:={v}' for k, v in args.items() if v is not None]
 
-    sim_tree = LaunchTree(
-        'sim', launch_cmd(sim_args),
-        os.path.join(LOG_DIR, 'sim.log'))
-    sim_tree.start()
-
-    # Give gz-sim + robot spawn a head start before bringing up
-    # localization, which otherwise starts subscribing to /scan and /pose
-    # before either exists -- not fatal (ROS handles late publishers fine)
-    # but avoids some noisy early "waiting for transform" warnings that
-    # make log-scraping for real errors harder.
-    time.sleep(8.0)
-
-    # backend maps 1:1 onto auto.launch.py's localization_mode; use_ekf is
-    # forwarded as its own independent arg, same two-axis shape as
-    # auto.launch.py/localization.launch.py.
-    sentry_args = (
-        'ros2 launch thornbots_pkg auto.launch.py real_hardware:=false '
-        f'localization_mode:={backend} '
-        f"use_ekf:={'true' if use_ekf else 'false'} load_map:=true"
-    )
-    if backend == 'slam':
-        # auto.launch.py's map_file default (clean_map) only ships a
-        # .yaml/.pgm (map_server-ready, fine for amcl), not a
-        # .posegraph/.data -- slam_toolbox's localization mode needs the
-        # latter to deserialize against, and silently fails to (see
-        # auto.launch.py's module docstring) if it's not passed explicitly.
-        # ARCC26 is the one map in the repo with a real posegraph.
-        arcc26_map_file = os.path.join(
-            get_package_share_directory('sentry_localization'),
-            'map', 'ARCC26')
-        sentry_args += f' map_file:={arcc26_map_file}'
-    sentry_tree = LaunchTree(
-        'thornbots_pkg', launch_cmd(sentry_args),
-        os.path.join(LOG_DIR, 'thornbots_pkg.log'))
-    sentry_tree.start()
+    stack = LaunchTree('stack', cmd, os.path.join(LOG_DIR, 'stack.log'))
+    stack.start()
 
     parent_frame, child_frame = BACKEND_FRAMES[backend]
     helper = LocalizationTestHelper(parent_frame, child_frame)
-    return sim_tree, sentry_tree, helper
+    return stack, helper
 
 
-def teardown_stack(sim_tree, sentry_tree, helper):
+def teardown_stack(stack, helper):
     if helper is not None:
         helper.destroy_node()
-    # thornbots_pkg first (consumer of sim's topics), then sim -- avoids
-    # the localization backend/pose_translator spending their shutdown
-    # window complaining about topics that vanished out from under them.
-    if sentry_tree is not None:
-        sentry_tree.stop()
-    if sim_tree is not None:
-        sim_tree.stop()
+    if stack is not None:
+        stack.stop()
 
 
 def wait_for_stack_ready(sc, helper, min_scans=10, timeout=60.0):
@@ -670,9 +661,9 @@ def wait_for_stack_ready(sc, helper, min_scans=10, timeout=60.0):
     return ok
 
 
-def scan_log_for_errors(log_text, name):
+def scan_log_for_errors(log_text):
     """
-    Return the suspicious lines from a launch tree's combined log.
+    Return the suspicious lines from a stack's combined launch log.
 
     Suspicious means ERROR-level, a traceback, or a segfault indicator.
     """
@@ -694,9 +685,9 @@ def scenario_baseline(gui, backend, use_ekf):
     sc = Scenario('baseline', f'no noise: stack comes up cleanly, {edge} '
                               'settles and stays STABLE (not necessarily '
                               'near zero -- see note below), no errors')
-    sim_tree = sentry_tree = helper = None
+    stack = helper = None
     try:
-        sim_tree, sentry_tree, helper = run_stack(
+        stack, helper = run_stack(
             gui, backend, use_ekf, odom_noise_enabled=False)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
@@ -725,21 +716,20 @@ def scenario_baseline(gui, backend, use_ekf):
         sc.log(f'after +10s: {edge} = (x={x2:.4f}, y={y2:.4f}), '
                f'drift from first sample = {drift:.4f} m')
 
-        sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
-        for e in (sim_errs + sentry_errs)[:10]:
+        log_errs = scan_log_for_errors(stack.log_text())
+        for e in log_errs[:10]:
             sc.log(f'log error: {e}')
 
         DRIFT_THRESHOLD = 0.05  # meters, over the 10s stability window
-        ok = drift < DRIFT_THRESHOLD and not sim_errs and not sentry_errs
+        ok = drift < DRIFT_THRESHOLD and not log_errs
         sc.result(ok,
                   f'{edge} drift over 10s = {drift:.4f} m (threshold '
                   f'{DRIFT_THRESHOLD} m; absolute offset {mag:.4f} m is '
                   f'expected/normal, see note above), '
-                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'log_errors={len(log_errs)}')
         return sc
     finally:
-        teardown_stack(sim_tree, sentry_tree, helper)
+        teardown_stack(stack, helper)
 
 
 def scenario_noise_correction(gui, backend, use_ekf):
@@ -749,9 +739,9 @@ def scenario_noise_correction(gui, backend, use_ekf):
                   f'continuous drift+jitter with motion (odom_noise_enabled, '
                   f'no slip): {edge} should correct periodically and stay '
                   'bounded, not grow without limit')
-    sim_tree = sentry_tree = helper = None
+    stack = helper = None
     try:
-        sim_tree, sentry_tree, helper = run_stack(
+        stack, helper = run_stack(
             gui, backend, use_ekf, odom_noise_enabled=True)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
@@ -777,15 +767,15 @@ def scenario_noise_correction(gui, backend, use_ekf):
         # jerk_with_motion (OBSTACLE_LOOP_LEGS). Fixed duration, no
         # early-exit on the correction TF -- see README.md for why an
         # early-exit loop is unsafe here.
-        t0 = time.monotonic()
+        t0 = helper.now_s()
         i = 0
-        while time.monotonic() - t0 < OBSERVE_SECONDS:
+        while helper.now_s() - t0 < OBSERVE_SECONDS:
             vx, vy, duration = OBSTACLE_LOOP_LEGS[i % len(OBSTACLE_LOOP_LEGS)]
             i += 1
             helper.drive(vx, vy, duration)
             p = helper.get_correction_tf(timeout=2.0)
             if p is not None:
-                elapsed = time.monotonic() - t0
+                elapsed = helper.now_s() - t0
                 mag = math.hypot(p[0], p[1])
                 samples.append((elapsed, mag))
                 sc.log(f't={elapsed:5.1f}s  |{edge} xy|={mag:.4f} m')
@@ -807,19 +797,18 @@ def scenario_noise_correction(gui, backend, use_ekf):
         second_half_max = max(mags[half:])
         growth_ratio = second_half_max / max(first_half_max, 1e-6)
 
-        sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
+        log_errs = scan_log_for_errors(stack.log_text())
 
         GROWTH_THRESHOLD = 2.0  # second half shouldn't be >2x first half
-        ok = growth_ratio < GROWTH_THRESHOLD and not sim_errs and not sentry_errs
+        ok = growth_ratio < GROWTH_THRESHOLD and not log_errs
         sc.result(ok,
                   f'max|xy|={max_mag:.4f} m, first_half_max={first_half_max:.4f}, '
                   f'second_half_max={second_half_max:.4f}, '
                   f'growth_ratio={growth_ratio:.2f} (threshold {GROWTH_THRESHOLD}), '
-                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'log_errors={len(log_errs)}')
         return sc
     finally:
-        teardown_stack(sim_tree, sentry_tree, helper)
+        teardown_stack(stack, helper)
 
 
 # Number of independent jerk trials scenario_jerk_with_motion fires
@@ -886,7 +875,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
         return sc
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
-    sim_tree = sentry_tree = helper = None
+    stack = helper = None
     # Models getting hit by another robot or running into a wall -- a
     # discrete collision impulse, not gradual wheel slip/bumpy terrain.
     # dx/dy are independent N(0, JERK_STDDEV) draws, so the resulting
@@ -894,7 +883,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
     # JERK_STDDEV * sqrt(pi/2) -- 0.24 targets a ~30cm average jerk.
     JERK_STDDEV = 0.24
     try:
-        sim_tree, sentry_tree, helper = run_stack(
+        stack, helper = run_stack(
             gui, backend, use_ekf, odom_noise_enabled=False,
             odom_jerk_stddev=JERK_STDDEV, odom_jerk_bias_xy=OBSTACLE_XY)
         if not wait_for_stack_ready(sc, helper):
@@ -990,20 +979,19 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
         p = helper.get_correction_tf(timeout=5.0)
         sc.log(f'{edge} after extra lap = {p}')
 
-        sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
+        log_errs = scan_log_for_errors(stack.log_text())
 
         n_pass = sum(1 for trial_ok, _ in trial_results if trial_ok)
         ok = (n_pass == JERK_WITH_MOTION_REPEATS
-              and not sim_errs and not sentry_errs)
+              and not log_errs)
         summary = '; '.join(detail for _, detail in trial_results)
         sc.result(ok,
                   f'{n_pass}/{JERK_WITH_MOTION_REPEATS} trials passed -- {summary} '
                   f'-- plus one extra closing lap around the square -- '
-                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'log_errors={len(log_errs)}')
         return sc
     finally:
-        teardown_stack(sim_tree, sentry_tree, helper)
+        teardown_stack(stack, helper)
 
 
 # Threshold shared by scenario_drift_correction_obstacle and
@@ -1036,9 +1024,9 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
     """
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
-    sim_tree = sentry_tree = helper = None
+    stack = helper = None
     try:
-        sim_tree, sentry_tree, helper = run_stack(
+        stack, helper = run_stack(
             gui, backend, use_ekf, odom_noise_enabled=False,
             odom_slip_ratio=0.15)
         if not wait_for_stack_ready(sc, helper):
@@ -1070,9 +1058,9 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
         # Drive the loop. Sampling the correction TF each leg.
         OBSERVE_SECONDS = 30.0
         samples = []
-        t0 = time.monotonic()
+        t0 = helper.now_s()
         i = 0
-        while time.monotonic() - t0 < OBSERVE_SECONDS:
+        while helper.now_s() - t0 < OBSERVE_SECONDS:
             vx, vy, duration = OBSTACLE_LOOP_LEGS[i % len(OBSTACLE_LOOP_LEGS)]
             i += 1
             helper.drive(vx, vy, duration)
@@ -1088,7 +1076,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
             helper.spin_for(OBSTACLE_LOOP_DWELL_SECONDS)
             p = helper.get_correction_tf(timeout=2.0)
             if p is not None:
-                elapsed = time.monotonic() - t0
+                elapsed = helper.now_s() - t0
                 delta = math.hypot(p[0] - pose_before[0], p[1] - pose_before[1])
                 samples.append(delta)
                 sc.log(f't={elapsed:5.1f}s  |{edge} - pre-loop {edge}|='
@@ -1105,20 +1093,19 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
             return sc
 
         max_delta = max(samples)
-        sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
+        log_errs = scan_log_for_errors(stack.log_text())
 
         ok = (max_delta < MAX_DELTA_THRESHOLD
-              and not sim_errs and not sentry_errs)
+              and not log_errs)
         obstacle_note = ' past the obstacle' if spawn_obstacle else ''
         sc.result(ok,
                   f'max|{edge} - pre-loop {edge}| = {max_delta:.4f} m '
                   f'over {OBSERVE_SECONDS:.0f}s driving the cornering '
                   f'loop{obstacle_note} (threshold {MAX_DELTA_THRESHOLD} m), '
-                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'log_errors={len(log_errs)}')
         return sc
     finally:
-        teardown_stack(sim_tree, sentry_tree, helper)
+        teardown_stack(stack, helper)
 
 
 def scenario_drift_correction_obstacle(gui, backend, use_ekf):
@@ -1194,9 +1181,9 @@ def scenario_odom_stuck(gui, backend, use_ekf):
         f'reported travel and may never re-open once odom is frozen -- a '
         f'failure here is a diagnostic finding about the stack, not '
         f'necessarily a test bug.')
-    sim_tree = sentry_tree = helper = None
+    stack = helper = None
     try:
-        sim_tree, sentry_tree, helper = run_stack(
+        stack, helper = run_stack(
             gui, backend, use_ekf, odom_noise_enabled=False)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
@@ -1221,15 +1208,15 @@ def scenario_odom_stuck(gui, backend, use_ekf):
 
         OBSERVE_SECONDS = 30.0
         samples = []
-        t0 = time.monotonic()
+        t0 = helper.now_s()
         i = 0
-        while time.monotonic() - t0 < OBSERVE_SECONDS:
+        while helper.now_s() - t0 < OBSERVE_SECONDS:
             vx, vy, duration = OBSTACLE_LOOP_LEGS[i % len(OBSTACLE_LOOP_LEGS)]
             i += 1
             helper.drive(vx, vy, duration)
             p = helper.get_correction_tf(timeout=2.0)
             if p is not None:
-                elapsed = time.monotonic() - t0
+                elapsed = helper.now_s() - t0
                 samples.append(p)
                 # Logging only -- NOT part of the pass/fail criteria below
                 # (which stays a pure liveness check). root_pos/truth_xy
@@ -1270,20 +1257,19 @@ def scenario_odom_stuck(gui, backend, use_ekf):
                                samples[j][1] - samples[k][1])
                 max_spread = max(max_spread, d)
 
-        sim_errs = scan_log_for_errors(sim_tree.log_text(), 'sim')
-        sentry_errs = scan_log_for_errors(sentry_tree.log_text(), 'thornbots_pkg')
+        log_errs = scan_log_for_errors(stack.log_text())
 
         ok = (max_spread >= ODOM_STUCK_MIN_TF_SPREAD
-              and not sim_errs and not sentry_errs)
+              and not log_errs)
         sc.result(ok,
                   f'max pairwise {edge} spread over {OBSERVE_SECONDS:.0f}s '
                   f'after odom_stuck = {max_spread:.4f} m (threshold '
                   f'{ODOM_STUCK_MIN_TF_SPREAD} m -- proves the backend is '
                   f'still attempting corrections, not latched), '
-                  f'sim_errors={len(sim_errs)}, sentry_errors={len(sentry_errs)}')
+                  f'log_errors={len(log_errs)}')
         return sc
     finally:
-        teardown_stack(sim_tree, sentry_tree, helper)
+        teardown_stack(stack, helper)
 
 
 SCENARIOS = {
@@ -1307,6 +1293,11 @@ def set_drive_speed(speed):
     global DRIVE_SPEED, OBSTACLE_LOOP_LEGS
     DRIVE_SPEED = speed
     OBSTACLE_LOOP_LEGS = _make_loop_legs(speed)
+
+
+def set_real_time_factor(rtf):
+    global REAL_TIME_FACTOR
+    REAL_TIME_FACTOR = rtf
 
 
 def run_scenario(name, gui, backend, use_ekf):

@@ -33,7 +33,8 @@ stationary case, MOVING_MIN_HIT_RATE for the moving ones. Do not relax them.
 Launches gz-sim, so marked `integration` and skipped by a plain
 `colcon test`; `ros2 launch sim shot_hit.launch.py` runs it. Options:
 --shot-speeds, --shot-duration, --hit-radius, --panel-layout,
---skip-stationary, --only-stationary, --headless, --log-dir, --external-stack.
+--skip-stationary, --only-stationary, --headless, --log-dir, --external-stack,
+--real-time-factor.
 """
 import os
 
@@ -53,7 +54,8 @@ def cv_stack(request, ros_context):
     log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     stack = harness.CvStack(config.getoption('--headless'), log_dir,
-                            external=config.getoption('--external-stack'))
+                            external=config.getoption('--external-stack'),
+                            real_time_factor=config.getoption('--real-time-factor'))
     try:
         stack.start()
         yield stack

@@ -19,7 +19,7 @@ That is backend='none' plus use_ekf=True in drift_harness's terms. Answers
 what the drift suite structurally can't (see README.md): does fusing
 /scan_odom into /odom via ekf_node actually beat raw /odom, scored against
 /sim/raw_odom? Importable machinery only -- test_ekf_ground_truth.py holds
-the assertion, ekf_ground_truth_diag.py is the argparse wrapper.
+the assertion, launch/localization_tests.launch.py suite:=ekf runs it.
 """
 import math
 import statistics
@@ -31,6 +31,7 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from tf2_ros import Buffer, TransformListener
 
 
@@ -43,7 +44,9 @@ class GroundTruthProbe(Node):
     """
 
     def __init__(self):
-        super().__init__('ekf_ground_truth_probe')
+        super().__init__(
+            'ekf_ground_truth_probe',
+            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self._truth = None
@@ -97,14 +100,13 @@ def _stats(errors):
 
 
 def run(gui, slip_ratio, drift_stddev, observe_seconds):
-    sim_tree = sentry_tree = helper = None
+    stack = helper = None
     probe = None
     try:
         # Wheel odometry error ON -- the whole point (see module docstring).
         # backend='none' (no map layer), use_ekf=True -- the old standalone
-        # 'ekf' backend, now expressed via run_localization_drift_tests.py's
-        # two-axis backend/use_ekf split.
-        sim_tree, sentry_tree, helper = _drift.run_stack(
+        # 'ekf' backend, in the drift suite's two-axis backend/use_ekf terms.
+        stack, helper = _drift.run_stack(
             gui, 'none', True,
             odom_noise_enabled=True,
             odom_drift_stddev=drift_stddev,
@@ -148,14 +150,13 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
 
         # Reposition to the loop's start corner, same as the drift suite's
         # cornering scenarios, so the driving profile is comparable.
-        helper.drive(-4.0, 0.0, 0.125)
-        helper.drive(0.0, -4.0, 0.25)
+        _drift._reposition_to_loop_start(helper)
 
         odom_errs = []
         ekf_errs = []
-        t0 = time.monotonic()
+        t0 = helper.now_s()
         i = 0
-        while time.monotonic() - t0 < observe_seconds:
+        while helper.now_s() - t0 < observe_seconds:
             vx, vy, duration = _drift.OBSTACLE_LOOP_LEGS[
                 i % len(_drift.OBSTACLE_LOOP_LEGS)]
             i += 1
@@ -171,7 +172,7 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
             e_odom, e_ekf = _err(odom, truth), _err(ekf, truth)
             odom_errs.append(e_odom)
             ekf_errs.append(e_ekf)
-            print(f't={time.monotonic() - t0:5.1f}s  '
+            print(f't={helper.now_s() - t0:5.1f}s  '
                   f'truth=({truth[0]:6.3f},{truth[1]:6.3f})  '
                   f'odom=({odom[0]:6.3f},{odom[1]:6.3f})  '
                   f'ekf=({ekf[0]:6.3f},{ekf[1]:6.3f})  '
@@ -188,7 +189,7 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
             except Exception:
                 pass
             probe.destroy_node()
-        _drift.teardown_stack(sim_tree, sentry_tree, helper)
+        _drift.teardown_stack(stack, helper)
 
 
 def improvement_pct(odom_stats, ekf_stats):

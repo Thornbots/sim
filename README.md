@@ -11,12 +11,14 @@ Build first on a fresh container (see Build). Each test starts its own sim and
 `thornbots_pkg` stacks, so stop anything you already have running.
 
 The localization suite runs `amcl` with the EKF, the configuration the robot
-is targeting. All six drift scenarios take several minutes:
+is targeting. All six drift scenarios take about three minutes:
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash
-ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
+ros2 launch sim localization_tests.launch.py
 ```
+
+`suite:=ekf` runs the EKF ground-truth test instead.
 
 The CV bench runs ten shot-hit cases, all with lead on: a stationary target,
 then 0.5, 1, 2 and 4 m/s, first with flat panels and then with neighbouring
@@ -42,12 +44,21 @@ ros2 launch sim shot_hit.launch.py
 ```
 
 The bench is one launch tree: the sim, the CV pipeline and the pytest that
-scores it. It shuts down when the tests finish, and Ctrl-C stops all of it.
+scores it. The localization launch runs pytest, and pytest starts a fresh
+stack for each scenario through the same file with `run_tests:=false`. Both
+shut down when the tests finish, and Ctrl-C stops everything, stacks included.
 
-Add an option to run part of a suite. `--scenario odom_stuck` runs one drift
-scenario. For the bench, `only_stationary:=true` runs the stationary case,
-`speeds:='0.5 1'` picks the moving cases, and `headless:=true` drops the gz
-GUI and rviz. `ros2 launch sim shot_hit.launch.py --show-args` lists the rest.
+Both launches default to `real_time_factor:=0`, which lets gz run as fast as
+the machine allows. Every test times itself in sim seconds, so a faster sim
+shortens the wall-clock run without shortening what gets scored. Pass
+`real_time_factor:=1` to run in real time. On the dev laptop the GUI runs
+2-3x real time, and headless runs 8-10x.
+
+Add an argument to run part of a suite. `scenario:=odom_stuck` runs one drift
+scenario and `backend:=slam` or `use_ekf:=false` changes the stack. For the
+bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
+picks the moving cases. `headless:=true` drops the gz GUI and rviz from
+either. `--show-args` on either launch lists the rest.
 
 ## Build
 
@@ -86,7 +97,7 @@ Everything under `test/` is pytest, and `colcon test` collects it.
 | Tier | Files | Needs |
 | --- | --- | --- |
 | unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, ament copyright/flake8/pep257 | Python + pytest |
-| integration | `localization/test_localization_drift.py`, `localization/test_ekf_ground_truth.py`, `cv/test_shot_hit.py` | gz-sim + two launch trees |
+| integration | `localization/test_localization_drift.py`, `localization/test_ekf_ground_truth.py`, `cv/test_shot_hit.py` | gz-sim and a launch tree |
 
 `setup.cfg` deselects the `integration` marker, so a plain `colcon test` runs
 only the unit tests and finishes in seconds. A `-m` on the command line
@@ -98,21 +109,20 @@ colcon test --packages-select sim --pytest-args ' -m integration'
 colcon test-result --verbose
 ```
 
-Each drift test launches gz-sim and `thornbots_pkg`, runs for tens of seconds,
-and shuts both down before the next test starts. The shot-hit suite launches
+Each drift test launches gz-sim and `thornbots_pkg` as one tree, runs for
+tens of seconds, and shuts it down before the next test starts. The shot-hit suite launches
 them once for all its cases, through `shot_hit.launch.py run_tests:=false`
 when pytest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
 the measurements.
 
 Rerun the drift suite whenever you tune `slam.yaml`, `amcl.yaml`, `ekf.yaml` or
-the noise model. `ros2 run sim ekf_ground_truth_diag.py` runs the EKF
-ground-truth test. Every wrapper accepts `--help` and passes unknown arguments
-such as `-k` through to pytest.
+the noise model. `pytest_args:=` passes extra arguments such as `-k` through to
+pytest.
 
-`--headless` turns off the gz GUI and rviz2, which are on by default. `--speed`
-changes the 4.0 m/s loop speed, but nobody has re-validated the thresholds at
-other speeds.
+`headless:=true` turns off the gz GUI and rviz2, which are on by default.
+`speed:=` changes the 4.0 m/s loop speed, but nobody has re-validated the
+thresholds at other speeds.
 `sentry_localization` copies its config, launch and map files into `install/`
 at build time. After you edit its YAML, rebuild with `--symlink-install` so
 later edits go straight through:
@@ -193,8 +203,9 @@ drives, samples the correction TF, asserts, and tears down.
 `test_localization_drift.py` is one parametrized test per scenario. That split
 lets `ekf_diag_harness.py` reuse `run_stack`/`drive` and puts `Scenario`'s
 `details` into the assertion message instead of pytest's capture. The harness
-owns its launch trees (each in its own process group) and won't
-attach to a running stack.
+launches each scenario's stack as one tree in its own process group and won't
+attach to a running stack. The stack gets SIGINT if pytest dies, so a killed
+run still tears it down.
 
 Each scenario watches the edge the backend owns (`BACKEND_FRAMES`):
 
@@ -304,7 +315,9 @@ returns `None` if parsing fails, so a change to the message format weakens the
 check instead of crashing it.
 
 `drive()` re-aims every tick at the leg's ground-truth endpoint from
-`/sim/raw_odom` until within `WAYPOINT_TOLERANCE` (0.03m). A fixed Twist for a
+`/sim/raw_odom` until within `WAYPOINT_TOLERANCE` (0.03m). Its ticks, like
+`spin_for` and every observe window, count sim seconds; the wall clock only
+guards against a stalled `/clock`. A fixed Twist for a
 wall-clock duration undershot whenever gz's real-time factor dipped under load;
 gating on projected distance fixed undershoot but not lateral drift. Speed is
 capped at `dist / CONTROL_PERIOD` (0.1s) so it tapers near the target. At full
@@ -413,9 +426,8 @@ seconds. That's a `ros_gz_sim create` bug, not a race, so delays don't help.
 
 ### test_ekf_ground_truth.py
 
-This suite (`ekf_diag_harness.py` plus the `ekf_ground_truth_diag.py` wrapper)
-asks
-whether fusing `/scan_odom` into `/odom` through `ekf_node` gets closer to
+This suite (`ekf_diag_harness.py`, run by `localization_tests.launch.py
+suite:=ekf`) asks whether fusing `/scan_odom` into `/odom` through `ekf_node` gets closer to
 where the robot really is, which the drift suite can't answer. Drift scenarios
 run with noise off, so only slip corrupts `/odom`; at zero slip
 `pose_emulator` reports exact ground truth and no EKF can beat it. Old "EKF is
