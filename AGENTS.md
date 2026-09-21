@@ -57,7 +57,7 @@ there is no `ekf` backend. It is on by default, matching `auto.launch.py`;
 
 `test/localization/` is `test_localization_drift.py` (one test per scenario) and
 `test_ekf_ground_truth.py`, both over `drift_harness.py`/`ekf_diag_harness.py`.
-`test/cv/` is `test_shot_hit.py` (integration, one test per lead/speed cell,
+`test/cv/` is `test_shot_hit.py` (integration, one test per layout/speed case,
 over `shot_hit_harness.py`) and `test_cv_head_aim.py` (plain pytest, no stack
 needed). Pass `-s` when running pytest directly, or the measured numbers these
 suites print get captured.
@@ -102,6 +102,21 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Open
 
+- **Shot-hit bench state (2026-09-21).** One stack per run, 10 cases (flat and
+  staggered x stationary, 0.5, 1, 2, 4 m/s), 3s settle + 30s scored each, ~5.5
+  min. Results and the stack's failures are in `../thornbots_pkg/AGENTS.md`.
+  Caveats a reader of those numbers needs:
+  - Detection noise is 0.005 m, far cleaner than a real D435, so rates run
+    optimistic. The tracker still assumes ~3 cm (`meas_noise_base_m`).
+  - `cv_head_aim`'s slew limits (10/6 rad/s) and `target_driver`'s
+    `max_accel` (6 m/s^2) and `max_spin_accel` (20 rad/s^2) are estimates.
+  - `MOVING_MIN_HIT_RATE` (0.25) is still a placeholder, now applied to the
+    score, not the hit rate.
+  - `panel_hits.jsonl` was only checked offline; no live run has written it.
+- **Keep the physics step at 1 ms.** A 2 ms or 4 ms step (tried 2026-09-21)
+  sent the head's PID unstable and threw the free-floating robot metres. With
+  the camera bridges off (`camera:=false`, the default) the laptop holds real
+  time at 1 ms anyway.
 - **The chassis has zero collision geometry, deliberately.** No link carries any
   `<collision>`, so the robot drives straight through walls and through
   `drift_correction_obstacle`'s spawned box. This was the price of making `root`
