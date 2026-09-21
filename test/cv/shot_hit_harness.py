@@ -66,7 +66,7 @@ TRUTH_HISTORY_S = 1.0  # ground truth kept for interpolating impact-time poses
 FIRE_LATENCY_S = 0.05
 
 DEFAULT_SPEEDS = [0.5, 1.0, 2.0, 4.0]
-DEFAULT_DURATION = 15.0  # seconds of steady-state sampling per case
+DEFAULT_DURATION = 15.0  # sim-time seconds of steady-state sampling per case
 DEFAULT_LOG_DIR = '/tmp/shot_hit_test_logs'
 # The stationary case (speed=0, spin=0) is the harness's own sanity
 # check, not a tracking/prediction difficulty: a working pipeline hits a
@@ -523,9 +523,22 @@ class ShotHitSampler(Node):
         return dropped
 
     def spin_for(self, seconds):
-        end = time.monotonic() + seconds
-        while time.monotonic() < end:
+        """
+        Spin for `seconds` of sim time, so a real-time factor under 1 doesn't shorten the case.
+
+        Wall-clock cap of 3x (at least +5s) in case /clock stalls, as in the
+        drift suite's drive().
+        """
+        wall_end = time.monotonic() + max(3.0 * seconds, seconds + 5.0)
+        start = None
+        while time.monotonic() < wall_end:
             rclpy.spin_once(self, timeout_sec=0.1)
+            now = self.get_clock().now().nanoseconds / 1e9
+            if start is None and now > 0.0:
+                start = now
+            if start is not None and now - start >= seconds:
+                return
+        print(f'[spin_for] wall-clock cap hit before {seconds}s of sim time elapsed')
 
     def wait_until(self, predicate, timeout, description):
         """
