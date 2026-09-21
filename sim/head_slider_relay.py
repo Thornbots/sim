@@ -23,7 +23,9 @@ to `ign topic` (no gz-transport Python bindings here); reader and
 publisher run on separate threads to avoid input lag -- see README.md
 for why.
 """
+import ctypes
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -36,6 +38,15 @@ RELAYS = [
 ]
 
 DATA_LINE = re.compile(r'^\s*data:\s*(-?[0-9.eE+-]+)\s*$')
+
+PR_SET_PDEATHSIG = 1
+_prctl = ctypes.CDLL(None, use_errno=True).prctl
+
+
+def _die_with_parent():
+    # `ign` execs into ign-transport-topic, which keeps this setting. Without
+    # it, launch's SIGINT to this process alone orphaned the echo forever.
+    _prctl(PR_SET_PDEATHSIG, int(signal.SIGTERM))
 
 
 def relay_one(src_topic, dst_topic):
@@ -53,6 +64,7 @@ def relay_one(src_topic, dst_topic):
         echo = subprocess.Popen(
             ['stdbuf', '-oL', 'ign', 'topic', '-e', '-t', src_topic],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            preexec_fn=_die_with_parent,
         )
         for line in echo.stdout:
             match = DATA_LINE.match(line)
