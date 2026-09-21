@@ -190,6 +190,7 @@ Visualization Manager:
       Enabled: true
       Name: ShotMarkers
       Namespaces:
+        shot_to_panel: true
         shots: true
       Topic:
         Depth: 5
