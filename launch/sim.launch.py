@@ -71,6 +71,13 @@ def generate_launch_description():
         'rviz_config', default_value=default_rviz_config,
         description='Full path to the rviz2 config file to load'
     )
+    camera_arg = DeclareLaunchArgument(
+        'camera', default_value='false',
+        description='Set to true to bridge the rgbd camera to /color and /depth; '
+                    'off by default because nothing in sim or its tests reads '
+                    'the images, and they are the heaviest thing it publishes'
+    )
+    camera_on = IfCondition(LaunchConfiguration('camera'))
 
     # --- Optional synthetic wheel-odometry drift injection (pose_emulator.py).
     # Off by default -- sim's /pose stays exact ground truth unless explicitly
@@ -429,6 +436,7 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='camera_image_bridge',
+        condition=camera_on,
         output='screen',
         arguments=['/camera/image@sensor_msgs/msg/Image[gz.msgs.Image'],
         remappings=[('/camera/image', '/color/image_raw')],
@@ -438,6 +446,7 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='camera_depth_bridge',
+        condition=camera_on,
         output='screen',
         arguments=['/camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image'],
         remappings=[('/camera/depth_image', '/depth/image_rect_raw')],
@@ -451,6 +460,7 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='camera_color_info_bridge',
+        condition=camera_on,
         output='screen',
         arguments=['/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'],
         remappings=[('/camera/camera_info', '/color/camera_info')],
@@ -460,6 +470,7 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='camera_depth_info_bridge',
+        condition=camera_on,
         output='screen',
         arguments=['/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'],
         remappings=[('/camera/camera_info', '/depth/camera_info')],
@@ -545,6 +556,7 @@ def generate_launch_description():
         gui_arg,
         rviz_arg,
         rviz_config_arg,
+        camera_arg,
         odom_noise_enabled_arg,
         odom_drift_stddev_arg,
         odom_jitter_stddev_arg,
