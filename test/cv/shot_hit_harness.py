@@ -40,6 +40,7 @@ thornbots_pkg/README.md) to set fire=True on one.
 Shots are observed today, so "zero shots" means something in the
 launched stack is actually broken.
 """
+import ctypes
 import json
 import math
 import os
@@ -211,12 +212,30 @@ def spin_hz_for_speed(speed, speed_min, speed_max):
     return SPIN_HZ_AT_MIN_SPEED + frac * (SPIN_HZ_AT_MAX_SPEED - SPIN_HZ_AT_MIN_SPEED)
 
 
+PR_SET_PDEATHSIG = 1
+_prctl = ctypes.CDLL(None, use_errno=True).prctl
+
+
+def interrupt_with_parent():
+    """Popen preexec_fn: SIGINT this child when the process that started it dies."""
+    _prctl(PR_SET_PDEATHSIG, int(signal.SIGINT))
+
+
+def signal_group(pgid, sig):
+    """Send sig to process group pgid; return False if the group is gone."""
+    try:
+        os.killpg(pgid, sig)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 class LaunchTree:
     """
     Launches a command as its own process group; SIGINT (then SIGKILL) the whole group on stop().
 
-    Mirrors run_localization_drift_tests.py's LaunchTree -- see that for
-    the orphan-process rationale.
+    Mirrors drift_harness.py's LaunchTree -- see that for the
+    orphan-process rationale.
     """
 
     def __init__(self, name, cmd, log_path):
@@ -230,33 +249,26 @@ class LaunchTree:
         self.log_file = open(self.log_path, 'w')
         self.proc = subprocess.Popen(
             self.cmd, stdout=self.log_file, stderr=subprocess.STDOUT,
-            start_new_session=True,
+            start_new_session=True, preexec_fn=interrupt_with_parent,
         )
         print(f'[{self.name}] started pid={self.proc.pid} log={self.log_path} '
               f'cmd={shlex.join(self.cmd)}')
 
     def stop(self, timeout=15.0):
-        if self.proc is None or self.proc.poll() is not None:
+        if self.proc is None:
             return
-        try:
-            pgid = os.getpgid(self.proc.pid)
-        except ProcessLookupError:
-            return
-        try:
-            os.killpg(pgid, signal.SIGINT)
-        except ProcessLookupError:
-            return
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
-                self.log_file.close()
-                return
-            time.sleep(0.2)
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        self.proc.wait(timeout=10)
+        pgid = self.proc.pid  # session leader, so its pid is the group id
+        if self.proc.poll() is None:
+            signal_group(pgid, signal.SIGINT)
+            try:
+                self.proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                signal_group(pgid, signal.SIGKILL)
+                self.proc.wait(timeout=10)
+        # Anything left in the group outlived the launch; see drift_harness.
+        if signal_group(pgid, 0):
+            print(f'[{self.name}] processes outlived the launch; SIGKILLing them')
+            signal_group(pgid, signal.SIGKILL)
         self.log_file.close()
 
 
