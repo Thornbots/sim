@@ -189,7 +189,7 @@ class CvTargetEmulator(Node):
         # publish_latency_s=0.06 is a placeholder pending a real measurement
         # from point_to_cv_target's LatencyStat (plan verification item 9) --
         # the plan's own estimate is pipeline latency ~50-100ms.
-        self.declare_parameter('noise_pos_stddev', 0.03)
+        self.declare_parameter('noise_pos_stddev', 0.01)
         self.declare_parameter('dropout_probability', 0.1)
         self.declare_parameter('publish_latency_s', 0.06)
         self.declare_parameter('yaw_joint_name', 'headlink')
