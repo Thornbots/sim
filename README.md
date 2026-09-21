@@ -19,12 +19,14 @@ is targeting. All six drift scenarios take several minutes:
 ros2 run sim run_localization_drift_tests.py --backend amcl --use-ekf
 ```
 
-The CV bench runs five shot-hit cases, all with lead on: a stationary target,
-then 0.5, 1, 2 and 4 m/s. It launches the stack once and only changes how the
-target moves between cases; each case settles for 3s, then scores 30s of sim
-time. The bench fires at up to 40 Hz, far above the real launcher, and scores
-each case on hit rate and hits per expected shot equally (`score()` in
-`test/cv/shot_hit_harness.py`), so falling behind 40 Hz costs points.
+The CV bench runs ten shot-hit cases, all with lead on: a stationary target,
+then 0.5, 1, 2 and 4 m/s, first with flat panels and then with neighbouring
+panels staggered 90% of a panel's height apart (`--panel-layout` picks one).
+It launches the stack once and only changes the target between cases; each
+case settles for 3s, then scores 30s of sim time. The bench fires at up to
+40 Hz, far above the real launcher, and scores each case on hit rate and hits
+per expected shot equally (`score()` in `test/cv/shot_hit_harness.py`), so
+falling behind 40 Hz costs points.
 
 Every scored shot goes to `shots.jsonl` in `--log-dir`, one JSON object per
 line: the case, whether it hit, the miss distance split into the panel's

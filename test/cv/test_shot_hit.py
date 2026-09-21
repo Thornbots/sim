@@ -23,14 +23,16 @@ and stack lifecycle live in shot_hit_harness.py.
 One test per case, stationary then each speed, all with point_to_cv_target's
 lead on and firing at up to TEST_FIRE_HZ (40), far above the real launcher, to
 stress tracking. The stack launches once per run (the cv_stack fixture); each
-case only changes how the target moves. Each case prints and asserts a score,
+case only changes how the target moves. Every case runs twice: flat panels,
+then staggered (neighbours STAGGERED_PANEL_M, 90% of a panel's height,
+apart); --panel-layout picks one. Each case prints and asserts a score,
 the mean of hit rate and hits per expected shot (shot_hit_harness.score), so
 falling behind 40 Hz costs points. Floors: STATIONARY_MIN_HIT_RATE for the
 stationary case, MOVING_MIN_HIT_RATE for the moving ones. Do not relax them.
 
 Launches gz-sim, so marked `integration` and skipped by a plain
 `colcon test`. Options: --shot-speeds, --shot-duration, --hit-radius,
---skip-stationary, --only-stationary, --headless, --log-dir.
+--panel-layout, --skip-stationary, --only-stationary, --headless, --log-dir.
 """
 import os
 
@@ -64,6 +66,9 @@ def _speeds(config):
     return [float(v) for v in raw.split(',') if v.strip()]
 
 
+LAYOUTS = {'flat': 0.0, 'staggered': harness.STAGGERED_PANEL_M}
+
+
 def pytest_generate_tests(metafunc):
     if 'case' not in metafunc.fixturenames:
         return
@@ -73,11 +78,14 @@ def pytest_generate_tests(metafunc):
         cases.append(STATIONARY)
     if not config.getoption('--only-stationary'):
         cases.extend(_speeds(config))
-    ids = [case if case == STATIONARY else f'speed{case}' for case in cases]
-    metafunc.parametrize('case', cases, ids=ids)
+    layout = config.getoption('--panel-layout')
+    layouts = list(LAYOUTS) if layout == 'both' else [layout]
+    params = [(lay, case) for lay in layouts for case in cases]
+    ids = [f'{lay}-{case if case == STATIONARY else f"speed{case}"}' for lay, case in params]
+    metafunc.parametrize('layout,case', params, ids=ids)
 
 
-def test_shot_hit(case, request, cv_stack):
+def test_shot_hit(layout, case, request, cv_stack):
     config = request.config
     speeds = _speeds(config)
     duration = config.getoption('--shot-duration') or harness.DEFAULT_DURATION
@@ -85,18 +93,19 @@ def test_shot_hit(case, request, cv_stack):
 
     if case == STATIONARY:
         speed, spin_hz = 0.0, 0.0
-        label, floor, floor_name = ('stationary, spin=0.00 Hz',
+        label, floor, floor_name = (f'{layout} stationary, spin=0.00 Hz',
                                     harness.STATIONARY_MIN_HIT_RATE,
                                     'STATIONARY_MIN_HIT_RATE')
     else:
         speed = case
         spin_hz = harness.spin_hz_for_speed(speed, min(speeds), max(speeds))
-        label, floor, floor_name = (f'speed={speed} m/s, spin={spin_hz:.2f} Hz',
+        label, floor, floor_name = (f'{layout} {speed} m/s, spin={spin_hz:.2f} Hz',
                                     harness.MOVING_MIN_HIT_RATE,
                                     'MOVING_MIN_HIT_RATE')
     print(f'\n=== {label} ===')
 
-    sampler, dropped = harness.run_case(cv_stack, speed, spin_hz, duration, hit_radius)
+    sampler, dropped = harness.run_case(cv_stack, speed, spin_hz, duration, hit_radius,
+                                        stagger=LAYOUTS[layout])
     total = harness.summarize(label, sampler, dropped, duration)
 
     assert sampler.shots_fired > 0, (

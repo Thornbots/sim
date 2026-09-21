@@ -77,6 +77,9 @@ def pytest_addoption(parser):
         '--hit-radius', type=float, default=None,
         help='perpendicular miss distance (m) still counted as a hit')
     group.addoption(
+        '--panel-layout', choices=['flat', 'staggered', 'both'], default='both',
+        help='target panel heights: flat, staggered by 90% of a panel, or both')
+    group.addoption(
         '--skip-stationary', action='store_true',
         help='skip the speed=0/spin=0 baseline case')
     group.addoption(
