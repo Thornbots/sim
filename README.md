@@ -118,7 +118,12 @@ ros2 launch sim sim.launch.py
 ros2 launch sim sim.launch.py gui:=false rviz:=false     # server only
 ros2 launch sim sim.launch.py x:=1.0 y:=0.5 yaw:=0.0     # spawn pose (z:= too)
 ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
+ros2 launch sim sim.launch.py camera:=true               # bridge /color and /depth
 ```
+
+The camera is off by default. Its color and depth images are the heaviest
+thing the sim publishes, and nothing in `sim` or its tests reads them. Turn it
+on to run the YOLO pipeline against sim or to fill rviz's Image panel.
 
 These add synthetic wheel-odometry error. All are off by default; the
 `pose_emulator.py` note explains each one:
