@@ -76,6 +76,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Standing rules
 
+- **Ask before starting any sim test run**, the shot-hit bench or the drift
+  suite, even when the next run seems the obvious step. The user may have
+  tuning to do first.
 - **GUI on, not headless**, for both `sim` and the drift suite; the user watches
   the gz-sim window during testing. Pass `--headless` only when asked (e.g. a
   quick unattended run). Launch through `dexec.sh -d`, which execs as `admin`,
