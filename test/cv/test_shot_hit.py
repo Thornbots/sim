@@ -21,17 +21,18 @@ real launcher per mcb_relay.py's "sole relay" design). Scoring geometry
 and stack lifecycle live in shot_hit_harness.py.
 
 One test per case, stationary then each speed, all with point_to_cv_target's
-lead on, printing a hit-rate line each. The stationary case asserts
-STATIONARY_MIN_HIT_RATE, a floor that catches gross aiming breakage. The
-moving cases assert MOVING_MIN_HIT_RATE, since aiming at a moving, spinning
-target is what this bench is for. Do not relax thresholds.
+lead on and firing at up to TEST_FIRE_HZ (40), far above the real launcher, to
+stress tracking. The stack launches once per run (the cv_stack fixture); each
+case only changes how the target moves. Each case prints and asserts a score,
+the mean of hit rate and hits per expected shot (shot_hit_harness.score), so
+falling behind 40 Hz costs points. Floors: STATIONARY_MIN_HIT_RATE for the
+stationary case, MOVING_MIN_HIT_RATE for the moving ones. Do not relax them.
 
 Launches gz-sim, so marked `integration` and skipped by a plain
 `colcon test`. Options: --shot-speeds, --shot-duration, --hit-radius,
 --skip-stationary, --only-stationary, --headless, --log-dir.
 """
 import os
-import time
 
 import pytest
 
@@ -42,16 +43,18 @@ pytestmark = pytest.mark.integration
 STATIONARY = 'stationary'
 
 
-@pytest.fixture(autouse=True)
-def settle_between_cases():
-    """
-    Let a case's stack fully release its topics/services before the next launches.
-
-    Teardown rather than test body, so it still runs when a case fails
-    and the next case starts against a clean graph either way.
-    """
-    yield
-    time.sleep(1.0)
+@pytest.fixture(scope='module')
+def cv_stack(request, ros_context):
+    """Launch the sim and CV pipeline once for every case in this module."""
+    config = request.config
+    log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
+    os.makedirs(log_dir, exist_ok=True)
+    stack = harness.CvStack(config.getoption('--headless'), log_dir)
+    try:
+        stack.start()
+        yield stack
+    finally:
+        stack.stop()
 
 
 def _speeds(config):
@@ -74,13 +77,11 @@ def pytest_generate_tests(metafunc):
     metafunc.parametrize('case', cases, ids=ids)
 
 
-def test_shot_hit(case, request, gui, ros_context):
+def test_shot_hit(case, request, cv_stack):
     config = request.config
     speeds = _speeds(config)
     duration = config.getoption('--shot-duration') or harness.DEFAULT_DURATION
     hit_radius = config.getoption('--hit-radius') or harness.DEFAULT_HIT_RADIUS
-    log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
-    os.makedirs(log_dir, exist_ok=True)
 
     if case == STATIONARY:
         speed, spin_hz = 0.0, 0.0
@@ -95,15 +96,14 @@ def test_shot_hit(case, request, gui, ros_context):
                                     'MOVING_MIN_HIT_RATE')
     print(f'\n=== {label} ===')
 
-    sampler, dropped = harness.run_one_speed(
-        speed, spin_hz, duration, not gui, log_dir, hit_radius)
-    harness.summarize(label, sampler, dropped)
+    sampler, dropped = harness.run_case(cv_stack, speed, spin_hz, duration, hit_radius)
+    total = harness.summarize(label, sampler, dropped, duration)
 
     assert sampler.shots_fired > 0, (
         f'no shots observed in {label} -- something in the launched stack is '
         'broken (mcb_relay not relaying, point_to_cv_target not firing, or a '
-        f'node failed to start; check the per-node logs in {log_dir})')
-    hit_rate = sampler.hits / sampler.shots_fired
-    assert hit_rate >= floor, (
-        f'{sampler.hits}/{sampler.shots_fired} = {hit_rate:.0%} hit rate '
-        f'({label}), below {floor:.0%}; see {floor_name}')
+        'node failed to start; check the per-node logs in --log-dir)')
+    assert total >= floor, (
+        f'score {total:.0%} ({label}: {sampler.hits} hits from '
+        f'{sampler.shots_fired} shots), below {floor:.0%}; see {floor_name} '
+        'and shot_hit_harness.score()')
