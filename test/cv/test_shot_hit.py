@@ -34,7 +34,7 @@ Launches gz-sim, so marked `integration` and skipped by a plain
 `colcon test`; `ros2 launch sim shot_hit.launch.py` runs it. Options:
 --shot-speeds, --shot-duration, --hit-radius, --panel-layout,
 --skip-stationary, --only-stationary, --headless, --log-dir, --external-stack,
---real-time-factor.
+--real-time-factor, --target-state (truth = the aim bench, no tracker).
 """
 import os
 
@@ -55,7 +55,8 @@ def cv_stack(request, ros_context):
     os.makedirs(log_dir, exist_ok=True)
     stack = harness.CvStack(config.getoption('--headless'), log_dir,
                             external=config.getoption('--external-stack'),
-                            real_time_factor=config.getoption('--real-time-factor'))
+                            real_time_factor=config.getoption('--real-time-factor'),
+                            target_state=config.getoption('--target-state'))
     try:
         stack.start()
         yield stack

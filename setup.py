@@ -68,6 +68,7 @@ setup(
             'head_slider_relay = sim.head_slider_relay:main',
             'target_driver = sim.target_driver:main',
             'cv_target_emulator = sim.cv_target_emulator:main',
+            'target_state_truth = sim.target_state_truth:main',
             'cv_head_aim = sim.cv_head_aim:main',
             'sapien_sim = sim.sapien_sim:main',
         ],

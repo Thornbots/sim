@@ -156,6 +156,8 @@ _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
 # RoboMaster Standard-class footprint (~600mm front-back, ~480mm
 # left-right) rather than a single square layout.
 _PANEL_OFFSETS_RAD = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
+PANEL_RADIUS_X = 0.30  # front/back, ~600mm chassis length / 2
+PANEL_RADIUS_Y = 0.24  # left/right, ~480mm chassis width / 2
 _PANEL_NAMES = ('front', 'left', 'back', 'right')
 _PANEL_USES_RADIUS_X = (True, False, True, False)  # front/back vs left/right
 # Small Armor Module (Standard-class, most ARCC opponents) approximated as
@@ -194,8 +196,8 @@ class CvTargetEmulator(Node):
         self.declare_parameter('publish_latency_s', 0.06)
         self.declare_parameter('yaw_joint_name', 'headlink')
         self.declare_parameter('pitch_joint_name', 'headpitch')
-        self.declare_parameter('panel_radius_x', 0.30)  # front/back, ~600mm chassis length / 2
-        self.declare_parameter('panel_radius_y', 0.24)  # left/right, ~480mm chassis width / 2
+        self.declare_parameter('panel_radius_x', PANEL_RADIUS_X)
+        self.declare_parameter('panel_radius_y', PANEL_RADIUS_Y)
         # Height difference (m) between neighbouring panels: front/back sit
         # half of it above the chassis centre, left/right half below.
         self.declare_parameter('panel_stagger_m', 0.0)

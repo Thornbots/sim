@@ -89,6 +89,9 @@ def pytest_addoption(parser):
         '--panel-layout', choices=['flat', 'staggered', 'both'], default='both',
         help='target panel heights: flat, staggered by 90% of a panel, or both')
     group.addoption(
+        '--target-state', choices=['tracker', 'truth'], default='tracker',
+        help='truth: the aim bench, target_state_truth in place of target_tracker')
+    group.addoption(
         '--skip-stationary', action='store_true',
         help='skip the speed=0/spin=0 baseline case')
     group.addoption(
