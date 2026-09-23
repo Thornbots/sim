@@ -181,12 +181,11 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   tumble the robot to extreme angles (~86° roll observed). The user chose to
   accept occasional flips rather than reintroduce a kinematic constraint.
   Revisit only if flips start blocking exploration in practice.
-- **The slip model corrupts position but not velocity.** `pose_emulator.py`
-  applies `odom_slip_ratio` to `_slipped_x/y` only, while `vel_x`/`vel_y` pass
-  through as true twist. Velocity-only wheel fusion therefore looks better in
-  sim than it will on hardware, where encoder velocity is also wrong during a
-  slip. Make slip corrupt velocity before trusting the +89% EKF number as a
-  hardware prediction.
+- **Slip now corrupts `/pose` velocity as well as position (2026-09-23).**
+  `odom_slip_ratio` scales `vel_x`/`vel_y` by the same `(1 - ratio)`, as
+  slipping encoders would. Every EKF number recorded before this was
+  measured with true velocity under slip; the drift suite has not been
+  rerun since.
 - **`drift_correction`/`drift_correction_obstacle` need an ekf-appropriate
   metric.** Their `MAX_DELTA_THRESHOLD` is calibrated for `map->odom`'s
   residual-correction semantics. Under `--backend none`, where the watched edge
