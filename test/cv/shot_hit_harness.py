@@ -673,14 +673,18 @@ class CvStack:
     both every tick), so the target keeps its place and the stack its state.
     """
 
-    def __init__(self, headless, log_dir, external=False, real_time_factor='0'):
+    def __init__(self, headless, log_dir, external=False, real_time_factor='0',
+                 target_state='tracker'):
         self.launch = None
+        # truth: target_state_truth stands in for target_tracker (the aim bench).
+        self.estimator = 'target_state_truth' if target_state == 'truth' else 'target_tracker'
         if not external:
             self.launch = LaunchTree(
                 'stack',
                 ['ros2', 'launch', 'sim', 'shot_hit.launch.py', 'run_tests:=false',
                  f'headless:={str(headless).lower()}',
-                 f'real_time_factor:={real_time_factor}'],
+                 f'real_time_factor:={real_time_factor}',
+                 f'target_state:={target_state}'],
                 os.path.join(log_dir, 'stack.log'))
         # One JSON line per scored shot, across the whole run; see _shot_record.
         self.shots_path = os.path.join(log_dir, 'shots.jsonl')
@@ -693,6 +697,8 @@ class CvStack:
             SetParameters, '/target_driver/set_parameters')
         self._set_emulator_params = self.node.create_client(
             SetParameters, '/cv_target_emulator/set_parameters')
+        self._set_truth_params = self.node.create_client(
+            SetParameters, '/target_state_truth/set_parameters')
 
     def start(self):
         open(self.shots_path, 'w').close()
@@ -706,7 +712,7 @@ class CvStack:
                 timeout=60.0,
                 description='/sim/raw_odom + /target/ground_truth_odom publishing')
             ready = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher',
-                     'target_selector', 'target_tracker']
+                     'target_selector', self.estimator]
             probe.wait_until(lambda: probe.nodes_up(*ready), timeout=15.0,
                              description=f'{", ".join(ready)} nodes up')
         finally:
@@ -730,6 +736,9 @@ class CvStack:
                   {'target_speed': speed, 'spin_hz': spin_hz})
         self._set(self._set_emulator_params, 'cv_target_emulator',
                   {'panel_stagger_m': stagger})
+        if self.estimator == 'target_state_truth':
+            self._set(self._set_truth_params, 'target_state_truth',
+                      {'panel_stagger_m': stagger})
         print(f'[stack] target set to speed={speed} m/s, spin={spin_hz:.2f} Hz, '
               f'panel stagger={stagger:.3f} m')
 

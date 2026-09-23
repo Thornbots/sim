@@ -29,6 +29,11 @@ case settles for 3s, then scores 30s of sim time. The bench fires at up to
 per expected shot equally (`score()` in `test/cv/shot_hit_harness.py`), so
 falling behind 40 Hz costs points.
 
+`target_state:=truth` makes it the aim bench: `target_state_truth` publishes
+the target's true `TargetState` in place of `target_tracker`, so a miss is
+`point_to_cv_target`'s and not the estimate's (see its note below). The floors
+are the same placeholders on both until the aim bench has been measured.
+
 Every scored shot goes to `shots.jsonl` in `--log-dir`, one JSON object per
 line: the case, whether it hit, the miss distance split into the panel's
 offset right of, above and ahead of the shot (ahead is along the target's
@@ -624,6 +629,27 @@ Detections outside the FOV (`horizontal_fov=1.5184`, vertical from 640x480) or
 range (0.1-10.0m) aren't published, which exercises `point_to_cv_target`'s
 watchdog. Inside, `noise_pos_stddev` (0.005m), `dropout_probability` (0.1) and
 `publish_latency_s` (0.06s, a placeholder) all default on.
+
+### target_state_truth.py: the aim bench's perfect knowledge
+
+Stands in for `target_tracker` under `shot_hit.launch.py target_state:=truth`.
+It publishes one `TargetState` per `/cv/robot_panels` message, copying that
+message's stamp and `robot_track_id`, so `point_to_cv_target` sees the same
+timing, latency and track ids as it does behind the tracker. The state is
+`/target/ground_truth_odom` at that stamp: the emulator stamps detections with
+the truth sample they came from, so the match is exact, and a sample more
+than 20 ms off is dropped as aged out of the 2 s history.
+
+Panel 0 (front) is always the tracked panel: `yaw` is the chassis yaw,
+unwrapped, `radius` is `panel_radius_x` and `other_radius` `panel_radius_y`.
+`z_offset`/`other_z_offset` carry the stagger (front/back `+stagger/2`,
+left/right `-stagger/2`); the tracker leaves both at 0, its one-height model.
+`variance` is zero and `valid` always true. `panel_stagger_m` has to follow
+`cv_target_emulator`'s, which `CvStack.set_target` does per case.
+
+`target_selector` still runs: `point_to_cv_target` takes its liveness and
+track id from `/cv/panel_detection`, so dropouts and track loss still reach
+the aim solve.
 
 ### cv_head_aim.py
 

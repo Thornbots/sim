@@ -16,6 +16,8 @@
 Shot-hit bench: the sim, the production CV pipeline and the scoring pytest in one launch tree.
 
 `ros2 launch sim shot_hit.launch.py [speeds:='0.5 1'] [only_stationary:=true]`.
+target_state:=truth is the aim bench: target_state_truth publishes the true
+TargetState in place of target_tracker, so every miss is point_to_cv_target's.
 Stops when the tests finish; Ctrl-C (or SIGINT/SIGTERM to this launch) stops
 the whole stack. `run_tests:=false` brings up the stack alone, which is how
 test_shot_hit.py's cv_stack fixture launches it under a bare pytest/colcon test.
@@ -97,14 +99,15 @@ def _stack(context):
     # picks from the emulator's panel_detections, target_tracker estimates the
     # spin centre, point_to_cv_target solves the lead and fires at up to
     # TEST_FIRE_HZ, mcb_relay forwards it to /dji_serial_bridge/cv_target.
-    def cv_node(executable, **params):
-        return Node(package='thornbots_pkg', executable=executable, name=executable,
+    def cv_node(executable, package='thornbots_pkg', **params):
+        return Node(package=package, executable=executable, name=executable,
                     output='screen', parameters=[{'use_sim_time': True, **params}])
 
+    truth = context.launch_configurations['target_state'] == 'truth'
     actions = [
         sim, robot_tf,
         cv_node('target_selector'),
-        cv_node('target_tracker'),
+        cv_node('target_state_truth', package='sim') if truth else cv_node('target_tracker'),
         cv_node('point_to_cv_target',
                 cv_target_publish_rate_hz=harness.TEST_FIRE_HZ,
                 fire_rate_hz=harness.TEST_FIRE_HZ + 10.0),
@@ -115,7 +118,8 @@ def _stack(context):
 
     cmd = [sys.executable, '-m', 'pytest', os.path.join(test_dir, TEST_FILE),
            '-m', 'integration', '-v', '-s', '--external-stack',
-           '--panel-layout', context.launch_configurations['panel_layout']]
+           '--panel-layout', context.launch_configurations['panel_layout'],
+           '--target-state', context.launch_configurations['target_state']]
     speeds = context.launch_configurations['speeds'].replace(',', ' ').split()
     if speeds:
         cmd += ['--shot-speeds', ','.join(speeds)]
@@ -158,6 +162,9 @@ def generate_launch_description():
                               description='sim-time seconds scored per case'),
         DeclareLaunchArgument('hit_radius', default_value='',
                               description='miss distance (m) still counted as a hit'),
+        DeclareLaunchArgument('target_state', default_value='tracker',
+                              choices=['tracker', 'truth'],
+                              description='truth: aim bench, true TargetState, no tracker'),
         DeclareLaunchArgument('panel_layout', default_value='both',
                               choices=['flat', 'staggered', 'both']),
         DeclareLaunchArgument('skip_stationary', default_value='false'),

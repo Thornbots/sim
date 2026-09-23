@@ -182,6 +182,14 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **Shot-hit stationary cases are bimodal (2026-09-21).** Two runs swapped
   results: flat 98%/1% and staggered 2%/84%. The bad mode misses by
   0.149 m every time, the panel 15-20 cm right of the shot.
+- **The aim bench (C1) is built, not run (2026-09-23).**
+  `shot_hit.launch.py target_state:=truth` swaps `target_tracker` for
+  `target_state_truth`, which publishes the true `TargetState` per
+  `/cv/robot_panels` message. `TargetState` grew `z_offset` /
+  `other_z_offset` for it (`dji_serial_bridge`); `point_to_cv_target`
+  doesn't read them yet, so staggered cases on the aim bench still aim at
+  one height. First run sets real floors for `MOVING_MIN_HIT_RATE`; run it
+  at `real_time_factor:=1` too, since results are bimodal (below).
 - **Shot-hit bench state (2026-09-21).** One stack per run, 10 cases (flat and
   staggered x stationary, 0.5, 1, 2, 4 m/s), 3s settle + 30s scored each, ~5.5
   min. Results and the stack's failures are in `../thornbots_pkg/AGENTS.md`.
