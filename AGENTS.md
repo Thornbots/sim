@@ -145,12 +145,23 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   each) read 0.348 m mean unthrottled vs 0.338 m at 1x. The CV pipeline adds
   36 ms of sim-time latency unthrottled vs 26 ms at 1x, on top of the
   emulator's 60 ms. Rerun at 1x before trusting a small CV score change.
-- **The EKF path is broken, so `use_ekf:=true` fails (2026-09-21).**
-  `suite:=ekf` at 1x: `odom->root` x runs backwards on eastward legs (truth
-  +1.49 m, EKF -0.78 m over the first leg); y and westward legs track. EKF
-  mean error 7.4 m vs raw `/odom` 0.16 m. `noise_correction` diverges to
-  7-15 m with it, passes at 0.14 m without. Suspect rf2o's `/scan_odom` sign;
-  compare its displacement vector to truth first.
+- **rf2o is not backwards; the EKF's remaining error is rf2o yaw drift
+  (2026-09-23).** `suite:=ekf` now prints each source's per-leg
+  displacement against truth as an angle and a length ratio. At
+  `real_time_factor:=1`, 4 m/s: `/scan_odom` reads x0.94-1.00 on every
+  leg but its direction drifts steadily, -1.3 deg to -5.1 deg over 45 s,
+  on a chassis that never rotates. The EKF takes rf2o's x/y at 0.02^2, so
+  it inherits the rotation: 0.205 m mean error against raw `/odom`'s
+  0.169 m (-21%). At 1 m/s the same run gave the EKF +93%. The 2026-09-21
+  "x runs backwards" reading and rf2o `73744a3`'s inverted warping (the
+  inversion gave 49.6 m mean error; reverted) both came from the next item.
+- **Unthrottled runs corrupt every rf2o/EKF number.** rf2o's main loop
+  runs at `freq` (20 Hz) on the wall clock and keeps only the latest scan.
+  At `real_time_factor:=0` the sim runs 2-3x real time, so rf2o skips
+  scans and matches pairs 0.8-1.2 m apart at 4 m/s. Same code, same
+  4 m/s loop: unthrottled `/scan_odom` read x0.40-0.77 on eastward legs and
+  drifted -19 deg; at 1x it read x0.94-1.00 and -5 deg. Run anything with
+  `use_ekf` at `real_time_factor:=1` until rf2o processes by scan stamp.
 - **Shot-hit stationary cases are bimodal (2026-09-21).** Two runs swapped
   results: flat 98%/1% and staggered 2%/84%. The bad mode misses by
   0.149 m every time, the panel 15-20 cm right of the shot.
