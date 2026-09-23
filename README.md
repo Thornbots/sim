@@ -293,6 +293,31 @@ export tree runs; confirm with the mechanical team. Nothing uses `sentry_v2`
 yet; wiring it in means a driven chassis instead of the kinematic ghost, and
 new pinned constants in `test_urdf_constants.py` and `cv_target_emulator.py`.
 
+### sentry.urdf.xacro: the lidar does not scan its own model
+
+Every robot visual carries `visibility_flags=0xFFFFFFFE` against the
+`gpu_lidar`'s `visibility_mask=0x01`, so `(mask & flags) == 0` and the sensor
+renders none of the sentry. Nothing else in the world sets the flags, so the
+field keeps sdformat's default `0xFFFFFFFF` and stays visible.
+
+This was tried in July 2026, reverted as "all-or-nothing per visual", and is
+back because all-or-nothing turned out to be the right answer. Measured
+2026-09-23, with the exclusion off: the head blanked 118-180 deg of
+`/scan_raw`, and a further rear sector out to -45 deg came and went with the
+head's pose -- between 863 and 1613 of 3000 beams, reported as `-inf` because
+the self-hits land inside `range_min`. `lidar_self_filter` blanks 1.0 rad
+(126-183 deg), so up to 140 deg of the scan was being lost to something
+nothing in the stack knew about. A bare `gpu_lidar` at the same height in the
+same world returns all 3000 beams at 2.22-7.17 m, which is what the sentry's
+sensor now returns too.
+
+Hardware is the reason to prefer it: the real RPLIDAR's scanning disk sits
+clear of the chassis, and only the head's own footprint blocks it.
+`lidar_self_filter` models exactly that, in the one place that also runs on
+the robot. Note that the filter's 2.20-3.20 rad came from sim's old self-hit
+cluster, which no longer exists -- it now needs a real `/scan_raw` capture to
+retune against (see `../thornbots_pkg/README.md`).
+
 ### test_localization_drift.py
 
 Integration suite for `sentry_localization`'s drift and jerk correction

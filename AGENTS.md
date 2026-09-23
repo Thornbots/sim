@@ -106,6 +106,16 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Open
 
+- **The lidar stopped scanning its own model (2026-09-23).** Every robot
+  visual now carries `visibility_flags` against the sensor's
+  `visibility_mask`, restoring the July approach that was reverted. Before
+  it, the head blanked 118-180 deg of `/scan_raw` plus a rear sector that
+  moved with the head's pose -- 863 to 1613 of 3000 beams as `-inf`, against
+  `lidar_self_filter`'s 1.0 rad. A bare `gpu_lidar` in the same world returns
+  all 3000 beams, so it was the robot, not the world or the sensor. Every
+  drift and shot-hit number recorded before this date was measured on the
+  blanked scan. `lidar_self_filter`'s sector was tuned to the self-hit
+  cluster that no longer exists; it needs a hardware capture to retune.
 - **Test results at `real_time_factor:=0` vs 1 (2026-09-21).** Both suites
   run 2-3x real time with the GUI. `drift_correction` (amcl, no EKF, 3 runs
   each) read 0.348 m mean unthrottled vs 0.338 m at 1x. The CV pipeline adds
