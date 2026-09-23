@@ -87,7 +87,8 @@ class PoseEmulator(Node):
         # accumulation) and jerk (one-time impulse): models wheels that
         # spin but don't fully grip (e.g. the arena's "Bumpy Road" zone),
         # losing a fixed FRACTION of every meter actually driven. 0.5 means
-        # reported /pose only advances 0.5m per 1m actually moved. 0.0
+        # reported /pose only advances 0.5m per 1m actually moved, and
+        # reports half the true velocity, as slipping encoders would. 0.0
         # (default) disables this.
         self.declare_parameter('odom_slip_ratio', 0.0)
 
@@ -251,6 +252,11 @@ class PoseEmulator(Node):
 
         vel_x = float(msg.twist.twist.linear.x)
         vel_y = float(msg.twist.twist.linear.y)
+        if slip_ratio > 0.0:
+            # Same loss as position: the EKF fuses only /odom's velocity.
+            vel_x *= (1.0 - slip_ratio)
+            vel_y *= (1.0 - slip_ratio)
+
         if self._odom_stuck:
             # Dead sensor: fresh timestamps keep arriving, but position and
             # velocity are pinned at zero regardless of actual motion --
