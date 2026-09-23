@@ -35,11 +35,13 @@ from launch.actions import (
     LogInfo,
     OpaqueFunction,
     RegisterEventHandler,
+    SetEnvironmentVariable,
     TimerAction,
 )
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 
 # Installed as a symlink into share/sim/launch (--symlink-install), so the real
 # path leads back to src/sim; the constant covers a copying install.
@@ -132,6 +134,11 @@ def _launch(context):
 
 def generate_launch_description():
     args = [
+        DeclareLaunchArgument('sim_engine',
+                              default_value=EnvironmentVariable('SIM_ENGINE', default_value='gz'),
+                              choices=['gz', 'sapien'],
+                              description='gz or sapien; exported as SIM_ENGINE so pytest '
+                                          'and every stack it launches use the same one'),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up one scenario stack only'),
         DeclareLaunchArgument('suite', default_value='drift', choices=['drift', 'ekf']),
@@ -157,4 +164,5 @@ def generate_launch_description():
         DeclareLaunchArgument('pytest_args', default_value='',
                               description="extra pytest args, e.g. '-x'"),
     ]
-    return LaunchDescription(args + [OpaqueFunction(function=_launch)])
+    engine = SetEnvironmentVariable('SIM_ENGINE', LaunchConfiguration('sim_engine'))
+    return LaunchDescription(args + [engine, OpaqueFunction(function=_launch)])

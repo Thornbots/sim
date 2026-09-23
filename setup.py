@@ -69,6 +69,7 @@ setup(
             'target_driver = sim.target_driver:main',
             'cv_target_emulator = sim.cv_target_emulator:main',
             'cv_head_aim = sim.cv_head_aim:main',
+            'sapien_sim = sim.sapien_sim:main',
         ],
     },
 )
