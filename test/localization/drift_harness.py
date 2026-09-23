@@ -636,6 +636,7 @@ EMULATOR_PARAMS = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stdde
 _sim = None
 _emulator_defaults = None
 _spawned_models = []
+_robot_runs = 0  # numbers each scenario's robot log, so a failed bring-up keeps its own
 
 
 def set_restart_sim(restart):
@@ -652,7 +653,11 @@ class ScenarioStack:
         self._sim_log_start = len(sim.log_text())
 
     def log_text(self):
-        return self.robot.log_text() + self.sim.log_text()[self._sim_log_start:]
+        # rviz is a viewer, not under test; it logs TF extrapolation errors
+        # whenever a robot stack restarts under it.
+        sim_lines = self.sim.log_text()[self._sim_log_start:].splitlines(keepends=True)
+        return self.robot.log_text() + ''.join(
+            line for line in sim_lines if not line.startswith('[rviz2'))
 
     def stop(self):
         self.robot.stop()
@@ -722,7 +727,7 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
     drift scenarios (_run_cornering_loop_scenario) pass 0.15 explicitly;
     see MAX_DELTA_THRESHOLD's comment for how 0.40m was calibrated.
     """
-    global _sim, _emulator_defaults
+    global _sim, _emulator_defaults, _robot_runs
     os.makedirs(LOG_DIR, exist_ok=True)
     emulator = {
         'odom_noise_enabled': odom_noise_enabled,
@@ -762,8 +767,9 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
     except Exception:
         helper.destroy_node()
         raise
+    _robot_runs += 1
     robot = LaunchTree('robot', _launch_cmd({**args, 'part': 'robot'}),
-                       os.path.join(LOG_DIR, 'robot.log'))
+                       os.path.join(LOG_DIR, f'robot_{_robot_runs}.log'))
     robot.start()
     return ScenarioStack(robot, _sim), helper
 
