@@ -32,6 +32,7 @@ import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from sensor_msgs.msg import JointState
 from tf2_ros import Buffer, TransformListener
 
 
@@ -51,10 +52,16 @@ class GroundTruthProbe(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self._truth = None
         self._odom = None
+        self._scan_odom = None
+        self.head_yaw = None
         self.create_subscription(
             Odometry, '/sim/raw_odom', self._on_truth, 10)
         self.create_subscription(
             Odometry, '/odom', self._on_odom, 10)
+        self.create_subscription(
+            Odometry, '/scan_odom', self._on_scan_odom, 10)
+        self.create_subscription(
+            JointState, '/sim/raw_joint_states', self._on_joints, 10)
 
     def _on_truth(self, msg):
         p = msg.pose.pose.position
@@ -63,6 +70,14 @@ class GroundTruthProbe(Node):
     def _on_odom(self, msg):
         p = msg.pose.pose.position
         self._odom = (p.x, p.y)
+
+    def _on_scan_odom(self, msg):
+        p = msg.pose.pose.position
+        self._scan_odom = (p.x, p.y)
+
+    def _on_joints(self, msg):
+        if 'headlink' in msg.name:
+            self.head_yaw = msg.position[msg.name.index('headlink')]
 
     def ekf_xy(self, timeout=0.5):
         """
@@ -89,6 +104,22 @@ class GroundTruthProbe(Node):
 
 def _err(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def leg_vector_error(start, end, truth_start, truth_end):
+    """
+    (angle_deg, length_ratio) of one source's leg displacement against truth's.
+
+    The angle is what catches a source pointing backwards; a length ratio
+    alone scored a reversed rf2o at ~1% error once (sim/AGENTS.md).
+    """
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    tx, ty = truth_end[0] - truth_start[0], truth_end[1] - truth_start[1]
+    t_len = math.hypot(tx, ty)
+    if t_len < 1e-6 or math.hypot(dx, dy) < 1e-6:
+        return float('nan'), float('nan')
+    angle = math.degrees(math.atan2(tx * dy - ty * dx, tx * dx + ty * dy))
+    return angle, math.hypot(dx, dy) / t_len
 
 
 def _stats(errors):
@@ -154,8 +185,13 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
 
         odom_errs = []
         ekf_errs = []
+        leg_angles = {'scan_odom': [], 'odom': [], 'ekf': []}
         t0 = helper.now_s()
         i = 0
+        # probe spins on its own thread, so everything is already current
+        # at each read -- no manual draining needed.
+        prev = probe.sample()
+        prev_scan = probe._scan_odom
         while helper.now_s() - t0 < observe_seconds:
             vx, vy, duration = _drift.OBSTACLE_LOOP_LEGS[
                 i % len(_drift.OBSTACLE_LOOP_LEGS)]
@@ -163,12 +199,26 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
             helper.drive(vx, vy, duration)
             helper.spin_for(_drift.OBSTACLE_LOOP_DWELL_SECONDS)
 
-            # probe spins on its own thread, so everything is already
-            # current here -- no manual draining needed.
             s = probe.sample()
+            scan = probe._scan_odom
             if s is None:
+                prev, prev_scan = None, scan
                 continue
             truth, odom, ekf = s
+            if prev is not None:
+                legs = [('odom', prev[1], odom), ('ekf', prev[2], ekf)]
+                if prev_scan is not None and scan is not None:
+                    legs.insert(0, ('scan_odom', prev_scan, scan))
+                parts = []
+                for name, a, b in legs:
+                    ang, ratio = leg_vector_error(a, b, prev[0], truth)
+                    leg_angles[name].append(ang)
+                    parts.append(f'{name} {ang:+6.1f}deg x{ratio:.2f}')
+                head = probe.head_yaw
+                head_str = f'  head_yaw={head:+.2f}' if head is not None else ''
+                print(f'  leg ({vx:+.1f},{vy:+.1f}) vs truth: '
+                      + ', '.join(parts) + head_str)
+            prev, prev_scan = s, scan
             e_odom, e_ekf = _err(odom, truth), _err(ekf, truth)
             odom_errs.append(e_odom)
             ekf_errs.append(e_ekf)
@@ -181,6 +231,11 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
         if len(odom_errs) < 3:
             print(f'FAIL: too few samples ({len(odom_errs)})')
             return None
+        for name, angles in leg_angles.items():
+            finite = [abs(a) for a in angles if not math.isnan(a)]
+            if finite:
+                print(f'{name} leg direction error: mean {statistics.fmean(finite):.1f} '
+                      f'deg, max {max(finite):.1f} deg over {len(finite)} legs')
         return _stats(odom_errs), _stats(ekf_errs), len(odom_errs)
     finally:
         if probe is not None:

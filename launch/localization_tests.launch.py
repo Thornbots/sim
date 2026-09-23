@@ -103,12 +103,13 @@ def _tests(context):
            '--real-time-factor', config['real_time_factor']]
     if _is_true(context, 'headless'):
         cmd.append('--headless')
+    if config['speed']:
+        cmd += ['--speed', config['speed']]
     if suite == 'drift':
         cmd += ['--backend', config['backend'],
                 '--use-ekf' if _is_true(context, 'use_ekf') else '--no-use-ekf']
-        for arg, opt in (('scenario', '--scenario'), ('speed', '--speed')):
-            if config[arg]:
-                cmd += [opt, config[arg]]
+        if config['scenario']:
+            cmd += ['--scenario', config['scenario']]
     else:
         for arg in ('ekf_slip_ratio', 'ekf_drift_stddev', 'ekf_seconds'):
             if config[arg]:
