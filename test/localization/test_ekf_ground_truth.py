@@ -37,6 +37,7 @@ def test_ekf_beats_raw_odom(request, gui, ros_context):
     drift_stddev = request.config.getoption('--ekf-drift-stddev')
     seconds = request.config.getoption('--ekf-seconds')
     drift_harness.set_real_time_factor(request.config.getoption('--real-time-factor'))
+    drift_harness.set_restart_sim(request.config.getoption('--restart-sim'))
     speed = request.config.getoption('--speed')
     if speed is not None:
         drift_harness.set_drive_speed(speed)

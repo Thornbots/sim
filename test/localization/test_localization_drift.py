@@ -23,7 +23,7 @@ Launches gz-sim and the full sentry stack, so every test here is marked
 `integration` and skipped by a plain `colcon test`;
 `ros2 launch sim localization_tests.launch.py` runs it. Options: --backend
 {slam,amcl,none}, --use-ekf, --scenario NAME, --headless, --speed M/S,
---real-time-factor (see test/conftest.py). See README.md for WHY THIS
+--real-time-factor, --restart-sim (see test/conftest.py). See README.md for WHY THIS
 EXISTS, BACKENDS and SCENARIOS.
 """
 import drift_harness
@@ -44,15 +44,17 @@ def pytest_generate_tests(metafunc):
 
 
 @pytest.fixture(scope='module', autouse=True)
-def orphan_check():
+def sim_session(request):
     """
-    Warn about a colliding sim/localization stack this suite didn't start.
+    Own the shared sim, and warn about a stack this suite didn't start.
 
     A live session shares topics and services with ours and silently
     corrupts every measurement below; see sim/AGENTS.md.
     """
+    drift_harness.set_restart_sim(request.config.getoption('--restart-sim'))
     drift_harness.check_no_orphans('pre-flight')
     yield
+    drift_harness.stop_sim()
     drift_harness.check_no_orphans(
         'post-flight (should be empty if teardown worked)')
 

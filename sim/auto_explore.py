@@ -120,6 +120,14 @@ def teleport(x, y, z=Z):
     return ok
 
 
+def remove_model(name):
+    """Delete a model from the running world; False if gz refused or timed out."""
+    return _ign_service(
+        'remove', 'ignition.msgs.Entity', 'ignition.msgs.Boolean',
+        f"name: '{name}', type: MODEL",
+    )
+
+
 class AutoExplore(Node):
 
     def __init__(self):

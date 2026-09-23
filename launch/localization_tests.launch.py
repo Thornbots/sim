@@ -16,10 +16,12 @@
 Localization suites: the drift scenarios (suite:=drift) or the EKF ground-truth check (suite:=ekf).
 
 `ros2 launch sim localization_tests.launch.py [backend:=amcl] [scenario:=odom_stuck]`.
-Runs pytest, which brings up a fresh stack per scenario through this file with
-run_tests:=false (sim, then auto.launch.py 8s later). Stops when the tests
-finish; Ctrl-C stops pytest, and its stack with it. real_time_factor:=0 (the
-default) runs the sim unthrottled; the suites measure in sim time.
+Runs pytest, which starts the sim once through this file (run_tests:=false
+part:=sim) and one robot stack per scenario (part:=robot, auto.launch.py);
+restart_sim:=true brings the sim up fresh per scenario instead (part:=all,
+auto.launch.py 8s after the sim). Stops when the tests finish; Ctrl-C stops
+pytest, and its stacks with it. real_time_factor:=0 (the default) runs the sim
+unthrottled; the suites measure in sim time.
 """
 import os
 import sys
@@ -72,6 +74,7 @@ def _is_true(context, name):
 
 def _stack(context):
     config = context.launch_configurations
+    part = config['part']
     gui = 'false' if _is_true(context, 'headless') else 'true'
     sim_args = {'gui': gui, 'rviz': gui, 'real_time_factor': config['real_time_factor']}
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
@@ -92,6 +95,10 @@ def _stack(context):
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
         launch_arguments=robot_args.items())
+    if part == 'sim':
+        return [sim]
+    if part == 'robot':
+        return [robot]
     return [sim, TimerAction(period=LOCALIZATION_DELAY_S, actions=[robot])]
 
 
@@ -105,6 +112,8 @@ def _tests(context):
         cmd.append('--headless')
     if config['speed']:
         cmd += ['--speed', config['speed']]
+    if _is_true(context, 'restart_sim'):
+        cmd.append('--restart-sim')
     if suite == 'drift':
         cmd += ['--backend', config['backend'],
                 '--use-ekf' if _is_true(context, 'use_ekf') else '--no-use-ekf']
@@ -143,6 +152,10 @@ def generate_launch_description():
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up one scenario stack only'),
         DeclareLaunchArgument('suite', default_value='drift', choices=['drift', 'ekf']),
+        DeclareLaunchArgument('part', default_value='all', choices=['all', 'sim', 'robot'],
+                              description='run_tests:=false only: sim, robot stack, or both'),
+        DeclareLaunchArgument('restart_sim', default_value='false',
+                              description='fresh sim per scenario instead of one per run'),
         DeclareLaunchArgument('headless', default_value='false',
                               description='skip the gz GUI and rviz2'),
         DeclareLaunchArgument('real_time_factor', default_value='0',

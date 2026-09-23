@@ -29,6 +29,10 @@ use_ekf=True). Scenarios, in SCENARIOS order: baseline, noise_correction,
 drift_correction, drift_correction_obstacle, jerk_with_motion,
 odom_stuck. See README.md for WHY THIS EXISTS, BACKENDS (per-backend TF
 edge), and SCENARIOS (pass conditions/rationale).
+
+One sim per run: the first run_stack() starts gz, and every scenario after
+that resets the robot and pose_emulator and relaunches only auto.launch.py.
+set_restart_sim(True) (--restart-sim) brings the sim up fresh per scenario.
 """
 import ctypes
 import math
@@ -40,11 +44,13 @@ import time
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
+from rcl_interfaces.srv import GetParameters, SetParameters
 import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
-from rclpy.parameter import Parameter
+from rclpy.parameter import Parameter, parameter_value_to_python
 from sensor_msgs.msg import LaserScan
+from sim.auto_explore import remove_model, teleport
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformListener
 
@@ -330,6 +336,20 @@ class LocalizationTestHelper(Node):
             self._spin_wall(poll)
         return None
 
+    def call(self, srv_type, name, request, timeout=10.0):
+        """Call a service and return its response; raises if it never answers."""
+        client = self.create_client(srv_type, name)
+        try:
+            if not client.wait_for_service(timeout_sec=timeout):
+                raise RuntimeError(f'{name} not available')
+            future = client.call_async(request)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=timeout)
+            if not future.done():
+                raise RuntimeError(f'{name} call timed out')
+            return future.result()
+        finally:
+            self.destroy_client(client)
+
     def call_trigger_jerk(self, timeout=10.0):
         if not self.jerk_client.wait_for_service(timeout_sec=timeout):
             raise RuntimeError('/pose_emulator/trigger_jerk not available')
@@ -544,8 +564,8 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
     Same `ros_gz_sim create -string <inline SDF>` mechanism as
     spawn_robot, run as a subprocess so it can fire mid-scenario
     instead of at stack startup. `size` is the x/y footprint, `height`
-    is z (NOT a cube), based at the ground. Torn down for free with the
-    rest of the stack -- no separate despawn needed. See README.md.
+    is z (NOT a cube), based at the ground. The next scenario's reset
+    removes it from the shared sim. See README.md.
     """
     x, y = xy
     if os.environ.get('SIM_ENGINE') == 'sapien':
@@ -573,6 +593,7 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
         raise RuntimeError(
             f'spawning obstacle {name!r} failed (rc={result.returncode}): '
             f'{result.stdout}\n{result.stderr}')
+    _spawned_models.append(name)
 
 
 class Scenario:
@@ -600,45 +621,151 @@ class Scenario:
         self.details.append(f'SKIP: {reason}')
 
 
+# --------------------------------------------------------------------------
+# One sim per run. The sim tree (gz, bridges, pose_emulator, rviz) stays up;
+# each scenario gets a fresh robot tree (auto.launch.py) over it.
+# --------------------------------------------------------------------------
+
+RESTART_SIM = False
+# sim.launch.py's spawn x/y, which is also amcl.yaml's initial_pose.
+SPAWN_XY = (0.0, 0.0)
+# pose_emulator params a scenario may set; the rest keep their launch values.
+EMULATOR_PARAMS = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stddev',
+                   'odom_jerk_stddev', 'odom_jerk_bias_enabled', 'odom_jerk_bias_x',
+                   'odom_jerk_bias_y', 'odom_slip_ratio')
+_sim = None
+_emulator_defaults = None
+_spawned_models = []
+
+
+def set_restart_sim(restart):
+    global RESTART_SIM
+    RESTART_SIM = restart
+
+
+class ScenarioStack:
+    """A scenario's robot tree over the shared sim; stop() leaves the sim up."""
+
+    def __init__(self, robot, sim):
+        self.robot = robot
+        self.sim = sim
+        self._sim_log_start = len(sim.log_text())
+
+    def log_text(self):
+        return self.robot.log_text() + self.sim.log_text()[self._sim_log_start:]
+
+    def stop(self):
+        self.robot.stop()
+
+
+def _launch_cmd(args):
+    cmd = ['ros2', 'launch', 'sim', 'localization_tests.launch.py']
+    return cmd + [f'{k}:={v}' for k, v in args.items() if v is not None]
+
+
+def _start_sim(gui, helper):
+    """Start the sim tree and wait for truth odometry; returns (tree, defaults)."""
+    sim = LaunchTree('sim', _launch_cmd({
+        'run_tests': 'false', 'part': 'sim',
+        'headless': str(not gui).lower(), 'real_time_factor': REAL_TIME_FACTOR,
+    }), os.path.join(LOG_DIR, 'sim.log'))
+    sim.start()
+    if not helper.wait_for_raw_odom(timeout=90.0):
+        sim.stop()
+        raise RuntimeError('sim never published /sim/raw_odom; see sim.log')
+    reply = helper.call(GetParameters, '/pose_emulator/get_parameters',
+                        GetParameters.Request(names=list(EMULATOR_PARAMS)), timeout=30.0)
+    defaults = {name: parameter_value_to_python(v)
+                for name, v in zip(EMULATOR_PARAMS, reply.values)}
+    return sim, defaults
+
+
+def stop_sim():
+    """Stop the shared sim, if one is up. Safe to call when none is."""
+    global _sim
+    if _sim is not None:
+        _sim.stop()
+        _sim = None
+    _spawned_models.clear()
+
+
+def _reset_sim(helper, emulator_params):
+    """Put the robot back at spawn and pose_emulator back to truth, with new noise params."""
+    helper.cmd_vel_pub.publish(Twist())
+    helper.spin_for(0.2)
+    for name in _spawned_models:
+        if not remove_model(name):
+            raise RuntimeError(f'could not remove {name!r} from the world')
+    _spawned_models.clear()
+    if not teleport(*SPAWN_XY):
+        raise RuntimeError('teleport back to spawn failed')
+    helper.spin_for(0.5)
+    params = [Parameter(name, value=float(value) if type(value) is int else value)
+              .to_parameter_msg()
+              for name, value in {**_emulator_defaults, **emulator_params}.items()]
+    reply = helper.call(SetParameters, '/pose_emulator/set_parameters',
+                        SetParameters.Request(parameters=params))
+    rejected = [r.reason for r in reply.results if not r.successful]
+    if rejected:
+        raise RuntimeError(f'pose_emulator rejected params: {rejected}')
+    helper.call(Trigger, '/pose_emulator/reset', Trigger.Request())
+
+
 def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
               odom_drift_stddev=None, odom_jitter_stddev=None,
               odom_slip_ratio=0.02, odom_jerk_bias_xy=None):
     """
-    Start one scenario's stack (localization_tests.launch.py run_tests:=false).
+    Bring up one scenario's stack; returns (stack, helper_node).
 
-    Returns (stack, helper_node); the caller must call teardown_stack()
-    when done. odom_slip_ratio defaults to 0.02, a small amount of slip
-    for every scenario. The drift scenarios (_run_cornering_loop_scenario,
-    i.e. drift_correction/drift_correction_obstacle) pass 0.15 explicitly
-    to isolate their own failure mode; see MAX_DELTA_THRESHOLD's comment
-    for how 0.40m was calibrated against that higher slip value.
+    The caller must call teardown_stack() when done. odom_slip_ratio
+    defaults to 0.02, a small amount of slip for every scenario. The
+    drift scenarios (_run_cornering_loop_scenario) pass 0.15 explicitly;
+    see MAX_DELTA_THRESHOLD's comment for how 0.40m was calibrated.
     """
+    global _sim, _emulator_defaults
     os.makedirs(LOG_DIR, exist_ok=True)
-
-    args = {
-        'run_tests': 'false',
-        'headless': str(not gui).lower(),
-        'real_time_factor': REAL_TIME_FACTOR,
-        'backend': backend,
-        'use_ekf': str(use_ekf).lower(),
-        'odom_noise_enabled': str(odom_noise_enabled).lower(),
+    emulator = {
+        'odom_noise_enabled': odom_noise_enabled,
         'odom_jerk_stddev': odom_jerk_stddev,
         'odom_drift_stddev': odom_drift_stddev,
         'odom_jitter_stddev': odom_jitter_stddev,
         'odom_slip_ratio': odom_slip_ratio,
     }
     if odom_jerk_bias_xy is not None:
-        args['odom_jerk_bias_enabled'] = 'true'
-        args['odom_jerk_bias_x'], args['odom_jerk_bias_y'] = odom_jerk_bias_xy
-    cmd = ['ros2', 'launch', 'sim', 'localization_tests.launch.py']
-    cmd += [f'{k}:={v}' for k, v in args.items() if v is not None]
-
-    stack = LaunchTree('stack', cmd, os.path.join(LOG_DIR, 'stack.log'))
-    stack.start()
-
+        emulator['odom_jerk_bias_enabled'] = True
+        emulator['odom_jerk_bias_x'], emulator['odom_jerk_bias_y'] = odom_jerk_bias_xy
+    emulator = {k: v for k, v in emulator.items() if v is not None}
+    args = {
+        'run_tests': 'false',
+        'headless': str(not gui).lower(),
+        'real_time_factor': REAL_TIME_FACTOR,
+        'backend': backend,
+        'use_ekf': str(use_ekf).lower(),
+    }
     parent_frame, child_frame = BACKEND_FRAMES[backend]
     helper = LocalizationTestHelper(parent_frame, child_frame)
-    return stack, helper
+
+    if RESTART_SIM:
+        args.update({k: str(v).lower() if isinstance(v, bool) else v
+                     for k, v in emulator.items()})
+        stack = LaunchTree('stack', _launch_cmd(args), os.path.join(LOG_DIR, 'stack.log'))
+        stack.start()
+        return stack, helper
+
+    try:
+        if _sim is not None and _sim.proc.poll() is not None:
+            print('[sim] the shared sim exited; starting a new one')
+            stop_sim()
+        if _sim is None:
+            _sim, _emulator_defaults = _start_sim(gui, helper)
+        _reset_sim(helper, emulator)
+    except Exception:
+        helper.destroy_node()
+        raise
+    robot = LaunchTree('robot', _launch_cmd({**args, 'part': 'robot'}),
+                       os.path.join(LOG_DIR, 'robot.log'))
+    robot.start()
+    return ScenarioStack(robot, _sim), helper
 
 
 def teardown_stack(stack, helper):
