@@ -593,6 +593,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'xacro': default_xacro,
+            'world': LaunchConfiguration('world'),
             'x': ParameterValue(LaunchConfiguration('x'), value_type=float),
             'y': ParameterValue(LaunchConfiguration('y'), value_type=float),
             'z': ParameterValue(LaunchConfiguration('z'), value_type=float),

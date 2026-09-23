@@ -27,6 +27,7 @@ import os
 import subprocess
 import threading
 import time
+import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
@@ -79,7 +80,8 @@ class SapienSim(Node):
         super().__init__('sapien_sim')
         share = get_package_share_directory('sim')
         self.declare_parameter('xacro', os.path.join(share, 'urdf', 'sentry.urdf.xacro'))
-        self.declare_parameter('field_mesh', os.path.join(share, 'world', 'composite_part_1.stl'))
+        self.declare_parameter('world', os.path.join(share, 'world', 'ARCC_Field_2026.sdf'))
+        self.declare_parameter('field_mesh', '')  # overrides the mesh the world names
         self.declare_parameter('x', 0.0)
         self.declare_parameter('y', 0.0)
         self.declare_parameter('z', 0.03)
@@ -110,7 +112,7 @@ class SapienSim(Node):
             self.joints[name].set_drive_properties(HEAD_P, HEAD_D, HEAD_EFFORT, 'force')
         self.lidar_link = next(link for link in self.robot.links if link.name == 'lidar')
 
-        self.field = RayMeshIntersector(trimesh.load(gp('field_mesh')))
+        self.field = RayMeshIntersector(self._load_field(gp('world'), gp('field_mesh')))
         self.boxes = []
         angles = np.linspace(LIDAR_MIN_ANGLE, LIDAR_MAX_ANGLE, LIDAR_SAMPLES)
         self._beam_dirs = np.stack([np.cos(angles), np.sin(angles), np.zeros_like(angles)], 1)
@@ -146,6 +148,30 @@ class SapienSim(Node):
         for link in robot.links:
             link.disable_gravity = True  # matches the URDF's <gravity>false</gravity>
         return robot
+
+    def _load_field(self, world_path, mesh_override):
+        """Load the world's first collision mesh, at the <pose> the world gives it."""
+        share_parent = os.path.dirname(get_package_share_directory('sim'))
+        uri, offset = None, np.zeros(3)
+        for col in ET.parse(world_path).getroot().iter('collision'):
+            mesh = col.find('geometry/mesh/uri')
+            if mesh is None:
+                continue
+            uri = mesh.text.replace('model://', share_parent + '/')
+            pose = col.find('pose')
+            if pose is not None:
+                xyz = [float(v) for v in pose.text.split()]
+                offset = np.array(xyz[:3])
+                if any(abs(v) > 1e-9 for v in xyz[3:]):
+                    self.get_logger().warn(f'{world_path}: mesh rpy {xyz[3:]} ignored')
+            break
+        if uri is None and not mesh_override:
+            raise RuntimeError(f'{world_path} names no collision mesh; pass field_mesh')
+        mesh = trimesh.load(mesh_override or uri)
+        mesh.apply_translation(offset)
+        self.get_logger().info(f'field {os.path.basename(mesh_override or uri)} at '
+                               f'{np.round(offset, 4).tolist()}')
+        return mesh
 
     def _on_cmd_vel(self, msg):
         with self.lock:
