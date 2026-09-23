@@ -106,6 +106,20 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Open
 
+- **sapien vs gz on the drift suite (2026-09-23).** Same amcl/EKF settings,
+  unthrottled, after the lidar visibility fix. Five of six scenarios agree:
+  `baseline`, `jerk_with_motion`, `odom_stuck` pass on both;
+  `drift_correction` (gz 4.02 m, sapien 3.39 m) and
+  `drift_correction_obstacle` (gz 3.45 m, sapien 8.69 m) fail on both, as
+  they did before any of this. `noise_correction` is the one disagreement:
+  gz passes (growth_ratio 1.47, 1.40 over two runs), sapien fails twice
+  (2.69, 3.31). sapien is not worse in absolute terms -- run 2 read
+  2.09/6.91 m per half against gz's 5.23/7.32 -- it fails because the
+  metric is second_half/first_half and sapien's cleaner start raises the
+  ratio. Fix the metric before reading this as an engine defect.
+  Wall clock for the six scenarios: gz 106 s, sapien 156 s.
+  sapien's `spawn_box` was verified by hand: 87 beams shortened to
+  2.09-2.38 m against an expected 2.12 m, at the right bearing.
 - **The lidar stopped scanning its own model (2026-09-23).** Every robot
   visual now carries `visibility_flags` against the sensor's
   `visibility_mask`, restoring the July approach that was reverted. Before
