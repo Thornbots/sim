@@ -116,6 +116,11 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   drift and shot-hit number recorded before this date was measured on the
   blanked scan. `lidar_self_filter`'s sector was tuned to the self-hit
   cluster that no longer exists; it needs a hardware capture to retune.
+  The drift suite (amcl, EKF on, unthrottled) run either side of the change
+  gives the same verdicts -- 4 pass, 2 fail -- with smaller errors on the
+  scan-driven scenarios: `noise_correction` max|xy| 7.32 -> 5.72 m,
+  `drift_correction` 5.16 -> 4.02 m, `drift_correction_obstacle`
+  3.87 -> 3.45 m. Both `drift_correction` failures predate the change.
 - **Test results at `real_time_factor:=0` vs 1 (2026-09-21).** Both suites
   run 2-3x real time with the GUI. `drift_correction` (amcl, no EKF, 3 runs
   each) read 0.348 m mean unthrottled vs 0.338 m at 1x. The CV pipeline adds
