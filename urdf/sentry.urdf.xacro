@@ -215,38 +215,46 @@
   </gazebo>
   <gazebo reference="body">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
   <gazebo reference="head">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
   <gazebo reference="head_pitch">
     <gravity>false</gravity>
   </gazebo>
   <gazebo reference="camera">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
   <gazebo reference="odowheel">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
   <gazebo reference="odowheel_1">
     <gravity>false</gravity>
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
   </gazebo>
-  <!-- Self-occlusion (the lidar's own housing mesh, and the head's real
-       partial blocking of its own field of view at whatever bearing it
-       currently sits at) used to be
-       modeled here via gz-sim's visibility_mask/visibility_flags, but that
-       approach was all-or-nothing per visual: either a visual is fully
-       invisible to the lidar (so it also sees straight through the head
-       even where it should genuinely occlude) or fully visible (so it
-       reports the head's own mesh as a false self-hit), with no way to
-       express "block the beam here without counting it as a detection".
-       Removed in favor of thornbots_pkg's lidar_self_filter node, a software
-       filter that blanks a fixed angular sector of /scan_raw; see that
-       node's docstring for why a fixed sector is valid here (the lidar
-       rotates rigidly with the head) and for the actual measured sector.
-       That approach also works for real hardware, which has no rendering
-       tricks available at all. -->
+  <!-- Every robot visual carries visibility_flags=0xFFFFFFFE against this
+       sensor's visibility_mask=0x01, so the lidar never scans its own
+       model; thornbots_pkg's lidar_self_filter is the only model of the
+       head's real blind sector, the same one hardware runs.
+       see README.md for design rationale -->
   <gazebo reference="lidar">
+    <visual>
+      <visibility_flags>0xFFFFFFFE</visibility_flags>
+    </visual>
     <sensor name="lidar" type="gpu_lidar">
       <always_on>true</always_on>
       <visualize>true</visualize>
@@ -290,6 +298,10 @@
           <mean>0.0</mean>
           <stddev>0.03</stddev>
         </noise>
+        <!-- (mask & flags) == 0 for the robot's own visuals, so it sees
+             none of them. Everything else keeps sdformat's default
+             0xFFFFFFFF and stays visible. -->
+        <visibility_mask>0x01</visibility_mask>
       </lidar>
     </sensor>
   </gazebo>
