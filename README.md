@@ -241,6 +241,11 @@ Why it looks the way it does:
   `cv2`; SAPIEN imports fine without it. No renderer is created, so the node
   needs no GPU or Vulkan.
 
+`world:=` works: the node reads the SDF for its first collision mesh and the
+`<pose>` the world gives it, which is what keeps sapien's ranges on top of
+gz's rather than 8 cm off. Only that one mesh is read, so a world built from
+several models needs `field_mesh:=` or a change here.
+
 Not yet supported under sapien: `gui:=` (no viewer), `camera:=`,
 `auto_explore.py`'s teleport and `head_slider_relay.py` (both gz-transport
 only).
