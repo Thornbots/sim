@@ -245,6 +245,7 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
                 pass
             probe.destroy_node()
         _drift.teardown_stack(stack, helper)
+        _drift.stop_sim()
 
 
 def improvement_pct(odom_stats, ekf_stats):

@@ -130,6 +130,9 @@ class PoseEmulator(Node):
         #   ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger
         self.create_service(Trigger, '~/trigger_jerk', self._trigger_jerk_srv)
         self.create_service(Trigger, '~/trigger_odom_stuck', self._trigger_odom_stuck_srv)
+        # Clears drift, slip and stuck state so /pose restarts at truth; the
+        # drift suite calls it between scenarios instead of restarting sim.
+        self.create_service(Trigger, '~/reset', self._reset_srv)
 
     def joint_callback(self, msg):
         if self.yaw_joint_name in msg.name:
@@ -200,6 +203,15 @@ class PoseEmulator(Node):
         self._odom_stuck = True
         response.success = True
         response.message = 'odom stuck: /pose will report (0, 0) from now on'
+        return response
+
+    def _reset_srv(self, request, response):
+        self._drift_x = self._drift_y = 0.0
+        self._slipped_x = self._slipped_y = None
+        self._prev_true_x = self._prev_true_y = None
+        self._odom_stuck = False
+        response.success = True
+        response.message = 'noise state cleared: /pose reports truth plus fresh noise'
         return response
 
     def odom_callback(self, msg):

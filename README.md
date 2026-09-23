@@ -44,8 +44,13 @@ ros2 launch sim shot_hit.launch.py
 ```
 
 The bench is one launch tree: the sim, the CV pipeline and the pytest that
-scores it. The localization launch runs pytest, and pytest starts a fresh
-stack for each scenario through the same file with `run_tests:=false`. Both
+scores it. The localization launch runs pytest, and pytest starts the sim once
+(`run_tests:=false part:=sim`) and a fresh robot stack for each scenario
+(`part:=robot`). Between scenarios it stops the robot stack, teleports the
+robot back to spawn, removes anything a scenario spawned, and resets
+`pose_emulator`'s noise state and parameters. `restart_sim:=true` brings the
+sim up fresh for every scenario instead, the old behaviour and the control when
+a verdict looks off. Both
 shut down when the tests finish, and Ctrl-C stops everything, stacks included.
 
 Both launches default to `real_time_factor:=0`, which lets gz run as fast as
@@ -329,15 +334,16 @@ Integration suite for `sentry_localization`'s drift and jerk correction
 against `pose_emulator.py`'s noise model. It mirrors `auto.launch.py`'s two
 axes: `--backend slam/amcl/none` (who owns `map->odom`) and `--use-ekf` /
 `--no-use-ekf` (whether `odom->root` is EKF-fused; on by default, matching
-`auto.launch.py`). For each scenario it launches the stack,
-drives, samples the correction TF, asserts, and tears down.
+`auto.launch.py`). For each scenario it resets the shared sim, launches the
+robot stack, drives, samples the correction TF, asserts, and stops the robot
+stack. The sim itself stops after the last scenario.
 
 `drift_harness.py` holds stack lifecycle, driving and scenarios;
 `test_localization_drift.py` is one parametrized test per scenario. That split
 lets `ekf_diag_harness.py` reuse `run_stack`/`drive` and puts `Scenario`'s
 `details` into the assertion message instead of pytest's capture. The harness
-launches each scenario's stack as one tree in its own process group and won't
-attach to a running stack. The stack gets SIGINT if pytest dies, so a killed
+launches the sim and each scenario's robot stack as trees in their own process
+groups and won't attach to a running stack. The stack gets SIGINT if pytest dies, so a killed
 run still tears it down.
 
 Each scenario watches the edge the backend owns (`BACKEND_FRAMES`):

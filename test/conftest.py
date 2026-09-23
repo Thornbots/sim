@@ -33,6 +33,10 @@ def pytest_addoption(parser):
         help="skip gz-sim's GUI window and rviz2 (both on by default, per "
              'sim/AGENTS.md\'s standing "watch sim live" rule)')
     group.addoption(
+        '--restart-sim', action='store_true',
+        help='bring the sim up fresh for every localization scenario instead '
+             'of once per run (the old behaviour; compare verdicts with it)')
+    group.addoption(
         '--real-time-factor', default='0',
         help="sim.launch.py's real_time_factor for every stack a suite "
              'launches; 0 (default) runs unthrottled, the suites time in sim '
