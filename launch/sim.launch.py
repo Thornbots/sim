@@ -15,8 +15,10 @@
 """
 Launches gz sim with the ARCC_Field_2026 world and spawns the sentry robot (sentry_urdf.xacro).
 
-Usage: `ros2 launch sim sim.launch.py [gui:=false] [rviz:=false]
-[world:=/abs/path.sdf] [real_time_factor:=0] [odom_noise_enabled:=true]`. To fire a one-time
+Usage: `ros2 launch sim sim.launch.py [sim_engine:=gz|sapien] [gui:=false] [rviz:=false]
+[world:=/abs/path.sdf] [real_time_factor:=0] [odom_noise_enabled:=true]`.
+sim_engine defaults to $SIM_ENGINE, else gz; sapien runs sim/sapien_sim.py in place of
+gz and its bridges, with the same topics. To fire a one-time
 odom "jerk" (odom_jerk_stddev:= sets its size in meters), once sim is up:
 `ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger`.
 """
@@ -29,6 +31,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
@@ -36,12 +39,14 @@ from launch.actions import (
     SetLaunchConfiguration,
     TimerAction,
 )
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition, LaunchConfigurationEquals, UnlessCondition
 from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import (
+    Command, EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
@@ -51,7 +56,10 @@ def _world_with_rtf(context):
     """Point `world` at a /tmp copy with real_time_factor:= applied; empty keeps the file's."""
     rtf = context.launch_configurations['real_time_factor']
     if not rtf:
-        return []
+        with open(context.launch_configurations['world']) as f:
+            match = RTF_TAG.search(f.read())
+        world_rtf = match.group(0).split('>')[1].split('<')[0] if match else '1'
+        return [SetLaunchConfiguration('sapien_real_time_factor', world_rtf)]
     rtf = str(float(rtf))  # reject a typo before gz sees it
     world = context.launch_configurations['world']
     with open(world) as f:
@@ -62,7 +70,8 @@ def _world_with_rtf(context):
     path = os.path.join(tempfile.gettempdir(), f'{stem}_rtf{rtf}.sdf')
     with open(path, 'w') as f:
         f.write(RTF_TAG.sub(f'<real_time_factor>{rtf}</real_time_factor>', sdf))
-    return [SetLaunchConfiguration('world', path)]
+    return [SetLaunchConfiguration('world', path),
+            SetLaunchConfiguration('sapien_real_time_factor', rtf)]
 
 
 def generate_launch_description():
@@ -72,6 +81,13 @@ def generate_launch_description():
     default_xacro = os.path.join(pkg_share, 'urdf', 'sentry.urdf.xacro')
     default_rviz_config = os.path.join(pkg_share, 'rviz', 'config.rviz')
 
+    sim_engine_arg = DeclareLaunchArgument(
+        'sim_engine', default_value=EnvironmentVariable('SIM_ENGINE', default_value='gz'),
+        choices=['gz', 'sapien'],
+        description='gz, or sapien (sim/sapien_sim.py); defaults to $SIM_ENGINE, else gz'
+    )
+    on_gz = LaunchConfigurationEquals('sim_engine', 'gz')
+    on_sapien = LaunchConfigurationEquals('sim_engine', 'sapien')
     world_arg = DeclareLaunchArgument(
         'world', default_value=default_world,
         description='Full path to the .sdf world file to load'
@@ -238,10 +254,8 @@ def generate_launch_description():
     # --- Start gz sim (server + optional GUI) with the requested world.
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('ros_gz_sim'),
-                'launch', 'gz_sim.launch.py'
-            )
+            # Resolved lazily, so sim_engine:=sapien runs without ros_gz installed.
+            PathJoinSubstitution([FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])
         ),
         launch_arguments={
             'gz_args': [world, ' -r'],  # -r == run immediately, not paused
@@ -251,10 +265,8 @@ def generate_launch_description():
 
     gz_sim_headless = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('ros_gz_sim'),
-                'launch', 'gz_sim.launch.py'
-            )
+            # Resolved lazily, so sim_engine:=sapien runs without ros_gz installed.
+            PathJoinSubstitution([FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])
         ),
         launch_arguments={
             'gz_args': [world, ' -r -s'],  # -s == server only, no GUI
@@ -571,6 +583,26 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
 
+    # --- SAPIEN engine: one node standing in for gz sim, the robot spawn and every
+    # bridge above (clock, scan, joint states, odom, cmd_vel, head commands).
+    # gui:= and camera:= have no sapien equivalent yet and are ignored.
+    sapien_sim = Node(
+        package='sim',
+        executable='sapien_sim',
+        name='sapien_sim',
+        output='screen',
+        parameters=[{
+            'xacro': default_xacro,
+            'x': ParameterValue(LaunchConfiguration('x'), value_type=float),
+            'y': ParameterValue(LaunchConfiguration('y'), value_type=float),
+            'z': ParameterValue(LaunchConfiguration('z'), value_type=float),
+            'yaw': ParameterValue(LaunchConfiguration('yaw'), value_type=float),
+            'real_time_factor': ParameterValue(
+                LaunchConfiguration('sapien_real_time_factor'), value_type=float),
+        }],
+        condition=on_sapien,
+    )
+
     # --- rviz2, using thornbots_pkg's config (same one thornbots_pkg's own launch
     # files use) so sim and real-hardware runs look the same. use_sim_time
     # matches every other node above since sim's /clock is what's bridged in.
@@ -584,7 +616,26 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
 
+    gz_only = GroupAction(condition=on_gz, actions=[
+        gz_sim,
+        gz_sim_headless,
+        clock_bridge,
+        scan_bridge,
+        joint_state_bridge,
+        odom_bridge,
+        head_slider_relay,
+        cmd_vel_bridge,
+        head_pan_bridge,
+        head_pitch_bridge,
+        camera_image_bridge,
+        camera_depth_bridge,
+        camera_color_info_bridge,
+        camera_depth_info_bridge,
+        delayed_spawn_robot,
+    ])
+
     return LaunchDescription([
+        sim_engine_arg,
         world_arg,
         robot_name_arg,
         x_arg,
@@ -614,24 +665,11 @@ def generate_launch_description():
         gz_resource_path,
         ign_resource_path,
         OpaqueFunction(function=_world_with_rtf),
-        gz_sim,
-        gz_sim_headless,
-        clock_bridge,
-        scan_bridge,
-        joint_state_bridge,
-        odom_bridge,
+        gz_only,
+        sapien_sim,
         pose_emulator,
-        head_slider_relay,
         target_driver,
         cv_target_emulator,
         cv_head_aim,
-        cmd_vel_bridge,
-        head_pan_bridge,
-        head_pitch_bridge,
-        camera_image_bridge,
-        camera_depth_bridge,
-        camera_color_info_bridge,
-        camera_depth_info_bridge,
-        delayed_spawn_robot,
         rviz,
     ])
