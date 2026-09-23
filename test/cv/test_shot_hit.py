@@ -34,7 +34,8 @@ Launches gz-sim, so marked `integration` and skipped by a plain
 `colcon test`; `ros2 launch sim shot_hit.launch.py` runs it. Options:
 --shot-speeds, --shot-duration, --hit-radius, --panel-layout,
 --skip-stationary, --only-stationary, --headless, --log-dir, --external-stack,
---real-time-factor, --target-state (truth = the aim bench, no tracker).
+--real-time-factor, --target-state (truth = the aim bench, no tracker),
+--target-path (lateral/radial/diagonal), --shooter-speed (our chassis moving).
 """
 import os
 
@@ -95,22 +96,26 @@ def test_shot_hit(layout, case, request, cv_stack):
     speeds = _speeds(config)
     duration = config.getoption('--shot-duration') or harness.DEFAULT_DURATION
     hit_radius = config.getoption('--hit-radius') or harness.DEFAULT_HIT_RADIUS
+    path = config.getoption('--target-path')
+    shooter_speed = config.getoption('--shooter-speed')
+    motion = f', {path} path' + (f', shooter {shooter_speed} m/s' if shooter_speed else '')
 
     if case == STATIONARY:
         speed, spin_hz = 0.0, 0.0
-        label, floor, floor_name = (f'{layout} stationary, spin=0.00 Hz',
+        label, floor, floor_name = (f'{layout} stationary, spin=0.00 Hz{motion}',
                                     harness.STATIONARY_MIN_HIT_RATE,
                                     'STATIONARY_MIN_HIT_RATE')
     else:
         speed = case
         spin_hz = harness.spin_hz_for_speed(speed, min(speeds), max(speeds))
-        label, floor, floor_name = (f'{layout} {speed} m/s, spin={spin_hz:.2f} Hz',
+        label, floor, floor_name = (f'{layout} {speed} m/s, spin={spin_hz:.2f} Hz{motion}',
                                     harness.MOVING_MIN_HIT_RATE,
                                     'MOVING_MIN_HIT_RATE')
     print(f'\n=== {label} ===')
 
     sampler, dropped = harness.run_case(cv_stack, speed, spin_hz, duration, hit_radius,
-                                        stagger=LAYOUTS[layout])
+                                        stagger=LAYOUTS[layout], path=path,
+                                        shooter_speed=shooter_speed)
     total = harness.summarize(label, sampler, dropped, duration)
 
     assert sampler.shots_fired > 0, (

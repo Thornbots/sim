@@ -33,6 +33,9 @@ falling behind 40 Hz costs points.
 the target's true `TargetState` in place of `target_tracker`, so a miss is
 `point_to_cv_target`'s and not the estimate's (see its note below). The floors
 are the same placeholders on both until the aim bench has been measured.
+`target_path:=radial` or `diagonal` moves the target along the camera ray
+instead of across it, and `shooter_speed:=1.0` drives our own chassis back and
+forth along y (within 1 m of the origin) for every case.
 
 Every scored shot goes to `shots.jsonl` in `--log-dir`, one JSON object per
 line: the case, whether it hit, the miss distance split into the panel's
@@ -596,6 +599,10 @@ queue for `publish_latency_s`, so downstream `now - header.stamp` shows the
 delay.
 
 The default path runs laterally at `x=3.0m`, `y in [-2.4, 2.4]`, `z=0.3m`.
+`path_angle_deg` turns it about `(center_x, center_y)`: 90 runs along x, down
+the camera ray, and the bench's `TARGET_PATHS` sets a centre and half-width
+per path that keeps the near panel past ~1.2 m. Path params are read every
+tick, and the twist carries world-frame x and y velocity.
 Visible half-width at 3m is `3.0*tan(1.5184/2)` ~ 2.85m, so the outer panels
 (0.3m out) keep ~0.15m margin with the head straight ahead. `max_accel`
 (6 m/s^2) brakes the target to a stop at each end and ramps any change of

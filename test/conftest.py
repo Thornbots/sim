@@ -92,6 +92,13 @@ def pytest_addoption(parser):
         '--target-state', choices=['tracker', 'truth'], default='tracker',
         help='truth: the aim bench, target_state_truth in place of target_tracker')
     group.addoption(
+        '--target-path', choices=['lateral', 'radial', 'diagonal'], default='lateral',
+        help="target_driver's path for every case: across the view, down the "
+             'camera ray, or both (shot_hit_harness.TARGET_PATHS)')
+    group.addoption(
+        '--shooter-speed', type=float, default=0.0,
+        help='m/s our own chassis drives back and forth along y during every case')
+    group.addoption(
         '--skip-stationary', action='store_true',
         help='skip the speed=0/spin=0 baseline case')
     group.addoption(

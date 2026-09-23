@@ -119,7 +119,9 @@ def _stack(context):
     cmd = [sys.executable, '-m', 'pytest', os.path.join(test_dir, TEST_FILE),
            '-m', 'integration', '-v', '-s', '--external-stack',
            '--panel-layout', context.launch_configurations['panel_layout'],
-           '--target-state', context.launch_configurations['target_state']]
+           '--target-state', context.launch_configurations['target_state'],
+           '--target-path', context.launch_configurations['target_path'],
+           '--shooter-speed', context.launch_configurations['shooter_speed']]
     speeds = context.launch_configurations['speeds'].replace(',', ' ').split()
     if speeds:
         cmd += ['--shot-speeds', ','.join(speeds)]
@@ -165,6 +167,11 @@ def generate_launch_description():
         DeclareLaunchArgument('target_state', default_value='tracker',
                               choices=['tracker', 'truth'],
                               description='truth: aim bench, true TargetState, no tracker'),
+        DeclareLaunchArgument('target_path', default_value='lateral',
+                              choices=['lateral', 'radial', 'diagonal'],
+                              description='across the view, down the camera ray, or both'),
+        DeclareLaunchArgument('shooter_speed', default_value='0.0',
+                              description='m/s our chassis drives back and forth along y'),
         DeclareLaunchArgument('panel_layout', default_value='both',
                               choices=['flat', 'staggered', 'both']),
         DeclareLaunchArgument('skip_stationary', default_value='false'),

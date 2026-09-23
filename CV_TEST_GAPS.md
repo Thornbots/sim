@@ -72,6 +72,12 @@ into the table passes all four table-driven tests unchanged, at 0.076%
 flight-time and 0.3mm aim error. So closing this gap is adding rows — no new
 math, no test changes.
 
+The shot-hit bench can now drive the shooter (2026-09-23, not yet run):
+`shooter_speed:=` bounces our chassis along y during every case, so
+`point_to_cv_target` fires with real `/pose` velocity. `target_path:=radial`
+and `diagonal` drive the target down the camera ray, which nothing did
+before. Both work with either `target_state:=` bench.
+
 ## 3. `KalmanFilter6D.predicted()` aliasing — FIXED 2026-09-09
 
 The `dt <= 0` branch returned `self.state` and a `np.diag(self.P)` view, so

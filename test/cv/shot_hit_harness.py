@@ -50,7 +50,7 @@ import subprocess
 import time
 
 from dji_serial_bridge.msg import CVTarget
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, Twist
 from nav_msgs.msg import Odometry
 import numpy as np
 from rcl_interfaces.srv import SetParameters
@@ -90,6 +90,18 @@ MOVING_MIN_HIT_RATE = 0.25
 # "typically 1-2 Hz" range (ARCC_2026_SENTRY_CONTEXT.md).
 SPIN_HZ_AT_MIN_SPEED = 2.0
 SPIN_HZ_AT_MAX_SPEED = 1.0
+# target_driver paths (CV_TEST_GAPS.md gap 2's depth case): lateral crosses the
+# view at constant range, radial runs down the camera ray, diagonal does both.
+# Each keeps the nearest panel past ~1.2 m and inside the FOV at the ends.
+TARGET_PATHS = {
+    'lateral': {'path_angle_deg': 0.0, 'center_x': 3.0, 'half_width': 2.4},
+    'radial': {'path_angle_deg': 90.0, 'center_x': 3.5, 'half_width': 2.0},
+    'diagonal': {'path_angle_deg': 45.0, 'center_x': 3.0, 'half_width': 2.0},
+}
+# --shooter-speed drives our own chassis back and forth along y within this
+# many metres of y=0, holding x at 0, so shooter_vel carries real motion.
+SHOOTER_HALF_WIDTH = 1.0
+SHOOTER_CMD_PERIOD_S = 0.05
 
 
 # Same fixed FK chain as cv_target_emulator.py's _camera_pose (root -> body
@@ -285,7 +297,8 @@ class ShotHitSampler(Node):
     once ground-truth data at/after its estimated impact time arrives.
     """
 
-    def __init__(self, hit_radius, marker_lifetime_s=5.0, panel_stagger=0.0):
+    def __init__(self, hit_radius, marker_lifetime_s=5.0, panel_stagger=0.0,
+                 shooter_speed=0.0):
         # use_sim_time, or marker headers get stamped with wall-clock time
         # while the rest of the stack (sim, amcl's map->odom TF) runs on
         # sim time -- rviz then can't resolve the marker's TF at its
@@ -297,6 +310,9 @@ class ShotHitSampler(Node):
             automatically_declare_parameters_from_overrides=True)
         self.hit_radius = hit_radius
         self.panel_stagger = panel_stagger  # must match cv_target_emulator's panel_stagger_m
+        self.shooter_speed = shooter_speed
+        self._shooter_dir = 1.0
+        self._last_shooter_cmd_s = None
         self.marker_lifetime = Duration(seconds=marker_lifetime_s).to_msg()
 
         self._root_pos = None
@@ -330,6 +346,7 @@ class ShotHitSampler(Node):
         # green = hit, red = miss. Not used for hit/miss judging itself,
         # purely a visualization aid.
         self.marker_pub = self.create_publisher(MarkerArray, '/shot_markers', 10)
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.create_timer(1.0 / 30.0, self._publish_in_flight)
 
     @staticmethod
@@ -342,6 +359,25 @@ class ShotHitSampler(Node):
         self._root_pos = np.array([p.x, p.y, p.z])
         self._root_rot = _rotation_from_quaternion(q.x, q.y, q.z, q.w)
         self._root_frame_id = msg.header.frame_id
+        self._drive_shooter(self._stamp_s(msg.header.stamp))
+
+    def _drive_shooter(self, now_s):
+        """Bounce our chassis along y at shooter_speed, holding x at 0 (chassis never yaws)."""
+        if self.shooter_speed <= 0.0:
+            return
+        if self._last_shooter_cmd_s is not None \
+                and now_s - self._last_shooter_cmd_s < SHOOTER_CMD_PERIOD_S:
+            return
+        self._last_shooter_cmd_s = now_s
+        x, y = self._root_pos[0], self._root_pos[1]
+        if y >= SHOOTER_HALF_WIDTH:
+            self._shooter_dir = -1.0
+        elif y <= -SHOOTER_HALF_WIDTH:
+            self._shooter_dir = 1.0
+        cmd = Twist()
+        cmd.linear.x = max(-self.shooter_speed, min(self.shooter_speed, -2.0 * x))
+        cmd.linear.y = self._shooter_dir * self.shooter_speed
+        self.cmd_vel_pub.publish(cmd)
 
     def _on_joint_states(self, msg):
         if 'headlink' in msg.name:
@@ -619,6 +655,8 @@ class ShotHitSampler(Node):
         dropped = len(self._pending_shots) + len(self._unlaunched)
         self._pending_shots = []
         self._unlaunched = []
+        if self.shooter_speed > 0.0:
+            self.cmd_vel_pub.publish(Twist())
         return dropped
 
     def spin_for(self, seconds):
@@ -730,17 +768,17 @@ class CvStack:
         if result is None or not all(r.successful for r in result.results):
             raise RuntimeError(f'{name} rejected {params}')
 
-    def set_target(self, speed, spin_hz, stagger):
-        """Set the target's speed, spin rate and panel stagger; raise if refused."""
+    def set_target(self, speed, spin_hz, stagger, path='lateral'):
+        """Set the target's speed, spin rate, panel stagger and path; raise if refused."""
         self._set(self._set_params, 'target_driver',
-                  {'target_speed': speed, 'spin_hz': spin_hz})
+                  {'target_speed': speed, 'spin_hz': spin_hz, **TARGET_PATHS[path]})
         self._set(self._set_emulator_params, 'cv_target_emulator',
                   {'panel_stagger_m': stagger})
         if self.estimator == 'target_state_truth':
             self._set(self._set_truth_params, 'target_state_truth',
                       {'panel_stagger_m': stagger})
         print(f'[stack] target set to speed={speed} m/s, spin={spin_hz:.2f} Hz, '
-              f'panel stagger={stagger:.3f} m')
+              f'panel stagger={stagger:.3f} m, {path} path')
 
     def stop(self):
         if self.launch is not None:
@@ -748,18 +786,20 @@ class CvStack:
         self.node.destroy_node()
 
 
-def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0):
+def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0, path='lateral',
+             shooter_speed=0.0):
     """
-    Switch the target to (speed, spin_hz, stagger), let the tracker settle, then score.
+    Switch the target to (speed, spin_hz, stagger, path), let the tracker settle, then score.
 
+    shooter_speed > 0 drives our own chassis for the whole case, settle included.
     Shots fired during the SETTLE_S window are discarded.
     """
-    stack.set_target(speed, spin_hz, stagger)
+    stack.set_target(speed, spin_hz, stagger, path)
     # At TEST_FIRE_HZ a 1s lifetime keeps ~40 markers; fast targets scatter
     # shots across the view, so theirs expire sooner still.
     sampler = ShotHitSampler(hit_radius=hit_radius,
                              marker_lifetime_s=1.0 / max(1.0, speed),
-                             panel_stagger=stagger)
+                             panel_stagger=stagger, shooter_speed=shooter_speed)
     try:
         sampler.spin_for(SETTLE_S)
         sampler.reset_score()
@@ -767,13 +807,13 @@ def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0):
     finally:
         dropped = sampler.finish()
         sampler.destroy_node()
+    case = {'speed': speed, 'spin_hz': round(spin_hz, 3), 'panel_stagger_m': stagger,
+            'target_path': path, 'shooter_speed': shooter_speed}
     with open(stack.shots_path, 'a') as f:
         for rec in sampler.shot_records:
-            f.write(json.dumps({'speed': speed, 'spin_hz': round(spin_hz, 3),
-                                'panel_stagger_m': stagger, **rec}) + '\n')
+            f.write(json.dumps({**case, **rec}) + '\n')
     with open(stack.panel_hits_path, 'a') as f:
-        f.write(json.dumps({'speed': speed, 'spin_hz': round(spin_hz, 3),
-                            'panel_stagger_m': stagger, 'panels': list(PANEL_NAMES),
+        f.write(json.dumps({**case, 'panels': list(PANEL_NAMES),
                             'hits_per_rotation': panel_hits_per_rotation(sampler)}) + '\n')
     return sampler, dropped
 
