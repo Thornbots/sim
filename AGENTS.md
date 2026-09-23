@@ -132,6 +132,15 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   a scenario (or a `drive()` option) that ramps velocity under an
   acceleration limit, so localization is also scored on motion the robot
   can actually make.
+- **Wanted: unthrottled runs must score the same as real time; find out
+  why they don't.** Every suite times itself in sim seconds, so
+  `real_time_factor:=0` should only shorten the wall clock. It doesn't:
+  the drift suite (amcl, EKF on) read `noise_correction` max 5.72 m,
+  `drift_correction` 4.02 m and `drift_correction_obstacle` 3.0-3.5 m
+  unthrottled, against 0.77, 0.42 and 0.50 m at 1x on the shared sim
+  (2026-09-23). rf2o is one known cause (its 20 Hz wall-clock loop skips
+  scans, item below). Check every node in the stack for wall-clock timers,
+  rates or timeouts before trusting any unthrottled number again.
 - **sapien vs gz on the drift suite (2026-09-23).** Same amcl/EKF settings,
   unthrottled, after the lidar visibility fix. Five of six scenarios agree:
   `baseline`, `jerk_with_motion`, `odom_stuck` pass on both;
