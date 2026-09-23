@@ -1,0 +1,55 @@
+# sim/tools/simplify_urdf.py config for the mechanical team's "NEW!!!! (tm) Sentry" Onshape export.
+# Coordinates are the export's world frame (metres) unless noted. see README.md for design rationale
+robot_name: sentry_v2
+mesh_uri: package://sim/urdf/sentry_v2/meshes
+
+# Reference geometry, not parts: rules keep-out boxes, FOV cones, two strays with no inertia.
+drop: 'keep_out_zone|fov_cone|ir_fov|^2_asm__1_$|^rollers__1_$'
+
+# Chassis centre on the ground (lowest wheel point); yaw turns the gun (world +y) onto +x.
+frame:
+  origin: [-0.225, -0.178, -0.2024]
+  yaw: 1.5707963
+
+# Gimbal: parts downstream of these export joints; later entries win.
+subtree_bodies:
+  - {name: head, joint: revolute_1_2}          # yaw slewing bearing, 2.85 kg above it
+  - {name: head_pitch, joint: cylindrical_1_4}  # horizontal shooter axis
+yaw_joint: revolute_1_2
+pitch_joint: cylindrical_1_5
+yaw_sign: -1                 # old model's headlink axis is -z; the CV stack assumes it
+pitch_limits: [-0.6, 0.6]    # PLACEHOLDER: old model's value, not from the CAD
+
+# Omni wheels: axial centre and outward axis, measured from the wheel meshes.
+wheel_radius: 0.0949
+wheel_half_width: 0.02
+wheels:
+  - {centre: [0.022, -0.178, -0.107], axis: [1, 0, 0]}
+  - {centre: [-0.225, 0.069, -0.107], axis: [0, 1, 0]}
+  - {centre: [-0.472, -0.178, -0.107], axis: [-1, 0, 0]}
+  - {centre: [-0.225, -0.425, -0.107], axis: [0, -1, 0]}
+# Unsprung carrier: parts inboard of each wheel within this cylinder, plus the arms.
+carrier_radius: 0.10
+carrier_depth: 0.10
+carrier_parts: 'sus_arm|motor_front_plate'
+
+# Parallel-arm suspension modelled as one prismatic joint per corner.
+# PLACEHOLDERS until the mechanical team gives the shock's rate and travel.
+suspension:
+  travel_up: 0.02
+  travel_down: 0.02
+  stiffness: 2200.0          # N/m per corner: ~1 cm static sag at 9 kg
+  damping: 60.0              # N s/m per corner
+
+# Collision hulls leave out parts reaching below this height (m, output frame).
+collision_min_z: 0.03
+
+sensors:
+  lidar: lidar
+  camera: camera_cover
+
+# Visual budget: one convex hull per part, parts under min_part_size (m, bbox diagonal)
+# kept for mass only; about 50 bytes per face on disk.
+min_part_size: 0.015
+max_hull_faces: 120
+faces: {root: 20000, head: 8000, carrier: 2000, wheel: 3000, default: 4000}

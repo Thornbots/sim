@@ -245,6 +245,54 @@ Not yet supported under sapien: `gui:=` (no viewer), `camera:=`,
 `auto_explore.py`'s teleport and `head_slider_relay.py` (both gz-transport
 only).
 
+### tools/simplify_urdf.py and urdf/sentry_v2
+
+The mechanical team's Onshape export of the new sentry has 3782 links, 3781
+joints and 581 meshes (220 MB), with no collision geometry. Onshape turns
+every assembly mate into joints (a planar mate becomes two prismatics and a
+continuous, a cylindrical one a prismatic and a continuous) and closes loops
+with `*_loop_closure` dummy links, so almost none of those joints are real
+motion. The export itself is not in the repo; regenerate from it with:
+
+```bash
+python3 tools/simplify_urdf.py <export_dir> urdf/sentry_v2.yaml urdf/sentry_v2
+```
+
+The tool collapses it to ten bodies: chassis (`root`), gimbal yaw (`head`),
+gimbal pitch (`head_pitch`), and per corner a sprung carrier and an omni
+wheel. Each body's mass and inertia are summed exactly (parallel-axis), so the
+total stays 8.92 kg. Assignment, in order:
+
+- `head` and `head_pitch` are the export tree below the yaw slewing bearing
+  (`revolute_1_2`) and the horizontal shooter axis (`cylindrical_1_4`).
+- A wheel is every part inside its measured cylinder (r 0.0949 m, +-0.02 m
+  axially); its carrier is the parts inboard of the wheel within 0.10 m of
+  the axle, plus the suspension arms by name.
+- Everything else is chassis. Reference geometry (the rules keep-out boxes,
+  FOV cones) and two stray parts with no inertia are dropped by name.
+
+Each corner's parallel-arm suspension is one prismatic joint, which is close
+to the arms' real arc over a few centimetres of travel. Wheels collide as
+spheres (omni rollers can't be modelled with isotropic friction anyway),
+other bodies as convex hulls of their parts above 3 cm. The robot's links
+must not collide with each other; the chassis hull contains the wheels.
+Visuals are one convex hull per part, capped at 120 faces, with parts under
+15 mm left out: CAD tessellations are full of T-junctions that quadric
+decimation cannot reduce. That keeps the model at 6.4 MB.
+
+The joint and link names match `sentry.urdf.xacro` (`root`, `body`, `head`,
+`head_pitch`, `lidar`, `camera`, `headlink`, `headpitch`) and `headlink` keeps
+its -z axis, because the CV stack and `test_urdf_constants.py` assume them.
+The output frame puts the gun on +x (the export's +y) with the origin on the
+ground under the chassis centre.
+
+Placeholders, not from the CAD: pitch limits (the old model's +-0.6 rad),
+suspension travel (+-2 cm), spring rate (2200 N/m per corner, about 1 cm of
+sag) and damping. The hopper landed on the pitch stage because of how the
+export tree runs; confirm with the mechanical team. Nothing uses `sentry_v2`
+yet; wiring it in means a driven chassis instead of the kinematic ghost, and
+new pinned constants in `test_urdf_constants.py` and `cv_target_emulator.py`.
+
 ### test_localization_drift.py
 
 Integration suite for `sentry_localization`'s drift and jerk correction
