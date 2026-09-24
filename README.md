@@ -163,6 +163,42 @@ script docstrings. The shot-hit suite runs one test per case and prints a hit
 rate for each. Its pass conditions are in the `test/cv/test_shot_hit.py`
 docstring and `CV_TEST_GAPS.md`.
 
+## Comparing a PR
+
+`tools/sim_pr_compare.py` runs the suites on a PR's base and head and puts the
+two sets of results side by side. It runs on the host, not in the container: it
+needs `gh` and git credentials, and it reaches the running container through
+`isaac_ros_common/scripts/dexec.sh`. It never starts a container.
+
+```bash
+cd ~/workspaces/isaac_ros-dev/src/sim
+tools/sim_pr_compare.py Thornbots/sim#2                   # drift + shot-hit, one run a side
+tools/sim_pr_compare.py thornbots_workspace#11 --repeat 3 --suite drift
+tools/sim_pr_compare.py <PR URL> --report-only --comment  # re-render, post on the PR
+```
+
+The PR can be on `thornbots_workspace` or on any package the suites load
+(`sim`, `thornbots_pkg`, `sentry_localization`, `rf2o_laser_odometry`,
+`ros2_dji_serial_bridge`, `sllidar_ros2`). Base is the PR's merge-base, so the
+two sides differ only by the PR. A workspace PR takes every gitlink from its
+own commits; a package PR takes the other packages from `origin/main`.
+
+Each side is its own colcon workspace under
+`~/workspaces/isaac_ros-dev/worktrees/sim-pr/<repo>-<N>/{base,head}`: a git
+worktree of each package at its commit, built with `--symlink-install`. The
+suites run from that workspace's `install/`, so neither your `src/` edits nor
+your `install/` leak in. Results go to `results/`: one junit XML and one log
+per suite run, the stack logs, and `report.md`. `--clean` removes the
+worktrees and builds and keeps `results/`.
+
+Runs are headless (`--gui` shows gz and rviz) and sequential, and with
+`--repeat` the side that goes first alternates. Every suite runs unthrottled;
+`--real-time-factor 1` is the control. The script refuses to start if a sim or
+robot stack is already running in the container. Every test
+records the numbers behind its verdict with `record_property`, so they appear
+in the junit XML. A side whose commits predate that shows verdicts but no
+numbers.
+
 ## Launch sim by hand
 
 ```bash

@@ -71,12 +71,14 @@ def real_time_factor(request):
     drift_harness.set_real_time_factor(request.config.getoption('--real-time-factor'))
 
 
-def test_scenario(scenario_name, request, gui, ros_context):
+def test_scenario(scenario_name, request, gui, ros_context, record_property):
     backend = request.config.getoption('--backend')
     use_ekf = request.config.getoption('--use-ekf')
 
     sc = drift_harness.run_scenario(scenario_name, gui, backend, use_ekf)
 
+    for name, value in sc.metrics.items():
+        record_property(name, value)
     detail = '\n'.join(sc.details)
     if sc.skipped:
         pytest.skip(detail)

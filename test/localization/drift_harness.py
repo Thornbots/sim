@@ -604,13 +604,16 @@ class Scenario:
         self.passed = None
         self.skipped = False
         self.details = []
+        self.metrics = {}
 
     def log(self, msg):
         print(f'    {msg}')
         self.details.append(msg)
 
-    def result(self, passed, summary):
+    def result(self, passed, summary, **metrics):
+        """Record the verdict; metrics are the numbers it rests on, for run-to-run diffs."""
         self.passed = passed
+        self.metrics.update(metrics)
         status = 'PASS' if passed else 'FAIL'
         print(f'  [{status}] {self.name}: {summary}')
         self.details.append(f'{status}: {summary}')
@@ -867,7 +870,8 @@ def scenario_baseline(gui, backend, use_ekf):
                   f'{edge} drift over 10s = {drift:.4f} m (threshold '
                   f'{DRIFT_THRESHOLD} m; absolute offset {mag:.4f} m is '
                   f'expected/normal, see note above), '
-                  f'log_errors={len(log_errs)}')
+                  f'log_errors={len(log_errs)}',
+                  drift_10s_m=drift, log_errors=len(log_errs))
         return sc
     finally:
         teardown_stack(stack, helper)
@@ -946,7 +950,8 @@ def scenario_noise_correction(gui, backend, use_ekf):
                   f'max|xy|={max_mag:.4f} m, first_half_max={first_half_max:.4f}, '
                   f'second_half_max={second_half_max:.4f}, '
                   f'growth_ratio={growth_ratio:.2f} (threshold {GROWTH_THRESHOLD}), '
-                  f'log_errors={len(log_errs)}')
+                  f'log_errors={len(log_errs)}',
+                  max_xy_m=max_mag, growth_ratio=growth_ratio, log_errors=len(log_errs))
         return sc
     finally:
         teardown_stack(stack, helper)
@@ -1129,7 +1134,8 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
         sc.result(ok,
                   f'{n_pass}/{JERK_WITH_MOTION_REPEATS} trials passed -- {summary} '
                   f'-- plus one extra closing lap around the square -- '
-                  f'log_errors={len(log_errs)}')
+                  f'log_errors={len(log_errs)}',
+                  trials_passed=n_pass, log_errors=len(log_errs))
         return sc
     finally:
         teardown_stack(stack, helper)
@@ -1246,7 +1252,8 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
                   f'max|{edge} - pre-loop {edge}| = {max_delta:.4f} m '
                   f'over {OBSERVE_SECONDS:.0f}s driving the cornering '
                   f'loop{obstacle_note} (threshold {MAX_DELTA_THRESHOLD} m), '
-                  f'log_errors={len(log_errs)}')
+                  f'log_errors={len(log_errs)}',
+                  max_delta_m=max_delta, log_errors=len(log_errs))
         return sc
     finally:
         teardown_stack(stack, helper)
@@ -1410,7 +1417,8 @@ def scenario_odom_stuck(gui, backend, use_ekf):
                   f'after odom_stuck = {max_spread:.4f} m (threshold '
                   f'{ODOM_STUCK_MIN_TF_SPREAD} m -- proves the backend is '
                   f'still attempting corrections, not latched), '
-                  f'log_errors={len(log_errs)}')
+                  f'log_errors={len(log_errs)}',
+                  max_spread_m=max_spread, log_errors=len(log_errs))
         return sc
     finally:
         teardown_stack(stack, helper)

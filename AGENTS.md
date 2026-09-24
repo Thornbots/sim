@@ -78,6 +78,11 @@ session only. To get a PID to kill, use `kill_launch.sh -l`, since the grep also
 matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 `finally` block.
 
+`tools/sim_pr_compare.py <PR>` runs the suites on a PR's base and head, each
+from its own worktree workspace, and writes a diffed `report.md` (README.md,
+"Comparing a PR"). It launches sims, so the ask-first rule below applies, and
+so does "ask before `--comment`": that flag posts on the PR.
+
 ## Standing rules
 
 - **Ask before starting any sim test run**, the shot-hit bench or the drift

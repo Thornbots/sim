@@ -32,7 +32,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def test_ekf_beats_raw_odom(request, gui, ros_context):
+def test_ekf_beats_raw_odom(request, gui, ros_context, record_property):
     slip_ratio = request.config.getoption('--ekf-slip-ratio')
     drift_stddev = request.config.getoption('--ekf-drift-stddev')
     seconds = request.config.getoption('--ekf-seconds')
@@ -49,6 +49,9 @@ def test_ekf_beats_raw_odom(request, gui, ros_context):
     odom_stats, ekf_stats, n = result
     ekf_diag_harness.report(odom_stats, ekf_stats, n, slip_ratio, drift_stddev)
     improvement = ekf_diag_harness.improvement_pct(odom_stats, ekf_stats)
+    record_property('odom_mean_err_m', odom_stats['mean'])
+    record_property('ekf_mean_err_m', ekf_stats['mean'])
+    record_property('ekf_improvement_pct', improvement)
     assert improvement > 0.0, (
         f'EKF did not beat raw /odom over {n} samples: mean error '
         f'{ekf_stats["mean"]:.4f} m fused vs {odom_stats["mean"]:.4f} m raw '

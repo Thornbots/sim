@@ -91,7 +91,7 @@ def pytest_generate_tests(metafunc):
     metafunc.parametrize('layout,case', params, ids=ids)
 
 
-def test_shot_hit(layout, case, request, cv_stack):
+def test_shot_hit(layout, case, request, cv_stack, record_property):
     config = request.config
     speeds = _speeds(config)
     duration = config.getoption('--shot-duration') or harness.DEFAULT_DURATION
@@ -117,6 +117,11 @@ def test_shot_hit(layout, case, request, cv_stack):
                                         stagger=LAYOUTS[layout], path=path,
                                         shooter_speed=shooter_speed)
     total = harness.summarize(label, sampler, dropped, duration)
+    _, hits_per_expected, keep_up = harness.score(sampler, duration)
+    record_property('score', total)
+    record_property('hit_rate', sampler.hits / sampler.shots_fired if sampler.shots_fired else 0.0)
+    record_property('hits_per_expected', hits_per_expected)
+    record_property('keep_up', keep_up)
 
     assert sampler.shots_fired > 0, (
         f'no shots observed in {label} -- something in the launched stack is '
