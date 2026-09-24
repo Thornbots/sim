@@ -576,14 +576,20 @@ tick makes a longer jump and the actor keeps its speed.
 The boxes are dynamic. gz only honours `set_pose` on a free body (see the
 `auto_explore.py` note), and a static model is welded to the world. A box
 spawned or teleported into `sentry_v2`'s chassis stalls the contact solver,
-so the driver reads `/sim/raw_odom` and never writes a position inside the
-robot's keep-out capsule: the robot's pose swept ahead by its velocity for
-`lookahead_s` (0.5 s, doubled tick time if that is longer, capped at 1 s),
-radius `robot_radius` (0.5 m, the barrel's reach) plus the box's half
-diagonal plus `margin` (0.3 m). A box whose next position falls inside hops
-forward along its path to the first clear spot. With no fresh truth pose it
-moves nothing, and it spawns nothing until one arrives. It doesn't stop the
-robot driving into a box between ticks.
+so the driver reads `/sim/raw_odom` and keeps every box `robot_radius`
+(0.5 m, the barrel's reach) plus the box's half diagonal plus `margin`
+(0.3 m) from wherever the robot can be within `lookahead_s` (1 s, or three
+tick times if that is longer). That is its velocity swept ahead, plus
+`route` ahead of it at `route_speed`: the harness passes the loop's corners
+and `DRIVE_SPEED`, because the robot dwells stopped at each corner and its
+velocity alone says nothing about the next leg. A blocked box steps to the
+nearest clear spot on its path, forward or back.
+
+The first version only swept the velocity 0.5 s ahead and hopped blocked
+boxes forward, so on 2026-09-24 they landed on the robot's next leg and it
+drove into them. The default paths now run from the loop's middle, 1.1 m
+from every edge and always clear, across the south, west and north edges.
+`closest box` in the log is the nearest a box centre got to the robot's.
 
 Each `set_pose` is an `ign service` subprocess costing tens of ms, run in
 parallel across actors. Unthrottled, the sim outruns that, and the boxes

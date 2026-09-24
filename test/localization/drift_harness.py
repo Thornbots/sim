@@ -613,6 +613,10 @@ def start_actor_driver(helper, timeout=60.0):
         sys.executable, '-m', 'sim.actor_driver', '--ros-args',
         '-p', 'use_sim_time:=true', '-p', f'count:={ACTOR_COUNT}',
         '-p', f'name_prefix:={ACTOR_PREFIX}',
+        # The loop's corners in drive order, so boxes clear the next leg
+        # even while the robot dwells at a corner.
+        '-p', 'route:=[-1.5, -1.5, 1.5, -1.5, 1.5, 1.5, -1.5, 1.5]',
+        '-p', f'route_speed:={float(DRIVE_SPEED)}',
     ], os.path.join(LOG_DIR, f'actor_driver_{_actor_runs}.log'))
     _actor_driver.start()
     deadline = time.monotonic() + timeout
