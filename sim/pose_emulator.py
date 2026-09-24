@@ -222,11 +222,11 @@ class PoseEmulator(Node):
 
         slip_ratio = self.get_parameter('odom_slip_ratio').value
         if slip_ratio > 0.0:
-            if self._prev_true_x is None:
-                # First callback: nothing to compute a delta from yet, so
-                # start the slipped position exactly at true position (no
-                # slip applied retroactively to distance already
-                # "traveled" before this node existed).
+            if self._prev_true_x is None or self._slipped_x is None:
+                # First slipping callback (at startup, after ~/reset, or
+                # after slip is switched on at runtime): start the slipped
+                # position exactly at true position, with no slip applied
+                # retroactively to distance already traveled.
                 self._slipped_x, self._slipped_y = true_x, true_y
             else:
                 self._slipped_x += (true_x - self._prev_true_x) * (1.0 - slip_ratio)
