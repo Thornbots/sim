@@ -123,10 +123,11 @@ colcon test --packages-select sim --pytest-args ' -m integration'
 colcon test-result --verbose
 ```
 
-Each drift test launches gz-sim and `thornbots_pkg` as one tree, runs for
-tens of seconds, and shuts it down before the next test starts. The shot-hit suite launches
-them once for all its cases, through `shot_hit.launch.py run_tests:=false`
-when pytest starts it. ROS topics are shared
+The drift suite starts gz-sim once and a fresh `thornbots_pkg` stack for each
+scenario, resetting the sim between them (see "Run the tests");
+`restart_sim:=true` restarts gz per scenario instead. The shot-hit suite
+launches both once for all its cases, through `shot_hit.launch.py
+run_tests:=false` when pytest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
 the measurements.
 
@@ -311,7 +312,8 @@ the self-hits land inside `range_min`. `lidar_self_filter` then blanked 1.0
 rad (126-183 deg), so up to 140 deg of the scan was being lost to something
 nothing in the stack knew about. A bare `gpu_lidar` at the same height in the
 same world returns all 3000 beams at 2.22-7.17 m, which is what the sentry's
-sensor now returns too.
+sensor now returns too. Both models have since dropped to the A2M8's 800
+beams.
 
 Hardware is the reason to prefer it: the real RPLIDAR's scanning disk sits
 clear of the chassis, and only the head's own footprint blocks it.
@@ -404,7 +406,9 @@ The suite runs them in this order.
    Measured 2026-07-27: `amcl` fails, stuck at 0.0000m for 30s, because the
    scan-match gate runs on odom-reported travel and frozen odom never reopens
    it. The stack really does depend on odometry to stay live. `amcl --use-ekf`
-   passes at 1.3071m, because the EKF keeps reporting travel.
+   passes at 1.3071m, because the EKF keeps reporting travel. Passing isn't
+   tracking: 2026-09-24 it passed at 1.5073m with ground-truth error cycling
+   0.24-4.3m per lap (see `AGENTS.md`).
 
 Two checks were removed. `jerk_stationary` (2026-07-23) re-verified a documented limit
 of the travel gate instead of testing recovery. A no-leak-before-motion check

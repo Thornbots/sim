@@ -113,15 +113,27 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 - **Unthrottled runs score like real time now**, localization included, with
   rf2o's `fixed_heading` and `/odom` prior. Run at the default
-  `real_time_factor:=0`; keep `:=1` as the control. rf2o still matches scans
-  from a 20 Hz wall-clock loop that keeps only the newest scan
-  (`thornbots_workspace#11` moves it into the scan callback).
+  `real_time_factor:=0`; keep `:=1` as the control. rf2o now matches every
+  scan in its callback (`thornbots_workspace#11`); its `ros2_ws` copy is
+  shadowed, so rebuild it in `isaac_ros-dev` before trusting a run.
+- **`suite:=ekf` and shot-hit predate the A2M8 lidar and rf2o's per-scan
+  matching** (800 beams, 0.15 m `range_min`, 0.01 m noise; was 3000, 0.2 m,
+  0.03 m). Re-run them before quoting their numbers.
+- **`odom_stuck` passes but localization is lost.** Its check is liveness
+  only (`map->odom` spread > 1 cm). 2026-09-24, amcl + EKF, unthrottled:
+  spread 1.51 m, but `root`'s ground-truth error cycles 0.24-4.3 m every
+  lap while the robot drives the 3 m loop, and `map->odom` yaw swings
+  +-0.17 rad on a chassis that never rotates. amcl isn't pulling the pose
+  along without odometry. Not yet chased.
 - **One robot bring-up can leave `amcl` unconfigured.** Its reply to
   `/amcl/change_state` times out (`failed to send response`), the lifecycle
   manager never activates it, and the scenario fails on "map->odom never
   became available". Seen once in six bring-ups; not yet chased.
-- **The drift suite passes 6/6 on `sentry_v2` at `--backend amcl --use-ekf`,
-  real time,** shared sim, `restart_sim:=true` and a scenario alone alike.
+- **The drift suite passes 6/6 on `sentry_v2` at `--backend amcl --use-ekf`,**
+  unthrottled with the A2M8 lidar and per-scan rf2o (2026-09-24,
+  drift_correction 0.17 m, with obstacle 0.17 m, against 0.40 m). Before
+  those changes it also passed at real time, shared sim,
+  `restart_sim:=true` and a scenario alone alike.
   Anything spawned into the world must clear the robot, which now collides:
   a box spawned inside the chassis stalls gz's contact solver and `/clock`.
 - **`sentry_v2` spawns by default; `model:=sentry` is the old model.** The
