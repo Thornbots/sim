@@ -57,8 +57,9 @@
     <origin xyz="0 0.1128 0" rpy="0 0 0"/>
   </joint>
 
-  <!-- Same sensor as sentry.urdf.xacro's: an RPLIDAR A2M8 at 10 Hz, 3000
-       beams over -pi..pi (rf2o assumes a zero-centred scan). -->
+  <!-- Same sensor as sentry.urdf.xacro's: an RPLIDAR A2M8 in its typical
+       mode, 10 Hz and 800 beams over -pi..pi (rf2o assumes a zero-centred
+       scan), 0.15-12 m, 0.01 m noise. -->
   <gazebo reference="lidar">
     <sensor name="lidar" type="gpu_lidar">
       <always_on>true</always_on>
@@ -69,21 +70,21 @@
       <lidar>
         <scan>
           <horizontal>
-            <samples>3000</samples>
+            <samples>800</samples>
             <resolution>1.000000</resolution>
             <min_angle>-3.140000</min_angle>
             <max_angle>3.140000</max_angle>
           </horizontal>
         </scan>
         <range>
-          <min>0.2</min>
+          <min>0.15</min>
           <max>12.0</max>
           <resolution>0.015000</resolution>
         </range>
         <noise>
           <type>gaussian</type>
           <mean>0.0</mean>
-          <stddev>0.03</stddev>
+          <stddev>0.01</stddev>
         </noise>
         <visibility_mask>0x01</visibility_mask>
       </lidar>
