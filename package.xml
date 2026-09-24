@@ -4,7 +4,7 @@
   <name>sim</name>
   <version>0.1.0</version>
   <description>Launches gz sim (Ignition Gazebo) with the ARCC_Field_2026 world and spawns the sentry robot from URDF/xacro.</description>
-  <maintainer email="you@example.com">you</maintainer>
+  <maintainer email="baptisbc@RHIT.edu">Thornbots</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>ros_gz_sim</exec_depend>
