@@ -74,21 +74,11 @@ bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
 picks the moving cases. `headless:=true` drops the gz GUI and rviz from
 either. `--show-args` on either launch lists the rest.
 
-`sim_engine:=sapien` runs either suite on SAPIEN instead of gz (see the
-`sapien_sim.py` note). It is new and has not yet run a full suite, so treat its
-numbers as unverified until they have been compared with gz:
-
-```bash
-ros2 launch sim localization_tests.launch.py sim_engine:=sapien
-ros2 launch sim shot_hit.launch.py sim_engine:=sapien
-```
-
 ## Build
 
 `Dockerfile.thornbots` installs neither `ros-humble-ros-gz` nor this package.
 On a fresh container, run `install-sim.sh` once from a container terminal. It
-installs the dependencies for both engines (gz from apt, SAPIEN from pip) and
-builds `sim`:
+installs gz from apt and builds `sim`:
 
 ```bash
 cd /workspaces/isaac_ros-dev
@@ -172,12 +162,11 @@ ros2 launch sim sim.launch.py gui:=false rviz:=false     # server only
 ros2 launch sim sim.launch.py x:=1.0 y:=0.5 yaw:=0.0     # spawn pose (z:= too)
 ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
 ros2 launch sim sim.launch.py camera:=true               # bridge /color and /depth
-ros2 launch sim sim.launch.py sim_engine:=sapien         # SAPIEN instead of gz
 ros2 launch sim sim.launch.py model:=sentry              # the old collision-free model
 ```
 
-`model:=` picks the gz robot: `sentry_v2` (the default, from the CAD) or
-`sentry`, the old model. sapien always loads the old one.
+`model:=` picks the robot: `sentry_v2` (the default, from the CAD) or
+`sentry`, the old model.
 
 The camera is off by default. Its color and depth images are the heaviest
 thing the sim publishes, and nothing in `sim` or its tests reads them. Turn it
@@ -219,56 +208,12 @@ doesn't have; only sim and its tests should read them.
 These notes explain why the code looks the way it does, so the in-code
 comments can stay short. Each heading names a file.
 
-### sapien_sim.py: the SAPIEN engine
+### SAPIEN: tried, not adopted
 
-`sim_engine:=sapien` swaps gz, the robot spawn and every bridge for this one
-node. Everything downstream (`pose_emulator`, `target_driver`,
-`cv_target_emulator`, `cv_head_aim`, `thornbots_pkg`) is unchanged, because the
-node publishes the same topics gz does: `/clock`, `/scan_raw`, `/sim/raw_odom`
-and `/sim/raw_joint_states`, with gz's frame names and rates. It subscribes to
-`/cmd_vel`, `/head_pan_cmd` and `/head_pitch_cmd`. SAPIEN is the engine under
-Triton Robotics' ManiSkill sim, which is why it was picked over MuJoCo and
-Webots; the comparison against gz has not been run yet.
-
-Why it looks the way it does:
-
-- It loads the old `sentry.urdf.xacro`, not `sentry_v2`, so its frames and
-  head differ from gz's default model.
-- The chassis is moved kinematically. `sentry.urdf.xacro` has no collision
-  and no gravity, so in gz that model is a ghost that `VelocityControl` moves;
-  integrating the `/cmd_vel` body-frame twist each step is the same thing. Like
-  `VelocityControl`, the last command holds until a new one arrives.
-- The head joints use the old xacro's `JointPositionController` gains (p 75,
-  d 0.125, effort 50) as SAPIEN force-mode drives, at gz's 1 ms step. On the
-  old model's gram-scale head that tracks a command within a few milliseconds.
-- The lidar is not SAPIEN's own ray cast. That casts one ray per Python call,
-  14 ms for the 3000-beam scan, which caps the sim near 7x real time. Instead
-  `trimesh` + `embreex` (Embree) cast all 3000 beams against
-  `world/composite_part_1.stl` in about 1.3 ms, and spawned boxes are
-  intersected analytically. The scan matches gz's `gpu_lidar` spec: frame
-  `lidar`, -3.14 to 3.14 rad, 0.2-12 m, 0.03 m Gaussian noise. It does not see
-  the robot's own head; `lidar_self_filter` blanks that sector anyway.
-- `spawn_box` is a parameter, not a service, because `sim` is an
-  `ament_python` package and can't define a `.srv`. `drift_harness.py`'s
-  `spawn_box_obstacle` sets it with `ros2 param set` when `SIM_ENGINE=sapien`.
-- The engine choice travels as the `SIM_ENGINE` environment variable. The
-  test launches set it from `sim_engine:=`, so pytest and every per-scenario
-  stack it starts inherit it without a new pytest option.
-- `ros_gz_sim`'s launch file is found with `FindPackageShare`, which resolves
-  only when the gz group runs, so the sapien engine works without `ros_gz`.
-- SAPIEN, `trimesh` and `embreex` are pip-installed with `--no-deps`. SAPIEN's
-  pip dependencies include `opencv-python`, which would replace the system
-  `cv2`; SAPIEN imports fine without it. No renderer is created, so the node
-  needs no GPU or Vulkan.
-
-`world:=` works: the node reads the SDF for its first collision mesh and the
-`<pose>` the world gives it, which is what keeps sapien's ranges on top of
-gz's rather than 8 cm off. Only that one mesh is read, so a world built from
-several models needs `field_mesh:=` or a change here.
-
-Not yet supported under sapien: `gui:=` (no viewer), `camera:=`,
-`auto_explore.py`'s teleport and `head_slider_relay.py` (both gz-transport
-only).
+A SAPIEN engine (`sim_engine:=sapien`) was built as a faster stand-in for gz
+and removed on 2026-09-24 before it ever ran a full suite. We are staying on
+gz. The removed `sim/sapien_sim.py` is in the commit log if the question
+comes back.
 
 ### tools/simplify_urdf.py and urdf/sentry_v2
 
