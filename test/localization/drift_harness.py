@@ -1179,14 +1179,6 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
             sc.result(False, f'{edge} never became available within 45s')
             return sc
         sc.log(f'{edge} before loop start = {pose_before}')
-
-        if spawn_obstacle:
-            spawn_box_obstacle()
-            sc.log(f'spawned {OBSTACLE_SIZE}x{OBSTACLE_SIZE}x'
-                   f'{OBSTACLE_HEIGHT}m box obstacle at {OBSTACLE_XY} '
-                   f'(not present in the saved map) -- at the center of '
-                   f'the loop this scenario is about to drive, see '
-                   f'OBSTACLE_LOOP_LEGS')
         scans_before_drive = helper._scan_count
 
         # Reposition to the loop's own start corner -- see
@@ -1195,6 +1187,17 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
         _reposition_to_loop_start(helper)
         sc.log("repositioned to the loop's start corner (-1.5,-1.5) "
                'before tracing its perimeter')
+
+        # Only once the robot has left spawn: the box goes where it was
+        # parked, and sentry_v2 collides, so spawning it earlier buries the
+        # chassis in it and stalls gz's contact solver.
+        if spawn_obstacle:
+            spawn_box_obstacle()
+            sc.log(f'spawned {OBSTACLE_SIZE}x{OBSTACLE_SIZE}x'
+                   f'{OBSTACLE_HEIGHT}m box obstacle at {OBSTACLE_XY} '
+                   f'(not present in the saved map) -- at the center of '
+                   f'the loop this scenario is about to drive, see '
+                   f'OBSTACLE_LOOP_LEGS')
 
         # Drive the loop. Sampling the correction TF each leg.
         OBSERVE_SECONDS = 30.0
