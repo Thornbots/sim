@@ -74,7 +74,6 @@ def generate_launch_description():
     pkg_share = get_package_share_directory('sim')
 
     default_world = os.path.join(pkg_share, 'world', 'ARCC_Field_2026.sdf')
-    default_xacro = os.path.join(pkg_share, 'urdf', 'sentry.urdf.xacro')
     default_rviz_config = os.path.join(pkg_share, 'rviz', 'config.rviz')
 
     world_arg = DeclareLaunchArgument(
@@ -310,7 +309,7 @@ def generate_launch_description():
         )
     )
 
-    # --- Bridge the gpu_lidar sensor's /scan topic (defined in sentry.urdf.xacro)
+    # --- Bridge the gpu_lidar sensor's /scan topic (defined in the model xacro)
     # into ROS 2, remapped to scan_raw -- thornbots_pkg's lidar_self_filter node
     # is the only thing that publishes the final /scan (see its docstring),
     # for both sim and real hardware.
@@ -329,7 +328,7 @@ def generate_launch_description():
     # has no such topic (the Type-C board doesn't expose raw joint states),
     # so nothing outside sim should consume this directly; it only feeds
     # pose_emulator below, which repackages it into the same pose interface
-    # real hardware speaks. That plugin (see sentry.urdf.xacro) only
+    # real hardware speaks. That plugin (see the model xacro) only
     # publishes on the gz-transport topic
     # /world/<world>/model/<robot_name>/joint_state as ignition.msgs.Model --
     # it does NOT talk to ROS on its own, hence this bridge.
@@ -350,7 +349,7 @@ def generate_launch_description():
     # /sim/raw_odom -- ground-truth, sim-internal only, for the same reason
     # as /sim/raw_joint_states above: real hardware has no raw /odom topic
     # either, only its Type-C pose interface. That plugin (see
-    # sentry.urdf.xacro) only publishes on the gz-transport topic
+    # the model xacro) only publishes on the gz-transport topic
     # /model/<robot_name>/odometry as ignition.msgs.Odometry, not to ROS.
     gz_odom_topic = ['/model/', robot_name, '/odometry']
     odom_bridge = Node(
@@ -416,7 +415,7 @@ def generate_launch_description():
     )
 
     # --- Drive the chassis in sim manually via /cmd_vel (sim/wasd_teleop.py).
-    # root is a genuinely free link again (see sentry.urdf.xacro), so a
+    # root is a genuinely free link again (see the model xacro), so a
     # single VelocityControl plugin on it takes a Twist directly -- no more
     # splitting into per-joint commands the way the old prismatic-joint-chain
     # design needed.
@@ -432,12 +431,12 @@ def generate_launch_description():
     )
 
     # --- Teleport the chassis in sim via sim/auto_explore.py's grid sweep.
-    # root has no parent joint any more (see sentry.urdf.xacro), so gz's
+    # root has no parent joint any more (see the model xacro), so gz's
     # physics now honors a direct world-pose write on it; auto_explore.py
     # calls gz's own `/world/<world>/set_pose` service directly (there's no
     # ROS-side equivalent to bridge here, it's a gz-transport-only service).
 
-    # --- Bridge for the head pan (see sentry.urdf.xacro's
+    # --- Bridge for the head pan (see the model xacro's
     # JointPositionController on headlink, reintroduced now that root's
     # inflated rotational inertia and auto_explore.py's before/after
     # joint resets make it safe again). Lets the gz sim GUI's "Joint
@@ -454,7 +453,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
-    # --- Bridge for the head-mounted camera's pitch (see sentry.urdf.xacro's
+    # --- Bridge for the head-mounted camera's pitch (see the model xacro's
     # JointPositionController on headpitch), same pattern as head_pan_bridge
     # above.
     gz_headpitch_topic = ['/model/', robot_name, '/joint/headpitch/cmd_pos']
@@ -468,7 +467,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
-    # --- Bridge the rgbd_camera sensor (defined in sentry.urdf.xacro,
+    # --- Bridge the rgbd_camera sensor (defined in the model xacro,
     # <topic>camera</topic>) into ROS 2, remapped to the same topic names
     # realsense-ros uses on real hardware (see
     # realsense-yolov8-nitros-bridge/launch/isaac_ros_yolov8_realsense.launch.py)
