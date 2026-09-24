@@ -24,15 +24,17 @@ stays keep-out clear of where the robot will be within lookahead_s: along
 velocity. A blocked box steps to the nearest clear spot on its path. The
 caller removes the actors (`<prefix>_<i>`). see README.md for design rationale
 """
-from concurrent.futures import ThreadPoolExecutor
 import math
 import subprocess
 
+from geometry_msgs.msg import Pose
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from sim.auto_explore import set_model_pose
+from ros_gz_interfaces.msg import Entity
+from ros_gz_interfaces.srv import SetEntityPose
+from sim.auto_explore import WORLD_NAME
 
 # Default layout: three segments crossing the drift suite's 3m loop
 # (corners +-1.5), clear of the ARCC26 map's walls by >= 0.4m. Each inner
@@ -47,16 +49,20 @@ STEP = 0.05  # m, search step for a clear spot
 
 
 def box_sdf(name, x, y, size, height, mass):
-    """Build a dynamic (not static) box, so set_pose moves it; it collides, so lidar sees it."""
+    """
+    Build a free (not static) box, so set_pose moves it.
+
+    No collision and no gravity: gpu_lidar renders visuals, and box-on-field-mesh
+    contact at the 1 ms step dropped gz's real-time factor to ~0.3.
+    """
     i_xy = mass * (size * size + height * height) / 12.0
     i_z = mass * size * size / 6.0
     geom = f'<geometry><box><size>{size} {size} {height}</size></box></geometry>'
     return (
         f'<sdf version="1.6"><model name="{name}">'
-        f'<pose>{x} {y} {height / 2.0} 0 0 0</pose><link name="link">'
+        f'<pose>{x} {y} {height / 2.0} 0 0 0</pose><link name="link"><gravity>false</gravity>'
         f'<inertial><mass>{mass}</mass><inertia><ixx>{i_xy}</ixx><iyy>{i_xy}</iyy>'
         f'<izz>{i_z}</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>'
-        f'<collision name="collision">{geom}</collision>'
         f'<visual name="visual">{geom}<material><ambient>0.8 0.4 0.1 1</ambient>'
         f'<diffuse>0.8 0.4 0.1 1</diffuse></material></visual>'
         f'</link></model></sdf>')
@@ -159,7 +165,11 @@ class ActorDriver(Node):
         self.actors = [Actor(f'{prefix}_{i}', *paths[4 * i:4 * i + 4], speeds[i])
                        for i in range(count)]
         self.keep_out = self.robot_radius + self.size / math.sqrt(2.0) + self.margin
-        self.pool = ThreadPoolExecutor(max_workers=max(count, 1))
+        # sim.launch.py's set_pose_bridge: one ROS call per move, no process.
+        self.set_pose = self.create_client(
+            SetEntityPose, f'/world/{WORLD_NAME}/set_pose')
+        self.pending = {}  # actor name -> in-flight future
+        self.failures = 0
         self.robot = None  # (x, y, vx, vy, stamp_s)
         self.spawned = False
         self.last_tick = None
@@ -214,8 +224,10 @@ class ActorDriver(Node):
             x, y = actor.position(u)
             sdf = box_sdf(actor.name, x, y, self.size, self.height, self.mass)
             result = subprocess.run(
+                # create overrides the SDF <pose> with -x/-y/-z (default 0).
                 ['ros2', 'run', 'ros_gz_sim', 'create', '-string', sdf,
-                 '-name', actor.name, '-allow_renaming', 'false'],
+                 '-name', actor.name, '-allow_renaming', 'false',
+                 '-x', str(x), '-y', str(y), '-z', str(self.height / 2.0)],
                 capture_output=True, text=True, timeout=30.0)
             if result.returncode != 0:
                 self.get_logger().error(
@@ -229,6 +241,10 @@ class ActorDriver(Node):
         now = self._now()
         if self.robot is None or now - self.robot[4] > 1.0:
             return  # no fresh truth pose: move nothing
+        if not self.set_pose.service_is_ready():
+            self.get_logger().warning(
+                'waiting for set_pose_bridge (sim.launch.py)', throttle_duration_sec=5.0)
+            return
         if not self.spawned:
             self.spawned = self._spawn()
             if self.spawned:
@@ -257,11 +273,23 @@ class ActorDriver(Node):
         for actor in self.actors:
             x, y = actor.position(actor.u)
             self.min_gap = min(self.min_gap, math.hypot(x - rx, y - ry))
-        results = self.pool.map(
-            lambda m: (m[0], set_model_pose(m[0], m[1], m[2], self.height / 2.0)), moves)
-        for name, ok in results:
-            if not ok:
-                self.get_logger().warning(f'set_pose {name} failed')
+        for name, x, y in moves:
+            if name in self.pending and not self.pending[name].done():
+                continue  # previous move still in flight; the next tick catches up
+            req = SetEntityPose.Request()
+            req.entity = Entity(name=name, type=Entity.MODEL)
+            req.pose = Pose()
+            req.pose.position.x, req.pose.position.y = x, y
+            req.pose.position.z = self.height / 2.0
+            req.pose.orientation.w = 1.0
+            future = self.set_pose.call_async(req)
+            future.add_done_callback(lambda f, n=name: self._on_set_pose(f, n))
+            self.pending[name] = future
+
+    def _on_set_pose(self, future, name):
+        if future.exception() is not None or not future.result().success:
+            self.failures += 1
+            self.get_logger().warning(f'set_pose {name} failed ({self.failures} so far)')
 
 
 def main(args=None):
@@ -273,7 +301,6 @@ def main(args=None):
         pass
     finally:
         node.get_logger().info(f'closest box to the robot: {node.min_gap:.2f} m')
-        node.pool.shutdown(wait=False)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

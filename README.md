@@ -566,17 +566,21 @@ inertia damps its own angular velocity.
 
 ### actor_driver.py: moving boxes
 
-`actor_driver` spawns `count` boxes (0.3 x 0.3 x 0.8 m, 20 kg) with
+`actor_driver` spawns `count` boxes (0.3 x 0.3 x 0.8 m) with
 `ros_gz_sim create` and walks each back and forth along a segment
 (`paths`, four numbers per actor) at `speeds` m/s, calling `set_pose` on
 every box each tick. Ticks run on a sim-time timer (`rate_hz`, 10), and each
 advances the box by speed times the sim time since the last tick, so a slow
 tick makes a longer jump and the actor keeps its speed.
 
-The boxes are dynamic. gz only honours `set_pose` on a free body (see the
-`auto_explore.py` note), and a static model is welded to the world. A box
-spawned or teleported into `sentry_v2`'s chassis stalls the contact solver,
-so the driver reads `/sim/raw_odom` and keeps every box `robot_radius`
+The boxes are free bodies with no collision and gravity off. gz only
+honours `set_pose` on a free body (see the `auto_explore.py` note), and a
+static model is welded to the world. The lidar still sees them, since
+`gpu_lidar` renders visuals. With collision, each box sat on the field's STL
+mesh and ODE ran box-on-mesh contact every 1 ms step: gz's real-time factor
+fell from ~1.0 to 0.24-0.42 and the scenario took twice as long as
+`drift_correction`. The robot would drive straight through a box, so the
+driver reads `/sim/raw_odom` and keeps every box `robot_radius`
 (0.5 m, the barrel's reach) plus the box's half diagonal plus `margin`
 (0.3 m) from wherever the robot can be within `lookahead_s` (1 s, or three
 tick times if that is longer). That is its velocity swept ahead, plus
@@ -591,10 +595,11 @@ drove into them. The default paths now run from the loop's middle, 1.1 m
 from every edge and always clear, across the south, west and north edges.
 `closest box` in the log is the nearest a box centre got to the robot's.
 
-Each `set_pose` is an `ign service` subprocess costing tens of ms, run in
-parallel across actors. Unthrottled, the sim outruns that, and the boxes
-move in bigger jumps; `real_time_factor:=1` gives smooth motion. The default
-paths clear the ARCC26 map's walls by at least 0.4 m.
+Moves go through `sim.launch.py`'s `set_pose_bridge`, gz's `set_pose` as a
+ROS `SetEntityPose` service, one async call per box per tick. The first
+version started an `ign service` process (Ruby) per call, and ticks lagged to
+~0.19 s of sim time. The default paths clear the ARCC26 map's walls by at
+least 0.4 m.
 
 ### sim.launch.py: spawn_robot uses -string
 

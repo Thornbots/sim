@@ -129,9 +129,10 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `/amcl/change_state` times out (`failed to send response`), the lifecycle
   manager never activates it, and the scenario fails on "map->odom never
   became available". Seen once in six bring-ups; not yet chased.
-- **The drift suite passes 6/6 on `sentry_v2` at `--backend amcl --use-ekf`,**
-  unthrottled with the A2M8 lidar and per-scan rf2o (2026-09-24,
-  drift_correction 0.17 m, with obstacle 0.17 m, against 0.40 m). Before
+- **The drift suite passes 7/7 on `sentry_v2` at `--backend amcl --use-ekf`,**
+  unthrottled with the A2M8 lidar and per-scan rf2o, GUI on, 212 s
+  (2026-09-24: drift_correction 0.14 m, with obstacle 0.17 m,
+  moving_obstacles 0.18 m, against 0.40 m). Before
   those changes it also passed at real time, shared sim,
   `restart_sim:=true` and a scenario alone alike.
   Anything spawned into the world must clear the robot, which now collides:
@@ -155,9 +156,15 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   export's grounded part and isn't mated to the head, so the chassis hull
   reaches 0.362 m. Harmless for scans; fix it in Onshape (mate it) or in
   `sentry_v2.yaml`'s `drop` list.
-- **`moving_obstacles` (ROADMAP A4) is built, not run.** Its `actor_driver`
-  boxes haven't been seen moving in gz yet, and the `slam` occupancy-grid
-  check is a TODO in `_run_cornering_loop_scenario`.
+- **`moving_obstacles` (ROADMAP A4) runs and passes.** Its boxes have no
+  collision (the lidar sees visuals; box-on-field-mesh contact cost ~3x
+  sim speed), so they never touch the robot and `actor_driver` keeps them
+  >= 1 m from it along the loop's route. Seen crossing the loop in gz. The
+  `slam` occupancy-grid check is still a TODO in
+  `_run_cornering_loop_scenario`.
+- **`ros_gz_sim create` ignores the SDF `<pose>`**; pass `-x/-y/-z` or the
+  model lands at the origin. `spawn_box_obstacle` buried half its box this way
+  until 2026-09-24.
 - **Wanted: a localization scenario with finite acceleration.** `drive()`
   steps `/cmd_vel` to 4 m/s and stops within one 0.1 s tick.
 - **The EKF beats raw `/odom` at 4 m/s, real time** (`suite:=ekf`), since
