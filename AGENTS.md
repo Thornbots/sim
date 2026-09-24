@@ -109,11 +109,15 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Open
 
-- **Run anything localization-related at `real_time_factor:=1`.**
-  Unthrottled runs score far worse than real time even though every suite
-  times itself in sim seconds; find out why. rf2o is one cause: its 20 Hz
-  wall-clock loop keeps only the newest scan, so a faster sim makes it skip
-  scans. Check every node for wall-clock timers, rates and timeouts.
+- **Unthrottled runs score like real time now**, localization included, with
+  rf2o's `fixed_heading` and `/odom` prior. Run at the default
+  `real_time_factor:=0`; keep `:=1` as the control. rf2o still matches scans
+  from a 20 Hz wall-clock loop that keeps only the newest scan
+  (`thornbots_workspace#11` moves it into the scan callback).
+- **One robot bring-up can leave `amcl` unconfigured.** Its reply to
+  `/amcl/change_state` times out (`failed to send response`), the lifecycle
+  manager never activates it, and the scenario fails on "map->odom never
+  became available". Seen once in six bring-ups; not yet chased.
 - **The drift suite passes 6/6 on `sentry_v2` at `--backend amcl --use-ekf`,
   real time,** shared sim, `restart_sim:=true` and a scenario alone alike.
   Anything spawned into the world must clear the robot, which now collides:
