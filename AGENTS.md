@@ -155,6 +155,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   export's grounded part and isn't mated to the head, so the chassis hull
   reaches 0.362 m. Harmless for scans; fix it in Onshape (mate it) or in
   `sentry_v2.yaml`'s `drop` list.
+- **`moving_obstacles` (ROADMAP A4) is built, not run.** Its `actor_driver`
+  boxes haven't been seen moving in gz yet, and the `slam` occupancy-grid
+  check is a TODO in `_run_cornering_loop_scenario`.
 - **Wanted: a localization scenario with finite acceleration.** `drive()`
   steps `/cmd_vel` to 4 m/s and stops within one 0.1 s tick.
 - **The EKF beats raw `/odom` at 4 m/s, real time** (`suite:=ekf`), since

@@ -70,6 +70,7 @@ setup(
             'cv_target_emulator = sim.cv_target_emulator:main',
             'target_state_truth = sim.target_state_truth:main',
             'cv_head_aim = sim.cv_head_aim:main',
+            'actor_driver = sim.actor_driver:main',
         ],
     },
 )

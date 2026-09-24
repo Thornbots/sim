@@ -108,16 +108,21 @@ def teleport(x, y, z=Z):
     needed (a reaction-impulse artifact from root's position discontinuity).
     """
     reset_joints()
+    ok = set_model_pose(ENTITY_NAME, x, y, z)
+    reset_joints()
+    return ok
+
+
+def set_model_pose(name, x, y, z):
+    """Set_pose one model to (x, y, z), identity orientation; no joint reset."""
     req = (
-        f"name: '{ENTITY_NAME}', "
+        f"name: '{name}', "
         f'position: {{x: {x}, y: {y}, z: {z}}}, '
         f'orientation: {{x: 0, y: 0, z: 0, w: 1}}'
     )
-    ok = _ign_service(
+    return _ign_service(
         'set_pose', 'ignition.msgs.Pose', 'ignition.msgs.Boolean', req,
     )
-    reset_joints()
-    return ok
 
 
 def remove_model(name):
