@@ -13,20 +13,20 @@
 # limitations under the License.
 
 """
-Pin every hard-coded copy of the head FK chain against sentry.urdf.xacro.
+Pin every hard-coded copy of the head FK chain against thornbots_pkg's URDF.
 
-The root->body->head->head_pitch->camera constants are duplicated on
-purpose across cv_head_aim_core, cv_target_emulator, shot_hit_harness and
-both urdf/sentry.urdf.xacro copies -- see shot_hit_harness.py's module
+The root->body->head->head_pitch->camera/muzzle constants are duplicated on
+purpose across cv_head_aim_core, cv_target_emulator, shot_hit_harness, sim's
+sentry_v2 model and thornbots_pkg's URDF -- see shot_hit_harness.py's module
 docstring for why the harness re-derives the chain instead of importing
 the emulator's. That is fine for the FK *algebra*; it is not fine for the
 *numbers*, which had no cross-check at all. A drifted origin leaves every
-other test green (test_cv_head_aim.py imports HEADPITCH_ORIGIN_YAW from
-the module it is testing, so both sides of its round-trip move together)
+other test green (test_cv_head_aim.py imports its constants from the
+module it is testing, so both sides of its round-trip move together)
 and surfaces only as a collapsed shot-hit rate -- which is how -0.38885
 cost a debugging cycle already, see sim/README.md's ## Notes.
 
-So: parse the xacro and assert each copy against it. The emulator and
+So: parse the URDF and assert each copy against it. The emulator and
 harness are read with `ast` rather than imported, because both pull in
 rclpy and ROS message packages and this suite must stay runnable on a
 bare Python 3 + pytest install. Launches nothing, so not `integration`.
@@ -43,39 +43,39 @@ SIM_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, SIM_DIR)
 
 from sim.cv_head_aim_core import (  # noqa: E402
-    HEADLINK_ORIGIN_Z, HEADPITCH_ORIGIN_X, HEADPITCH_ORIGIN_YAW, HEADPITCH_ORIGIN_Z,
+    HEADLINK_ORIGIN_X, HEADLINK_ORIGIN_Y, HEADLINK_ORIGIN_Z, HEADPITCH_ORIGIN,
+    MUZZLELINK_ORIGIN,
 )
 
 WORKSPACE_SRC = os.path.dirname(SIM_DIR)
-SIM_XACRO = os.path.join(SIM_DIR, 'urdf', 'sentry.urdf.xacro')
-THORNBOTS_XACRO = os.path.join(
-    WORKSPACE_SRC, 'thornbots_pkg', 'urdf', 'sentry.urdf.xacro')
+# The reference: plain URDF, the whole chain in one file. sim's model is the
+# generated URDF plus the muzzle frame its xacro wrapper adds.
+URDF = os.path.join(WORKSPACE_SRC, 'thornbots_pkg', 'urdf', 'sentry.urdf.xacro')
+SIM_URDF = os.path.join(SIM_DIR, 'urdf', 'sentry_v2', 'sentry_v2.urdf')
+SIM_XACRO = os.path.join(SIM_DIR, 'urdf', 'sentry_v2.urdf.xacro')
 EMULATOR = os.path.join(SIM_DIR, 'sim', 'cv_target_emulator.py')
 HARNESS = os.path.join(os.path.dirname(__file__), 'shot_hit_harness.py')
 
-CHAIN_JOINTS = ('fastened_2', 'headlink', 'headpitch', 'cameralink')
-# The xacro writes pi as 3.14159; the Python copies use math.pi. That
-# 2.7e-6 rad gap is rounding in the ONSHAPE export, not drift.
-PI_TOL = 1e-5
+CHAIN_JOINTS = ('fastened_2', 'headlink', 'headpitch', 'cameralink', 'muzzlelink')
 EXACT_TOL = 1e-12
 
 
-def _joint_origins(xacro_path):
+def _joint_origins(xacro_path, names=CHAIN_JOINTS):
     """Return {joint_name: (xyz, rpy, axis_or_None)} for the head chain."""
     root = ET.parse(xacro_path).getroot()
     out = {}
     for joint in root.iter('joint'):
         name = joint.get('name')
-        if name not in CHAIN_JOINTS:
+        if name not in names:
             continue
         origin = joint.find('origin')
         axis = joint.find('axis')
         out[name] = (
             tuple(float(v) for v in origin.get('xyz').split()),
-            tuple(float(v) for v in origin.get('rpy').split()),
+            tuple(float(v) for v in origin.get('rpy', '0 0 0').split()),
             tuple(float(v) for v in axis.get('xyz').split()) if axis is not None else None,
         )
-    missing = set(CHAIN_JOINTS) - set(out)
+    missing = set(names) - set(out)
     assert not missing, f'{xacro_path} no longer defines joints {sorted(missing)}'
     return out
 
@@ -88,7 +88,7 @@ def _module_constants(py_path, names):
     `math.pi` resolves and nothing else can. `_rotation_from_rpy(r, p, y)`
     yields its `(r, p, y)` arguments and `_transform(rot, trans)` yields
     whatever its `rot` argument yields -- the rpy triples are the part
-    worth comparing against the xacro, not the assembled matrices.
+    worth comparing against the URDF, not the assembled matrices.
     """
     with open(py_path) as f:
         tree = ast.parse(f.read(), filename=py_path)
@@ -119,17 +119,17 @@ CHAIN_CONSTANTS = (
 )
 
 
-def _assert_chain_matches_xacro(py_path):
-    joints = _joint_origins(SIM_XACRO)
-    consts = _module_constants(py_path, CHAIN_CONSTANTS)
+def _assert_chain_matches_urdf(py_path, end_link):
+    joints = _joint_origins(URDF)
+    end = f'_{end_link.upper()}_T'
+    consts = _module_constants(py_path, CHAIN_CONSTANTS + (end,))
 
     assert consts['_T_FASTENED_2'][2] == pytest.approx(
-        joints['fastened_2'][1][2], abs=PI_TOL)
+        joints['fastened_2'][1][2], abs=EXACT_TOL)
 
     assert consts['_HEADLINK_ORIGIN_R'][2] == pytest.approx(
-        joints['headlink'][1][2], abs=PI_TOL)
-    # The xacro's ~1e-17 x/y are export noise, not a real offset.
-    assert consts['_HEADLINK_ORIGIN_T'] == pytest.approx(joints['headlink'][0], abs=1e-9)
+        joints['headlink'][1][2], abs=EXACT_TOL)
+    assert consts['_HEADLINK_ORIGIN_T'] == pytest.approx(joints['headlink'][0], abs=EXACT_TOL)
     assert consts['_HEADLINK_AXIS'] == pytest.approx(joints['headlink'][2], abs=EXACT_TOL)
 
     assert consts['_HEADPITCH_ORIGIN_R'][2] == pytest.approx(
@@ -137,51 +137,42 @@ def _assert_chain_matches_xacro(py_path):
     assert consts['_HEADPITCH_ORIGIN_T'] == pytest.approx(
         joints['headpitch'][0], abs=EXACT_TOL)
     assert consts['_HEADPITCH_AXIS'] == pytest.approx(joints['headpitch'][2], abs=EXACT_TOL)
+    assert consts[end] == pytest.approx(joints[end_link][0], abs=EXACT_TOL)
+    assert joints[end_link][1] == (0.0, 0.0, 0.0), f'{end_link} grew a rotation'
 
 
-def test_head_aim_core_yaw_matches_xacro():
-    # The one constant test_cv_head_aim.py's round-trip cannot check,
-    # because it imports it from the module under test.
-    joints = _joint_origins(SIM_XACRO)
-    assert HEADPITCH_ORIGIN_YAW == pytest.approx(joints['headpitch'][1][2], abs=EXACT_TOL)
+def test_head_aim_core_matches_urdf():
+    # The parallax solve's lever arms. test_cv_head_aim.py's round-trip
+    # imports these from the module under test, so only the URDF can catch
+    # drift here.
+    joints = _joint_origins(URDF)
+    assert (HEADLINK_ORIGIN_X, HEADLINK_ORIGIN_Y, HEADLINK_ORIGIN_Z) == pytest.approx(
+        joints['headlink'][0], abs=EXACT_TOL)
+    assert HEADPITCH_ORIGIN == pytest.approx(joints['headpitch'][0], abs=EXACT_TOL)
+    assert MUZZLELINK_ORIGIN == pytest.approx(joints['muzzlelink'][0], abs=EXACT_TOL)
+    for name in ('fastened_2', 'headlink', 'headpitch', 'muzzlelink'):
+        assert joints[name][1] == (0.0, 0.0, 0.0), f'{name} grew a rotation'
 
 
-def test_head_aim_core_muzzle_offsets_match_xacro():
-    # The parallax solve's lever arms. Same blind spot as the yaw above:
-    # test_cv_head_aim.py's round-trip imports MUZZLE_Z/MUZZLE_RADIUS from
-    # the module under test, so only the xacro can catch drift here.
-    joints = _joint_origins(SIM_XACRO)
-    assert HEADLINK_ORIGIN_Z == pytest.approx(joints['headlink'][0][2], abs=EXACT_TOL)
-    assert HEADPITCH_ORIGIN_X == pytest.approx(joints['headpitch'][0][0], abs=EXACT_TOL)
-    assert HEADPITCH_ORIGIN_Z == pytest.approx(joints['headpitch'][0][2], abs=EXACT_TOL)
+def test_emulator_fk_constants_match_urdf():
+    _assert_chain_matches_urdf(EMULATOR, 'cameralink')
 
 
-def test_emulator_fk_constants_match_xacro():
-    _assert_chain_matches_xacro(EMULATOR)
+def test_harness_fk_constants_match_urdf():
+    _assert_chain_matches_urdf(HARNESS, 'muzzlelink')
 
 
-def test_harness_fk_constants_match_xacro():
-    _assert_chain_matches_xacro(HARNESS)
-
-
-def test_camera_link_is_still_identity():
-    # All three Python copies stop the chain at head_pitch and treat the
-    # camera frame as identical to it.
-    xyz, rpy, _ = _joint_origins(SIM_XACRO)['cameralink']
-    assert xyz == (0.0, 0.0, 0.0)
-    assert rpy == (0.0, 0.0, 0.0)
-
-
-def test_both_package_urdfs_agree_on_the_head_chain():
-    # test_shot_hit.py scores against shot_hit_harness's FK (sim's xacro)
-    # while the TF tree under test comes from thornbots_pkg's
-    # auto.launch.py + robot_state_publisher (thornbots_pkg's xacro). If
-    # those drift, the harness scores against a robot the stack isn't
-    # driving, and neither side looks wrong on its own.
-    if not os.path.exists(THORNBOTS_XACRO):
-        pytest.skip('thornbots_pkg not checked out alongside sim')
-    sim_joints = _joint_origins(SIM_XACRO)
-    pkg_joints = _joint_origins(THORNBOTS_XACRO)
+def test_sim_model_matches_urdf():
+    # test_shot_hit.py scores against shot_hit_harness's FK while the TF
+    # tree under test comes from thornbots_pkg's URDF, and the sim renders
+    # the camera from its own model. If any two drift, the bench scores a
+    # robot the stack isn't driving, and nothing looks wrong on its own.
+    ref = _joint_origins(URDF)
+    sim = {**_joint_origins(SIM_URDF, CHAIN_JOINTS[:-1]),
+           **_joint_origins(SIM_XACRO, ('muzzlelink',))}
     for name in CHAIN_JOINTS:
-        assert sim_joints[name][0] == pytest.approx(pkg_joints[name][0], abs=EXACT_TOL), name
-        assert sim_joints[name][1] == pytest.approx(pkg_joints[name][1], abs=EXACT_TOL), name
+        for k in range(3):
+            if ref[name][k] is None:
+                assert sim[name][k] is None, name
+            else:
+                assert sim[name][k] == pytest.approx(ref[name][k], abs=EXACT_TOL), name

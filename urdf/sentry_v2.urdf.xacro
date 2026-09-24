@@ -1,0 +1,161 @@
+<?xml version="1.0"?>
+<!-- The new sentry for gz: sentry_v2/sentry_v2.urdf (generated, from the
+     mechanical team's CAD) plus the sensors, plugins and contact settings
+     the export doesn't carry. Gravity and collision are on; VelocityControl
+     sets the chassis's velocity from /cmd_vel and zeroes its yaw rate (about
+     1 deg still leaks in during hard corners).
+     see README.md for design rationale -->
+<robot name="sentry" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="$(find sim)/urdf/sentry_v2/sentry_v2.urdf"/>
+
+  <!-- Colour (gz only; the generated URDF has no materials, so rviz draws it
+       grey), and hidden from the lidar: visibility_mask 0x01 below renders
+       none of the robot, and lidar_self_filter models the blind sector
+       instead, as on hardware. -->
+  <xacro:macro name="body_visual" params="link rgb">
+    <gazebo reference="${link}">
+      <visual>
+        <material>
+          <ambient>${rgb} 1</ambient>
+          <diffuse>${rgb} 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+        <visibility_flags>0xFFFFFFFE</visibility_flags>
+      </visual>
+    </gazebo>
+  </xacro:macro>
+  <xacro:body_visual link="root" rgb="0.18 0.18 0.2"/>
+  <xacro:body_visual link="head" rgb="0.75 0.08 0.08"/>
+  <xacro:body_visual link="head_pitch" rgb="0.9 0.35 0.1"/>
+
+  <!-- Corner i: a sprung carrier (spring rate and travel are placeholders in
+       sentry_v2.yaml) and a sphere wheel with no friction, so wheels ride
+       along under the velocity-driven chassis rather than fighting it. -->
+  <xacro:macro name="corner" params="i">
+    <xacro:body_visual link="carrier_${i}" rgb="0.6 0.62 0.65"/>
+    <xacro:body_visual link="wheel_${i}" rgb="0.08 0.08 0.08"/>
+    <gazebo reference="suspension_${i}">
+      <springReference>0.0</springReference>
+      <springStiffness>2200.0</springStiffness>
+    </gazebo>
+    <gazebo reference="wheel_${i}">
+      <mu1>0.0</mu1>
+      <mu2>0.0</mu2>
+    </gazebo>
+  </xacro:macro>
+  <xacro:corner i="0"/>
+  <xacro:corner i="1"/>
+  <xacro:corner i="2"/>
+  <xacro:corner i="3"/>
+
+  <!-- Where the shot leaves: on the pitch axis, between the flywheels.
+       thornbots_pkg's URDF carries the same frame. -->
+  <link name="muzzle"/>
+  <joint name="muzzlelink" type="fixed">
+    <parent link="head_pitch"/>
+    <child link="muzzle"/>
+    <origin xyz="0 0.1128 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Same sensor as sentry.urdf.xacro's: an RPLIDAR A2M8 at 10 Hz, 3000
+       beams over -pi..pi (rf2o assumes a zero-centred scan). -->
+  <gazebo reference="lidar">
+    <sensor name="lidar" type="gpu_lidar">
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+      <update_rate>10</update_rate>
+      <topic>scan</topic>
+      <gz_frame_id>lidar</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>3000</samples>
+            <resolution>1.000000</resolution>
+            <min_angle>-3.140000</min_angle>
+            <max_angle>3.140000</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.2</min>
+          <max>12.0</max>
+          <resolution>0.015000</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.03</stddev>
+        </noise>
+        <visibility_mask>0x01</visibility_mask>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <!-- D435-like RGBD camera at 60 Hz; sim.launch.py bridges it onto
+       realsense-ros's topic names. -->
+  <gazebo reference="camera">
+    <sensor name="camera" type="rgbd_camera">
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+      <update_rate>60</update_rate>
+      <topic>camera</topic>
+      <gz_frame_id>camera</gz_frame_id>
+      <camera>
+        <horizontal_fov>1.5184</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>10.0</far>
+        </clip>
+      </camera>
+    </sensor>
+  </gazebo>
+
+  <gazebo>
+    <!-- /sim/raw_odom at 100 Hz, the Type-C board's /pose rate. -->
+    <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>root</robot_base_frame>
+      <publish_odom_tf>true</publish_odom_tf>
+      <dimensions>3</dimensions>
+      <odom_publish_frequency>100</odom_publish_frequency>
+    </plugin>
+    <!-- Every joint, so robot_state_publisher can place the wheels too. -->
+    <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher"/>
+    <!-- Head yaw and pitch track /head_pan_cmd and /head_pitch_cmd (rad).
+         d_gain is sized for the real gimbal: about 0.031 kg m^2 about the
+         yaw axis and 0.009 about pitch, near critical damping at p 75. -->
+    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+      <joint_name>headlink</joint_name>
+      <topic>/model/sentry/joint/headlink/cmd_pos</topic>
+      <p_gain>75</p_gain>
+      <i_gain>0.0</i_gain>
+      <d_gain>2.1</d_gain>
+      <i_max>0</i_max>
+      <i_min>0</i_min>
+      <cmd_max>50</cmd_max>
+      <cmd_min>-50</cmd_min>
+    </plugin>
+    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+      <joint_name>headpitch</joint_name>
+      <topic>/model/sentry/joint/headpitch/cmd_pos</topic>
+      <p_gain>75</p_gain>
+      <i_gain>0.0</i_gain>
+      <d_gain>1.2</d_gain>
+      <i_max>0</i_max>
+      <i_min>0</i_min>
+      <cmd_max>50</cmd_max>
+      <cmd_min>-50</cmd_min>
+    </plugin>
+    <!-- Sets the chassis's full twist every step from /cmd_vel: planar
+         velocity as commanded, zero angular velocity (a hard yaw lock), and
+         zero vertical velocity, so the chassis settles onto its springs at
+         about 1 cm/s but can't bounce. -->
+    <plugin filename="ignition-gazebo-velocity-control-system" name="ignition::gazebo::systems::VelocityControl">
+      <topic>/model/sentry/cmd_vel</topic>
+    </plugin>
+  </gazebo>
+</robot>

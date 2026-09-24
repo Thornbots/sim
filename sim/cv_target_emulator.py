@@ -136,16 +136,16 @@ def _transform(rot, trans):
     return t
 
 
-# Fixed joint offsets from sentry.urdf.xacro (see README.md for the full
-# chain rationale) -- root -> body -> head -> head_pitch -> camera.
-_T_FASTENED_2 = _transform(_rotation_from_rpy(0, 0, math.pi), (0.0, 0.0, 0.0))
-_HEADLINK_ORIGIN_R = _rotation_from_rpy(0, 0, math.pi)
-_HEADLINK_ORIGIN_T = (0.0, 0.0, 0.252215)
+# Fixed joint offsets from sentry_v2 (thornbots_pkg's URDF; see README.md
+# for the chain rationale) -- root -> body -> head -> head_pitch -> camera.
+_T_FASTENED_2 = _transform(_rotation_from_rpy(0, 0, 0), (0.0, 0.0, 0.0))
+_HEADLINK_ORIGIN_R = _rotation_from_rpy(0, 0, 0)
+_HEADLINK_ORIGIN_T = (-0.000171242, 9.52126e-05, 0.248293)
 _HEADLINK_AXIS = (0.0, 0.0, -1.0)
-_HEADPITCH_ORIGIN_R = _rotation_from_rpy(0, 0, -0.38885)
-_HEADPITCH_ORIGIN_T = (0.1, 0.0, 0.1218)
+_HEADPITCH_ORIGIN_R = _rotation_from_rpy(0, 0, 0)
+_HEADPITCH_ORIGIN_T = (-0.00760542, -0.100122, 0.14235)
 _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
-# cameralink is identity -- omitted, camera frame == head_pitch frame.
+_CAMERALINK_T = (0.0920381, 0.0948673, 0.0566588)
 
 # 4 armor panels spaced 90 degrees apart around the chassis center (front,
 # left, back, right), matching a standard RoboMaster-class robot's layout
@@ -323,7 +323,7 @@ class CvTargetEmulator(Node):
         t_headpitch = _transform(
             _HEADPITCH_ORIGIN_R @ _rotation_axis_angle(_HEADPITCH_AXIS, self._head_pitch),
             _HEADPITCH_ORIGIN_T)
-        t_camera = t_head @ t_headpitch
+        t_camera = t_head @ t_headpitch @ _transform(np.eye(3), _CAMERALINK_T)
         return t_camera[:3, 3], t_camera[:3, :3]
 
     def _make_detection(self, cand, cam_pos, cam_rot):

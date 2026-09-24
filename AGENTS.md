@@ -1,7 +1,7 @@
 # sim: agent notes
 
 gz-sim simulation of the `ARCC_Field_2026` world plus the spawned `sentry`
-robot, and the home of the localization integration suite. **Reference docs live
+robot (`urdf/sentry_v2.urdf.xacro` by default), and the home of the localization integration suite. **Reference docs live
 in `README.md`**, in particular its `## Notes` section, which holds the
 drift-suite design history and per-scenario pass conditions. This file is only
 the operating contract for working here.
@@ -114,18 +114,36 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   times itself in sim seconds; find out why. rf2o is one cause: its 20 Hz
   wall-clock loop keeps only the newest scan, so a faster sim makes it skip
   scans. Check every node for wall-clock timers, rates and timeouts.
-- **The shared sim isn't stable yet.** One scenario's robot stack came up
-  without `/scan`; its `robot_<n>.log` will say why next time. Done when
-  each scenario gives the same verdict alone, sixth, and under
-  `restart_sim:=true`.
-- **Wanted: switch to `urdf/sentry_v2`** for its collision and suspension
-  (README.md). Its pitch limits and suspension values are placeholders, and
-  collision reopens the free-floating `root` item below.
+- **The drift suite passes 6/6 on `sentry_v2` at `--backend amcl --use-ekf`,
+  real time,** shared sim, `restart_sim:=true` and a scenario alone alike.
+  Anything spawned into the world must clear the robot, which now collides:
+  a box spawned inside the chassis stalls gz's contact solver and `/clock`.
+- **`sentry_v2` spawns by default; `model:=sentry` is the old model.** The
+  TF tree (`thornbots_pkg`'s URDF) and the CV chain (`cv_head_aim_core`,
+  `cv_target_emulator`, `shot_hit_harness`) moved to it too. sapien still
+  loads the old model. Pitch limits (+-0.6 rad), suspension travel, spring
+  rate and damping are placeholders, not CAD values.
+- **Shot-hit on `sentry_v2` passes 3/10**: both stationary cells hit 99%
+  when run, flat 0.5 and 1.0 m/s clear the 25% floor, everything faster and
+  every staggered moving cell misses. Staggered stationary scored 0.3% in
+  the full run, straight after flat 4 m/s, and 99% twice alone: state leaks
+  between cases, which is the bench's old "bimodal" result. Find the leak
+  before trusting a full-run number.
+- **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard
+  corners at 4 m/s and keeps it: the head's reaction torque gets past the
+  yaw lock. The real robot is expected to drift 1-5 deg too. Noted, not
+  acted on; the stack assumes a fixed heading for now.
+- **The lidar's bottom guard sits on the chassis in `sentry_v2`.** It is the
+  export's grounded part and isn't mated to the head, so the chassis hull
+  reaches 0.362 m. Harmless for scans; fix it in Onshape (mate it) or in
+  `sentry_v2.yaml`'s `drop` list.
 - **Wanted: a localization scenario with finite acceleration.** `drive()`
   steps `/cmd_vel` to 4 m/s and stops within one 0.1 s tick.
-- **The EKF is worse than raw `/odom` at 4 m/s.** rf2o's heading drifts on
-  a chassis that never rotates, and the EKF trusts rf2o's x/y. rf2o's sign
-  is right; don't invert its warping again.
+- **The EKF beats raw `/odom` at 4 m/s, real time** (`suite:=ekf`), since
+  rf2o got `fixed_heading` and an `/odom` prior (`../sentry_localization`).
+  Both were needed: without the prior rf2o undershot legs that start from
+  rest, whatever the blind sector. rf2o's sign is right; don't invert its
+  warping again.
 - **`drift_correction`/`drift_correction_obstacle` have no metric for
   `--backend none`.** `MAX_DELTA_THRESHOLD` assumes `map->odom`; under
   `none` it measures the robot's own motion. `test_ekf_ground_truth.py`
@@ -140,15 +158,14 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   1% on the same case, so don't trust one run. Detection noise (0.005 m) is
   far cleaner than a D435, and slew limits and target accelerations are
   estimates.
-- **`lidar_self_filter`'s sector is tuned to a self-hit cluster that no
-  longer exists**, since the lidar stopped scanning the robot. Retune from a
-  hardware capture.
+- **`lidar_self_filter`'s sector comes from the CAD**, not a scan. Check it
+  against a hardware `/scan_raw` (`../thornbots_pkg/AGENTS.md`).
 - **Keep the physics step at 1 ms.** 2-4 ms sent the head's PID unstable.
-- **The chassis has no collision geometry, deliberately,** so `root` stays
-  free-floating for `set_pose` teleports. It drives through walls and
-  obstacles; lidar still sees them.
-- **The rotation lock is soft.** A wall hit can flip the robot; accepted
-  until flips block exploration.
+- **`sentry_v2` collides, and `VelocityControl` drives it anyway.** It sets
+  the chassis's whole twist every step (planar velocity from `/cmd_vel`,
+  zero angular, zero vertical), so a wall hit can't flip or spin it. What
+  it does when driven into a wall hasn't been checked. `root` still has no parent joint, so `set_pose` teleports work.
+  The old model has no collision and drives through everything.
 - **Never validate odometry on magnitude alone.** Compare displacement
   vectors; a backwards rf2o once scored 1% error on magnitude.
 - ARCC zone coordinates (`../ARCC_2026_SENTRY_CONTEXT.md` Figures 3-1 to

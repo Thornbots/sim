@@ -104,9 +104,9 @@ SHOOTER_HALF_WIDTH = 1.0
 SHOOTER_CMD_PERIOD_S = 0.05
 
 
-# Same fixed FK chain as cv_target_emulator.py's _camera_pose (root -> body
-# -> head(yaw) -> head_pitch(pitch) -> camera; cameralink is identity, and
-# there's no separate muzzle link in this sim, so muzzle == camera pose).
+# The same fixed FK chain as cv_target_emulator.py's _camera_pose, ending at
+# muzzlelink instead of cameralink: root -> body -> head(yaw) ->
+# head_pitch(pitch) -> muzzle, sentry_v2's frames.
 def _rotation_from_rpy(r, p, y):
     cr, sr = math.cos(r), math.sin(r)
     cp, sp = math.cos(p), math.sin(p)
@@ -145,13 +145,14 @@ def _transform(rot, trans):
     return t
 
 
-_T_FASTENED_2 = _transform(_rotation_from_rpy(0, 0, math.pi), (0.0, 0.0, 0.0))
-_HEADLINK_ORIGIN_R = _rotation_from_rpy(0, 0, math.pi)
-_HEADLINK_ORIGIN_T = (0.0, 0.0, 0.252215)
+_T_FASTENED_2 = _transform(_rotation_from_rpy(0, 0, 0), (0.0, 0.0, 0.0))
+_HEADLINK_ORIGIN_R = _rotation_from_rpy(0, 0, 0)
+_HEADLINK_ORIGIN_T = (-0.000171242, 9.52126e-05, 0.248293)
 _HEADLINK_AXIS = (0.0, 0.0, -1.0)
-_HEADPITCH_ORIGIN_R = _rotation_from_rpy(0, 0, -0.38885)
-_HEADPITCH_ORIGIN_T = (0.1, 0.0, 0.1218)
+_HEADPITCH_ORIGIN_R = _rotation_from_rpy(0, 0, 0)
+_HEADPITCH_ORIGIN_T = (-0.00760542, -0.100122, 0.14235)
 _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
+_MUZZLELINK_T = (0.0, 0.1128, 0.0)
 
 # Same 4-panel layout as cv_target_emulator.py's _panel_poses (front/left/
 # back/right, spaced 90 degrees apart around the chassis center) --
@@ -421,7 +422,7 @@ class ShotHitSampler(Node):
         t_headpitch = _transform(
             _HEADPITCH_ORIGIN_R @ _rotation_axis_angle(_HEADPITCH_AXIS, self._head_pitch),
             _HEADPITCH_ORIGIN_T)
-        t_muzzle = t_head @ t_headpitch
+        t_muzzle = t_head @ t_headpitch @ _transform(np.eye(3), _MUZZLELINK_T)
         pos = t_muzzle[:3, 3]
         # Camera-local +X is forward, not +Z -- see cv_target_emulator.py's
         # REP-103 conversion (rel_cam[0] is called 'fwd'). This was wrong
