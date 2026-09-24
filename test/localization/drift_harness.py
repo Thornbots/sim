@@ -26,8 +26,8 @@ Two independent axes, mirroring auto.launch.py: backend
 below) and use_ekf (whether odom->root is EKF-fused, layerable on any
 backend -- the old standalone 'ekf' backend is now backend='none' plus
 use_ekf=True). Scenarios, in SCENARIOS order: baseline, noise_correction,
-drift_correction, drift_correction_obstacle, jerk_with_motion,
-odom_stuck. See README.md for WHY THIS EXISTS, BACKENDS (per-backend TF
+drift_correction, drift_correction_obstacle, moving_obstacles,
+jerk_with_motion, odom_stuck. See README.md for WHY THIS EXISTS, BACKENDS (per-backend TF
 edge), and SCENARIOS (pass conditions/rationale).
 
 One sim per run: the first run_stack() starts gz, and every scenario after
@@ -40,6 +40,7 @@ import os
 import shlex
 import signal
 import subprocess
+import sys
 import time
 
 from geometry_msgs.msg import Twist
@@ -588,6 +589,54 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
     _spawned_models.append(name)
 
 
+# moving_obstacles: sim/actor_driver.py's boxes, on its default paths and
+# speeds (three segments crossing OBSTACLE_LOOP_LEGS's edges at 0.5-2 m/s).
+ACTOR_COUNT = 3
+ACTOR_PREFIX = 'moving_actor'
+_actor_driver = None
+_actor_runs = 0
+
+
+def start_actor_driver(helper, timeout=60.0):
+    """
+    Start actor_driver and wait (wall clock) until it has spawned every actor.
+
+    Run as `python -m` so a checkout without a rebuilt console script still
+    works. Its actors join _spawned_models before it starts, so the next
+    reset removes whatever it managed to spawn. Returns True once spawned.
+    """
+    global _actor_driver, _actor_runs
+    stop_actor_driver()
+    _spawned_models.extend(f'{ACTOR_PREFIX}_{i}' for i in range(ACTOR_COUNT))
+    _actor_runs += 1
+    _actor_driver = LaunchTree('actor_driver', [
+        sys.executable, '-m', 'sim.actor_driver', '--ros-args',
+        '-p', 'use_sim_time:=true', '-p', f'count:={ACTOR_COUNT}',
+        '-p', f'name_prefix:={ACTOR_PREFIX}',
+    ], os.path.join(LOG_DIR, f'actor_driver_{_actor_runs}.log'))
+    _actor_driver.start()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if f'all {ACTOR_COUNT} actors spawned' in _actor_driver.log_text():
+            return True
+        if _actor_driver.proc.poll() is not None:
+            return False
+        helper._spin_wall(0.5)
+    return False
+
+
+def actor_driver_alive():
+    return _actor_driver is not None and _actor_driver.proc.poll() is None
+
+
+def stop_actor_driver():
+    """Stop actor_driver if it runs; its actors stay until _reset_sim removes them."""
+    global _actor_driver
+    if _actor_driver is not None:
+        _actor_driver.stop()
+        _actor_driver = None
+
+
 class Scenario:
 
     def __init__(self, name, description):
@@ -680,6 +729,7 @@ def _start_sim(gui, helper):
 def stop_sim():
     """Stop the shared sim, if one is up. Safe to call when none is."""
     global _sim
+    stop_actor_driver()
     if _sim is not None:
         _sim.stop()
         _sim = None
@@ -690,6 +740,7 @@ def _reset_sim(helper, emulator_params):
     """Put the robot back at spawn and pose_emulator back to truth, with new noise params."""
     helper.cmd_vel_pub.publish(Twist())
     helper.spin_for(0.2)
+    stop_actor_driver()  # before removing its actors, or it keeps moving them
     for name in _spawned_models:
         if not remove_model(name):
             raise RuntimeError(f'could not remove {name!r} from the world')
@@ -767,6 +818,7 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
 
 
 def teardown_stack(stack, helper):
+    stop_actor_driver()
     if helper is not None:
         helper.destroy_node()
     if stack is not None:
@@ -1143,15 +1195,14 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
 MAX_DELTA_THRESHOLD = 0.40  # meters
 
 
-def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
+def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, obstacles=None):
     """
     Drive the cornering loop shared by both drift_correction scenarios.
 
-    scenario_drift_correction_obstacle and scenario_drift_correction
-    both drive the identical 3m hard-cornering loop
-    (OBSTACLE_LOOP_LEGS) with an obstacle either spawned or not, so the
-    two differ only in `spawn_obstacle` and can be compared directly
-    against the same MAX_DELTA_THRESHOLD. Mutates and returns `sc` (the
+    scenario_drift_correction, _obstacle and scenario_moving_obstacles
+    all drive the identical 3m hard-cornering loop (OBSTACLE_LOOP_LEGS)
+    and differ only in `obstacles` (None, 'box' or 'actors'), so they can
+    be compared directly against the same MAX_DELTA_THRESHOLD. Mutates and returns `sc` (the
     caller's Scenario) via sc.result()/sc.log(), same convention as
     every other scenario_* function.
     """
@@ -1183,13 +1234,19 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
         # Only once the robot has left spawn: the box goes where it was
         # parked, and sentry_v2 collides, so spawning it earlier buries the
         # chassis in it and stalls gz's contact solver.
-        if spawn_obstacle:
+        if obstacles == 'box':
             spawn_box_obstacle()
             sc.log(f'spawned {OBSTACLE_SIZE}x{OBSTACLE_SIZE}x'
                    f'{OBSTACLE_HEIGHT}m box obstacle at {OBSTACLE_XY} '
                    f'(not present in the saved map) -- at the center of '
                    f'the loop this scenario is about to drive, see '
                    f'OBSTACLE_LOOP_LEGS')
+        elif obstacles == 'actors':
+            if not start_actor_driver(helper):
+                sc.result(False, 'actor_driver did not spawn its actors; see '
+                          f'actor_driver_{_actor_runs}.log')
+                return sc
+            sc.log(f'actor_driver spawned {ACTOR_COUNT} moving boxes crossing the loop')
 
         # Drive the loop. Sampling the correction TF each leg.
         OBSERVE_SECONDS = 30.0
@@ -1216,7 +1273,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
                 delta = math.hypot(p[0] - pose_before[0], p[1] - pose_before[1])
                 samples.append(delta)
                 sc.log(f't={elapsed:5.1f}s  |{edge} - pre-loop {edge}|='
-                       f'{delta:.4f} m')
+                       f'{delta:.4f} m{_truth_error_str(helper)}')
 
         if len(samples) < 3:
             sc.result(False, f'too few {edge} samples ({len(samples)}) to '
@@ -1228,12 +1285,22 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, spawn_obstacle):
                       'the loop -- backend may have stalled')
             return sc
 
+        if obstacles == 'actors' and not actor_driver_alive():
+            sc.result(False, 'actor_driver exited mid-loop; see '
+                      f'actor_driver_{_actor_runs}.log')
+            return sc
+        # TODO(A4): under backend slam, sample /map on the actors' paths at
+        # the end and fail if their cells stayed occupied.
+
         max_delta = max(samples)
         log_errs = scan_log_for_errors(stack.log_text())
+        if obstacles == 'actors':
+            log_errs += scan_log_for_errors(_actor_driver.log_text())
 
         ok = (max_delta < MAX_DELTA_THRESHOLD
               and not log_errs)
-        obstacle_note = ' past the obstacle' if spawn_obstacle else ''
+        obstacle_note = {'box': ' past the obstacle',
+                         'actors': ' among moving actors'}.get(obstacles, '')
         sc.result(ok,
                   f'max|{edge} - pre-loop {edge}| = {max_delta:.4f} m '
                   f'over {OBSERVE_SECONDS:.0f}s driving the cornering '
@@ -1265,7 +1332,7 @@ def scenario_drift_correction_obstacle(gui, backend, use_ekf):
         'needle versus drift_correction -- see BACKENDS in the module '
         'docstring.')
     return _run_cornering_loop_scenario(
-        sc, gui, backend, use_ekf, spawn_obstacle=True)
+        sc, gui, backend, use_ekf, obstacles='box')
 
 
 def scenario_drift_correction(gui, backend, use_ekf):
@@ -1287,8 +1354,29 @@ def scenario_drift_correction(gui, backend, use_ekf):
         'matching on raw /scan, feeding /scan_odom into ekf_node, so lidar '
         'data does drive odom->root here -- see BACKENDS in the module '
         'docstring for the scan-to-scan vs scan-to-map distinction.')
+    return _run_cornering_loop_scenario(sc, gui, backend, use_ekf)
+
+
+def scenario_moving_obstacles(gui, backend, use_ekf):
+    sc = Scenario(
+        'moving_obstacles',
+        'drift_correction with three unmapped boxes (actor_driver) crossing '
+        'the loop at 0.5-2 m/s, so transient lidar returns come and go. '
+        'Same metric and MAX_DELTA_THRESHOLD as drift_correction; each '
+        'sample also logs map->root error against /sim/raw_odom. Also fails '
+        'if actor_driver dies mid-loop. Compare against drift_correction.')
     return _run_cornering_loop_scenario(
-        sc, gui, backend, use_ekf, spawn_obstacle=False)
+        sc, gui, backend, use_ekf, obstacles='actors')
+
+
+def _truth_error_str(helper):
+    """Return '  truth_error=N m' (parent->root against /sim/raw_odom), or ''."""
+    root_pos = helper.get_root_position(timeout=0.5)
+    truth_xy = helper._raw_odom_xy
+    if root_pos is None or truth_xy is None:
+        return ''
+    err = math.hypot(root_pos[0] - truth_xy[0], root_pos[1] - truth_xy[1])
+    return f'  truth_error={err:.4f} m'
 
 
 # Minimum spread (m) the correction TF must show across odom_stuck's
@@ -1413,6 +1501,7 @@ SCENARIOS = {
     'noise_correction': scenario_noise_correction,
     'drift_correction': scenario_drift_correction,
     'drift_correction_obstacle': scenario_drift_correction_obstacle,
+    'moving_obstacles': scenario_moving_obstacles,
     'jerk_with_motion': scenario_jerk_with_motion,
     'odom_stuck': scenario_odom_stuck,
 }

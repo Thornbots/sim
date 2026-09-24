@@ -11,7 +11,8 @@ Build first on a fresh container (see Build). Each test starts its own sim and
 `thornbots_pkg` stacks, so stop anything you already have running.
 
 The localization suite runs `amcl` with the EKF, the configuration the robot
-is targeting. All six drift scenarios take about three minutes:
+is targeting. The six scenarios before `moving_obstacles` took about three
+minutes; it adds one more 30s loop:
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash
@@ -356,7 +357,8 @@ against one.
 only (`odom0_config`), with no travel gate, so neither expectation is defined.
 Drift scenarios do run for `none`, since rf2o's `/scan_odom` does real scan
 matching. With no map to miss a feature from, `drift_correction` and
-`drift_correction_obstacle` should read about the same there.
+`drift_correction_obstacle` should read about the same there, and so should
+`moving_obstacles`.
 
 amcl with and without EKF under slip, measured 2026-07-26 against a 0.30m
 bound; verdicts shown against today's 0.40m `MAX_DELTA_THRESHOLD`:
@@ -391,7 +393,13 @@ The suite runs them in this order.
    mid-scenario, absent from the world and the map. It shares driving and
    threshold with `drift_correction`, so comparing the two isolates the
    obstacle. A pass here means nothing if `drift_correction` failed.
-5. `jerk_with_motion` (slam/amcl) models a collision impulse. Each trial fires
+5. `moving_obstacles` drives the same square while `actor_driver` walks three
+   unmapped boxes across its south, west and north edges at 1.0, 2.0 and 0.5
+   m/s. It scores like `drift_correction`, on `MAX_DELTA_THRESHOLD`, and logs
+   each sample's `map->root` error against `/sim/raw_odom`. It also fails if
+   `actor_driver` dies mid-loop. Under `slam`, ROADMAP A4 also wants the
+   actors' cells checked in `/map` at the end; that check isn't built yet.
+6. `jerk_with_motion` (slam/amcl) models a collision impulse. Each trial fires
    `trigger_jerk`, drives one leg to the next corner, then requires a
    correction proportional to the jerk or an end state within
    `MAX_DELTA_THRESHOLD`. Jerks are biased toward `OBSTACLE_XY` so they don't
@@ -399,7 +407,7 @@ The suite runs them in this order.
    so the robot still lands on its corner. `JERK_WITH_MOTION_REPEATS` (8)
    trials share one stack (relaunching costs 15-20s each) and all must pass.
    A closing lap follows.
-6. `odom_stuck` models a dead encoder: `trigger_odom_stuck` pins `/pose` x/y
+7. `odom_stuck` models a dead encoder: `trigger_odom_stuck` pins `/pose` x/y
    and velocity at zero with fresh timestamps. It checks liveness only, since
    there is no valid odometry to bound drift against: scans keep processing
    and pairwise TF spread exceeds `ODOM_STUCK_MIN_TF_SPREAD` (1cm).
@@ -463,6 +471,11 @@ warning when hit.
 `spawn_box_obstacle` spawns a `<static>` box with
 `ros_gz_sim create -string <inline SDF>` as a subprocess, since it fires
 mid-scenario after the pre-spawn baseline. Sim teardown removes it.
+
+`start_actor_driver` runs `python3 -m sim.actor_driver` (a checkout that
+hasn't rebuilt its console scripts still has the module) and waits for its
+"all N actors spawned" log line. `_reset_sim` and `teardown_stack` stop it
+before anything else, and `_reset_sim` removes its `moving_actor_<i>` boxes.
 
 #### Thresholds
 
@@ -550,6 +563,32 @@ Each teleport also fires a `model_only` `WorldReset`, before and after
 The reset afterwards clears the one-step reaction impulse root's position jump
 can put through the body joints. On the old model, root's inflated rotational
 inertia damps its own angular velocity.
+
+### actor_driver.py: moving boxes
+
+`actor_driver` spawns `count` boxes (0.3 x 0.3 x 0.8 m, 20 kg) with
+`ros_gz_sim create` and walks each back and forth along a segment
+(`paths`, four numbers per actor) at `speeds` m/s, calling `set_pose` on
+every box each tick. Ticks run on a sim-time timer (`rate_hz`, 10), and each
+advances the box by speed times the sim time since the last tick, so a slow
+tick makes a longer jump and the actor keeps its speed.
+
+The boxes are dynamic. gz only honours `set_pose` on a free body (see the
+`auto_explore.py` note), and a static model is welded to the world. A box
+spawned or teleported into `sentry_v2`'s chassis stalls the contact solver,
+so the driver reads `/sim/raw_odom` and never writes a position inside the
+robot's keep-out capsule: the robot's pose swept ahead by its velocity for
+`lookahead_s` (0.5 s, doubled tick time if that is longer, capped at 1 s),
+radius `robot_radius` (0.5 m, the barrel's reach) plus the box's half
+diagonal plus `margin` (0.3 m). A box whose next position falls inside hops
+forward along its path to the first clear spot. With no fresh truth pose it
+moves nothing, and it spawns nothing until one arrives. It doesn't stop the
+robot driving into a box between ticks.
+
+Each `set_pose` is an `ign service` subprocess costing tens of ms, run in
+parallel across actors. Unthrottled, the sim outruns that, and the boxes
+move in bigger jumps; `real_time_factor:=1` gives smooth motion. The default
+paths clear the ARCC26 map's walls by at least 0.4 m.
 
 ### sim.launch.py: spawn_robot uses -string
 
