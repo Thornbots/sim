@@ -409,7 +409,7 @@ class LocalizationTestHelper(Node):
         seconds) is only a safety cap. See README.md for the design
         history.
         """
-        WAYPOINT_TOLERANCE = 0.03  # meters; matches the lidar noise stddev
+        WAYPOINT_TOLERANCE = 0.03  # meters, against ground truth
         CONTROL_PERIOD = 0.1  # seconds; matches the spin_for() tick below
         speed = math.hypot(vx, vy)
         safety_deadline = self.now_s() + max(duration * 3.0, duration + 5.0)

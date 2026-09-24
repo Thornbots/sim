@@ -202,4 +202,6 @@ only lands when a panel happens to face the muzzle at impact, and nothing
 times shots to the spin phase (firing logic is out of scope). Lead does
 help: mean miss drops 18-38% at 1-4 m/s. Samples are 11-19 shots per cell,
 so single-cell rates are noisy. Re-derive `MOVING_MIN_HIT_RATE` once shot
-timing exists.
+timing exists. Latest on `sentry_v2` (`sim/AGENTS.md`): flat 0.5/1.0 m/s
+52%/43%, 4 m/s 9%, every staggered moving cell misses, and state leaks
+between cases, so a full-run number isn't trustworthy yet.
