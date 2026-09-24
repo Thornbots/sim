@@ -80,6 +80,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Standing rules
 
+- **gz is the only engine. We are not switching to SAPIEN**; it was tried and
+  removed (README.md).
 - **Ask before starting any sim test run**, the shot-hit bench or the drift
   suite, even when the next run seems the obvious step. The user may have
   tuning to do first.
@@ -124,9 +126,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   a box spawned inside the chassis stalls gz's contact solver and `/clock`.
 - **`sentry_v2` spawns by default; `model:=sentry` is the old model.** The
   TF tree (`thornbots_pkg`'s URDF) and the CV chain (`cv_head_aim_core`,
-  `cv_target_emulator`, `shot_hit_harness`) moved to it too. sapien still
-  loads the old model. Pitch limits (+-0.6 rad), suspension travel, spring
-  rate and damping are placeholders, not CAD values.
+  `cv_target_emulator`, `shot_hit_harness`) moved to it too. Pitch limits
+  (+-0.6 rad), suspension travel, spring rate and damping are placeholders,
+  not CAD values.
 - **Shot-hit on `sentry_v2` passes 3/10**: both stationary cells hit 99%
   when run, flat 0.5 and 1.0 m/s clear the 25% floor, everything faster and
   every staggered moving cell misses. Staggered stationary scored 0.3% in

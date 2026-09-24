@@ -164,7 +164,7 @@ def check_no_orphans(label):
     try:
         out = subprocess.run(
             ['bash', '-c',
-             "ps aux | grep -E 'ign gazebo|gz sim|sapien_sim|slam_toolbox|amcl|"
+             "ps aux | grep -E 'ign gazebo|gz sim|slam_toolbox|amcl|"
              "map_server|ekf_filter_node|pose_translator|pose_emulator' | "
              'grep -v grep | '
              # Excludes the suite's own processes: `--backend amcl` on
@@ -568,14 +568,6 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
     removes it from the shared sim. See README.md.
     """
     x, y = xy
-    if os.environ.get('SIM_ENGINE') == 'sapien':
-        cmd = ['ros2', 'param', 'set', '/sapien_sim', 'spawn_box',
-               f'[{float(x)}, {float(y)}, {float(size)}, {float(height)}]']
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        if result.returncode != 0 or 'Set parameter successful' not in result.stdout:
-            raise RuntimeError(
-                f'spawning obstacle {name!r} failed: {result.stdout}{result.stderr}')
-        return
     sdf = (
         '<sdf version="1.6"><model name="{name}"><static>true</static>'
         '<pose>{x} {y} {z} 0 0 0</pose><link name="link">'
