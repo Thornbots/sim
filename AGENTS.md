@@ -111,6 +111,14 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Open
 
+- **Sim speed: the full stack caps at RTF ~1.55, cause unknown.** Idle
+  `sim.launch.py` sits there with GUI or headless, rviz or not, and with the
+  field collision simplified, so neither physics nor rendering sets it.
+  Bisecting the stack's nodes and bridges next. Known costs: the field
+  mesh's collision (its sub-3 cm floor triangles under the wheels) is
+  ~0.4 ms of each 1 ms step, and a subscribed 60 Hz RGB-D camera caps a
+  bare server near RTF 2.2 (gz skips rendering it with no subscriber).
+  Many separate box collisions cost more than the mesh: ~2 us/shape/step.
 - **Unthrottled runs score like real time now**, localization included, with
   rf2o's `fixed_heading` and `/odom` prior. Run at the default
   `real_time_factor:=0`; keep `:=1` as the control. rf2o now matches every
@@ -142,10 +150,10 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `cv_target_emulator`, `shot_hit_harness`) moved to it too. Pitch limits
   (+-0.6 rad), suspension travel, spring rate and damping are placeholders,
   not CAD values.
-- **Shot-hit on `sentry_v2` passes 3/10**: both stationary cells hit 99%
-  when run, flat 0.5 and 1.0 m/s clear the 25% floor, everything faster and
-  every staggered moving cell misses. Staggered stationary scored 0.3% in
-  the full run, straight after flat 4 m/s, and 99% twice alone: state leaks
+- **Shot-hit on `sentry_v2` passes 5/10** (2026-09-24 full run): flat
+  stationary, 0.5 and 1.0 m/s and staggered 0.5 and 1.0 m/s pass; 2 and
+  4 m/s miss in both layouts. Staggered stationary scored 15% (0.3% in an
+  earlier full run), straight after flat 4 m/s, and 99% twice alone: state leaks
   between cases, which is the bench's old "bimodal" result. Find the leak
   before trusting a full-run number.
 - **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard

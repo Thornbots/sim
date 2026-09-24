@@ -66,8 +66,9 @@ shut down when the tests finish, and Ctrl-C stops everything, stacks included.
 Both launches default to `real_time_factor:=0`, which lets gz run as fast as
 the machine allows. Every test times itself in sim seconds, so a faster sim
 shortens the wall-clock run without shortening what gets scored. Pass
-`real_time_factor:=1` to run in real time. On the dev laptop the GUI runs
-2-3x real time, and headless runs 8-10x.
+`real_time_factor:=1` to run in real time. On the dev laptop with `sentry_v2`,
+the drift suite runs about 1.2x real time and shot-hit about 1x, GUI or
+headless alike.
 
 Add an argument to run part of a suite. `scenario:=odom_stuck` runs one drift
 scenario and `backend:=slam` or `use_ekf:=false` changes the stack. For the
