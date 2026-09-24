@@ -579,8 +579,11 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
         '<diffuse>0.1 0.1 0.8 1</diffuse></material></visual>'
         '</link></model></sdf>'
     ).format(name=name, x=x, y=y, z=height / 2.0, s=size, h=height)
+    # create overrides the SDF <pose> with -x/-y/-z (default 0), which
+    # buried half the box.
     cmd = ['ros2', 'run', 'ros_gz_sim', 'create', '-string', sdf,
-           '-name', name, '-allow_renaming', 'false']
+           '-name', name, '-allow_renaming', 'false',
+           '-x', str(x), '-y', str(y), '-z', str(height / 2.0)]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise RuntimeError(

@@ -433,8 +433,18 @@ def generate_launch_description():
     # --- Teleport the chassis in sim via sim/auto_explore.py's grid sweep.
     # root has no parent joint any more (see the model xacro), so gz's
     # physics now honors a direct world-pose write on it; auto_explore.py
-    # calls gz's own `/world/<world>/set_pose` service directly (there's no
-    # ROS-side equivalent to bridge here, it's a gz-transport-only service).
+    # calls gz's own `/world/<world>/set_pose` service through `ign service`.
+    # set_pose_bridge offers the same service to ROS as
+    # ros_gz_interfaces/srv/SetEntityPose, so actor_driver.py can call it
+    # every tick without starting a process per call.
+    set_pose_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='set_pose_bridge',
+        output='screen',
+        arguments=['/world/ARCC_Field_2026/set_pose@ros_gz_interfaces/srv/SetEntityPose'],
+        parameters=[{'use_sim_time': True}],
+    )
 
     # --- Bridge for the head pan (see the model xacro's
     # JointPositionController on headlink, reintroduced now that root's
@@ -629,6 +639,7 @@ def generate_launch_description():
         head_slider_relay,
         cmd_vel_bridge,
         head_pan_bridge,
+        set_pose_bridge,
         head_pitch_bridge,
         camera_image_bridge,
         camera_depth_bridge,
