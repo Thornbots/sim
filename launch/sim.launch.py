@@ -13,10 +13,13 @@
 # limitations under the License.
 
 """
-Launches gz sim with the ARCC_Field_2026 world and spawns the sentry robot (sentry_urdf.xacro).
+Launches gz sim with the ARCC_Field_2026 world and spawns the sentry robot.
+
+The robot is urdf/<model>.urdf.xacro.
 
 Usage: `ros2 launch sim sim.launch.py [sim_engine:=gz|sapien] [gui:=false] [rviz:=false]
-[world:=/abs/path.sdf] [real_time_factor:=0] [odom_noise_enabled:=true]`.
+[world:=/abs/path.sdf] [model:=sentry] [real_time_factor:=0] [odom_noise_enabled:=true]`.
+model defaults to sentry_v2; sapien always loads the old sentry model.
 sim_engine defaults to $SIM_ENGINE, else gz; sapien runs sim/sapien_sim.py in place of
 gz and its bridges, with the same topics. To fire a one-time
 odom "jerk" (odom_jerk_stddev:= sets its size in meters), once sim is up:
@@ -92,6 +95,13 @@ def generate_launch_description():
         'world', default_value=default_world,
         description='Full path to the .sdf world file to load'
     )
+    model_arg = DeclareLaunchArgument(
+        'model', default_value='sentry_v2', choices=['sentry_v2', 'sentry'],
+        description='gz robot model: sentry_v2 (the new CAD, driven with contact) '
+                    'or sentry (the old collision-free ghost)'
+    )
+    model_xacro = [os.path.join(pkg_share, 'urdf', ''), LaunchConfiguration('model'),
+                   '.urdf.xacro']
     robot_name_arg = DeclareLaunchArgument(
         'robot_name', default_value='sentry',
         description='Name the robot is spawned with in the sim'
@@ -295,7 +305,7 @@ def generate_launch_description():
         name='spawn_sentry',
         output='screen',
         arguments=[
-            '-string', Command(['xacro ', default_xacro]),
+            '-string', Command(['xacro '] + model_xacro),
             '-name', robot_name,
             '-x', LaunchConfiguration('x'),
             '-y', LaunchConfiguration('y'),
@@ -638,6 +648,7 @@ def generate_launch_description():
     return LaunchDescription([
         sim_engine_arg,
         world_arg,
+        model_arg,
         robot_name_arg,
         x_arg,
         y_arg,

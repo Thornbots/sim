@@ -2,7 +2,7 @@
 
 sim holds the robot's integration tests. The localization drift suite and the
 CV shot-hit bench each start a `gz sim` model of the `ARCC_Field_2026` field,
-spawn the `sentry` robot from `urdf/sentry.urdf.xacro`, and run the real
+spawn the `sentry` robot from `urdf/sentry_v2.urdf.xacro`, and run the real
 `thornbots_pkg` stack against it.
 
 ## Run the tests
@@ -27,7 +27,8 @@ It launches the stack once and only changes the target between cases; each
 case settles for 3s, then scores 30s of sim time. The bench fires at up to
 40 Hz, far above the real launcher, and scores each case on hit rate and hits
 per expected shot equally (`score()` in `test/cv/shot_hit_harness.py`), so
-falling behind 40 Hz costs points.
+falling behind 40 Hz costs points. Shots leave from `sentry_v2`'s `muzzle`
+frame (see the `cv_head_aim.py` note).
 
 `target_state:=truth` makes it the aim bench: `target_state_truth` publishes
 the target's true `TargetState` in place of `target_tracker`, so a miss is
@@ -172,7 +173,11 @@ ros2 launch sim sim.launch.py x:=1.0 y:=0.5 yaw:=0.0     # spawn pose (z:= too)
 ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
 ros2 launch sim sim.launch.py camera:=true               # bridge /color and /depth
 ros2 launch sim sim.launch.py sim_engine:=sapien         # SAPIEN instead of gz
+ros2 launch sim sim.launch.py model:=sentry              # the old collision-free model
 ```
+
+`model:=` picks the gz robot: `sentry_v2` (the default, from the CAD) or
+`sentry`, the old model. sapien always loads the old one.
 
 The camera is off by default. Its color and depth images are the heaviest
 thing the sim publishes, and nothing in `sim` or its tests reads them. Turn it
@@ -227,13 +232,15 @@ Webots; the comparison against gz has not been run yet.
 
 Why it looks the way it does:
 
+- It loads the old `sentry.urdf.xacro`, not `sentry_v2`, so its frames and
+  head differ from gz's default model.
 - The chassis is moved kinematically. `sentry.urdf.xacro` has no collision
-  and no gravity, so in gz the robot is a ghost that `VelocityControl` moves;
+  and no gravity, so in gz that model is a ghost that `VelocityControl` moves;
   integrating the `/cmd_vel` body-frame twist each step is the same thing. Like
   `VelocityControl`, the last command holds until a new one arrives.
-- The head joints use the xacro's `JointPositionController` gains (p 75,
-  d 0.125, effort 50) as SAPIEN force-mode drives, at gz's 1 ms step. On a
-  gram-scale head that tracks a command within a few milliseconds, as in gz.
+- The head joints use the old xacro's `JointPositionController` gains (p 75,
+  d 0.125, effort 50) as SAPIEN force-mode drives, at gz's 1 ms step. On the
+  old model's gram-scale head that tracks a command within a few milliseconds.
 - The lidar is not SAPIEN's own ray cast. That casts one ray per Python call,
   14 ms for the 3000-beam scan, which caps the sim near 7x real time. Instead
   `trimesh` + `embreex` (Embree) cast all 3000 beams against
@@ -298,7 +305,7 @@ Visuals are one convex hull per part, capped at 120 faces, with parts under
 15 mm left out: CAD tessellations are full of T-junctions that quadric
 decimation cannot reduce. That keeps the model at 6.4 MB.
 
-The joint and link names match `sentry.urdf.xacro` (`root`, `body`, `head`,
+The joint and link names match the old model's (`root`, `body`, `head`,
 `head_pitch`, `lidar`, `camera`, `headlink`, `headpitch`) and `headlink` keeps
 its -z axis, because the CV stack and `test_urdf_constants.py` assume them.
 The output frame puts the gun on +x (the export's +y) with the origin on the
@@ -307,24 +314,56 @@ ground under the chassis centre.
 Placeholders, not from the CAD: pitch limits (the old model's +-0.6 rad),
 suspension travel (+-2 cm), spring rate (2200 N/m per corner, about 1 cm of
 sag) and damping. The hopper landed on the pitch stage because of how the
-export tree runs; confirm with the mechanical team. Nothing uses `sentry_v2`
-yet; wiring it in means a driven chassis instead of the kinematic ghost, and
-new pinned constants in `test_urdf_constants.py` and `cv_target_emulator.py`.
+export tree runs; confirm with the mechanical team.
 
-### sentry.urdf.xacro: the lidar does not scan its own model
+The export's base link, `root`, is `G_Lidar_Bottom_Guard`: it is the grounded
+part, and nothing mates it to the head, so the tool put it on the chassis. It
+sits diametrically opposite the lidar at (0.13, 0.14, 0.32-0.35), which pushes
+the chassis collision hull up to 0.362 m. Scans don't notice (see the lidar
+note below), but the hull is wrong. Fix it in Onshape by mating the guard to
+the head, or drop it in `sentry_v2.yaml`'s `drop` list.
 
-Every robot visual carries `visibility_flags=0xFFFFFFFE` against the
+`sentry_v2.urdf.xacro` wraps the generated URDF for gz: colours, the lidar and
+camera sensors, the plugins, and a `muzzle` frame (see the `cv_head_aim.py`
+note). `thornbots_pkg`'s `sentry.urdf.xacro` carries the same frames and
+meshes, and `test_urdf_constants.py` checks the two agree.
+
+### sentry_v2.urdf.xacro: motion model
+
+Gravity and collision are on. `VelocityControl` sets the chassis's whole
+twist every step: planar velocity from `/cmd_vel`, zero angular velocity (a
+hard yaw lock) and zero vertical velocity. The chassis settles onto its
+sprung carriers (2200 N/m each) at about 1 cm/s and can't bounce. The wheels
+are zero-friction spheres that ride along instead of fighting the commanded
+velocity.
+
+The head's PID keeps p 75 but raises d to 2.1 (yaw) and 1.2 (pitch), sized for
+the real gimbal's inertia, about 0.031 and 0.009 kg m^2. The old model's
+d 0.125 was tuned for a gram-scale head.
+
+Measured on a real-time run: the chassis rests at z -1.0 cm. Over five laps of
+the 3 m square at 4 m/s it rode at z -1.2 to -1.8 cm with roll and pitch under
+0.2 deg. It picked up about 1 deg of yaw in the first lap's hard corners and
+kept it (0.97 deg, then 0.89 deg by the end): the head's reaction torque during
+instant 4 m/s velocity steps gets past the yaw lock. The real robot is expected
+to drift 1-5 deg in yaw as well; for now the whole stack assumes a fixed
+heading.
+
+### Both robot models: the lidar does not scan its own model
+
+Both of sim's models, `urdf/sentry.urdf.xacro` and `urdf/sentry_v2.urdf.xacro`,
+do this. Every robot visual carries `visibility_flags=0xFFFFFFFE` against the
 `gpu_lidar`'s `visibility_mask=0x01`, so `(mask & flags) == 0` and the sensor
 renders none of the sentry. Nothing else in the world sets the flags, so the
 field keeps sdformat's default `0xFFFFFFFF` and stays visible.
 
 This was tried in July 2026, reverted as "all-or-nothing per visual", and is
 back because all-or-nothing turned out to be the right answer. Measured
-2026-09-23, with the exclusion off: the head blanked 118-180 deg of
+2026-09-23 on the old model, with the exclusion off: the head blanked 118-180 deg of
 `/scan_raw`, and a further rear sector out to -45 deg came and went with the
 head's pose -- between 863 and 1613 of 3000 beams, reported as `-inf` because
-the self-hits land inside `range_min`. `lidar_self_filter` blanks 1.0 rad
-(126-183 deg), so up to 140 deg of the scan was being lost to something
+the self-hits land inside `range_min`. `lidar_self_filter` then blanked 1.0
+rad (126-183 deg), so up to 140 deg of the scan was being lost to something
 nothing in the stack knew about. A bare `gpu_lidar` at the same height in the
 same world returns all 3000 beams at 2.22-7.17 m, which is what the sentry's
 sensor now returns too.
@@ -332,9 +371,9 @@ sensor now returns too.
 Hardware is the reason to prefer it: the real RPLIDAR's scanning disk sits
 clear of the chassis, and only the head's own footprint blocks it.
 `lidar_self_filter` models exactly that, in the one place that also runs on
-the robot. Note that the filter's 2.20-3.20 rad came from sim's old self-hit
-cluster, which no longer exists -- it now needs a real `/scan_raw` capture to
-retune against (see `../thornbots_pkg/README.md`).
+the robot. Its sector (0.09-1.41 rad) now comes from slicing `sentry_v2`'s CAD
+at the scan plane, and still needs checking against a real `/scan_raw` (see
+`../thornbots_pkg/README.md`).
 
 ### test_localization_drift.py
 
@@ -551,17 +590,17 @@ values arriving mid-publish.
 
 Teleport writes the gz world pose through `/world/<world>/set_pose` via
 `ign service`; ROS has no equivalent. It works because root is a free 6DOF body
-with no parent joint and no collision on any link. gz only honours a pose write
-on a link its `FreeGroup` API sees as free (an older URDF with a prismatic chain
-ignored it), and without collision nothing it passes through can spin it up.
-Nothing enforces zero rotation any more, so each teleport sets orientation to
-identity.
+with no parent joint. gz only honours a pose write on a link its `FreeGroup`
+API sees as free (an older URDF with a prismatic chain ignored it). Each
+teleport sets orientation to identity. On the old model nothing has collision,
+so nothing the robot passes through can spin it up; on `sentry_v2`,
+`VelocityControl` zeroes root's angular velocity every step.
 
 Each teleport also fires a `model_only` `WorldReset`, before and after
 `set_pose`, to zero the joints. It can't move root, which has no parent joint.
 The reset afterwards clears the one-step reaction impulse root's position jump
-can put through the body joints. Root's inflated rotational inertia damps its
-own angular velocity.
+can put through the body joints. On the old model, root's inflated rotational
+inertia damps its own angular velocity.
 
 ### sim.launch.py: spawn_robot uses -string
 
@@ -609,21 +648,24 @@ Visible half-width at 3m is `3.0*tan(1.5184/2)` ~ 2.85m, so the outer panels
 `target_speed`, and `max_spin_accel` (20 rad/s^2) does the same for `spin_hz`;
 both are estimates. It used to reverse and change speed instantly.
 
-`cv_target_emulator` computes camera pose by chaining the xacro's fixed joint
+`cv_target_emulator` computes camera pose by chaining `sentry_v2`'s fixed joint
 offsets (root -> fastened_2 -> body -> headlink(yaw) -> head ->
 headpitch(pitch) -> head_pitch -> cameralink -> camera), since sim runs no
 `robot_state_publisher`. It reads joint angles from `/sim/raw_joint_states` by
-name. `headlink`'s and `fastened_2`'s pi yaws cancel at `head_yaw=0`, but
-`headpitch` carries a fixed -0.38885 rad yaw that never cancels. Mean `pos_err`
-was ~2.45m with +0.38885, ~1.22m with 0, and ~0.13m with -0.38885, near the
-0.03m noise floor, so -0.38885 is the right sign. Compare vectors rather than
-magnitudes, as with rf2o's `angle_min` bug, because `tan(+x)` and `tan(-x)` have
-the same magnitude.
+name. None of `sentry_v2`'s joint origins rotate, so the head frame has the
+gun on +x at zero yaw. `cameralink` puts the camera 9 cm ahead of the pitch
+axis, 5.7 cm above it and 1.8 cm right of the muzzle.
+
+The old model's `headpitch` carried a fixed -0.38885 rad yaw, and getting its
+sign wrong cost a debugging cycle: mean `pos_err` was ~2.45m with +0.38885 and
+~0.13m with -0.38885. Compare vectors rather than magnitudes, as with rf2o's
+`angle_min` bug, because `tan(+x)` and `tan(-x)` have the same magnitude.
 
 `headlink` has been a continuous joint since 2026-07-28, matching the
 free-spinning real gimbal. It used to be `revolute` with a +-pi limit;
 `cv_head_aim` pegging at exactly +-3.14159 turned out to be its own software
-clamp. `headpitch` keeps its real +-0.6 limit.
+clamp. `headpitch` keeps a +-0.6 rad limit, carried over from the old model
+as a placeholder.
 
 Target positions use REP-103 (x forward, y left, z up), not the optical frame
 a real driver reports. Mislabelling optical as REP-103 would rotate every
@@ -666,24 +708,31 @@ Subscribes `/cv/target` (from `thornbots_pkg`'s `point_to_cv_target`, so run
 the only thing moving the head in CV tests. `CVTarget.x/y/z` is a root-frame
 position, so the old `atan2(x, z)` bearing controller was replaced.
 
-`cv_head_aim_core.solve_head_angles()` inverts the FK chain `cv_target_emulator`
-walks (root -> body -> headlink(yaw) -> headpitch(pitch) -> camera), treating
-`HEADPITCH_ORIGIN_YAW` (-0.38885) as a yaw in the joint origin, not a pitch
-bias. `test/cv/test_cv_head_aim.py` checks it against a separately written FK,
-and `test_urdf_constants.py` pins the duplicated constants to the xacro.
+`cv_head_aim_core.solve_head_angles()` inverts the FK chain from root to the
+`muzzle` frame (root -> body -> headlink(yaw) -> headpitch(pitch) ->
+muzzlelink). `test/cv/test_cv_head_aim.py` checks it against a separately
+written FK, and `test_urdf_constants.py` pins the duplicated constants to
+`thornbots_pkg`'s URDF and checks sim's model against it.
+
+The `muzzle` frame sits on `head_pitch` at (0, 0.1128, 0): on the pitch axis,
+between the two stacked flywheels. In the CAD the barrel is 0.3915 m up and
+the pitch axis 0.3906 m, so the barrel really does sit on the axis. In the head
+frame that puts the muzzle `MUZZLE_Y` = 0.0127 m left of the yaw axis and
+`MUZZLE_Z` = 0.391 m above root.
 
 It aims along the ray from the muzzle. Before 2026-09-09 it aimed from root,
 assuming a ~0.35m offset wouldn't matter at range. That's true for flight time,
-but a parallel offset in direction stays the same size at any range. The
-muzzle sits `MUZZLE_Z` = 0.374m above root against a 0.05m hit radius, and
-every stationary shot missed by ~0.33m (`CV_TEST_GAPS.md` gap 7).
+but a parallel offset in direction stays the same size at any range. On the
+old model every stationary shot missed by ~0.33m against a 0.05m hit radius
+(`CV_TEST_GAPS.md` gap 7).
 
-The fix is closed-form even though muzzle position depends on the yaw being
-solved. The muzzle circles the yaw axis at `MUZZLE_RADIUS` = 0.1m, and only
-`MUZZLE_PERP` = `MUZZLE_RADIUS * sin(HEADPITCH_ORIGIN_YAW)` = 0.038m sits off
-the shot line. Azimuth is `atan2(y, x) + asin(MUZZLE_PERP / horizontal_range)`,
-and pitch follows from the elevation at that muzzle point. The pitch axis
-passes through the muzzle, so pitch needs no correction.
+The solve is closed-form even though the muzzle's position depends on the yaw
+being solved. The shot leaves along the head's +x, and whatever the yaw that
+line passes `MUZZLE_Y` to the left of the yaw axis. So azimuth is
+`bearing - asin(MUZZLE_Y / horizontal_range)`, with bearing and range taken
+from the yaw axis, and pitch follows from the elevation seen from the muzzle
+at that azimuth. The muzzle is on the pitch axis, so pitching never moves it.
+Head yaw is minus the azimuth, because `headlink` turns about -z.
 
 Type-C probably has the same bug. It receives a root-frame position and runs its
 own gimbal solve, and only the firmware knows where the real barrel sits, so

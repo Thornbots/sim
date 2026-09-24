@@ -15,29 +15,24 @@
 """
 cv_head_aim_core.py -- pure head-IK math for cv_head_aim.py, no rclpy import.
 
-Unit-tested standalone in test/cv/test_cv_head_aim.py. See README.md's
-### cv_head_aim.py Notes for the derivation.
+Unit-tested standalone in test/cv/test_cv_head_aim.py. see README.md for
+design rationale
 """
 import math
 
-# headpitch joint origin's rpy z component (sentry.urdf.xacro:137-139) -- an
-# empirically-tuned mesh-alignment YAW on the joint origin, not a pitch
-# bias. See the plan's Phase 2 "Confirm before composing the rotation."
-HEADPITCH_ORIGIN_YAW = -0.38885
-# Where the shot actually leaves from, in root: the headpitch joint origin
-# (== camera, cameralink is identity). root -> headlink is Rz(pi) about a
-# zero translation then (0, 0, HEADLINK_ORIGIN_Z), so the muzzle sits
-# MUZZLE_Z up and MUZZLE_RADIUS out from the yaw axis. All three pinned
-# against the xacro in test/cv/test_urdf_constants.py.
-HEADLINK_ORIGIN_Z = 0.252215
-HEADPITCH_ORIGIN_X = 0.1
-HEADPITCH_ORIGIN_Z = 0.1218
-MUZZLE_RADIUS = HEADPITCH_ORIGIN_X          # offset from the yaw axis
-MUZZLE_Z = HEADLINK_ORIGIN_Z + HEADPITCH_ORIGIN_Z   # 0.374 m above root
-# The muzzle's offset from the yaw axis is carried round by the yaw, so
-# only this component of it -- 0.038 m, fixed -- is ever perpendicular to
-# the shot. See README.md's ### cv_head_aim.py Notes.
-MUZZLE_PERP = MUZZLE_RADIUS * math.sin(HEADPITCH_ORIGIN_YAW)
+# sentry_v2's head chain in root, pinned to thornbots_pkg's URDF by
+# test/cv/test_urdf_constants.py. root -> headlink origin (no rotation,
+# yaw about -z, so azimuth = -theta_y) -> headpitch origin (pitch about +y)
+# -> muzzlelink. The muzzle sits on the pitch axis, so pitching never moves
+# it; its only offset off the shot line is MUZZLE_Y, sideways.
+HEADLINK_ORIGIN_X = -0.000171242
+HEADLINK_ORIGIN_Y = 9.52126e-05
+HEADLINK_ORIGIN_Z = 0.248293
+HEADPITCH_ORIGIN = (-0.00760542, -0.100122, 0.14235)
+MUZZLELINK_ORIGIN = (0.0, 0.1128, 0.0)
+MUZZLE_X = HEADPITCH_ORIGIN[0] + MUZZLELINK_ORIGIN[0]   # along the shot, in the head frame
+MUZZLE_Y = HEADPITCH_ORIGIN[1] + MUZZLELINK_ORIGIN[1]   # 0.013 m left of the yaw axis
+MUZZLE_Z = HEADLINK_ORIGIN_Z + HEADPITCH_ORIGIN[2] + MUZZLELINK_ORIGIN[2]  # 0.391 m
 
 
 def wrap_to_pi(angle):
@@ -45,43 +40,32 @@ def wrap_to_pi(angle):
 
 
 def muzzle_offset_root(phi):
-    """
-    Root-frame position of the muzzle (headpitch joint origin) at camera azimuth phi.
-
-    Depends on the yaw only: the pitch axis passes through this point, so
-    pitching does not move it. theta_y = HEADPITCH_ORIGIN_YAW - phi, and
-    the head's x offset is carried round by Rz(-theta_y).
-    """
-    a = phi - HEADPITCH_ORIGIN_YAW
-    return (MUZZLE_RADIUS * math.cos(a), MUZZLE_RADIUS * math.sin(a), MUZZLE_Z)
+    """Root-frame muzzle position at head azimuth phi; pitch does not move it."""
+    c, s = math.cos(phi), math.sin(phi)
+    return (HEADLINK_ORIGIN_X + MUZZLE_X * c - MUZZLE_Y * s,
+            HEADLINK_ORIGIN_Y + MUZZLE_X * s + MUZZLE_Y * c, MUZZLE_Z)
 
 
 def solve_head_angles(target_root):
     """
-    Solve absolute (yaw, pitch) aiming the camera/muzzle at the root-frame POINT target_root.
+    Solve absolute (yaw, pitch) putting the muzzle's +X ray through root-frame point target_root.
 
-    The aim axis is the camera's local +X and the shot leaves the muzzle,
-    MUZZLE_Z (0.374 m) above the root origin -- so this solves the
-    parallax, not just the bearing from root. Aiming from root instead
-    missed a stationary panel by a constant ~0.33 m at any range
-    (CV_TEST_GAPS.md gap 7). Closed form, no iteration: the muzzle rides
-    round with the yaw, leaving MUZZLE_PERP as the only perpendicular
-    offset, so the azimuth is just bearing + asin(MUZZLE_PERP / range).
-    See README.md's ### cv_head_aim.py Notes for the FK derivation.
+    Solves the parallax from the muzzle, not a bearing from root: aiming
+    from root missed a stationary panel by a constant ~0.33 m on the old
+    model (CV_TEST_GAPS.md gap 7). Closed form: the ray's lateral offset
+    from the yaw axis is MUZZLE_Y whatever the yaw, so the azimuth is the
+    bearing minus asin(MUZZLE_Y / range). see README.md for design rationale
     """
-    x, y, z = target_root
+    x = target_root[0] - HEADLINK_ORIGIN_X
+    y = target_root[1] - HEADLINK_ORIGIN_Y
     horiz = math.hypot(x, y)
     bearing = math.atan2(y, x) if horiz > 0.0 else 0.0
-    # Inside MUZZLE_PERP of the yaw axis there is no azimuth that points
-    # the muzzle at the target at all; clamp rather than raise, the head
-    # cannot usefully aim at its own turret either way.
-    ratio = MUZZLE_PERP / horiz if horiz > abs(MUZZLE_PERP) else math.copysign(
-        1.0, MUZZLE_PERP)
-    phi = bearing + math.asin(ratio)
+    # Inside MUZZLE_Y of the yaw axis no azimuth reaches the target; clamp.
+    ratio = MUZZLE_Y / horiz if horiz > abs(MUZZLE_Y) else math.copysign(1.0, MUZZLE_Y)
+    phi = bearing - math.asin(ratio)
 
     mx, my, mz = muzzle_offset_root(phi)
-    dx, dy, dz = x - mx, y - my, z - mz
-    r = math.hypot(dx, dy)
-    theta_p = math.atan2(-dz, r) if (r > 0.0 or dz != 0.0) else 0.0
-    theta_y = HEADPITCH_ORIGIN_YAW - phi
-    return theta_y, theta_p
+    dx, dy, dz = target_root[0] - mx, target_root[1] - my, target_root[2] - mz
+    r = dx * math.cos(phi) + dy * math.sin(phi)
+    theta_p = math.atan2(-dz, r) if (r != 0.0 or dz != 0.0) else 0.0
+    return -phi, theta_p
