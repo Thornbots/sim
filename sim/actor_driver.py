@@ -16,12 +16,13 @@
 Spawn N box actors and walk each back and forth along a segment by gz set_pose.
 
 Params: count, speeds (m/s), paths (x0,y0,x1,y1 per actor, world frame),
+route (closed polyline the robot drives, corners in drive order), route_speed,
 rate_hz (sim time, run with use_sim_time:=true), size, height, mass,
-robot_radius, margin, lookahead_s. Reads /sim/raw_odom for the robot. A
-position is only written if it clears the robot's keep-out capsule (current
-pose swept ahead by its velocity); otherwise the actor hops forward along its
-path to the next clear spot. The caller removes the actors (`<prefix>_<i>`).
-see README.md for design rationale
+robot_radius, margin, lookahead_s. Reads /sim/raw_odom for the robot. A box
+stays keep-out clear of where the robot will be within lookahead_s: along
+`route` ahead of it at route_speed (it may be stopped at a corner), plus its
+velocity. A blocked box steps to the nearest clear spot on its path. The
+caller removes the actors (`<prefix>_<i>`). see README.md for design rationale
 """
 from concurrent.futures import ThreadPoolExecutor
 import math
@@ -34,12 +35,15 @@ from rclpy.node import Node
 from sim.auto_explore import set_model_pose
 
 # Default layout: three segments crossing the drift suite's 3m loop
-# (corners +-1.5), clear of the ARCC26 map's walls by >= 0.4m.
-DEFAULT_PATHS = [0.8, 0.2, 0.8, -2.8,    # south edge
-                 -0.3, 0.3, -2.4, 0.3,   # west edge
-                 0.2, -0.4, 0.2, 2.1]    # north edge
+# (corners +-1.5), clear of the ARCC26 map's walls by >= 0.4m. Each inner
+# end is 1.1m from the whole loop, so a box always has a clear spot.
+DEFAULT_PATHS = [0.4, -0.2, 0.4, -2.1,    # south edge
+                 -0.2, -0.4, -2.3, -0.4,  # west edge
+                 -0.4, 0.2, -0.4, 2.1]    # north edge
 DEFAULT_SPEEDS = [1.0, 2.0, 0.5]
-HOP_STEP = 0.05  # m, search step when hopping past the robot
+DEFAULT_ROUTE = [-1.5, -1.5, 1.5, -1.5, 1.5, 1.5, -1.5, 1.5]
+ON_ROUTE_M = 0.5  # further than this from the route, predict by velocity only
+STEP = 0.05  # m, search step for a clear spot
 
 
 def box_sdf(name, x, y, size, height, mass):
@@ -58,11 +62,56 @@ def box_sdf(name, x, y, size, height, mass):
         f'</link></model></sdf>')
 
 
-def dist_to_segment(px, py, ax, ay, bx, by):
+def project(px, py, ax, ay, bx, by):
+    """Return (distance, fraction along a->b) of p's closest point on the segment."""
     dx, dy = bx - ax, by - ay
     len2 = dx * dx + dy * dy
     t = 0.0 if len2 < 1e-12 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len2))
-    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy)), t
+
+
+def dist_to_segment(px, py, ax, ay, bx, by):
+    return project(px, py, ax, ay, bx, by)[0]
+
+
+class Route:
+    """Closed polyline; s is arc length from the first corner."""
+
+    def __init__(self, flat):
+        pts = [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
+        self.segs = [(pts[i], pts[(i + 1) % len(pts)]) for i in range(len(pts))]
+        self.lens = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in self.segs]
+        self.total = sum(self.lens)
+
+    def locate(self, x, y):
+        """Return (distance to the route, s of the closest point)."""
+        best, s0 = (math.inf, 0.0), 0.0
+        for (a, b), n in zip(self.segs, self.lens):
+            d, t = project(x, y, *a, *b)
+            if d < best[0]:
+                best = (d, s0 + t * n)
+            s0 += n
+        return best
+
+    def point(self, s):
+        s %= self.total
+        for (a, b), n in zip(self.segs, self.lens):
+            if s <= n:
+                f = s / n if n > 0 else 0.0
+                return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
+            s -= n
+        return self.segs[-1][1]
+
+    def arc(self, s, length):
+        """Segments covering the route from s to s + length, split at corners."""
+        cuts, c = [s], self.total * math.floor(s / self.total)
+        while c < s + length:
+            for n in self.lens:
+                c += n
+                if s < c < s + length:
+                    cuts.append(c)
+        cuts.append(s + length)
+        return [(self.point(u), self.point(v)) for u, v in zip(cuts, cuts[1:])]
 
 
 class Actor:
@@ -99,7 +148,10 @@ class ActorDriver(Node):
         self.mass = p('mass', 20.0).value
         self.robot_radius = p('robot_radius', 0.5).value  # sentry_v2 incl. barrel
         self.margin = p('margin', 0.3).value
-        self.lookahead_s = p('lookahead_s', 0.5).value
+        self.lookahead_s = p('lookahead_s', 1.0).value
+        route = list(p('route', DEFAULT_ROUTE).value)
+        self.route = Route(route) if len(route) >= 4 else None
+        self.route_speed = p('route_speed', 4.0).value
         prefix = p('name_prefix', 'moving_actor').value
         if len(paths) < 4 * count or len(speeds) < count:
             raise ValueError(f'count={count} needs {4 * count} path values '
@@ -113,6 +165,7 @@ class ActorDriver(Node):
         self.last_tick = None
         self.ticks = 0
         self.tick_dt_sum = 0.0
+        self.min_gap = math.inf  # closest box centre to the robot centre, m
         self.create_subscription(Odometry, '/sim/raw_odom', self._on_odom, 10)
         self.timer = self.create_timer(1.0 / self.rate_hz, self._tick)
 
@@ -128,22 +181,33 @@ class ActorDriver(Node):
         p = msg.pose.pose.position
         self.robot = (p.x, p.y, vx, vy, self._now())
 
-    def _clear(self, xy, lookahead):
+    def _danger(self, lookahead):
+        """Segments the robot may sweep within lookahead: its velocity, then its route."""
         rx, ry, vx, vy, _ = self.robot
-        return dist_to_segment(xy[0], xy[1], rx, ry,
-                               rx + vx * lookahead, ry + vy * lookahead) >= self.keep_out
+        segs = [((rx, ry), (rx + vx * lookahead, ry + vy * lookahead))]
+        if self.route is not None:
+            d, s = self.route.locate(rx, ry)
+            if d <= ON_ROUTE_M:
+                ahead = max(self.route_speed, math.hypot(vx, vy)) * lookahead
+                segs += self.route.arc(s, ahead)
+        return segs
 
-    def _first_clear(self, actor, u, lookahead):
-        """Return the first progress >= u whose position is clear, or None."""
-        for k in range(int(2.0 * actor.length / HOP_STEP) + 1):
-            if self._clear(actor.position(u + k * HOP_STEP), lookahead):
-                return u + k * HOP_STEP
+    def _clear(self, xy, danger):
+        return all(dist_to_segment(xy[0], xy[1], *a, *b) >= self.keep_out for a, b in danger)
+
+    def _nearest_clear(self, actor, u, danger):
+        """Return the clear progress nearest u, forward or back, or None."""
+        for k in range(int(2.0 * actor.length / STEP) + 1):
+            for cand in (u + k * STEP, u - k * STEP):
+                if self._clear(actor.position(cand), danger):
+                    return cand % (2.0 * actor.length)
         return None
 
     def _spawn(self):
         """Spawn every actor not yet spawned, each at a clear spot; False if one had none."""
+        danger = self._danger(self.lookahead_s)
         for actor in (a for a in self.actors if not a.spawned):
-            u = self._first_clear(actor, 0.0, self.lookahead_s)
+            u = self._nearest_clear(actor, 0.0, danger)
             if u is None:
                 return False
             actor.u = u
@@ -177,17 +241,22 @@ class ActorDriver(Node):
         self.tick_dt_sum += dt
         if self.ticks % 100 == 0:
             self.get_logger().info(
-                f'{self.ticks} ticks, mean {self.tick_dt_sum / self.ticks:.3f} s sim per tick')
-        # Look further ahead when ticks lag (unthrottled sim), capped at 1s.
-        lookahead = min(max(self.lookahead_s, 2.0 * dt), 1.0)
+                f'{self.ticks} ticks, mean {self.tick_dt_sum / self.ticks:.3f} s sim per tick, '
+                f'closest box {self.min_gap:.2f} m')
+        # Look further ahead when ticks lag (unthrottled sim).
+        danger = self._danger(max(self.lookahead_s, 3.0 * dt))
         moves = []
         for actor in self.actors:
-            u = self._first_clear(actor, actor.u + actor.speed * dt, lookahead)
+            u = self._nearest_clear(actor, actor.u + actor.speed * dt, danger)
             if u is None:
                 continue  # hold: no clear spot on the whole path
-            actor.u = u % (2.0 * actor.length)
+            actor.u = u
             x, y = actor.position(actor.u)
             moves.append((actor.name, x, y))
+        rx, ry = self.robot[0], self.robot[1]
+        for actor in self.actors:
+            x, y = actor.position(actor.u)
+            self.min_gap = min(self.min_gap, math.hypot(x - rx, y - ry))
         results = self.pool.map(
             lambda m: (m[0], set_model_pose(m[0], m[1], m[2], self.height / 2.0)), moves)
         for name, ok in results:
@@ -203,6 +272,7 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        node.get_logger().info(f'closest box to the robot: {node.min_gap:.2f} m')
         node.pool.shutdown(wait=False)
         node.destroy_node()
         if rclpy.ok():
