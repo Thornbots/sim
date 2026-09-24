@@ -255,6 +255,11 @@
     <visual>
       <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
+    <!-- RPLIDAR A2M8 in its typical mode, as sllidar_node runs it with no
+         scan_mode: 10 Hz, 8000 samples/s, so 800 beams at 0.45 deg. Range
+         0.15-12 m. Noise is 1% of range per the datasheet's distance
+         resolution; gz only takes a constant, so 0.01 m is 1% at the
+         ~1 m ranges the sentry usually sees. -->
     <sensor name="lidar" type="gpu_lidar">
       <always_on>true</always_on>
       <visualize>true</visualize>
@@ -264,7 +269,7 @@
       <lidar>
         <scan>
           <horizontal>
-            <samples>3000</samples>
+            <samples>800</samples>
             <resolution>1.000000</resolution>
             <!-- Symmetric about the sensor's forward axis (-pi to +pi), NOT
                  0 to 2pi. Two reasons, and this is not cosmetic:
@@ -288,15 +293,14 @@
           </horizontal>
         </scan>
         <range>
-          <!-- Matches RPLIDAR A2M8 datasheet: 0.15-12m -->
-          <min>0.2</min>
+          <min>0.15</min>
           <max>12.0</max>
           <resolution>0.015000</resolution>
         </range>
         <noise>
           <type>gaussian</type>
           <mean>0.0</mean>
-          <stddev>0.03</stddev>
+          <stddev>0.01</stddev>
         </noise>
         <!-- (mask & flags) == 0 for the robot's own visuals, so it sees
              none of them. Everything else keeps sdformat's default
