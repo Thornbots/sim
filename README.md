@@ -219,16 +219,19 @@ ros2 launch sim sim.launch.py
 ros2 launch sim sim.launch.py gui:=false rviz:=false     # server only
 ros2 launch sim sim.launch.py x:=1.0 y:=0.5 yaw:=0.0     # spawn pose (z:= too)
 ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
-ros2 launch sim sim.launch.py camera:=true               # bridge /color and /depth
+ros2 launch sim sim.launch.py camera:=true               # add the camera, bridge /color and /depth
 ros2 launch sim sim.launch.py model:=sentry              # the old collision-free model
 ```
 
 `model:=` picks the robot: `sentry_v2` (the default, from the CAD) or
 `sentry`, the old model.
 
-The camera is off by default. Its color and depth images are the heaviest
-thing the sim publishes, and nothing in `sim` or its tests reads them. Turn it
-on to run the YOLO pipeline against sim or to fill rviz's Image panel.
+The camera is off by default, sensor and all: without `camera:=true` the
+robot spawns with no `rgbd_camera`, so gz renders nothing for it. Nothing in
+`sim` or its tests reads the images; every CV bench synthesises detections
+instead. The `camera` link and its TF stay, since the emulator and tracker
+place detections through that frame. Turn it on to run the YOLO pipeline
+against sim or to fill rviz's Image panel.
 
 These add synthetic wheel-odometry error. All are off by default; the
 `pose_emulator.py` note explains each one:
