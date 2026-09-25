@@ -13,24 +13,19 @@
 # limitations under the License.
 
 """
-Black-box shot-hit machinery: launches the sim plus the production CV pipeline.
+Aim-bench machinery: scores point_to_cv_target's shots against the true target.
 
-Scores each firing CVTarget on /dji_serial_bridge/cv_target, knowing
-nothing about how thornbots_pkg predicts (see sim/README.md's ## Notes for
-why). Importable only -- test_shot_hit.py holds the assertions and
-launch/shot_hit.launch.py defines the stack and runs them.
+No gz: shot_hit.launch.py runs a /clock, our chassis (point_shooter), the
+phantom target and its true TargetState. Scores each firing CVTarget on
+/dji_serial_bridge/cv_target, knowing nothing about how thornbots_pkg
+predicts. Importable only -- test_shot_hit.py holds the assertions.
 
-For each shot: computes the muzzle pose (from /sim/raw_odom +
-/sim/raw_joint_states, the same fixed FK chain cv_target_emulator.py
-uses, duplicated here rather than imported so this doesn't silently
-start passing/failing from an unrelated emulator refactor), simulates a
-straight-line 25 m/s projectile (muzzle-speed cap per
-ARCC_2026_SENTRY_CONTEXT.md), and checks the shot against all 4 of the
-target's armor panels (layout also duplicated from
-cv_target_emulator.py) at estimated impact time: a hit needs BOTH the
-flight path to pass within hit_radius of a panel's 0.1m x 0.1m face AND
-to arrive within that panel's 145-degree front exposure cone --
-geometrically on-target from behind the panel still misses.
+Each shot leaves root's true position at its exit time toward the newest aim
+before then (a perfect gimbal), at 25 m/s (ARCC_2026_SENTRY_CONTEXT.md's cap)
+plus our chassis velocity, flies straight, and is checked against all 4 armor
+panels (layout duplicated from cv_target_emulator.py) at impact: a hit needs
+the path within hit_radius of a panel's center AND arriving inside its
+145-degree front exposure cone.
 
 Requires mcb_relay.py to relay /cv/target onto
 /dji_serial_bridge/cv_target (wired 2026-07-27, fire decision merged into
@@ -50,7 +45,7 @@ import subprocess
 import time
 
 from dji_serial_bridge.msg import CVTarget
-from geometry_msgs.msg import Point, Twist
+from geometry_msgs.msg import Point
 from nav_msgs.msg import Odometry
 import numpy as np
 from rcl_interfaces.srv import SetParameters
@@ -59,7 +54,6 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import JointState
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -68,9 +62,11 @@ TRUTH_HISTORY_S = 1.0  # ground truth kept for interpolating impact-time poses
 # Static delay from a shot's fire time (CVTarget stamp + delay_ms) to the
 # projectile leaving the muzzle; flight time at MUZZLE_SPEED comes on top.
 FIRE_LATENCY_S = 0.05
-# The point bench's shooter (target_state:=truth): root sits here in odom with
-# no rotation, and shots leave from it toward the newest aim point.
+# The shooter: root starts here in odom and never rotates; shots leave from
+# it toward the newest aim point. shooter_speed bounces it along y within
+# SHOOTER_HALF_WIDTH of here (CV_SPLIT_PLAN.md 1.8).
 POINT_SHOOTER = (0.0, 0.0, 0.4)
+SHOOTER_HALF_WIDTH = 1.0
 
 DEFAULT_SPEEDS = [0.5, 1.0, 2.0, 4.0]
 DEFAULT_DURATION = 30.0  # sim-time seconds of steady-state sampling per case
@@ -79,10 +75,6 @@ SETTLE_S = 3.0  # sim-time seconds after a motion change before scoring starts
 # point_to_cv_target fires at most once per publish tick, so the publish rate
 # sets it; fire_rate_hz sits above so a tick a millisecond early still fires.
 TEST_FIRE_HZ = 40.0
-# How far cv_head_aim plus the joint PID trail a moving setpoint, past the
-# half tick each aim is held: shots overshot by ~27 ms of target motion when
-# aimed 62 ms ahead, so 35 ms in all. point_to_cv_target's gimbal_lag_s.
-GIMBAL_LAG_S = 0.035 - 0.5 / TEST_FIRE_HZ
 DEFAULT_LOG_DIR = '/tmp/shot_hit_test_logs'
 # The stationary case (speed=0, spin=0) is the harness's own sanity
 # check: a working pipeline hits a motionless target trivially. 0.5 is far
@@ -105,15 +97,8 @@ TARGET_PATHS = {
     'radial': {'path_angle_deg': 90.0, 'center_x': 3.5, 'half_width': 2.0},
     'diagonal': {'path_angle_deg': 45.0, 'center_x': 3.0, 'half_width': 2.0},
 }
-# --shooter-speed drives our own chassis back and forth along y within this
-# many metres of y=0, holding x at 0, so shooter_vel carries real motion.
-SHOOTER_HALF_WIDTH = 1.0
-SHOOTER_CMD_PERIOD_S = 0.05
 
 
-# The same fixed FK chain as cv_target_emulator.py's _camera_pose, ending at
-# muzzlelink instead of cameralink: root -> body -> head(yaw) ->
-# head_pitch(pitch) -> muzzle, sentry_v2's frames.
 def _rotation_from_rpy(r, p, y):
     cr, sr = math.cos(r), math.sin(r)
     cp, sp = math.cos(p), math.sin(p)
@@ -133,38 +118,9 @@ def _rotation_from_quaternion(x, y, z, w):
     ])
 
 
-def _rotation_axis_angle(axis, angle):
-    ax = np.array(axis, dtype=float)
-    ax = ax / np.linalg.norm(ax)
-    c, s = math.cos(angle), math.sin(angle)
-    k = np.array([
-        [0, -ax[2], ax[1]],
-        [ax[2], 0, -ax[0]],
-        [-ax[1], ax[0], 0],
-    ])
-    return np.eye(3) + s * k + (1 - c) * (k @ k)
-
-
-def _transform(rot, trans):
-    t = np.eye(4)
-    t[:3, :3] = rot
-    t[:3, 3] = trans
-    return t
-
-
-_T_FASTENED_2 = _transform(_rotation_from_rpy(0, 0, 0), (0.0, 0.0, 0.0))
-_HEADLINK_ORIGIN_R = _rotation_from_rpy(0, 0, 0)
-_HEADLINK_ORIGIN_T = (-0.000171242, 9.52126e-05, 0.248293)
-_HEADLINK_AXIS = (0.0, 0.0, -1.0)
-_HEADPITCH_ORIGIN_R = _rotation_from_rpy(0, 0, 0)
-_HEADPITCH_ORIGIN_T = (-0.00760542, -0.100122, 0.14235)
-_HEADPITCH_AXIS = (0.0, 1.0, 0.0)
-_MUZZLELINK_T = (0.0, 0.1128, 0.0)
-
 # Same 4-panel layout as cv_target_emulator.py's _panel_poses (front/left/
-# back/right, spaced 90 degrees apart around the chassis center) --
-# duplicated for the same "independent of an emulator refactor" reason as
-# the FK constants above.
+# back/right, spaced 90 degrees apart around the chassis center),
+# duplicated so an emulator refactor can't move the bench's goalposts.
 _PANEL_OFFSETS_RAD = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
 _PANEL_USES_RADIUS_X = (True, False, True, False)
 PANEL_NAMES = ('front', 'left', 'back', 'right')  # _PANEL_OFFSETS_RAD order
@@ -223,6 +179,18 @@ def _panel_poses(target_pos, target_rot, stagger=0.0):
         world_normal = target_rot @ local_normal
         poses.append((panel_pos, world_normal))
     return poses
+
+
+def _interpolate(history, t):
+    """Linearly interpolate [(stamp_s, a, b)] to time t, holding the ends."""
+    if t <= history[0][0]:
+        return history[0][1:]
+    if t >= history[-1][0]:
+        return history[-1][1:]
+    i = next(k for k in range(1, len(history)) if history[k][0] >= t)
+    (t0, *v0), (t1, *v1) = history[i - 1], history[i]
+    a = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
+    return tuple(x0 + a * (x1 - x0) for x0, x1 in zip(v0, v1))
 
 
 def spin_hz_for_speed(speed, speed_min, speed_max):
@@ -294,46 +262,26 @@ class LaunchTree:
 
 class ShotHitSampler(Node):
     """
-    Subscribes the sim, ground-truth and cv_target topics the scorer needs.
+    Subscribes the ground-truth and cv_target topics the scorer needs.
 
-    /sim/raw_odom + /sim/raw_joint_states give the muzzle FK,
-    /target/ground_truth_odom the impact truth, and
-    /dji_serial_bridge/cv_target the aim points that carry the fire
-    decision.
-
-    Each CVTarget with fire=True becomes one pending shot, resolved
-    once ground-truth data at/after its estimated impact time arrives.
+    /target/ground_truth_odom is the impact truth, and every CVTarget on
+    /dji_serial_bridge/cv_target an aim point; each with fire=True becomes
+    one shot, resolved once truth at/after its impact time arrives.
     """
 
-    def __init__(self, hit_radius, marker_lifetime_s=5.0, panel_stagger=0.0,
-                 shooter_speed=0.0, point=False):
-        # use_sim_time, or marker headers get stamped with wall-clock time
-        # while the rest of the stack (sim, amcl's map->odom TF) runs on
-        # sim time -- rviz then can't resolve the marker's TF at its
-        # timestamp and silently drops it (this was why shot markers
-        # never appeared).
+    def __init__(self, hit_radius, marker_lifetime_s=5.0, panel_stagger=0.0):
+        # use_sim_time, or rviz can't place the markers on sim-time TF.
         super().__init__(
             'shot_hit_test_sampler',
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
             automatically_declare_parameters_from_overrides=True)
         self.hit_radius = hit_radius
-        self.panel_stagger = panel_stagger  # must match cv_target_emulator's panel_stagger_m
-        self.shooter_speed = shooter_speed
-        self._shooter_dir = 1.0
-        self._last_shooter_cmd_s = None
+        self.panel_stagger = panel_stagger  # must match target_state_truth's panel_stagger_m
         self.marker_lifetime = Duration(seconds=marker_lifetime_s).to_msg()
 
-        # point: no gz; shots leave POINT_SHOOTER toward the newest aim.
-        self.point = point
-        if point and shooter_speed > 0.0:
-            raise ValueError('the point bench has a fixed shooter; shooter_speed needs gz')
-        self._root_pos = np.array(POINT_SHOOTER) if point else None
-        self._root_rot = np.eye(3) if point else None
-        self._root_frame_id = 'odom' if point else None
-        self._aims = []  # point: [(stamp_s, root-frame aim)], last second
-        self._panels_tick = -1  # point: last 20 Hz tick the panels were drawn on
-        self._head_yaw = 0.0
-        self._head_pitch = 0.0
+        self._shooter_history = []  # [(stamp_s, pos, vel)], last TRUTH_HISTORY_S
+        self._aims = []  # [(stamp_s, root-frame aim)], last second
+        self._panels_tick = -1  # last 20 Hz tick the panels were drawn on
         self._target_pos = None
         self._truth_history = []  # [(stamp_s, pos, yaw)], last TRUTH_HISTORY_S
         self._target_rot = None
@@ -346,113 +294,69 @@ class ShotHitSampler(Node):
         self.shot_records = []  # one dict per scored shot; see _shot_record
         self._shot_marker_id = 0
 
-        if not point:
-            self.create_subscription(Odometry, '/sim/raw_odom', self._on_root_odom, 10)
-            self.create_subscription(
-                JointState, '/sim/raw_joint_states', self._on_joint_states, 10)
         self.create_subscription(
             Odometry, '/target/ground_truth_odom', self._on_target_odom, 10)
+        self.create_subscription(
+            Odometry, '/shooter/ground_truth_odom', self._on_shooter_odom, 10)
         # Best-effort, matching mcb_relay's cv_target publisher.
         self.create_subscription(
             CVTarget, '/dji_serial_bridge/cv_target', self._on_cv_target,
             qos_profile_sensor_data)
-        # So each shot's straight-line path is visible in rviz
-        # (cv_target.rviz's ShotMarkers display) as it's resolved --
-        # green = hit, red = miss. Not used for hit/miss judging itself,
-        # purely a visualization aid.
+        # Shots, panels and in-flight dots for rviz (cv_target.rviz); not
+        # used for scoring.
         self.marker_pub = self.create_publisher(MarkerArray, '/shot_markers', 10)
-        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.create_timer(1.0 / 30.0, self._publish_in_flight)
 
     @staticmethod
     def _stamp_s(header_stamp):
         return header_stamp.sec + header_stamp.nanosec / 1e9
 
-    def _on_root_odom(self, msg):
-        p = msg.pose.pose.position
-        q = msg.pose.pose.orientation
-        self._root_pos = np.array([p.x, p.y, p.z])
-        self._root_rot = _rotation_from_quaternion(q.x, q.y, q.z, q.w)
-        self._root_frame_id = msg.header.frame_id
-        self._drive_shooter(self._stamp_s(msg.header.stamp))
-
-    def _drive_shooter(self, now_s):
-        """Bounce our chassis along y at shooter_speed, holding x at 0 (chassis never yaws)."""
-        if self.shooter_speed <= 0.0:
-            return
-        if self._last_shooter_cmd_s is not None \
-                and now_s - self._last_shooter_cmd_s < SHOOTER_CMD_PERIOD_S:
-            return
-        self._last_shooter_cmd_s = now_s
-        x, y = self._root_pos[0], self._root_pos[1]
-        if y >= SHOOTER_HALF_WIDTH:
-            self._shooter_dir = -1.0
-        elif y <= -SHOOTER_HALF_WIDTH:
-            self._shooter_dir = 1.0
-        cmd = Twist()
-        cmd.linear.x = max(-self.shooter_speed, min(self.shooter_speed, -2.0 * x))
-        cmd.linear.y = self._shooter_dir * self.shooter_speed
-        self.cmd_vel_pub.publish(cmd)
-
-    def _on_joint_states(self, msg):
-        if 'headlink' in msg.name:
-            self._head_yaw = msg.position[msg.name.index('headlink')]
-        if 'headpitch' in msg.name:
-            self._head_pitch = msg.position[msg.name.index('headpitch')]
-        self._launch_due(self._stamp_s(msg.header.stamp))
-
     def _launch_due(self, now_s):
-        """Launch commanded shots whose exit time has come, from the muzzle pose then."""
+        """Launch commanded shots whose exit time has come."""
+        if self._target_pos is None or not self._aims or not self._shooter_history:
+            return
+        # Wait for shooter truth at the exit, so it is interpolated, not held.
+        now_s = min(now_s, self._shooter_history[-1][0])
         due = [f for f in self._unlaunched if f['exit_time'] <= now_s]
-        if not due or self._root_pos is None or self._target_pos is None:
+        if not due:
             return
         self._unlaunched = [f for f in self._unlaunched if f['exit_time'] > now_s]
-        if not self.point:
-            muzzle_pos, aim_dir = self._muzzle_pose()
         for fire in due:
-            if self.point:
-                muzzle_pos, aim_dir = self._point_pose(fire['exit_time'])
+            muzzle_pos, shot_vel = self._shot_launch(fire['exit_time'])
+            shot_speed = float(np.linalg.norm(shot_vel))
             shot_range = float(np.linalg.norm(self._target_pos - muzzle_pos))
             # Resolved once truth covers the latest plausible impact; each
             # panel is then judged at its own arrival time (see _resolve_pending).
             self._pending_shots.append({
                 'fire_time': fire['exit_time'],
-                'impact_time': fire['exit_time'] + (shot_range + 1.0) / MUZZLE_SPEED,
+                'impact_time': fire['exit_time'] + (shot_range + 1.0) / shot_speed,
                 'muzzle_pos': muzzle_pos,
-                'aim_dir': aim_dir,
+                'aim_dir': shot_vel / shot_speed,
+                'shot_speed': shot_speed,
                 'shot_range': shot_range,
                 'fire': fire,
             })
 
-    def _point_pose(self, t):
-        """Return the point shooter's (position, unit direction) at t: toward the newest aim."""
+    def _shot_launch(self, t):
+        """
+        Return a shot's (muzzle position, world velocity) leaving at t.
+
+        The gun points along the newest root-frame aim (root never rotates), and
+        the projectile carries our chassis velocity on top of MUZZLE_SPEED.
+        """
         aims = [a for stamp, a in self._aims if stamp <= t]
         aim = aims[-1] if aims else self._aims[0][1]
-        return self._root_pos.copy(), aim / (np.linalg.norm(aim) + 1e-9)
+        pos, vel = _interpolate(self._shooter_history, t)
+        return pos, MUZZLE_SPEED * aim / (np.linalg.norm(aim) + 1e-9) + vel
 
-    def _muzzle_pose(self):
-        """
-        Compute world (position, unit forward direction) of the muzzle via the fixed FK chain.
-
-        No TF lookup -- see module docstring.
-        """
-        t_root = _transform(self._root_rot, self._root_pos)
-        t_body = t_root @ _T_FASTENED_2
-        t_headlink = _transform(
-            _HEADLINK_ORIGIN_R @ _rotation_axis_angle(_HEADLINK_AXIS, self._head_yaw),
-            _HEADLINK_ORIGIN_T)
-        t_head = t_body @ t_headlink
-        t_headpitch = _transform(
-            _HEADPITCH_ORIGIN_R @ _rotation_axis_angle(_HEADPITCH_AXIS, self._head_pitch),
-            _HEADPITCH_ORIGIN_T)
-        t_muzzle = t_head @ t_headpitch @ _transform(np.eye(3), _MUZZLELINK_T)
-        pos = t_muzzle[:3, 3]
-        # Camera-local +X is forward, not +Z -- see cv_target_emulator.py's
-        # REP-103 conversion (rel_cam[0] is called 'fwd'). This was wrong
-        # (used +Z) and is the likely cause of the earlier ~2.85m
-        # near-constant miss distance across every speed.
-        forward = t_muzzle[:3, :3] @ np.array([1.0, 0.0, 0.0])
-        return pos, forward / np.linalg.norm(forward)
+    def _on_shooter_odom(self, msg):
+        p, v = msg.pose.pose.position, msg.twist.twist.linear
+        stamp = self._stamp_s(msg.header.stamp)
+        # target_driver's twist is world-frame, despite child_frame_id.
+        self._shooter_history.append(
+            (stamp, np.array([p.x, p.y, p.z]), np.array([v.x, v.y, v.z])))
+        self._shooter_history = [
+            h for h in self._shooter_history if stamp - h[0] <= TRUTH_HISTORY_S]
 
     def _on_target_odom(self, msg):
         p = msg.pose.pose.position
@@ -466,9 +370,8 @@ class ShotHitSampler(Node):
             yaw = prev_yaw + math.atan2(math.sin(yaw - prev_yaw), math.cos(yaw - prev_yaw))
         self._truth_history.append((stamp, self._target_pos.copy(), yaw))
         self._truth_history = [h for h in self._truth_history if stamp - h[0] <= TRUTH_HISTORY_S]
-        if self.point:
-            self._launch_due(stamp)
-            self._publish_panels(stamp)
+        self._launch_due(stamp)
+        self._publish_panels(stamp)
         self._resolve_pending(stamp)
 
     def _truth_at(self, t):
@@ -478,27 +381,17 @@ class ShotHitSampler(Node):
 
     def _truth_pos_yaw(self, t):
         """Target position and unwrapped yaw linearly interpolated to time t."""
-        hist = self._truth_history
-        if t <= hist[0][0]:
-            _, pos, yaw = hist[0]
-        elif t >= hist[-1][0]:
-            _, pos, yaw = hist[-1]
-        else:
-            i = next(k for k in range(1, len(hist)) if hist[k][0] >= t)
-            (t0, p0, y0), (t1, p1, y1) = hist[i - 1], hist[i]
-            a = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
-            pos, yaw = p0 + a * (p1 - p0), y0 + a * (y1 - y0)
-        return pos, yaw
+        return _interpolate(self._truth_history, t)
 
     def _on_cv_target(self, msg):
-        if self.point and msg.confidence > 0.0:
+        if msg.confidence > 0.0:
             stamp = self._stamp_s(msg.header.stamp)
             self._aims.append((stamp, np.array([msg.x, msg.y, msg.z])))
             self._aims = [a for a in self._aims if stamp - a[0] <= 1.0]
         if not msg.fire:
             return
-        if self._root_pos is None or self._target_pos is None:
-            return  # no muzzle pose / ground truth yet to evaluate against
+        if self._target_pos is None:
+            return  # no ground truth yet to evaluate against
 
         # The projectile leaves FIRE_LATENCY_S after the commanded fire
         # time, aimed wherever the muzzle points then (_launch_due).
@@ -523,11 +416,11 @@ class ShotHitSampler(Node):
             # panel is judged against interpolated truth at the moment the
             # projectile reaches it along the ray: at 1-2Hz spin, the
             # nearest truth sample (60Hz) is up to ~9 deg of yaw off.
-            pos, rot = self._truth_at(shot['fire_time'] + shot['shot_range'] / MUZZLE_SPEED)
+            pos, rot = self._truth_at(shot['fire_time'] + shot['shot_range'] / shot['shot_speed'])
             arrivals = []
             for panel_pos, _ in _panel_poses(pos, rot, self.panel_stagger):
                 along = float(np.dot(panel_pos - shot['muzzle_pos'], shot['aim_dir']))
-                arrivals.append(shot['fire_time'] + max(along, 0.0) / MUZZLE_SPEED)
+                arrivals.append(shot['fire_time'] + max(along, 0.0) / shot['shot_speed'])
             # Nearest panel among those facing the muzzle (within the front
             # 145 degrees, PANEL_EXPOSURE_HALF_ANGLE); the far side can line
             # up behind a hit but could never register one. Falls back to the
@@ -598,7 +491,7 @@ class ShotHitSampler(Node):
         }
 
     def _publish_panels(self, stamp):
-        """Point bench: draw the target's four panels, which no emulator draws here."""
+        """Draw the target's four panels, which nothing else draws here."""
         if int(stamp * 20.0) == self._panels_tick:
             return  # 20 Hz is plenty for rviz
         self._panels_tick = int(stamp * 20.0)
@@ -621,7 +514,7 @@ class ShotHitSampler(Node):
         """Draw every airborne shot as a yellow dot at its current position."""
         now = self.get_clock().now().nanoseconds / 1e9
         marker = Marker()
-        marker.header.frame_id = self._root_frame_id or 'odom'
+        marker.header.frame_id = 'odom'
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.ns = 'in_flight'
         marker.id = 0
@@ -630,7 +523,7 @@ class ShotHitSampler(Node):
         marker.scale.x = marker.scale.y = marker.scale.z = 0.02
         marker.color.r, marker.color.g, marker.color.b, marker.color.a = 1.0, 1.0, 0.0, 1.0
         for shot in self._pending_shots:
-            flown = MUZZLE_SPEED * (now - shot['fire_time'])
+            flown = shot['shot_speed'] * (now - shot['fire_time'])
             if 0.0 <= flown <= shot['shot_range']:
                 p = shot['muzzle_pos'] + shot['aim_dir'] * flown
                 marker.points.append(Point(x=float(p[0]), y=float(p[1]), z=float(p[2])))
@@ -645,7 +538,7 @@ class ShotHitSampler(Node):
         it (green hit, orange miss); its length is the miss distance.
         """
         end_pt = Point(x=float(ray_pt[0]), y=float(ray_pt[1]), z=float(ray_pt[2]))
-        header_frame = self._root_frame_id or 'odom'
+        header_frame = 'odom'
         stamp = self.get_clock().now().to_msg()
 
         marker = Marker()
@@ -706,8 +599,6 @@ class ShotHitSampler(Node):
         dropped = len(self._pending_shots) + len(self._unlaunched)
         self._pending_shots = []
         self._unlaunched = []
-        if self.shooter_speed > 0.0:
-            self.cmd_vel_pub.publish(Twist())
         return dropped
 
     def spin_for(self, seconds):
@@ -753,7 +644,7 @@ class ShotHitSampler(Node):
 
 class CvStack:
     """
-    The sim plus the production CV pipeline, launched once and reused for every case.
+    The aim bench's stack, launched once and reused for every case.
 
     launch/shot_hit.launch.py defines the stack. With external=True that launch
     is already running (it started this pytest) and this only waits for it;
@@ -762,22 +653,14 @@ class CvStack:
     both every tick), so the target keeps its place and the stack its state.
     """
 
-    def __init__(self, headless, log_dir, external=False, real_time_factor='0',
-                 target_state='tracker'):
+    def __init__(self, headless, log_dir, external=False, shooter_speed=0.0):
         self.launch = None
-        # truth: target_state_truth stands in for the emulator, selector and
-        # tracker (the aim bench).
-        self.truth = target_state == 'truth'
-        self.estimators = (['sim_clock', 'target_driver', 'target_state_truth'] if self.truth
-                           else ['robot_state_publisher', 'target_selector',
-                                 'target_tracker'])
+        self.shooter_speed = shooter_speed  # fixed for the run; launch sets the motion
         if not external:
             self.launch = LaunchTree(
                 'stack',
                 ['ros2', 'launch', 'sim', 'shot_hit.launch.py', 'run_tests:=false',
-                 f'headless:={str(headless).lower()}',
-                 f'real_time_factor:={real_time_factor}',
-                 f'target_state:={target_state}'],
+                 f'headless:={str(headless).lower()}', f'shooter_speed:={shooter_speed}'],
                 os.path.join(log_dir, 'stack.log'))
         # One JSON line per scored shot, across the whole run; see _shot_record.
         self.shots_path = os.path.join(log_dir, 'shots.jsonl')
@@ -788,8 +671,6 @@ class CvStack:
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
         self._set_params = self.node.create_client(
             SetParameters, '/target_driver/set_parameters')
-        self._set_emulator_params = self.node.create_client(
-            SetParameters, '/cv_target_emulator/set_parameters')
         self._set_truth_params = self.node.create_client(
             SetParameters, '/target_state_truth/set_parameters')
 
@@ -798,13 +679,12 @@ class CvStack:
         open(self.panel_hits_path, 'w').close()
         if self.launch is not None:
             self.launch.start()
-        probe = ShotHitSampler(hit_radius=0.0, point=self.truth)
+        probe = ShotHitSampler(hit_radius=0.0)
         try:
-            probe.wait_until(
-                lambda: probe._root_pos is not None and probe._target_pos is not None,
-                timeout=60.0,
-                description='/sim/raw_odom + /target/ground_truth_odom publishing')
-            ready = ['point_to_cv_target', 'mcb_relay', *self.estimators]
+            probe.wait_until(lambda: probe._target_pos is not None, timeout=60.0,
+                             description='/target/ground_truth_odom publishing')
+            ready = ['sim_clock', 'target_driver', 'shooter_driver', 'point_shooter',
+                     'target_state_truth', 'point_to_cv_target', 'mcb_relay']
             probe.wait_until(lambda: probe.nodes_up(*ready), timeout=15.0,
                              description=f'{", ".join(ready)} nodes up')
         finally:
@@ -826,12 +706,8 @@ class CvStack:
         """Set the target's speed, spin rate, panel stagger and path; raise if refused."""
         self._set(self._set_params, 'target_driver',
                   {'target_speed': speed, 'spin_hz': spin_hz, **TARGET_PATHS[path]})
-        if self.truth:
-            self._set(self._set_truth_params, 'target_state_truth',
-                      {'panel_stagger_m': stagger})
-        else:
-            self._set(self._set_emulator_params, 'cv_target_emulator',
-                      {'panel_stagger_m': stagger})
+        self._set(self._set_truth_params, 'target_state_truth',
+                  {'panel_stagger_m': stagger})
         print(f'[stack] target set to speed={speed} m/s, spin={spin_hz:.2f} Hz, '
               f'panel stagger={stagger:.3f} m, {path} path')
 
@@ -841,12 +717,10 @@ class CvStack:
         self.node.destroy_node()
 
 
-def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0, path='lateral',
-             shooter_speed=0.0):
+def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0, path='lateral'):
     """
-    Switch the target to (speed, spin_hz, stagger, path), let the tracker settle, then score.
+    Switch the target to (speed, spin_hz, stagger, path), let it settle, then score.
 
-    shooter_speed > 0 drives our own chassis for the whole case, settle included.
     Shots fired during the SETTLE_S window are discarded.
     """
     stack.set_target(speed, spin_hz, stagger, path)
@@ -854,8 +728,7 @@ def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0, path='lat
     # shots across the view, so theirs expire sooner still.
     sampler = ShotHitSampler(hit_radius=hit_radius,
                              marker_lifetime_s=1.0 / max(1.0, speed),
-                             panel_stagger=stagger, shooter_speed=shooter_speed,
-                             point=stack.truth)
+                             panel_stagger=stagger)
     try:
         sampler.spin_for(SETTLE_S)
         sampler.reset_score()
@@ -864,7 +737,7 @@ def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0, path='lat
         dropped = sampler.finish()
         sampler.destroy_node()
     case = {'speed': speed, 'spin_hz': round(spin_hz, 3), 'panel_stagger_m': stagger,
-            'target_path': path, 'shooter_speed': shooter_speed}
+            'target_path': path, 'shooter_speed': stack.shooter_speed}
     with open(stack.shots_path, 'a') as f:
         for rec in sampler.shot_records:
             f.write(json.dumps({**case, **rec}) + '\n')

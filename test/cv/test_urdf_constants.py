@@ -16,18 +16,16 @@
 Pin every hard-coded copy of the head FK chain against thornbots_pkg's URDF.
 
 The root->body->head->head_pitch->camera/muzzle constants are duplicated on
-purpose across cv_head_aim_core, cv_target_emulator, shot_hit_harness, sim's
-sentry_v2 model and thornbots_pkg's URDF -- see shot_hit_harness.py's module
-docstring for why the harness re-derives the chain instead of importing
-the emulator's. That is fine for the FK *algebra*; it is not fine for the
+purpose across cv_head_aim_core, cv_target_emulator, sim's sentry_v2 model
+and thornbots_pkg's URDF. That is fine for the FK *algebra*; it is not fine for the
 *numbers*, which had no cross-check at all. A drifted origin leaves every
 other test green (test_cv_head_aim.py imports its constants from the
 module it is testing, so both sides of its round-trip move together)
 and surfaces only as a collapsed shot-hit rate -- which is how -0.38885
 cost a debugging cycle already, see sim/README.md's ## Notes.
 
-So: parse the URDF and assert each copy against it. The emulator and
-harness are read with `ast` rather than imported, because both pull in
+So: parse the URDF and assert each copy against it. The emulator is read
+with `ast` rather than imported, because it pulls in
 rclpy and ROS message packages and this suite must stay runnable on a
 bare Python 3 + pytest install. Launches nothing, so not `integration`.
 """
@@ -54,7 +52,6 @@ URDF = os.path.join(WORKSPACE_SRC, 'thornbots_pkg', 'urdf', 'sentry.urdf.xacro')
 SIM_URDF = os.path.join(SIM_DIR, 'urdf', 'sentry_v2', 'sentry_v2.urdf')
 SIM_XACRO = os.path.join(SIM_DIR, 'urdf', 'sentry_v2.urdf.xacro')
 EMULATOR = os.path.join(SIM_DIR, 'sim', 'cv_target_emulator.py')
-HARNESS = os.path.join(os.path.dirname(__file__), 'shot_hit_harness.py')
 
 CHAIN_JOINTS = ('fastened_2', 'headlink', 'headpitch', 'cameralink', 'muzzlelink')
 EXACT_TOL = 1e-12
@@ -156,10 +153,6 @@ def test_head_aim_core_matches_urdf():
 
 def test_emulator_fk_constants_match_urdf():
     _assert_chain_matches_urdf(EMULATOR, 'cameralink')
-
-
-def test_harness_fk_constants_match_urdf():
-    _assert_chain_matches_urdf(HARNESS, 'muzzlelink')
 
 
 def test_sim_model_matches_urdf():
