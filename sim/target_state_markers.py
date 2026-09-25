@@ -18,9 +18,10 @@ Draw a TargetState in rviz: its 4 panels, center, velocity and acceleration.
 input_topic (/cv/target_state) -> output_topic (/cv/target_state_markers),
 at most max_rate_hz (30) of wall time, the newest state only: rviz reads one
 message per topic per frame, so a faster stream only queues. Panels follow
-TargetState.msg's armor model; orange when valid, grey when not, the tracked
-panel (k = 0) brighter. Arrows: velocity x velocity_scale_s (magenta),
-acceleration x accel_scale_s2 (red). Visualization only.
+TargetState.msg's armor model, canted 15 deg per S122; orange when valid,
+grey when not, the tracked panel (k = 0) brighter. Arrows: velocity x
+velocity_scale_s (magenta), acceleration x accel_scale_s2 (red).
+Visualization only.
 """
 import math
 
@@ -29,7 +30,7 @@ from geometry_msgs.msg import Point
 import rclpy
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
-from sim.cv_target_emulator import PANEL_SIZE
+from sim.cv_target_emulator import canted_panel_quat, PANEL_SIZE
 from visualization_msgs.msg import Marker, MarkerArray
 
 LIFETIME_NS = 500_000_000  # a state that stops arriving clears in 0.5 s
@@ -100,8 +101,8 @@ class TargetStateMarkers(Node):
             panel.pose.position = Point(x=msg.center.x + r * math.cos(yaw),
                                         y=msg.center.y + r * math.sin(yaw),
                                         z=msg.center.z + dz)
-            panel.pose.orientation.z = math.sin(yaw / 2.0)
-            panel.pose.orientation.w = math.cos(yaw / 2.0)
+            o = panel.pose.orientation
+            o.x, o.y, o.z, o.w = canted_panel_quat(yaw)
             panel.scale.x, panel.scale.y, panel.scale.z = 0.02, PANEL_SIZE, PANEL_SIZE
             out.append(panel)
         out.append(self._arrow(msg, 'state_velocity', msg.velocity,
