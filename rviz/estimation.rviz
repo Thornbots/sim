@@ -1,5 +1,5 @@
-# C1 aim bench (shot_hit.launch.py). Every topic is depth 1: rviz reads one message
-# per topic per frame, so a deeper queue only shows older data.
+# C2 estimation bench (estimation.launch.py): target_tracker's model against the truth.
+# Every topic is depth 1: rviz reads one message per topic per frame.
 Panels:
   - Class: rviz_common/Displays
     Help Height: 78
@@ -48,42 +48,33 @@ Visualization Manager:
       Name: TF
       Show Arrows: false
       Show Axes: true
-      Show Names: true
+      Show Names: false
       Update Interval: 0
       Value: true
-    - Angle Tolerance: 0.10000000149011612
-      Class: rviz_default_plugins/Odometry
-      Covariance:
-        Value: false
-      Enabled: true
-      Keep: 1
-      Name: Target truth
-      Position Tolerance: 0.10000000149011612
-      Shape:
-        Alpha: 1
-        Axes Length: 0.5
-        Axes Radius: 0.05
-        Color: 0; 170; 255
-        Head Length: 0.1
-        Head Radius: 0.05
-        Shaft Length: 0.4
-        Shaft Radius: 0.02
-        Value: Arrow
-      Topic:
+    - Alpha: 0.6
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description File: ""
+      Description Source: Topic
+      Description Topic:
         Depth: 1
-        Durability Policy: Volatile
-        Filter size: 10
+        Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /target/ground_truth_odom
+        Value: /robot_description
+      Enabled: true
+      Name: RobotModel
+      TF Prefix: ""
+      Update Interval: 0
       Value: true
+      Visual Enabled: true
     - Angle Tolerance: 0.10000000149011612
       Class: rviz_default_plugins/Odometry
       Covariance:
         Value: false
       Enabled: true
       Keep: 1
-      Name: Shooter (root)
+      Name: Our chassis (/sim/raw_odom)
       Position Tolerance: 0.10000000149011612
       Shape:
         Alpha: 1
@@ -101,11 +92,11 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /shooter/ground_truth_odom
+        Value: /sim/raw_odom
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Shots (panels, aim, shots)
+      Name: Truth + detection (emulator)
       Namespaces:
         {}
       Topic:
@@ -113,11 +104,23 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /shot_markers
+        Value: /target_markers
+      Value: true
+    - Alpha: 1
+      Class: rviz_default_plugins/Polygon
+      Color: 255; 255; 0
+      Enabled: true
+      Name: Selected panel (target_selector)
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /cv/panel_polygon
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: TargetState (aimed at)
+      Name: Tracker TargetState
       Namespaces:
         {}
       Topic:

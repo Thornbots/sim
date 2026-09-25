@@ -77,7 +77,7 @@ def _stack(context):
         sim_args.update(gui='false', rviz='false')
     else:
         sim_args['rviz_config'] = os.path.join(
-            get_package_share_directory('sim'), 'rviz', 'cv_target.rviz')
+            get_package_share_directory('sim'), 'rviz', 'estimation.rviz')
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
@@ -100,6 +100,8 @@ def _stack(context):
         tracker['process_noise_accel'] = float(cfg['process_noise_accel'])
     actions = [sim, robot_tf, cv_node('target_selector'),
                cv_node('target_tracker', **tracker), cv_node('point_to_cv_target')]
+    if not headless:
+        actions.append(cv_node('target_state_markers', package='sim'))
     if _is_true(context, 'run_tests'):
         actions += _tests(context, _test_dir())
     return actions

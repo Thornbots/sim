@@ -113,6 +113,7 @@ def _point_stack(context, harness, headless):
         cv_node('mcb_relay'),
     ]
     if not headless:
+        actions.append(cv_node('target_state_markers', package='sim'))
         actions.append(Node(
             package='rviz2', executable='rviz2', name='rviz2', output='screen',
             arguments=['-d', os.path.join(get_package_share_directory('sim'), 'rviz',
