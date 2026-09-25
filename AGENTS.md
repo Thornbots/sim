@@ -227,6 +227,13 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   vectors; a backwards rf2o once scored 1% error on magnitude.
 - ARCC zone coordinates (`../ARCC_2026_SENTRY_CONTEXT.md` Figures 3-1 to
   3-9) aren't in the world yet.
+- **Jazzy moves `sim` from gz Fortress to Harmonic.** Both xacros'
+  `ignition-gazebo-*-system` plugins become `gz-sim-*-system`,
+  `head_slider_relay.py`'s `ign topic`/`ignition.msgs.Double` become
+  `gz topic`/`gz.msgs.Double`, the `ign gazebo` cleanup pattern in
+  `drift_harness.py` becomes `gz sim`, and `setup.cfg`'s dashed keys and
+  `setup.py`'s `tests_require` go. `install-sim.sh`'s `pip install trimesh`
+  fails under Ubuntu 24.04's PEP 668. Full list: `../JAZZY_PLAN.md`.
 
 ## Committing
 
