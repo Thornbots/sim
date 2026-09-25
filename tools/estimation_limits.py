@@ -28,8 +28,8 @@ import os
 import sys
 
 # estimation_metrics.METRICS
-METRICS = ('facing_panel_m', 'panel_m', 'center_m', 'velocity_m_s', 'yaw_rad',
-           'yaw_rate_rad_s', 'radius_m', 'z_offset_m')
+METRICS = ('facing_panel_m', 'panel_m', 'center_m', 'center_along_m', 'center_across_m',
+           'velocity_m_s', 'yaw_rad', 'yaw_rate_rad_s', 'radius_m', 'z_offset_m')
 
 
 def main(argv=None):

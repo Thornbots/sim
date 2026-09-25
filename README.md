@@ -89,8 +89,8 @@ ros2 launch sim estimation.launch.py
 Per case it prints how long the facing panel's error took to stay under
 5 cm, the fraction of states valid, and the mean and p95 over the last 30 s
 of: the facing panel's error (the panel Part 1 aims at), all four panels',
-center, velocity, yaw (mod a quarter turn), spin rate, radius and height per
-pair. `blackout:=true` drops every detection for 0.3 s in each 2 s.
+center (also split along and across the ray from us), velocity, yaw (mod a
+quarter turn), spin rate, radius and height per pair. `blackout:=true` drops every detection for 0.3 s in each 2 s.
 `camera_latency_s:=0.03` stamps detections late and tells the tracker to
 undo it (`tracker_camera_latency_s:=0` to leave it undone).
 `shooter_speed:=1.0`, `target_path:=`, `speeds:=` and `panel_layout:=` work
