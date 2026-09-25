@@ -88,20 +88,50 @@ STATIONARY_MIN_HIT_RATE = 0.5
 MOVING_MIN_HIT_RATE = 0.25
 # Per-cell floors (CV_SPLIT_PLAN.md 1.7): the lowest score over three runs
 # minus FLOOR_MARGIN, printed from their scores.jsonl by tools/shot_floors.py.
-# Seeded from ONE run (2026-09-24, chase, still shooter) until three exist.
-# Cells not listed fall back to the two placeholders above.
+# Three chase-mode runs per path and shooter speed, 4x, 2026-09-25; the
+# comment on each is its three scores. Unlisted cells use the placeholders.
 FLOOR_MARGIN = 0.10
 FLOORS = {
-    'flat-stationary-lateral-shooter0': 0.892,
-    'flat-speed0.5-lateral-shooter0': 0.886,
-    'flat-speed1-lateral-shooter0': 0.880,
-    'flat-speed2-lateral-shooter0': 0.873,
-    'flat-speed4-lateral-shooter0': 0.863,
-    'staggered-stationary-lateral-shooter0': 0.892,
-    'staggered-speed0.5-lateral-shooter0': 0.887,
-    'staggered-speed1-lateral-shooter0': 0.879,
-    'staggered-speed2-lateral-shooter0': 0.874,
-    'staggered-speed4-lateral-shooter0': 0.879,
+    'flat-speed0.5-lateral-shooter0': 0.883,  # 0.987, 0.983, 0.985
+    'flat-speed1-lateral-shooter0': 0.876,  # 0.980, 0.978, 0.976
+    'flat-speed2-lateral-shooter0': 0.870,  # 0.972, 0.970, 0.972
+    'flat-speed4-lateral-shooter0': 0.865,  # 0.968, 0.968, 0.965
+    'flat-stationary-lateral-shooter0': 0.891,  # 0.992, 0.992, 0.991
+    'staggered-speed0.5-lateral-shooter0': 0.885,  # 0.988, 0.986, 0.985
+    'staggered-speed1-lateral-shooter0': 0.876,  # 0.978, 0.979, 0.976
+    'staggered-speed2-lateral-shooter0': 0.868,  # 0.971, 0.971, 0.968
+    'staggered-speed4-lateral-shooter0': 0.870,  # 0.970, 0.971, 0.972
+    'staggered-stationary-lateral-shooter0': 0.892,  # 0.993, 0.993, 0.992
+    'flat-speed0.5-lateral-shooter1': 0.884,  # 0.988, 0.985, 0.984
+    'flat-speed1-lateral-shooter1': 0.875,  # 0.981, 0.977, 0.975
+    'flat-speed2-lateral-shooter1': 0.868,  # 0.973, 0.968, 0.970
+    'flat-speed4-lateral-shooter1': 0.854,  # 0.954, 0.960, 0.956
+    'flat-stationary-lateral-shooter1': 0.890,  # 0.993, 0.990, 0.993
+    'staggered-speed0.5-lateral-shooter1': 0.884,  # 0.985, 0.985, 0.984
+    'staggered-speed1-lateral-shooter1': 0.878,  # 0.978, 0.978, 0.979
+    'staggered-speed2-lateral-shooter1': 0.862,  # 0.971, 0.962, 0.972
+    'staggered-speed4-lateral-shooter1': 0.856,  # 0.960, 0.956, 0.959
+    'staggered-stationary-lateral-shooter1': 0.892,  # 0.992, 0.992, 0.992
+    'flat-speed0.5-radial-shooter0': 0.891,  # 0.992, 0.992, 0.991
+    'flat-speed1-radial-shooter0': 0.892,  # 0.992, 0.993, 0.992
+    'flat-speed2-radial-shooter0': 0.891,  # 0.993, 0.992, 0.991
+    'flat-speed4-radial-shooter0': 0.894,  # 0.994, 0.995, 0.995
+    'flat-stationary-radial-shooter0': 0.891,  # 0.992, 0.993, 0.991
+    'staggered-speed0.5-radial-shooter0': 0.892,  # 0.993, 0.993, 0.992
+    'staggered-speed1-radial-shooter0': 0.893,  # 0.993, 0.993, 0.993
+    'staggered-speed2-radial-shooter0': 0.893,  # 0.993, 0.993, 0.993
+    'staggered-speed4-radial-shooter0': 0.894,  # 0.995, 0.994, 0.994
+    'staggered-stationary-radial-shooter0': 0.893,  # 0.993, 0.993, 0.994
+    'flat-speed0.5-diagonal-shooter0': 0.891,  # 0.992, 0.991, 0.993
+    'flat-speed1-diagonal-shooter0': 0.890,  # 0.990, 0.992, 0.993
+    'flat-speed2-diagonal-shooter0': 0.891,  # 0.991, 0.991, 0.992
+    'flat-speed4-diagonal-shooter0': 0.887,  # 0.987, 0.987, 0.991
+    'flat-stationary-diagonal-shooter0': 0.893,  # 0.993, 0.993, 0.993
+    'staggered-speed0.5-diagonal-shooter0': 0.893,  # 0.993, 0.993, 0.993
+    'staggered-speed1-diagonal-shooter0': 0.893,  # 0.993, 0.993, 0.993
+    'staggered-speed2-diagonal-shooter0': 0.891,  # 0.992, 0.991, 0.993
+    'staggered-speed4-diagonal-shooter0': 0.888,  # 0.989, 0.988, 0.989
+    'staggered-stationary-diagonal-shooter0': 0.893,  # 0.993, 0.993, 0.994
 }
 # Spin rate swept inversely to speed, spanning ARCC's documented
 # "typically 1-2 Hz" range (ARCC_2026_SENTRY_CONTEXT.md).
