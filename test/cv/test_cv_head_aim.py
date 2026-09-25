@@ -18,7 +18,7 @@ Unit test for cv_head_aim_core.py's closed-form head IK (sentry_v2 chain).
 Checked against a from-scratch FK of root -> headlink -> headpitch ->
 muzzlelink written with the URDF's literal numbers, not cv_head_aim_core's
 constants, so a sign or algebra error in either one shows up. It scores
-the ray leaving the MUZZLE, not bearings from root (CV_TEST_GAPS.md gap 7).
+the ray leaving the MUZZLE, not bearings from root.
 No rclpy: `python3 -m pytest test/cv/test_cv_head_aim.py`.
 """
 import math

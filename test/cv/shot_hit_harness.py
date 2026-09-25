@@ -80,11 +80,11 @@ DEFAULT_LOG_DIR = '/tmp/shot_hit_test_logs'
 # The stationary case (speed=0, spin=0) is the harness's own sanity
 # check: a working pipeline hits a motionless target trivially. 0.5 is far
 # below what a working stack does (90-96% on 2026-09-21), a floor that
-# catches gross breakage, not a tuned figure. See CV_TEST_GAPS.md gap 7.
+# catches gross breakage, not a tuned figure.
 STATIONARY_MIN_HIT_RATE = 0.5
 # The moving cases are what this bench exists for: aiming at a moving,
-# spinning target. A placeholder stating intent, not a measurement; see
-# CV_TEST_GAPS.md gap 8.
+# spinning target. A placeholder stating intent, not a measurement, for
+# cells FLOORS doesn't list yet.
 MOVING_MIN_HIT_RATE = 0.25
 # Per-cell floors (CV_SPLIT_PLAN.md 1.7): the lowest score over three runs
 # minus FLOOR_MARGIN, printed from their scores.jsonl by tools/shot_floors.py.
@@ -107,7 +107,7 @@ FLOORS = {
 # "typically 1-2 Hz" range (ARCC_2026_SENTRY_CONTEXT.md).
 SPIN_HZ_AT_MIN_SPEED = 2.0
 SPIN_HZ_AT_MAX_SPEED = 1.0
-# target_driver paths (CV_TEST_GAPS.md gap 2's depth case): lateral crosses the
+# target_driver paths (ROADMAP C3's depth case): lateral crosses the
 # view at constant range, radial runs down the camera ray, diagonal does both.
 # Each keeps the nearest panel past ~1.2 m and inside the FOV at the ends.
 TARGET_PATHS = {
