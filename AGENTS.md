@@ -156,6 +156,16 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   1.2 cm p95; 2 m/s with `blackout` and 1 m/s with our chassis moving both
   ~35 cm p95 and ~10 s to converge. `LIMITS` is empty; every cell passes on
   liveness until three runs fill it.
+- **Tune Part 2 offline first:** `tools/estimation_offline.py` runs
+  target_driver, the emulator and the tracker without ROS, scored like C2,
+  in seconds. gz C2 decides; the offline copy leaves out the head slewing.
+- **`cv_target_emulator` adds D435-like ray noise** (depth 0.0036 r^2,
+  bearing 0.003 r) on top of the 5 mm. Datasheet estimates, not measured.
+- **Launch long runs with `dexec.sh -d`, not a foreground `dexec.sh`.** On
+  2026-09-25 a foreground queue lost its host shell: each queued `ros2
+  launch` died at once and left its nodes orphaned (parent 1, invisible to
+  `kill_launch.sh -l`), nine stacks all publishing `/clock`. Before a run,
+  check `ps -eo pid,ppid,cmd | grep install/` for such orphans too.
 - **C2's target is still `target_driver`'s phantom.** A spawned opponent
   moved by `set_pose` steps at the call rate and its gz pose lags the
   integrator, so truth stays `target_driver`'s. Spawn a visual one when YOLO
