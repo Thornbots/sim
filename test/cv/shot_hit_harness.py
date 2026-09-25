@@ -616,8 +616,13 @@ class ShotHitSampler(SimTimeNode):
                 m = self._marker('panels', Marker.CUBE, stamp)
                 m.id = k
                 m.pose.position = Point(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
+                # Yaw to the normal's azimuth, then pitch its +X up by the S122 cant.
                 half_yaw = math.atan2(normal[1], normal[0]) / 2.0
-                m.pose.orientation.z, m.pose.orientation.w = math.sin(half_yaw), math.cos(half_yaw)
+                half_pitch = -math.atan2(normal[2], math.hypot(normal[0], normal[1])) / 2.0
+                cy, sy = math.cos(half_yaw), math.sin(half_yaw)
+                cp, sp = math.cos(half_pitch), math.sin(half_pitch)
+                o = m.pose.orientation
+                o.x, o.y, o.z, o.w = -sy * sp, cy * sp, sy * cp, cy * cp
                 m.scale.x, m.scale.y, m.scale.z = 0.01, PANEL_SIZE, PANEL_SIZE
                 m.color.r, m.color.g, m.color.b = 0.2, 0.4, 1.0
                 markers.append(m)

@@ -175,6 +175,15 @@ PANEL_SIZE = 0.1
 PANEL_NORMAL_ANGLE_FROM_UP = math.radians(75.0)
 
 
+def canted_panel_quat(yaw):
+    """Return (x, y, z, w) turning +X onto a panel normal at azimuth yaw, tilted up per S122."""
+    half_yaw = yaw / 2.0
+    half_pitch = -(math.pi / 2.0 - PANEL_NORMAL_ANGLE_FROM_UP) / 2.0  # -pitch tilts +X up
+    cy, sy = math.cos(half_yaw), math.sin(half_yaw)
+    cp, sp = math.cos(half_pitch), math.sin(half_pitch)
+    return (-sy * sp, cy * sp, sy * cp, cy * cp)
+
+
 class CvTargetEmulator(Node):
 
     def __init__(self):
