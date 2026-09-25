@@ -52,7 +52,7 @@ def solve_head_angles(target_root):
 
     Solves the parallax from the muzzle, not a bearing from root: aiming
     from root missed a stationary panel by a constant ~0.33 m on the old
-    model (CV_TEST_GAPS.md gap 7). Closed form: the ray's lateral offset
+    model. Closed form: the ray's lateral offset
     from the yaw axis is MUZZLE_Y whatever the yaw, so the azimuth is the
     bearing minus asin(MUZZLE_Y / range). see README.md for design rationale
     """

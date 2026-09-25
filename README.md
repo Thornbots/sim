@@ -207,7 +207,7 @@ the source copy.
 Before you interpret a drift failure, read the notes below rather than the
 script docstrings. The shot-hit suite runs one test per case and prints a hit
 rate for each. Its pass conditions are in the `test/cv/test_shot_hit.py`
-docstring and `CV_TEST_GAPS.md`.
+docstring.
 
 ## Launch sim by hand
 
@@ -797,8 +797,7 @@ frame that puts the muzzle `MUZZLE_Y` = 0.0127 m left of the yaw axis and
 It aims along the ray from the muzzle. Before 2026-09-09 it aimed from root,
 assuming a ~0.35m offset wouldn't matter at range. That's true for flight time,
 but a parallel offset in direction stays the same size at any range. On the
-old model every stationary shot missed by ~0.33m against a 0.05m hit radius
-(`CV_TEST_GAPS.md` gap 7).
+old model every stationary shot missed by ~0.33m against a 0.05m hit radius.
 
 The solve is closed-form even though the muzzle's position depends on the yaw
 being solved. The shot leaves along the head's +x, and whatever the yaw that
