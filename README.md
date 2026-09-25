@@ -43,8 +43,8 @@ next. So a miss is `point_to_cv_target`'s math and nothing else. It runs at
 target's panels in rviz.
 
 `chase_settle_s` picks `point_to_cv_target`'s spin mode: `>= 0` (the default,
-0) chases the facing panel and fires every tick, `< 0` is center aim with
-timed fire. `gimbal_lag_s` defaults to 0, the perfect gimbal. Each cell has
+0) chases the facing panel and fires every tick, `< 0` is shotgating: hold
+the center line and time the fire. `gimbal_lag_s` defaults to 0, the perfect gimbal. Each cell has
 its own floor in `FLOORS` (`test/cv/shot_hit_harness.py`), the lowest score
 over three runs minus 10 points. The ten lateral, still-shooter cells are
 seeded from one run until three exist; any other cell falls back to the

@@ -175,8 +175,8 @@ def generate_launch_description():
                               description="point_to_cv_target's gimbal_lag_s; 0 is the "
                                           'perfect gimbal'),
         DeclareLaunchArgument('chase_settle_s', default_value='0.0',
-                              description="point_to_cv_target's spin mode: < 0 center "
-                                          'aim and timed fire, >= 0 chase the facing panel'),
+                              description="point_to_cv_target's spin mode: < 0 shotgating "
+                                          '(timed fire), >= 0 chase the facing panel'),
         DeclareLaunchArgument('chase_margin_s', default_value='0.0',
                               description="point_to_cv_target's chase_margin_s"),
         DeclareLaunchArgument('panel_layout', default_value='both',
