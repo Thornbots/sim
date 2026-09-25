@@ -185,7 +185,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   accuracy.
 - **The aim bench (`shot_hit.launch.py`) is gz-free and passes 10/10**
   with a still shooter. A point shooter with a perfect gimbal; README.md has
-  the setup. Floors are still the placeholders (`CV_SPLIT_PLAN.md` 1.7).
+  the setup. Per-cell `FLOORS` are seeded from one run; three runs through
+`tools/shot_floors.py` replace them (`CV_SPLIT_PLAN.md` 1.7).
   `shooter_speed:=1.0` (a moving `root`, 1.8) hasn't run yet.
 - **Shot-hit results are optimistic.** Detection noise (0.005 m) is far
   cleaner than a D435, and slew limits and target accelerations are

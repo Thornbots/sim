@@ -44,8 +44,11 @@ target's panels in rviz.
 
 `chase_settle_s` picks `point_to_cv_target`'s spin mode: `>= 0` (the default,
 0) chases the facing panel and fires every tick, `< 0` is center aim with
-timed fire. `gimbal_lag_s` defaults to 0, the perfect gimbal. The floors are
-placeholders until `CV_SPLIT_PLAN.md` 1.7. `target_path:=radial` or `diagonal`
+timed fire. `gimbal_lag_s` defaults to 0, the perfect gimbal. Each cell has
+its own floor in `FLOORS` (`test/cv/shot_hit_harness.py`), the lowest score
+over three runs minus 10 points. The ten lateral, still-shooter cells are
+seeded from one run until three exist; any other cell falls back to the
+placeholders and says so. `target_path:=radial` or `diagonal`
 moves the target along the camera ray instead of across it, and
 `shooter_speed:=1.0` bounces our own chassis along y (within 1 m of
 `POINT_SHOOTER`) through every case.
@@ -58,6 +61,11 @@ the target's velocity, the target rotation it arrived in, and the `CVTarget`
 fire fields. Each case also prints the mean of those offsets over its misses.
 `panel_hits.jsonl` holds one line per case with the hits on each panel (front,
 left, back, right) in each target rotation. It is for reading, not scoring.
+`scores.jsonl` holds each case's score. Three runs' worth make the floors:
+
+```bash
+python3 tools/shot_floors.py run1/ run2/ run3/   # each a log_dir:=
+```
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash

@@ -85,6 +85,23 @@ STATIONARY_MIN_HIT_RATE = 0.5
 # spinning target. A placeholder stating intent, not a measurement; see
 # CV_TEST_GAPS.md gap 8.
 MOVING_MIN_HIT_RATE = 0.25
+# Per-cell floors (CV_SPLIT_PLAN.md 1.7): the lowest score over three runs
+# minus FLOOR_MARGIN, printed from their scores.jsonl by tools/shot_floors.py.
+# Seeded from ONE run (2026-09-24, chase, still shooter) until three exist.
+# Cells not listed fall back to the two placeholders above.
+FLOOR_MARGIN = 0.10
+FLOORS = {
+    'flat-stationary-lateral-shooter0': 0.892,
+    'flat-speed0.5-lateral-shooter0': 0.886,
+    'flat-speed1-lateral-shooter0': 0.880,
+    'flat-speed2-lateral-shooter0': 0.873,
+    'flat-speed4-lateral-shooter0': 0.863,
+    'staggered-stationary-lateral-shooter0': 0.892,
+    'staggered-speed0.5-lateral-shooter0': 0.887,
+    'staggered-speed1-lateral-shooter0': 0.879,
+    'staggered-speed2-lateral-shooter0': 0.874,
+    'staggered-speed4-lateral-shooter0': 0.879,
+}
 # Spin rate swept inversely to speed, spanning ARCC's documented
 # "typically 1-2 Hz" range (ARCC_2026_SENTRY_CONTEXT.md).
 SPIN_HZ_AT_MIN_SPEED = 2.0
@@ -191,6 +208,12 @@ def _interpolate(history, t):
     (t0, *v0), (t1, *v1) = history[i - 1], history[i]
     a = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
     return tuple(x0 + a * (x1 - x0) for x0, x1 in zip(v0, v1))
+
+
+def cell_id(layout, speed, path, shooter_speed):
+    """Name one bench cell, as FLOORS and scores.jsonl key it."""
+    case = 'stationary' if speed == 0.0 else f'speed{speed:g}'
+    return f'{layout}-{case}-{path}-shooter{shooter_speed:g}'
 
 
 def spin_hz_for_speed(speed, speed_min, speed_max):
@@ -666,6 +689,8 @@ class CvStack:
         self.shots_path = os.path.join(log_dir, 'shots.jsonl')
         # Per case, hits on each panel in each target rotation (info only).
         self.panel_hits_path = os.path.join(log_dir, 'panel_hits.jsonl')
+        # Per case, its score; tools/shot_floors.py turns three runs into FLOORS.
+        self.scores_path = os.path.join(log_dir, 'scores.jsonl')
         self.node = rclpy.create_node(
             'shot_hit_stack',
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
@@ -675,8 +700,8 @@ class CvStack:
             SetParameters, '/target_state_truth/set_parameters')
 
     def start(self):
-        open(self.shots_path, 'w').close()
-        open(self.panel_hits_path, 'w').close()
+        for path in (self.shots_path, self.panel_hits_path, self.scores_path):
+            open(path, 'w').close()
         if self.launch is not None:
             self.launch.start()
         probe = ShotHitSampler(hit_radius=0.0)
@@ -773,6 +798,15 @@ def score(sampler, duration):
     hits_per_expected = sampler.hits / expected
     return (0.5 * (hit_rate + hits_per_expected), hits_per_expected,
             sampler.shots_fired / expected)
+
+
+def record_score(stack, cell, sampler, duration):
+    """Append one case's score to scores.jsonl, keyed by cell_id."""
+    total, per_expected, keep_up = score(sampler, duration)
+    with open(stack.scores_path, 'a') as f:
+        f.write(json.dumps({'cell': cell, 'score': round(total, 4), 'hits': sampler.hits,
+                            'shots': sampler.shots_fired, 'keep_up': round(keep_up, 4)})
+                + '\n')
 
 
 def summarize(label, sampler, dropped, duration):

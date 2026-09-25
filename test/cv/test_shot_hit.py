@@ -27,8 +27,9 @@ case only changes how the target moves. Every case runs twice: flat panels,
 then staggered (neighbours STAGGERED_PANEL_M, 90% of a panel's height,
 apart); --panel-layout picks one. Each case prints and asserts a score,
 the mean of hit rate and hits per expected shot (shot_hit_harness.score), so
-falling behind 40 Hz costs points. Floors: STATIONARY_MIN_HIT_RATE for the
-stationary case, MOVING_MIN_HIT_RATE for the moving ones. Do not relax them.
+falling behind 40 Hz costs points. Floors are per cell (shot_hit_harness.FLOORS,
+three runs' lowest minus 10 points), falling back to STATIONARY_MIN_HIT_RATE or
+MOVING_MIN_HIT_RATE for a cell not measured yet. Do not relax them.
 
 The C1 aim bench: no gz, a point shooter with a perfect gimbal and a
 perfectly known target (see shot_hit_harness.py). Launches a ROS stack, so
@@ -97,9 +98,10 @@ def test_shot_hit(layout, case, request, cv_stack):
     duration = config.getoption('--shot-duration') or harness.DEFAULT_DURATION
     hit_radius = config.getoption('--hit-radius') or harness.DEFAULT_HIT_RADIUS
     path = config.getoption('--target-path')
+    shooter_speed = config.getoption('--shooter-speed')
     motion = f', {path} path'
-    if config.getoption('--shooter-speed') > 0.0:
-        motion += f', shooter {config.getoption("--shooter-speed")} m/s'
+    if shooter_speed > 0.0:
+        motion += f', shooter {shooter_speed} m/s'
 
     if case == STATIONARY:
         speed, spin_hz = 0.0, 0.0
@@ -117,6 +119,12 @@ def test_shot_hit(layout, case, request, cv_stack):
     sampler, dropped = harness.run_case(cv_stack, speed, spin_hz, duration, hit_radius,
                                         stagger=LAYOUTS[layout], path=path)
     total = harness.summarize(label, sampler, dropped, duration)
+    cell = harness.cell_id(layout, speed, path, shooter_speed)
+    harness.record_score(cv_stack, cell, sampler, duration)
+    if cell in harness.FLOORS:
+        floor, floor_name = harness.FLOORS[cell], f'FLOORS[{cell!r}]'
+    else:
+        print(f'{cell}: no measured floor yet, using {floor_name}')
 
     assert sampler.shots_fired > 0, (
         f'no shots observed in {label} -- something in the launched stack is '
