@@ -97,6 +97,14 @@ def pytest_addoption(parser):
         help='our own chassis speed (m/s) the stack was launched with, for labels '
              "and shots.jsonl; shot_hit.launch.py's shooter_speed sets the motion")
     group.addoption(
+        '--blackout', action='store_true',
+        help='estimation bench: drop every detection for 0.3 s in each 2 s '
+             '(estimation_harness.BLACKOUT)')
+    group.addoption(
+        '--camera-latency', type=float, default=0.0,
+        help='estimation bench: the camera_latency_s the stack was launched with, '
+             'for cell names; estimation.launch.py sets it')
+    group.addoption(
         '--skip-stationary', action='store_true',
         help='skip the speed=0/spin=0 baseline case')
     group.addoption(

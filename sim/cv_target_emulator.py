@@ -198,6 +198,12 @@ class CvTargetEmulator(Node):
         # camera's capture latency, for target_tracker's camera_latency_s to
         # undo. Delivery waits at least this long too.
         self.declare_parameter('camera_latency_s', 0.0)
+        # Masking, read every tick: detections_enabled false publishes
+        # nothing; a blackout_s gap every blackout_period_s (0 = never)
+        # drops whole frames, as an occluded or lost target would.
+        self.declare_parameter('detections_enabled', True)
+        self.declare_parameter('blackout_period_s', 0.0)
+        self.declare_parameter('blackout_s', 0.0)
         self.declare_parameter('yaw_joint_name', 'headlink')
         self.declare_parameter('pitch_joint_name', 'headpitch')
         self.declare_parameter('panel_radius_x', PANEL_RADIUS_X)
@@ -367,10 +373,19 @@ class CvTargetEmulator(Node):
         detection.class_id = self.get_parameter('class_id').value
         return detection
 
+    def _masked(self):
+        if not self.get_parameter('detections_enabled').value:
+            return True
+        period = self.get_parameter('blackout_period_s').value
+        if period <= 0.0:
+            return False
+        now_s = self.get_clock().now().nanoseconds / 1e9
+        return now_s % period < self.get_parameter('blackout_s').value
+
     def on_timer(self):
         self._flush_pending()
 
-        if self._root_pos is None or self._target_pos is None:
+        if self._root_pos is None or self._target_pos is None or self._masked():
             return
         if self._root_frame_id and self._target_frame_id \
                 and self._root_frame_id != self._target_frame_id:

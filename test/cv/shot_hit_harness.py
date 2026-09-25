@@ -198,7 +198,7 @@ def _panel_poses(target_pos, target_rot, stagger=0.0):
     return poses
 
 
-def _interpolate(history, t):
+def interpolate(history, t):
     """Linearly interpolate [(stamp_s, a, b)] to time t, holding the ends."""
     if t <= history[0][0]:
         return history[0][1:]
@@ -283,7 +283,62 @@ class LaunchTree:
         self.log_file.close()
 
 
-class ShotHitSampler(Node):
+class SimTimeNode(Node):
+    """A use_sim_time node that can spin for sim seconds and wait on the graph."""
+
+    def __init__(self, name):
+        # use_sim_time, or rviz can't place markers on sim-time TF.
+        super().__init__(
+            name,
+            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
+            automatically_declare_parameters_from_overrides=True)
+
+    @staticmethod
+    def _stamp_s(header_stamp):
+        return header_stamp.sec + header_stamp.nanosec / 1e9
+
+    def spin_for(self, seconds):
+        """
+        Spin for `seconds` of sim time, so a real-time factor under 1 doesn't shorten the case.
+
+        Wall-clock cap of 3x (at least +5s) in case /clock stalls, as in the
+        drift suite's drive().
+        """
+        wall_end = time.monotonic() + max(3.0 * seconds, seconds + 5.0)
+        start = None
+        while time.monotonic() < wall_end:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            now = self.get_clock().now().nanoseconds / 1e9
+            if start is None and now > 0.0:
+                start = now
+            if start is not None and now - start >= seconds:
+                return
+        print(f'[spin_for] wall-clock cap hit before {seconds}s of sim time elapsed')
+
+    def wait_until(self, predicate, timeout, description):
+        """
+        Spin until predicate() is true or timeout (s) elapses.
+
+        So the sampling window starts once the stack is actually
+        publishing instead of after a guessed fixed sleep. Falls back to
+        the full timeout (and a printed warning) if the predicate never
+        fires -- the caller still proceeds rather than hanging forever on
+        a genuinely broken launch.
+        """
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if predicate():
+                return True
+            rclpy.spin_once(self, timeout_sec=0.1)
+        print(f'[wait_until] timed out after {timeout}s waiting for: {description}')
+        return False
+
+    def nodes_up(self, *names):
+        live = {n for n, _ in self.get_node_names_and_namespaces()}
+        return all(n in live for n in names)
+
+
+class ShotHitSampler(SimTimeNode):
     """
     Subscribes the ground-truth and cv_target topics the scorer needs.
 
@@ -293,11 +348,7 @@ class ShotHitSampler(Node):
     """
 
     def __init__(self, hit_radius, marker_lifetime_s=5.0, panel_stagger=0.0):
-        # use_sim_time, or rviz can't place the markers on sim-time TF.
-        super().__init__(
-            'shot_hit_test_sampler',
-            parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)],
-            automatically_declare_parameters_from_overrides=True)
+        super().__init__('shot_hit_test_sampler')
         self.hit_radius = hit_radius
         self.panel_stagger = panel_stagger  # must match target_state_truth's panel_stagger_m
         self.marker_lifetime = Duration(seconds=marker_lifetime_s).to_msg()
@@ -329,10 +380,6 @@ class ShotHitSampler(Node):
         # used for scoring.
         self.marker_pub = self.create_publisher(MarkerArray, '/shot_markers', 10)
         self.create_timer(1.0 / 30.0, self._publish_in_flight)
-
-    @staticmethod
-    def _stamp_s(header_stamp):
-        return header_stamp.sec + header_stamp.nanosec / 1e9
 
     def _launch_due(self, now_s):
         """Launch commanded shots whose exit time has come."""
@@ -369,7 +416,7 @@ class ShotHitSampler(Node):
         """
         aims = [a for stamp, a in self._aims if stamp <= t]
         aim = aims[-1] if aims else self._aims[0][1]
-        pos, vel = _interpolate(self._shooter_history, t)
+        pos, vel = interpolate(self._shooter_history, t)
         return pos, MUZZLE_SPEED * aim / (np.linalg.norm(aim) + 1e-9) + vel
 
     def _on_shooter_odom(self, msg):
@@ -404,7 +451,7 @@ class ShotHitSampler(Node):
 
     def _truth_pos_yaw(self, t):
         """Target position and unwrapped yaw linearly interpolated to time t."""
-        return _interpolate(self._truth_history, t)
+        return interpolate(self._truth_history, t)
 
     def _on_cv_target(self, msg):
         if msg.confidence > 0.0:
@@ -623,46 +670,6 @@ class ShotHitSampler(Node):
         self._pending_shots = []
         self._unlaunched = []
         return dropped
-
-    def spin_for(self, seconds):
-        """
-        Spin for `seconds` of sim time, so a real-time factor under 1 doesn't shorten the case.
-
-        Wall-clock cap of 3x (at least +5s) in case /clock stalls, as in the
-        drift suite's drive().
-        """
-        wall_end = time.monotonic() + max(3.0 * seconds, seconds + 5.0)
-        start = None
-        while time.monotonic() < wall_end:
-            rclpy.spin_once(self, timeout_sec=0.1)
-            now = self.get_clock().now().nanoseconds / 1e9
-            if start is None and now > 0.0:
-                start = now
-            if start is not None and now - start >= seconds:
-                return
-        print(f'[spin_for] wall-clock cap hit before {seconds}s of sim time elapsed')
-
-    def wait_until(self, predicate, timeout, description):
-        """
-        Spin until predicate() is true or timeout (s) elapses.
-
-        So the sampling window starts once the stack is actually
-        publishing instead of after a guessed fixed sleep. Falls back to
-        the full timeout (and a printed warning) if the predicate never
-        fires -- the caller still proceeds rather than hanging forever on
-        a genuinely broken launch.
-        """
-        end = time.monotonic() + timeout
-        while time.monotonic() < end:
-            if predicate():
-                return True
-            rclpy.spin_once(self, timeout_sec=0.1)
-        print(f'[wait_until] timed out after {timeout}s waiting for: {description}')
-        return False
-
-    def nodes_up(self, *names):
-        live = {n for n, _ in self.get_node_names_and_namespaces()}
-        return all(n in live for n in names)
 
 
 class CvStack:
