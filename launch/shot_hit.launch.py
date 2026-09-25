@@ -156,8 +156,9 @@ def generate_launch_description():
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('headless', default_value='false',
                               description='skip rviz2'),
-        DeclareLaunchArgument('real_time_factor', default_value='1.0',
-                              description="sim_clock's rate, sim seconds per wall second"),
+        DeclareLaunchArgument('real_time_factor', default_value='4.0',
+                              description="sim_clock's rate, sim seconds per wall second; "
+                                          '4 scores like 1, 8 falls behind'),
         DeclareLaunchArgument('speeds', default_value='',
                               description="target speeds (m/s), e.g. '0.5 1'; "
                                           'empty = the harness default sweep'),
