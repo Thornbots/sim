@@ -150,12 +150,11 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `cv_target_emulator`, `shot_hit_harness`) moved to it too. Pitch limits
   (+-0.6 rad), suspension travel, spring rate and damping are placeholders,
   not CAD values.
-- **Shot-hit on `sentry_v2` passes 5/10** (2026-09-24 full run): flat
-  stationary, 0.5 and 1.0 m/s and staggered 0.5 and 1.0 m/s pass; 2 and
-  4 m/s miss in both layouts. Staggered stationary scored 15% (0.3% in an
-  earlier full run), straight after flat 4 m/s, and 99% twice alone: state leaks
-  between cases, which is the bench's old "bimodal" result. Find the leak
-  before trusting a full-run number.
+- **The tracker bench (gz, `target_state:=tracker`) hasn't run since Part 1
+  was rewritten** (2026-09-24). Its old "state leak" was Part 1 aiming a
+  stationary target at panel 0 whichever way the last case left it facing;
+  Part 1 now aims at the facing panel. It runs center aim: chase on gz's
+  gimbal needs a measured settle time and margin, not yet tuned.
 - **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard
   corners at 4 m/s and keeps it: the head's reaction torque gets past the
   yaw lock. The real robot is expected to drift 1-5 deg too. Noted, not
@@ -187,12 +186,11 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **`noise_correction`'s growth_ratio compares the two halves of a run**, so
   a run that starts clean fails hardest. Don't read its verdict as absolute
   accuracy.
-- **The aim bench (`target_state:=truth`) hasn't run.** `point_to_cv_target`
-  ignores `TargetState`'s `z_offset` fields, and `MOVING_MIN_HIT_RATE`
-  (0.25) stays a placeholder until the bench measures a real floor.
-- **Shot-hit results are bimodal and optimistic.** Runs have swapped 98% and
-  1% on the same case, so don't trust one run. Detection noise (0.005 m) is
-  far cleaner than a D435, and slew limits and target accelerations are
+- **The aim bench (`target_state:=truth`) is gz-free and passes 10/10.**
+  A point shooter with a perfect gimbal; README.md has the setup. Floors are
+  still the placeholders (`CV_SPLIT_PLAN.md` 1.7).
+- **Shot-hit results are optimistic.** Detection noise (0.005 m) is far
+  cleaner than a D435, and slew limits and target accelerations are
   estimates.
 - **`lidar_self_filter`'s sector comes from the CAD**, not a scan. Check it
   against a hardware `/scan_raw` (`../thornbots_pkg/AGENTS.md`).

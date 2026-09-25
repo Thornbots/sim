@@ -16,9 +16,10 @@
 Shot-hit bench: the sim, the production CV pipeline and the scoring pytest in one launch tree.
 
 `ros2 launch sim shot_hit.launch.py [speeds:='0.5 1'] [only_stationary:=true]`.
-target_state:=truth is the aim bench: target_state_truth publishes the true
-TargetState and nothing else runs upstream of /cv/target_state but
-target_driver, so every miss is point_to_cv_target's.
+target_state:=truth is the aim bench, with no gz at all: target_state_truth
+publishes the true TargetState of target_driver's target, and shots leave
+one fixed point (POINT_SHOOTER) toward the latest aim, a perfect gimbal. So
+every miss is point_to_cv_target's.
 Stops when the tests finish; Ctrl-C (or SIGINT/SIGTERM to this launch) stops
 the whole stack. `run_tests:=false` brings up the stack alone, which is how
 test_shot_hit.py's cv_stack fixture launches it under a bare pytest/colcon test.
@@ -71,8 +72,59 @@ def _stack(context):
 
     headless = _is_true(context, 'headless')
     truth = context.launch_configurations['target_state'] == 'truth'
+    if truth:
+        actions = _point_stack(context, harness, headless)
+    else:
+        actions = _gz_stack(context, harness, headless)
+    if not _is_true(context, 'run_tests'):
+        return actions
+    return actions + _tests(context, test_dir)
+
+
+def cv_node(executable, package='thornbots_pkg', **params):
+    return Node(package=package, executable=executable, name=executable,
+                output='screen', parameters=[{'use_sim_time': True, **params}])
+
+
+def _aim_node(context, harness, gimbal_lag_s, chase_settle_s):
+    lag = context.launch_configurations['gimbal_lag_s']
+    settle = context.launch_configurations['chase_settle_s']
+    return cv_node('point_to_cv_target',
+                   cv_target_publish_rate_hz=harness.TEST_FIRE_HZ,
+                   fire_rate_hz=harness.TEST_FIRE_HZ + 10.0,
+                   gimbal_lag_s=float(lag) if lag else gimbal_lag_s,
+                   chase_settle_s=float(settle) if settle else chase_settle_s,
+                   chase_margin_s=float(context.launch_configurations['chase_margin_s']))
+
+
+def _point_stack(context, harness, headless):
+    # No world, no robot: a /clock, a fixed odom->root at the shooter point,
+    # the phantom target and its true state, and the aim node. A perfect
+    # gimbal: it holds each 40 Hz aim until the next, with no lag after.
+    rtf = float(context.launch_configurations['real_time_factor'])
+    x, y, z = harness.POINT_SHOOTER
+    actions = [
+        Node(package='sim', executable='sim_clock', name='sim_clock', output='screen',
+             parameters=[{'rate': rtf if rtf > 0.0 else 1.0}]),
+        Node(package='tf2_ros', executable='static_transform_publisher', name='odom_to_root',
+             arguments=['--x', str(x), '--y', str(y), '--z', str(z),
+                        '--frame-id', 'odom', '--child-frame-id', 'root']),
+        cv_node('target_driver', package='sim', target_speed=0.0, spin_hz=0.0),
+        cv_node('target_state_truth', package='sim'),
+        _aim_node(context, harness, 0.0, 0.0),
+        cv_node('mcb_relay'),
+    ]
+    if not headless:
+        actions.append(Node(
+            package='rviz2', executable='rviz2', name='rviz2', output='screen',
+            arguments=['-d', os.path.join(get_package_share_directory('sim'), 'rviz',
+                                          'cv_target.rviz')],
+            parameters=[{'use_sim_time': True}]))
+    return actions
+
+
+def _gz_stack(context, harness, headless):
     sim_args = {'spawn_target': 'true', 'target_speed': '0.0', 'target_spin_hz': '0.0',
-                'cv_emulator': str(not truth).lower(),
                 'real_time_factor': context.launch_configurations['real_time_factor']}
     if headless:
         sim_args.update(gui='false', rviz='false')
@@ -100,23 +152,11 @@ def _stack(context):
     # picks from the emulator's panel_detections, target_tracker estimates the
     # spin center, point_to_cv_target solves the lead and fires at up to
     # TEST_FIRE_HZ, mcb_relay forwards it to /dji_serial_bridge/cv_target.
-    # truth swaps the first two, and the emulator, for target_state_truth.
-    def cv_node(executable, package='thornbots_pkg', **params):
-        return Node(package=package, executable=executable, name=executable,
-                    output='screen', parameters=[{'use_sim_time': True, **params}])
+    return [sim, robot_tf, cv_node('target_selector'), cv_node('target_tracker'),
+            _aim_node(context, harness, harness.GIMBAL_LAG_S, -1.0), cv_node('mcb_relay')]
 
-    estimate = ([cv_node('target_state_truth', package='sim')] if truth
-                else [cv_node('target_selector'), cv_node('target_tracker')])
-    actions = [
-        sim, robot_tf, *estimate,
-        cv_node('point_to_cv_target',
-                cv_target_publish_rate_hz=harness.TEST_FIRE_HZ,
-                fire_rate_hz=harness.TEST_FIRE_HZ + 10.0),
-        cv_node('mcb_relay'),
-    ]
-    if not _is_true(context, 'run_tests'):
-        return actions
 
+def _tests(context, test_dir):
     cmd = [sys.executable, '-m', 'pytest', os.path.join(test_dir, TEST_FILE),
            '-m', 'integration', '-v', '-s', '--external-stack',
            '--panel-layout', context.launch_configurations['panel_layout'],
@@ -142,7 +182,7 @@ def _stack(context):
             LogInfo(msg=f'shot-hit tests exited with code {event.returncode}'),
             EmitEvent(event=Shutdown(reason='shot-hit tests finished')),
         ]))
-    return actions + [tests, done]
+    return [tests, done]
 
 
 def generate_launch_description():
@@ -162,11 +202,20 @@ def generate_launch_description():
                               description='miss distance (m) still counted as a hit'),
         DeclareLaunchArgument('target_state', default_value='tracker',
                               choices=['tracker', 'truth'],
-                              description='truth: aim bench, true TargetState, '
-                                          'no emulator, selector or tracker'),
+                              description='truth: aim bench, no gz, true TargetState, '
+                                          'shots from one point'),
         DeclareLaunchArgument('target_path', default_value='lateral',
                               choices=['lateral', 'radial', 'diagonal'],
                               description='across the view, down the camera ray, or both'),
+        DeclareLaunchArgument('gimbal_lag_s', default_value='',
+                              description="point_to_cv_target's gimbal_lag_s; empty = "
+                                          "the stack's (gz: GIMBAL_LAG_S, point: 0)"),
+        DeclareLaunchArgument('chase_settle_s', default_value='',
+                              description="point_to_cv_target's spin mode: < 0 center "
+                                          'aim and timed fire, >= 0 chase the facing panel; '
+                                          "empty = the stack's (point: 0, gz: -1)"),
+        DeclareLaunchArgument('chase_margin_s', default_value='0.0',
+                              description="point_to_cv_target's chase_margin_s"),
         DeclareLaunchArgument('shooter_speed', default_value='0.0',
                               description='m/s our chassis drives back and forth along y'),
         DeclareLaunchArgument('panel_layout', default_value='both',

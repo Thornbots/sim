@@ -31,14 +31,22 @@ per expected shot equally (`score()` in `test/cv/shot_hit_harness.py`), so
 falling behind 40 Hz costs points. Shots leave from `sentry_v2`'s `muzzle`
 frame (see the `cv_head_aim.py` note).
 
-`target_state:=truth` makes it the aim bench: `target_state_truth` publishes
-the target's true `TargetState`, and the emulator, `target_selector` and
-`target_tracker` don't run, so a miss is `point_to_cv_target`'s and not the
-estimate's (see its note below). The floors
-are the same placeholders on both until the aim bench has been measured.
-`target_path:=radial` or `diagonal` moves the target along the camera ray
-instead of across it, and `shooter_speed:=1.0` drives our own chassis back and
-forth along y (within 1 m of the origin) for every case.
+`target_state:=truth` makes it the aim bench, and runs no gz at all:
+`sim_clock` publishes `/clock`, `root` is a fixed point in `odom`
+(`POINT_SHOOTER`, 0.4 m up), `target_driver` moves the phantom target and
+`target_state_truth` publishes its true `TargetState`. No emulator, selector,
+tracker, robot or gimbal. Each shot leaves `root` toward the newest `/cv/target`
+aim before its exit time: a perfect gimbal that holds each 40 Hz aim until
+the next. A miss is `point_to_cv_target`'s math and nothing else. It runs at
+`real_time_factor` (0 means 1 here), and draws the target's panels in rviz.
+`shooter_speed` needs gz, so it is refused there.
+
+`chase_settle_s` picks `point_to_cv_target`'s spin mode: `>= 0` chases the
+facing panel and fires every tick, `< 0` is center aim with timed fire. The
+point bench chases (0), the gz bench aims at the center (-1). The floors are placeholders on both benches until
+`CV_SPLIT_PLAN.md` 1.7. `target_path:=radial` or `diagonal` moves the target
+along the camera ray instead of across it, and `shooter_speed:=1.0` drives our
+own chassis back and forth along y (within 1 m of the origin) for every case.
 
 Every scored shot goes to `shots.jsonl` in `--log-dir`, one JSON object per
 line: the case, whether it hit, the miss distance split into the panel's
@@ -194,7 +202,6 @@ to zero for a clean run:
 
 ```bash
 spawn_target:=true            # target_driver, cv_target_emulator, cv_head_aim
-cv_emulator:=false            # leave cv_target_emulator out
 target_speed:=2.0 target_spin_hz:=1.5
 cv_noise_pos_stddev:=0.005    # Gaussian position noise, m
 cv_dropout_probability:=0.1   # per-sample detection drop
@@ -683,20 +690,25 @@ watchdog. Inside, `noise_pos_stddev` (0.005m), `dropout_probability` (0.1) and
 
 ### target_state_truth.py: the aim bench's perfect knowledge
 
-Stands in for the whole of Part 2 (emulator, `target_selector`,
-`target_tracker`) under `shot_hit.launch.py target_state:=truth`; only
-`target_driver` runs upstream of it. On its own timer at `publish_rate_hz`
-(60, the emulator's camera rate) it publishes the newest
-`/target/ground_truth_odom` sample, stamped with that sample's time and sent
-at once, with no latency added. That is the contract `TargetState.msg` sets
-for Part 2: the state describes the target at its stamp.
+Stands in for the whole of Part 2 on the point bench (`shot_hit.launch.py
+target_state:=truth`). For each `/target/ground_truth_odom` sample it
+publishes the target's `TargetState` at once, stamped with that sample's time:
+the contract `TargetState.msg` sets for Part 2, a state describing the target
+at its stamp. It used to publish on its own 60 Hz timer, which ran just ahead
+of `target_driver`'s samples and sent each one ~17 ms late.
 
 Panel 0 (front) is always the tracked panel: `yaw` is the chassis yaw,
 unwrapped, and `radius` is `[panel_radius_x, panel_radius_y]`. `z_offset`
 carries the stagger, `[+stagger/2, -stagger/2]` (front/back above, left/right
-below). `valid` is always true, `confidence` 1, `robot_track_id` fixed at 1,
-and `variance` zero. There is no field of view or occlusion. `panel_stagger_m`
-has to follow the case's layout, which `CvStack.set_target` sets per case.
+below). `acceleration` is the velocity change over the last sample step: exact
+on `target_driver`'s constant-acceleration stretches, one step late at each
+switch. `valid` is always true, `confidence` 1, `robot_track_id` 1, `variance`
+zero. `panel_stagger_m` follows the case's layout (`CvStack.set_target`).
+
+### sim_clock.py
+
+`/clock` for stacks with no gz: `rate` sim seconds per wall second, stepped
+by measured wall time at 1 kHz.
 
 ### cv_head_aim.py
 

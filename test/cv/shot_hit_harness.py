@@ -68,6 +68,9 @@ TRUTH_HISTORY_S = 1.0  # ground truth kept for interpolating impact-time poses
 # Static delay from a shot's fire time (CVTarget stamp + delay_ms) to the
 # projectile leaving the muzzle; flight time at MUZZLE_SPEED comes on top.
 FIRE_LATENCY_S = 0.05
+# The point bench's shooter (target_state:=truth): root sits here in odom with
+# no rotation, and shots leave from it toward the newest aim point.
+POINT_SHOOTER = (0.0, 0.0, 0.4)
 
 DEFAULT_SPEEDS = [0.5, 1.0, 2.0, 4.0]
 DEFAULT_DURATION = 30.0  # sim-time seconds of steady-state sampling per case
@@ -76,6 +79,10 @@ SETTLE_S = 3.0  # sim-time seconds after a motion change before scoring starts
 # point_to_cv_target fires at most once per publish tick, so the publish rate
 # sets it; fire_rate_hz sits above so a tick a millisecond early still fires.
 TEST_FIRE_HZ = 40.0
+# How far cv_head_aim plus the joint PID trail a moving setpoint, past the
+# half tick each aim is held: shots overshot by ~27 ms of target motion when
+# aimed 62 ms ahead, so 35 ms in all. point_to_cv_target's gimbal_lag_s.
+GIMBAL_LAG_S = 0.035 - 0.5 / TEST_FIRE_HZ
 DEFAULT_LOG_DIR = '/tmp/shot_hit_test_logs'
 # The stationary case (speed=0, spin=0) is the harness's own sanity
 # check: a working pipeline hits a motionless target trivially. 0.5 is far
@@ -299,7 +306,7 @@ class ShotHitSampler(Node):
     """
 
     def __init__(self, hit_radius, marker_lifetime_s=5.0, panel_stagger=0.0,
-                 shooter_speed=0.0):
+                 shooter_speed=0.0, point=False):
         # use_sim_time, or marker headers get stamped with wall-clock time
         # while the rest of the stack (sim, amcl's map->odom TF) runs on
         # sim time -- rviz then can't resolve the marker's TF at its
@@ -316,9 +323,15 @@ class ShotHitSampler(Node):
         self._last_shooter_cmd_s = None
         self.marker_lifetime = Duration(seconds=marker_lifetime_s).to_msg()
 
-        self._root_pos = None
-        self._root_rot = None
-        self._root_frame_id = None
+        # point: no gz; shots leave POINT_SHOOTER toward the newest aim.
+        self.point = point
+        if point and shooter_speed > 0.0:
+            raise ValueError('the point bench has a fixed shooter; shooter_speed needs gz')
+        self._root_pos = np.array(POINT_SHOOTER) if point else None
+        self._root_rot = np.eye(3) if point else None
+        self._root_frame_id = 'odom' if point else None
+        self._aims = []  # point: [(stamp_s, root-frame aim)], last second
+        self._panels_tick = -1  # point: last 20 Hz tick the panels were drawn on
         self._head_yaw = 0.0
         self._head_pitch = 0.0
         self._target_pos = None
@@ -333,9 +346,10 @@ class ShotHitSampler(Node):
         self.shot_records = []  # one dict per scored shot; see _shot_record
         self._shot_marker_id = 0
 
-        self.create_subscription(Odometry, '/sim/raw_odom', self._on_root_odom, 10)
-        self.create_subscription(
-            JointState, '/sim/raw_joint_states', self._on_joint_states, 10)
+        if not point:
+            self.create_subscription(Odometry, '/sim/raw_odom', self._on_root_odom, 10)
+            self.create_subscription(
+                JointState, '/sim/raw_joint_states', self._on_joint_states, 10)
         self.create_subscription(
             Odometry, '/target/ground_truth_odom', self._on_target_odom, 10)
         # Best-effort, matching mcb_relay's cv_target publisher.
@@ -393,9 +407,12 @@ class ShotHitSampler(Node):
         if not due or self._root_pos is None or self._target_pos is None:
             return
         self._unlaunched = [f for f in self._unlaunched if f['exit_time'] > now_s]
-        muzzle_pos, aim_dir = self._muzzle_pose()
-        shot_range = float(np.linalg.norm(self._target_pos - muzzle_pos))
+        if not self.point:
+            muzzle_pos, aim_dir = self._muzzle_pose()
         for fire in due:
+            if self.point:
+                muzzle_pos, aim_dir = self._point_pose(fire['exit_time'])
+            shot_range = float(np.linalg.norm(self._target_pos - muzzle_pos))
             # Resolved once truth covers the latest plausible impact; each
             # panel is then judged at its own arrival time (see _resolve_pending).
             self._pending_shots.append({
@@ -406,6 +423,12 @@ class ShotHitSampler(Node):
                 'shot_range': shot_range,
                 'fire': fire,
             })
+
+    def _point_pose(self, t):
+        """Return the point shooter's (position, unit direction) at t: toward the newest aim."""
+        aims = [a for stamp, a in self._aims if stamp <= t]
+        aim = aims[-1] if aims else self._aims[0][1]
+        return self._root_pos.copy(), aim / (np.linalg.norm(aim) + 1e-9)
 
     def _muzzle_pose(self):
         """
@@ -443,6 +466,9 @@ class ShotHitSampler(Node):
             yaw = prev_yaw + math.atan2(math.sin(yaw - prev_yaw), math.cos(yaw - prev_yaw))
         self._truth_history.append((stamp, self._target_pos.copy(), yaw))
         self._truth_history = [h for h in self._truth_history if stamp - h[0] <= TRUTH_HISTORY_S]
+        if self.point:
+            self._launch_due(stamp)
+            self._publish_panels(stamp)
         self._resolve_pending(stamp)
 
     def _truth_at(self, t):
@@ -465,6 +491,10 @@ class ShotHitSampler(Node):
         return pos, yaw
 
     def _on_cv_target(self, msg):
+        if self.point and msg.confidence > 0.0:
+            stamp = self._stamp_s(msg.header.stamp)
+            self._aims.append((stamp, np.array([msg.x, msg.y, msg.z])))
+            self._aims = [a for a in self._aims if stamp - a[0] <= 1.0]
         if not msg.fire:
             return
         if self._root_pos is None or self._target_pos is None:
@@ -566,6 +596,26 @@ class ShotHitSampler(Node):
             'target_vel': [round(float(v), 3) for v in vel[:2]],
             **{k: v for k, v in shot['fire'].items() if k != 'exit_time'},
         }
+
+    def _publish_panels(self, stamp):
+        """Point bench: draw the target's four panels, which no emulator draws here."""
+        if int(stamp * 20.0) == self._panels_tick:
+            return  # 20 Hz is plenty for rviz
+        self._panels_tick = int(stamp * 20.0)
+        markers = []
+        for k, (pos, normal) in enumerate(
+                _panel_poses(self._target_pos, self._target_rot, self.panel_stagger)):
+            m = Marker()
+            m.header.frame_id = 'odom'
+            m.header.stamp = self.get_clock().now().to_msg()
+            m.ns, m.id, m.type, m.action = 'panels', k, Marker.CUBE, Marker.ADD
+            m.pose.position = Point(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
+            yaw = math.atan2(normal[1], normal[0])
+            m.pose.orientation.z, m.pose.orientation.w = math.sin(yaw / 2.0), math.cos(yaw / 2.0)
+            m.scale.x, m.scale.y, m.scale.z = 0.01, PANEL_SIZE, PANEL_SIZE
+            m.color.r, m.color.g, m.color.b, m.color.a = 0.2, 0.4, 1.0, 1.0
+            markers.append(m)
+        self.marker_pub.publish(MarkerArray(markers=markers))
 
     def _publish_in_flight(self):
         """Draw every airborne shot as a yellow dot at its current position."""
@@ -718,8 +768,9 @@ class CvStack:
         # truth: target_state_truth stands in for the emulator, selector and
         # tracker (the aim bench).
         self.truth = target_state == 'truth'
-        self.estimators = (['target_state_truth'] if self.truth
-                           else ['target_selector', 'target_tracker'])
+        self.estimators = (['sim_clock', 'target_driver', 'target_state_truth'] if self.truth
+                           else ['robot_state_publisher', 'target_selector',
+                                 'target_tracker'])
         if not external:
             self.launch = LaunchTree(
                 'stack',
@@ -747,14 +798,13 @@ class CvStack:
         open(self.panel_hits_path, 'w').close()
         if self.launch is not None:
             self.launch.start()
-        probe = ShotHitSampler(hit_radius=0.0)
+        probe = ShotHitSampler(hit_radius=0.0, point=self.truth)
         try:
             probe.wait_until(
                 lambda: probe._root_pos is not None and probe._target_pos is not None,
                 timeout=60.0,
                 description='/sim/raw_odom + /target/ground_truth_odom publishing')
-            ready = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher',
-                     *self.estimators]
+            ready = ['point_to_cv_target', 'mcb_relay', *self.estimators]
             probe.wait_until(lambda: probe.nodes_up(*ready), timeout=15.0,
                              description=f'{", ".join(ready)} nodes up')
         finally:
@@ -804,7 +854,8 @@ def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0, path='lat
     # shots across the view, so theirs expire sooner still.
     sampler = ShotHitSampler(hit_radius=hit_radius,
                              marker_lifetime_s=1.0 / max(1.0, speed),
-                             panel_stagger=stagger, shooter_speed=shooter_speed)
+                             panel_stagger=stagger, shooter_speed=shooter_speed,
+                             point=stack.truth)
     try:
         sampler.spin_for(SETTLE_S)
         sampler.reset_score()

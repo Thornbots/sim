@@ -15,10 +15,12 @@
 """
 Ground-truth stand-in for target_tracker: the aim bench's perfect knowledge.
 
-Publishes the target's true TargetState on /cv/target_state at
-publish_rate_hz (60, the emulator's camera rate), from
-/target/ground_truth_odom alone: the newest sample, stamped with its own
-sample time, valid, confidence 1, track id TRACK_ID. Panel 0 (front) is the
+Publishes the target's true TargetState on /cv/target_state for each
+/target/ground_truth_odom sample as it arrives (60 Hz, target_driver's
+rate), stamped with that sample's time: valid, confidence 1, track id
+TRACK_ID. Acceleration is the
+velocity change over the last sample step, exact on target_driver's
+constant-acceleration segments. Panel 0 (front) is the
 tracked panel. Panel geometry matches cv_target_emulator (panel_radius_x/y,
 panel_stagger_m). see README.md for design rationale
 """
@@ -28,6 +30,7 @@ from dji_serial_bridge.msg import TargetState
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
+from rclpy.time import Time
 from sim.cv_target_emulator import PANEL_RADIUS_X, PANEL_RADIUS_Y
 
 TRACK_ID = 1  # one target, never switched
@@ -38,18 +41,17 @@ class TargetStateTruth(Node):
     def __init__(self):
         super().__init__('target_state_truth')
         self.declare_parameter('output_topic', '/cv/target_state')
-        self.declare_parameter('publish_rate_hz', 60.0)
         self.declare_parameter('panel_radius_x', PANEL_RADIUS_X)
         self.declare_parameter('panel_radius_y', PANEL_RADIUS_Y)
         self.declare_parameter('panel_stagger_m', 0.0)
 
-        self._truth = None  # newest /target/ground_truth_odom
-        self._yaw = None  # its yaw, unwrapped
+        self._truth = None  # previous /target/ground_truth_odom
+        self._yaw = None  # unwrapped
+        self._accel = (0.0, 0.0)  # world-frame x, y, m/s^2
         self.pub = self.create_publisher(
             TargetState, self.get_parameter('output_topic').value, 10)
         self.create_subscription(
             Odometry, '/target/ground_truth_odom', self.on_truth, 50)
-        self.create_timer(1.0 / self.get_parameter('publish_rate_hz').value, self.on_timer)
 
     def on_truth(self, msg):
         q = msg.pose.pose.orientation
@@ -58,12 +60,17 @@ class TargetStateTruth(Node):
             self._yaw = yaw
         else:
             self._yaw += (yaw - self._yaw + math.pi) % (2.0 * math.pi) - math.pi
+        prev = self._truth
+        if prev is not None:
+            dt = (Time.from_msg(msg.header.stamp)
+                  - Time.from_msg(prev.header.stamp)).nanoseconds / 1e9
+            if dt > 0.0:
+                v, v0 = msg.twist.twist.linear, prev.twist.twist.linear
+                self._accel = ((v.x - v0.x) / dt, (v.y - v0.y) / dt)
         self._truth = msg
+        self.publish_state(msg, self._yaw)
 
-    def on_timer(self):
-        truth, yaw = self._truth, self._yaw
-        if truth is None:
-            return
+    def publish_state(self, truth, yaw):
         radius = self.get_parameter('panel_radius_x').value
         half_stagger = self.get_parameter('panel_stagger_m').value / 2.0
         p = truth.pose.pose.position
@@ -75,6 +82,7 @@ class TargetStateTruth(Node):
         # target_driver writes world-frame velocity into its twist.
         out.velocity.x = truth.twist.twist.linear.x
         out.velocity.y = truth.twist.twist.linear.y
+        out.acceleration.x, out.acceleration.y = self._accel
         out.panel.x = p.x + radius * math.cos(yaw)
         out.panel.y = p.y + radius * math.sin(yaw)
         out.panel.z = p.z + half_stagger
