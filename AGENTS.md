@@ -150,8 +150,16 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `cv_target_emulator`, `shot_hit_harness`) moved to it too. Pitch limits
   (+-0.6 rad), suspension travel, spring rate and damping are placeholders,
   not CAD values.
-- **The gz shot-hit bench is gone.** Part 2 is scored on its state, not on
-  hits, by the C2 estimation bench (`CV_SPLIT_PLAN.md` Phase 2).
+- **The C2 estimation bench (`estimation.launch.py`) is built, not run as a
+  suite.** It scores Part 2's state, not hits. A headless probe on
+  2026-09-25 (8 s cases, not a baseline): staggered stationary facing panel
+  1.2 cm p95; 2 m/s with `blackout` and 1 m/s with our chassis moving both
+  ~35 cm p95 and ~10 s to converge. `LIMITS` is empty; every cell passes on
+  liveness until three runs fill it.
+- **C2's target is still `target_driver`'s phantom.** A spawned opponent
+  moved by `set_pose` steps at the call rate and its gz pose lags the
+  integrator, so truth stays `target_driver`'s. Spawn a visual one when YOLO
+  sees rendered frames (`CV_SPLIT_PLAN.md` 2.0).
 - **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard
   corners at 4 m/s and keeps it: the head's reaction torque gets past the
   yaw lock. The real robot is expected to drift 1-5 deg too. Noted, not

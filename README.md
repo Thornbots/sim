@@ -5,7 +5,7 @@ sim holds the robot's integration tests. The localization drift suite starts a
 `urdf/sentry_v2.urdf.xacro`, and runs the real `thornbots_pkg` stack against
 it. The CV aim bench runs no gz: it scores `point_to_cv_target` against a
 perfectly known target. gz on the CV side is for Part 2 only, turning noisy
-detections into a target model (`../CV_SPLIT_PLAN.md` Phase 2).
+detections into a target model (`../CV_SPLIT_PLAN.md`, Estimation).
 
 ## Run the tests
 
@@ -72,6 +72,39 @@ source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 launch sim shot_hit.launch.py
 ```
 
+The CV estimation bench (C2) scores Part 2, not hits. gz runs our
+`sentry_v2`, `target_driver` moves the phantom target through the same ten
+cells, `cv_target_emulator` turns it into detections off the real head's
+camera, and `target_selector` and `target_tracker` build the `TargetState`.
+`point_to_cv_target` and `cv_head_aim` keep the head on it; nothing fires.
+Each case switches detections off for 1 s so the tracker starts a fresh
+track, then scores every state for 3 s + 30 s against `target_driver`'s truth
+at the state's own stamp, so a late stamp scores as error:
+
+```bash
+source /workspaces/isaac_ros-dev/install/setup.bash
+ros2 launch sim estimation.launch.py
+```
+
+Per case it prints how long the facing panel's error took to stay under
+5 cm, the fraction of states valid, and the mean and p95 over the last 30 s
+of: the facing panel's error (the panel Part 1 aims at), all four panels',
+center, velocity, yaw (mod a quarter turn), spin rate, radius and height per
+pair. `blackout:=true` drops every detection for 0.3 s in each 2 s.
+`camera_latency_s:=0.03` stamps detections late and tells the tracker to
+undo it (`tracker_camera_latency_s:=0` to leave it undone).
+`shooter_speed:=1.0`, `target_path:=`, `speeds:=` and `panel_layout:=` work
+as on the aim bench, and `process_noise_accel:=` sets the tracker's. A cell
+passes on liveness until `LIMITS` in `test/cv/estimation_harness.py` has
+limits for it:
+
+```bash
+python3 tools/estimation_limits.py run1/ run2/ run3/   # each a log_dir:=
+```
+
+`estimation.jsonl` has one summary line per case and
+`estimation_states.jsonl` one line per scored state.
+
 The bench is one launch tree: the stack and the pytest that scores it. The
 localization launch runs pytest, and pytest starts the sim once
 (`run_tests:=false part:=sim`) and a fresh robot stack for each scenario
@@ -130,9 +163,10 @@ Everything under `test/` is pytest, and `colcon test` collects it.
 
 | Tier | Files | Needs |
 | --- | --- | --- |
-| unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, ament copyright/flake8/pep257 | Python + pytest |
+| unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, `cv/test_estimation_metrics.py`, ament copyright/flake8/pep257 | Python + pytest |
 | integration | `localization/test_localization_drift.py`, `localization/test_ekf_ground_truth.py` | gz-sim and a launch tree |
 | integration | `cv/test_shot_hit.py` | a launch tree, no gz |
+| integration | `cv/test_estimation.py` | gz-sim and a launch tree |
 
 `setup.cfg` deselects the `integration` marker, so a plain `colcon test` runs
 only the unit tests and finishes in seconds. A `-m` on the command line
