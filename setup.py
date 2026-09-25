@@ -69,6 +69,7 @@ setup(
             'target_driver = sim.target_driver:main',
             'cv_target_emulator = sim.cv_target_emulator:main',
             'target_state_truth = sim.target_state_truth:main',
+            'target_state_markers = sim.target_state_markers:main',
             'sim_clock = sim.sim_clock:main',
             'point_shooter = sim.point_shooter:main',
             'cv_head_aim = sim.cv_head_aim:main',

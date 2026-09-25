@@ -50,10 +50,11 @@ from nav_msgs.msg import Odometry
 import numpy as np
 from rcl_interfaces.srv import SetParameters
 import rclpy
-from rclpy.duration import Duration
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
+from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -351,11 +352,10 @@ class ShotHitSampler(SimTimeNode):
         super().__init__('shot_hit_test_sampler')
         self.hit_radius = hit_radius
         self.panel_stagger = panel_stagger  # must match target_state_truth's panel_stagger_m
-        self.marker_lifetime = Duration(seconds=marker_lifetime_s).to_msg()
+        self.marker_lifetime_s = marker_lifetime_s
 
         self._shooter_history = []  # [(stamp_s, pos, vel)], last TRUTH_HISTORY_S
         self._aims = []  # [(stamp_s, root-frame aim)], last second
-        self._panels_tick = -1  # last 20 Hz tick the panels were drawn on
         self._target_pos = None
         self._truth_history = []  # [(stamp_s, pos, yaw)], last TRUTH_HISTORY_S
         self._target_rot = None
@@ -366,7 +366,7 @@ class ShotHitSampler(SimTimeNode):
         self.hits = 0
         self.miss_distances = []
         self.shot_records = []  # one dict per scored shot; see _shot_record
-        self._shot_marker_id = 0
+        self._shot_marks = []  # [(stamp_s, hit, ray_pt, panel_pt)], for rviz only
 
         self.create_subscription(
             Odometry, '/target/ground_truth_odom', self._on_target_odom, 10)
@@ -376,10 +376,12 @@ class ShotHitSampler(SimTimeNode):
         self.create_subscription(
             CVTarget, '/dji_serial_bridge/cv_target', self._on_cv_target,
             qos_profile_sensor_data)
-        # Shots, panels and in-flight dots for rviz (cv_target.rviz); not
-        # used for scoring.
+        # Panels, aim, shots and in-flight dots for rviz (cv_target.rviz), not
+        # scoring: one whole MarkerArray per 30 Hz wall tick. rviz takes one
+        # message per topic per 30 Hz frame, so more messages only queue.
         self.marker_pub = self.create_publisher(MarkerArray, '/shot_markers', 10)
-        self.create_timer(1.0 / 30.0, self._publish_in_flight)
+        self.create_timer(1.0 / 30.0, self._publish_markers,
+                          clock=Clock(clock_type=ClockType.STEADY_TIME))
 
     def _launch_due(self, now_s):
         """Launch commanded shots whose exit time has come."""
@@ -441,7 +443,6 @@ class ShotHitSampler(SimTimeNode):
         self._truth_history.append((stamp, self._target_pos.copy(), yaw))
         self._truth_history = [h for h in self._truth_history if stamp - h[0] <= TRUTH_HISTORY_S]
         self._launch_due(stamp)
-        self._publish_panels(stamp)
         self._resolve_pending(stamp)
 
     def _truth_at(self, t):
@@ -521,7 +522,7 @@ class ShotHitSampler(SimTimeNode):
                 self.hits += 1
             self.shot_records.append(
                 self._shot_record(shot, best, hit, nearest_facing is not None))
-            self._publish_shot_marker(hit, best_ray_pt, best_panel_pt)
+            self._shot_marks.append((now_s, hit, best_ray_pt, best_panel_pt))
         self._pending_shots = still_pending
 
     def _shot_record(self, shot, best, hit, any_facing):
@@ -560,95 +561,75 @@ class ShotHitSampler(SimTimeNode):
             **{k: v for k, v in shot['fire'].items() if k != 'exit_time'},
         }
 
-    def _publish_panels(self, stamp):
-        """Draw the target's four panels, which nothing else draws here."""
-        if int(stamp * 20.0) == self._panels_tick:
-            return  # 20 Hz is plenty for rviz
-        self._panels_tick = int(stamp * 20.0)
-        markers = []
-        for k, (pos, normal) in enumerate(
-                _panel_poses(self._target_pos, self._target_rot, self.panel_stagger)):
-            m = Marker()
-            m.header.frame_id = 'odom'
-            m.header.stamp = self.get_clock().now().to_msg()
-            m.ns, m.id, m.type, m.action = 'panels', k, Marker.CUBE, Marker.ADD
-            m.pose.position = Point(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
-            yaw = math.atan2(normal[1], normal[0])
-            m.pose.orientation.z, m.pose.orientation.w = math.sin(yaw / 2.0), math.cos(yaw / 2.0)
-            m.scale.x, m.scale.y, m.scale.z = 0.01, PANEL_SIZE, PANEL_SIZE
-            m.color.r, m.color.g, m.color.b, m.color.a = 0.2, 0.4, 1.0, 1.0
-            markers.append(m)
-        self.marker_pub.publish(MarkerArray(markers=markers))
+    def _marker(self, ns, kind, stamp, points=None):
+        m = Marker()
+        m.header.frame_id = 'odom'
+        m.header.stamp = stamp
+        m.ns, m.id, m.type, m.action = ns, 0, kind, Marker.ADD
+        m.pose.orientation.w = 1.0
+        m.color.a = 1.0
+        m.lifetime.nanosec = 500_000_000  # gone soon after this sampler stops
+        if points is not None:
+            m.points = [Point(x=float(p[0]), y=float(p[1]), z=float(p[2])) for p in points]
+            if not m.points:
+                m.action = Marker.DELETE
+        return m
 
-    def _publish_in_flight(self):
-        """Draw every airborne shot as a yellow dot at its current position."""
-        now = self.get_clock().now().nanoseconds / 1e9
-        marker = Marker()
-        marker.header.frame_id = 'odom'
-        marker.header.stamp = self.get_clock().now().to_msg()
-        marker.ns = 'in_flight'
-        marker.id = 0
-        marker.type = Marker.SPHERE_LIST
-        marker.pose.orientation.w = 1.0
-        marker.scale.x = marker.scale.y = marker.scale.z = 0.02
-        marker.color.r, marker.color.g, marker.color.b, marker.color.a = 1.0, 1.0, 0.0, 1.0
+    def _publish_markers(self):
+        """Publish panels, aim, in-flight shots and scored shots as one MarkerArray."""
+        stamp = self.get_clock().now().to_msg()
+        now = self._stamp_s(stamp)
+        markers = []
+        if self._target_pos is not None:
+            for k, (pos, normal) in enumerate(
+                    _panel_poses(self._target_pos, self._target_rot, self.panel_stagger)):
+                m = self._marker('panels', Marker.CUBE, stamp)
+                m.id = k
+                m.pose.position = Point(x=float(pos[0]), y=float(pos[1]), z=float(pos[2]))
+                half_yaw = math.atan2(normal[1], normal[0]) / 2.0
+                m.pose.orientation.z, m.pose.orientation.w = math.sin(half_yaw), math.cos(half_yaw)
+                m.scale.x, m.scale.y, m.scale.z = 0.01, PANEL_SIZE, PANEL_SIZE
+                m.color.r, m.color.g, m.color.b = 0.2, 0.4, 1.0
+                markers.append(m)
+
+        # Newest aim point, drawn from root (odom-parallel) as a line.
+        aim_line = []
+        if self._aims and self._shooter_history:
+            root = self._shooter_history[-1][1]
+            aim_line = [root, root + self._aims[-1][1]]
+        m = self._marker('aim', Marker.LINE_LIST, stamp, aim_line)
+        m.scale.x = 0.005
+        m.color.r = m.color.g = m.color.b = 1.0
+        markers.append(m)
+
+        flying = []
         for shot in self._pending_shots:
             flown = shot['shot_speed'] * (now - shot['fire_time'])
             if 0.0 <= flown <= shot['shot_range']:
-                p = shot['muzzle_pos'] + shot['aim_dir'] * flown
-                marker.points.append(Point(x=float(p[0]), y=float(p[1]), z=float(p[2])))
-        marker.action = Marker.ADD if marker.points else Marker.DELETE
-        self.marker_pub.publish(MarkerArray(markers=[marker]))
+                flying.append(shot['muzzle_pos'] + shot['aim_dir'] * flown)
+        m = self._marker('in_flight', Marker.SPHERE_LIST, stamp, flying)
+        m.scale.x = m.scale.y = m.scale.z = 0.02
+        m.color.r, m.color.g = 1.0, 1.0
+        markers.append(m)
 
-    def _publish_shot_marker(self, hit, ray_pt, panel_pt):
-        """
-        Sphere where the shot passed nearest a facing panel (green hit, red miss).
-
-        An arrow runs from there to that panel's center as the shot reached
-        it (green hit, orange miss); its length is the miss distance.
-        """
-        end_pt = Point(x=float(ray_pt[0]), y=float(ray_pt[1]), z=float(ray_pt[2]))
-        header_frame = 'odom'
-        stamp = self.get_clock().now().to_msg()
-
-        marker = Marker()
-        marker.header.frame_id = header_frame
-        marker.header.stamp = stamp
-        marker.ns = 'shots'
-        marker.id = self._shot_marker_id
-        marker.type = Marker.SPHERE
-        marker.action = Marker.ADD
-        marker.pose.position = end_pt
-        marker.pose.orientation.w = 1.0
-        marker.scale.x = marker.scale.y = marker.scale.z = 0.03
-        marker.color.a = 1.0
-        if hit:
-            marker.color.r, marker.color.g, marker.color.b = 0.0, 1.0, 0.0
-        else:
-            marker.color.r, marker.color.g, marker.color.b = 1.0, 0.0, 0.0
-        marker.lifetime = self.marker_lifetime
-
-        arrow = Marker()
-        arrow.header.frame_id = header_frame
-        arrow.header.stamp = stamp
-        arrow.ns = 'shot_to_panel'
-        arrow.id = self._shot_marker_id
-        arrow.type = Marker.ARROW
-        arrow.action = Marker.ADD
-        arrow.pose.orientation.w = 1.0
-        c = panel_pt
-        arrow.points = [end_pt, Point(x=float(c[0]), y=float(c[1]), z=float(c[2]))]
-        # shaft diameter, head diameter, head length
-        arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.006, 0.02, 0.03
-        if hit:
-            arrow.color.r, arrow.color.g, arrow.color.b = 0.0, 0.6, 0.0
-        else:
-            arrow.color.r, arrow.color.g, arrow.color.b = 1.0, 0.5, 0.0
-        arrow.color.a = 1.0
-        arrow.lifetime = self.marker_lifetime
-
-        self._shot_marker_id += 1
-        self.marker_pub.publish(MarkerArray(markers=[marker, arrow]))
+        # Scored shots from the last marker_lifetime_s: a sphere where each
+        # passed nearest a facing panel, a line from there to that panel's
+        # center (its length is the miss). Green hit, red/orange miss.
+        self._shot_marks = [s for s in self._shot_marks
+                            if now - s[0] <= self.marker_lifetime_s]
+        spheres = self._marker('shots', Marker.SPHERE_LIST, stamp,
+                               [s[2] for s in self._shot_marks])
+        spheres.scale.x = spheres.scale.y = spheres.scale.z = 0.03
+        lines = self._marker('shot_to_panel', Marker.LINE_LIST, stamp,
+                             [p for s in self._shot_marks for p in (s[2], s[3])])
+        lines.scale.x = 0.006
+        for _, hit, _, _ in self._shot_marks:
+            spheres.colors.append(ColorRGBA(r=0.0 if hit else 1.0, g=1.0 if hit else 0.0,
+                                            b=0.0, a=1.0))
+            line = ColorRGBA(r=0.0 if hit else 1.0, g=0.6 if hit else 0.5, b=0.0, a=1.0)
+            lines.colors += [line, line]
+        markers += [spheres, lines]
+        self.marker_pub.publish(MarkerArray(markers=markers))
 
     def reset_score(self):
         """Forget every shot so far, scored or in flight; ground truth is kept."""
