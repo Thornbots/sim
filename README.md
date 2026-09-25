@@ -38,11 +38,16 @@ publishes `/pose`, `target_driver` moves the phantom target and
 `target_state_truth` publishes its true `TargetState`. Each shot leaves
 `root` toward the newest `/cv/target` aim before its exit time, carrying
 `root`'s velocity: a perfect gimbal that holds each 40 Hz aim until the
-next. So a miss is `point_to_cv_target`'s math and nothing else. It runs at
-`real_time_factor` (4 by default; no "unthrottled" without gz) and draws the
-target's panels in rviz. On 2026-09-25, 4x scored every cell within 1x's
-run-to-run spread with `keep_up` 0.99-1.00; 8x lost 2-5 points and fell
-behind (`keep_up` 0.98). Use `:=1` as the control.
+next. So a miss is `point_to_cv_target`'s math and nothing else. It draws the
+target's panels in rviz.
+
+`real_time_factor:=0` (the default) runs it as fast as the stack keeps up.
+`sim_clock` steps sim time 2 ms at a time and holds each step until
+`/cv/target_state`, `/pose`, `/cv/target` and the scorer's `/bench/progress`
+are stamped within one period of it, so no node falls behind. A fixed
+`real_time_factor` above 0 doesn't wait: 8x lost 2-5 points. On 2026-09-25
+the paced clock ran 6.6-6.8x and scored every cell within half a point of
+three 4x runs, `keep_up` 1.00. Use `:=1` as the control.
 
 `chase_settle_s` picks `point_to_cv_target`'s spin mode: `>= 0` (the default,
 0) chases the facing panel and fires every tick, `< 0` is shotgating: hold
@@ -118,7 +123,7 @@ a verdict looks off. Both
 shut down when the tests finish, and Ctrl-C stops everything, stacks included.
 
 The localization launch defaults to `real_time_factor:=0`, which lets gz run
-as fast as the machine allows; the aim bench runs at 4. Every test times
+as fast as the machine allows, and so does the aim bench. Every test times
 itself in sim seconds, so a faster sim shortens the wall-clock run without
 shortening what gets scored. On the dev laptop with `sentry_v2`, the drift
 suite runs about 1.2x real time, GUI or headless alike.

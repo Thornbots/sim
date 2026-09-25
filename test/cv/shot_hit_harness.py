@@ -54,7 +54,7 @@ from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, Header
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -410,6 +410,9 @@ class ShotHitSampler(SimTimeNode):
         # scoring: one whole MarkerArray per 30 Hz wall tick. rviz takes one
         # message per topic per 30 Hz frame, so more messages only queue.
         self.marker_pub = self.create_publisher(MarkerArray, '/shot_markers', 10)
+        # The stamp of each aim scored, so sim_clock's paced mode (rate 0)
+        # doesn't run ahead of this scorer.
+        self.progress_pub = self.create_publisher(Header, '/bench/progress', 10)
         self.create_timer(1.0 / 30.0, self._publish_markers,
                           clock=Clock(clock_type=ClockType.STEADY_TIME))
 
@@ -485,6 +488,7 @@ class ShotHitSampler(SimTimeNode):
         return interpolate(self._truth_history, t)
 
     def _on_cv_target(self, msg):
+        self.progress_pub.publish(Header(stamp=msg.header.stamp))
         if msg.confidence > 0.0:
             stamp = self._stamp_s(msg.header.stamp)
             self._aims.append((stamp, np.array([msg.x, msg.y, msg.z])))

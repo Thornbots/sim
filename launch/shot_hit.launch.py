@@ -91,13 +91,19 @@ def _point_stack(context, harness, headless):
     # No world, no robot: a /clock, our chassis as odom->root and /pose,
     # the phantom target and its true state, and the aim node. A perfect
     # gimbal: it holds each 40 Hz aim until the next, with no lag after.
-    rate = float(context.launch_configurations['real_time_factor'])
-    if rate <= 0.0:
-        raise RuntimeError('real_time_factor must be > 0: sim_clock has no "unthrottled"')
+    rate = max(0.0, float(context.launch_configurations['real_time_factor']))
+    # rate 0: as fast as every stage below keeps up, each output's stamp
+    # within one of its periods of sim time (truth and our pose at 60 Hz,
+    # the aim and the scorer at TEST_FIRE_HZ).
+    aim_period = 1.0 / harness.TEST_FIRE_HZ
+    pace = ['/cv/target_state dji_serial_bridge/msg/TargetState 0.0167',
+            '/pose dji_serial_bridge/msg/RobotPose 0.0167',
+            f'/cv/target dji_serial_bridge/msg/CVTarget {aim_period}',
+            f'/bench/progress std_msgs/msg/Header {aim_period}']
     x, y, z = harness.POINT_SHOOTER
     actions = [
         Node(package='sim', executable='sim_clock', name='sim_clock', output='screen',
-             parameters=[{'rate': rate}]),
+             parameters=[{'rate': rate, 'pace_topics': pace}]),
         # Our chassis: a second target_driver, no spin, bouncing along y
         # through root at shooter_speed (0 holds it at POINT_SHOOTER).
         Node(package='sim', executable='target_driver', name='shooter_driver', output='screen',
@@ -156,9 +162,9 @@ def generate_launch_description():
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('headless', default_value='false',
                               description='skip rviz2'),
-        DeclareLaunchArgument('real_time_factor', default_value='4.0',
+        DeclareLaunchArgument('real_time_factor', default_value='0',
                               description="sim_clock's rate, sim seconds per wall second; "
-                                          '4 scores like 1, 8 falls behind'),
+                                          '0 runs as fast as the stack keeps up'),
         DeclareLaunchArgument('speeds', default_value='',
                               description="target speeds (m/s), e.g. '0.5 1'; "
                                           'empty = the harness default sweep'),
