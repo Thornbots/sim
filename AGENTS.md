@@ -46,8 +46,10 @@ each one's args):
 ../isaac_ros_common/scripts/dexec.sh -d -- ros2 launch sim shot_hit.launch.py
 ```
 
-Both default to `real_time_factor:=0` (unthrottled) and time everything in sim
-seconds; `real_time_factor:=1` is the control when a result looks off.
+Both time everything in sim seconds. The drift suite defaults to
+`real_time_factor:=0` (unthrottled), the gz-free aim bench to `:=4` (8
+falls behind its 40 Hz). `real_time_factor:=1` is the control when a
+result looks off.
 
 Every scenario failing "stack NOT ready" means the container has the old
 discovery-server DDS profile; see the `isaac-ros-docker` skill. The
