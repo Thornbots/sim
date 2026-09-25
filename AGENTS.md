@@ -129,12 +129,12 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **`suite:=ekf` and shot-hit predate the A2M8 lidar and rf2o's per-scan
   matching** (800 beams, 0.15 m `range_min`, 0.01 m noise; was 3000, 0.2 m,
   0.03 m). Re-run them before quoting their numbers.
-- **`odom_stuck` passes but localization is lost.** Its check is liveness
-  only (`map->odom` spread > 1 cm). 2026-09-24, amcl + EKF, unthrottled:
-  spread 1.51 m, but `root`'s ground-truth error cycles 0.24-4.3 m every
-  lap while the robot drives the 3 m loop, and `map->odom` yaw swings
-  +-0.17 rad on a chassis that never rotates. amcl isn't pulling the pose
-  along without odometry. Not yet chased.
+- **`odom_stuck` passes but localization is lost, and that is accepted**
+  (the user's call, 2026-09-25). Its check stays liveness only. rf2o's
+  `/odom` seed freezes with `/odom`, and 0.4 m between 10 Hz scans at
+  4 m/s is too far to match unseeded, so `odom->root` stays inside ~1 m
+  and amcl rotates its estimate (up to 0.66 rad) to fit the scan.
+  README.md's scenario list has the details.
 - **One robot bring-up can leave `amcl` unconfigured.** Its reply to
   `/amcl/change_state` times out (`failed to send response`), the lifecycle
   manager never activates it, and the scenario fails on "map->odom never
@@ -205,10 +205,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   Both were needed: without the prior rf2o undershot legs that start from
   rest, whatever the blind sector. rf2o's sign is right; don't invert its
   warping again.
-- **`drift_correction`/`drift_correction_obstacle` have no metric for
-  `--backend none`.** `MAX_DELTA_THRESHOLD` assumes `map->odom`; under
-  `none` it measures the robot's own motion. `test_ekf_ground_truth.py`
-  should become that assertion.
+- **Under `--backend none` the drift scenarios score ground-truth error**
+  (`_truth_error`, ROADMAP A3), since `odom->root` there is the robot's
+  own motion. Built 2026-09-25, not yet run.
 - **`noise_correction`'s growth_ratio compares the two halves of a run**, so
   a run that starts clean fails hardest. Don't read its verdict as absolute
   accuracy.

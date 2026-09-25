@@ -412,12 +412,14 @@ Each scenario watches the edge the backend owns (`BACKEND_FRAMES`):
 alone. `mapping` isn't offered, since it builds a map rather than being scored
 against one.
 
-`jerk_with_motion` is skipped for `none`: `ekf_node` fuses `/odom` velocity
-only (`odom0_config`), with no travel gate, so neither expectation is defined.
-Drift scenarios do run for `none`, since rf2o's `/scan_odom` does real scan
-matching. With no map to miss a feature from, `drift_correction` and
-`drift_correction_obstacle` should read about the same there, and so should
-`moving_obstacles`.
+Under `none`, `odom->root` is the robot's own position, so its change says
+nothing about error. `noise_correction` and the three cornering-loop scenarios
+score `odom->root`'s distance from `/sim/raw_odom` there instead, against the
+same thresholds. `jerk_with_motion` is skipped for `none`: `ekf_node` fuses
+`/odom` velocity only (`odom0_config`), with no travel gate, so neither
+expectation is defined. With no map to miss a feature from, `drift_correction`
+and `drift_correction_obstacle` should read about the same under `none`, and
+so should `moving_obstacles`.
 
 amcl with and without EKF under slip, measured 2026-07-26 against a 0.30m
 bound; verdicts shown against today's 0.40m `MAX_DELTA_THRESHOLD`:
@@ -458,6 +460,7 @@ The suite runs them in this order.
    each sample's `map->root` error against `/sim/raw_odom`. It also fails if
    `actor_driver` dies mid-loop. Under `slam`, ROADMAP A4 also wants the
    actors' cells checked in `/map` at the end; that check isn't built yet.
+   Under `none` it scores ground-truth error, like `drift_correction`.
 6. `jerk_with_motion` (slam/amcl) models a collision impulse. Each trial fires
    `trigger_jerk`, drives one leg to the next corner, then requires a
    correction proportional to the jerk or an end state within
@@ -474,8 +477,15 @@ The suite runs them in this order.
    scan-match gate runs on odom-reported travel and frozen odom never reopens
    it. The stack really does depend on odometry to stay live. `amcl --use-ekf`
    passes at 1.3071m, because the EKF keeps reporting travel. Passing isn't
-   tracking: 2026-09-24 it passed at 1.5073m with ground-truth error cycling
-   0.24-4.3m per lap (see `AGENTS.md`).
+   tracking: 2026-09-25 it passed at 1.35m while `odom->root` stayed inside
+   about 1m and ground-truth error cycled 0.2-3.9m per lap. rf2o seeds each
+   match from `/odom`, so a frozen `/odom` pins it too, and at 4 m/s the 10 Hz
+   lidar moves 0.4m between scans, too far for rf2o to match without a good
+   seed. Matching from rf2o's own last motion as well didn't help, since that
+   motion was already near zero. amcl has no motion to spread its particles
+   and turns its estimate (up to 0.66 rad) to fit the scan. Losing the robot
+   here is a known limit of this sensor set, not a defect; the scenario stays
+   a liveness check.
 
 Two checks were removed. `jerk_stationary` (2026-07-23) re-verified a documented limit
 of the travel gate instead of testing recovery. A no-leak-before-motion check
