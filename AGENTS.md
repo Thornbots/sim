@@ -47,9 +47,10 @@ each one's args):
 ```
 
 Both time everything in sim seconds. The drift suite defaults to
-`real_time_factor:=0` (unthrottled), the gz-free aim bench to `:=4` (8
-falls behind its 40 Hz). `real_time_factor:=1` is the control when a
-result looks off.
+`real_time_factor:=0`, as fast as the machine allows: gz can't step past
+its own physics, and the gz-free aim bench's `sim_clock` waits for each
+stage's output. `real_time_factor:=1` is the control when a result looks
+off.
 
 Every scenario failing "stack NOT ready" means the container has the old
 discovery-server DDS profile; see the `isaac-ros-docker` skill. The
