@@ -166,6 +166,10 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   launch` died at once and left its nodes orphaned (parent 1, invisible to
   `kill_launch.sh -l`), nine stacks all publishing `/clock`. Before a run,
   check `ps -eo pid,ppid,cmd | grep install/` for such orphans too.
+- **Panels are canted 15 deg in the game (S122), and not everywhere here.**
+  The emulator and the scorer's facing test keep the cant; both rviz views
+  draw panels vertical, and a hit is scored as distance to the panel
+  centre, not a crossing of the canted square (`../ROADMAP.md` Caveats).
 - **C2's target is still `target_driver`'s phantom.** A spawned opponent
   moved by `set_pose` steps at the call rate and its gz pose lags the
   integrator, so truth stays `target_driver`'s. Spawn a visual one when YOLO
