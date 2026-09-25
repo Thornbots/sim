@@ -6,6 +6,7 @@
      1 deg still leaks in during hard corners).
      see README.md for design rationale -->
 <robot name="sentry" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="camera" default="false"/>
   <xacro:include filename="$(find sim)/urdf/sentry_v2/sentry_v2.urdf"/>
 
   <!-- Colour (gz only; the generated URDF has no materials, so rviz draws it
@@ -91,29 +92,32 @@
     </sensor>
   </gazebo>
 
-  <!-- D435-like RGBD camera at 60 Hz; sim.launch.py bridges it onto
-       realsense-ros's topic names. -->
-  <gazebo reference="camera">
-    <sensor name="camera" type="rgbd_camera">
-      <always_on>true</always_on>
-      <visualize>true</visualize>
-      <update_rate>60</update_rate>
-      <topic>camera</topic>
-      <gz_frame_id>camera</gz_frame_id>
-      <camera>
-        <horizontal_fov>1.5184</horizontal_fov>
-        <image>
-          <width>640</width>
-          <height>480</height>
-          <format>R8G8B8</format>
-        </image>
-        <clip>
-          <near>0.1</near>
-          <far>10.0</far>
-        </clip>
-      </camera>
-    </sensor>
-  </gazebo>
+  <!-- D435-like RGBD camera at 60 Hz, only with camera:=true: no test reads
+       the images, and rendering them costs sim speed. sim.launch.py bridges
+       it onto realsense-ros's topic names. -->
+  <xacro:if value="$(arg camera)">
+    <gazebo reference="camera">
+      <sensor name="camera" type="rgbd_camera">
+        <always_on>true</always_on>
+        <visualize>true</visualize>
+        <update_rate>60</update_rate>
+        <topic>camera</topic>
+        <gz_frame_id>camera</gz_frame_id>
+        <camera>
+          <horizontal_fov>1.5184</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.1</near>
+            <far>10.0</far>
+          </clip>
+        </camera>
+      </sensor>
+    </gazebo>
+  </xacro:if>
 
   <gazebo>
     <!-- /sim/raw_odom at 100 Hz, the Type-C board's /pose rate. -->

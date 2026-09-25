@@ -1462,6 +1462,13 @@ def scenario_odom_stuck(gui, backend, use_ekf):
                     err = math.hypot(root_pos[0] - truth_xy[0],
                                      root_pos[1] - truth_xy[1])
                     err_str = f'  ground_truth_error={err:.4f} m'
+                try:
+                    o = helper.tf_buffer.lookup_transform(
+                        'odom', 'root', rclpy.time.Time()).transform.translation
+                    err_str += (f'  odom->root=({o.x:.3f}, {o.y:.3f})'
+                                f'  truth={truth_xy}')
+                except Exception:
+                    pass
                 sc.log(f't={elapsed:5.1f}s  {edge} = '
                        f'(x={p[0]:.4f}, y={p[1]:.4f}, yaw={p[2]:.4f})'
                        f'{err_str}')

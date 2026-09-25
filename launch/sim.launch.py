@@ -109,9 +109,10 @@ def generate_launch_description():
     )
     camera_arg = DeclareLaunchArgument(
         'camera', default_value='false',
-        description='Set to true to bridge the rgbd camera to /color and /depth; '
-                    'off by default because nothing in sim or its tests reads '
-                    'the images, and they are the heaviest thing it publishes'
+        description='Set to true to add the rgbd camera sensor to the robot and '
+                    'bridge it to /color and /depth; off by default because '
+                    'nothing in sim or its tests reads the images, and '
+                    'rendering them costs sim speed'
     )
     camera_on = IfCondition(LaunchConfiguration('camera'))
     real_time_factor_arg = DeclareLaunchArgument(
@@ -293,7 +294,8 @@ def generate_launch_description():
         name='spawn_sentry',
         output='screen',
         arguments=[
-            '-string', Command(['xacro '] + model_xacro),
+            '-string', Command(['xacro '] + model_xacro
+                               + [' camera:=', LaunchConfiguration('camera')]),
             '-name', robot_name,
             '-x', LaunchConfiguration('x'),
             '-y', LaunchConfiguration('y'),
