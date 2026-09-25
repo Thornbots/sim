@@ -43,7 +43,7 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
-    AndSubstitution, Command, LaunchConfiguration, PathJoinSubstitution)
+    Command, LaunchConfiguration, PathJoinSubstitution)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -188,11 +188,6 @@ def generate_launch_description():
     spawn_target_arg = DeclareLaunchArgument(
         'spawn_target', default_value='false',
         description='Launch target_driver + cv_target_emulator for CV detection testing'
-    )
-    cv_emulator_arg = DeclareLaunchArgument(
-        'cv_emulator', default_value='true',
-        description='With spawn_target, also launch cv_target_emulator. false '
-        "leaves target_driver alone, as shot_hit.launch.py's truth bench does"
     )
     target_speed_arg = DeclareLaunchArgument(
         'target_speed', default_value='2.0',
@@ -573,8 +568,7 @@ def generate_launch_description():
                 LaunchConfiguration('cv_publish_latency_s'), value_type=float
             ),
         }],
-        condition=IfCondition(AndSubstitution(
-            LaunchConfiguration('spawn_target'), LaunchConfiguration('cv_emulator'))),
+        condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
 
     # --- Turns thornbots_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd
@@ -627,7 +621,6 @@ def generate_launch_description():
         odom_jerk_bias_y_arg,
         odom_slip_ratio_arg,
         spawn_target_arg,
-        cv_emulator_arg,
         target_speed_arg,
         target_spin_hz_arg,
         cv_noise_pos_stddev_arg,
