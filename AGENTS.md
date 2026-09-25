@@ -154,17 +154,18 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   not CAD values.
 - **The C2 estimation bench (`estimation.launch.py`) has run once**
   (2026-09-25, GUI, `../log/cv_runs/est_c2_1`). It scores Part 2's state,
-  not hits. Moving cells score 2-3x worse on gz than offline (facing p95
-  0.18-0.31 m against 0.06-0.12); not yet traced. `LIMITS` is empty; every
+  not hits. Moving cells read 0.12-0.51 m facing p95 and swing up to 2x
+  between runs; not yet traced. `LIMITS` is empty; every
   cell passes on liveness until three runs fill it.
 - **`cv_head_aim` holds the head when there's no target**, so a case can
   start with the target out of view. `estimation_harness` aims the head at
   the truth during each case's reset; before that, staggered stationary
   after 4 m/s scored nothing.
-- **Tune Part 2 offline first:** `tools/estimation_offline.py` runs
-  target_driver, the emulator and the tracker without ROS, scored like C2,
-  in seconds. gz C2 decides; the offline copy leaves out the head slewing.
-  Its `TRACKER` defaults copy the node's; keep them in step.
+- **Every CV test runs with ROS** (the user's rule, 2026-09-25): tune and
+  score Part 2 on C2, never on a copy of the nodes outside ROS. The
+  offline estimator (`tools/estimation_offline.py`) was removed for that:
+  it left out the head slewing and its tracker defaults drifted from the
+  node's. Pure-numpy unit tests of the `*_core.py` modules stay.
 - **`cv_target_emulator` adds D435-like ray noise** (depth 0.0036 r^2,
   bearing 0.003 r) on top of the 5 mm. Datasheet estimates, not measured.
 - **Launch long runs with `dexec.sh -d`, not a foreground `dexec.sh`.** On
