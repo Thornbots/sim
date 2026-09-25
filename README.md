@@ -247,7 +247,7 @@ to zero for a clean run:
 ```bash
 spawn_target:=true            # target_driver, cv_target_emulator, cv_head_aim
 target_speed:=2.0 target_spin_hz:=1.5
-cv_noise_pos_stddev:=0.005    # Gaussian position noise, m
+cv_noise_pos_stddev:=0.005    # Gaussian position noise, m, plus D435-like ray noise
 cv_dropout_probability:=0.1   # per-sample detection drop
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
@@ -732,6 +732,13 @@ Detections outside the FOV (`horizontal_fov=1.5184`, vertical from 640x480) or
 range (0.1-10.0m) aren't published, which exercises `point_to_cv_target`'s
 watchdog. Inside, `noise_pos_stddev` (0.005m), `dropout_probability` (0.1) and
 `publish_latency_s` (0.06s, a placeholder) all default on.
+
+On top of the isotropic noise sits a D435-shaped ray model, since the tracker
+has to be tuned on the noise it will meet: depth std `noise_depth_range_coeff *
+range^2` (0.0036, 3 cm at 3 m, from the stereo baseline and a 0.08 px subpixel)
+and bearing std `noise_lateral_rad * range` (0.003, about a pixel). Both are
+datasheet estimates; measure them on the robot. Set both to 0 for the old
+5 mm-only noise.
 
 ### target_state_truth.py: the aim bench's perfect knowledge
 

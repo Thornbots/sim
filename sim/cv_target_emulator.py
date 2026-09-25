@@ -192,6 +192,11 @@ class CvTargetEmulator(Node):
         # from point_to_cv_target's LatencyStat (plan verification item 9) --
         # the plan's own estimate is pipeline latency ~50-100ms.
         self.declare_parameter('noise_pos_stddev', 0.005)
+        # On top of it, a D435-like ray model: depth std = coeff * range^2
+        # (stereo, 50 mm baseline, 0.08 px subpixel), bearing std = lateral
+        # rad * range (about a pixel). Estimates, not measurements.
+        self.declare_parameter('noise_depth_range_coeff', 0.0036)
+        self.declare_parameter('noise_lateral_rad', 0.003)
         self.declare_parameter('dropout_probability', 0.1)
         self.declare_parameter('publish_latency_s', 0.06)
         # How much later than the sampled pose each detection is stamped: the
@@ -348,9 +353,15 @@ class CvTargetEmulator(Node):
             return None
 
         stddev = self.get_parameter('noise_pos_stddev').value
-        fwd_n = fwd + np.random.normal(0.0, stddev)
-        left_n = left + np.random.normal(0.0, stddev)
-        up_n = up + np.random.normal(0.0, stddev)
+        rel = np.array([fwd, left, up])
+        range_m = float(np.linalg.norm(rel))
+        ray = rel / range_m
+        lateral = np.random.normal(
+            0.0, self.get_parameter('noise_lateral_rad').value * range_m, 3)
+        lateral -= (lateral @ ray) * ray
+        depth = np.random.normal(
+            0.0, self.get_parameter('noise_depth_range_coeff').value * range_m ** 2)
+        fwd_n, left_n, up_n = rel + np.random.normal(0.0, stddev, 3) + lateral + depth * ray
 
         half = PANEL_SIZE / 2.0
         noise = np.array([fwd_n - fwd, left_n - left, up_n - up])
