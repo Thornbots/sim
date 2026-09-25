@@ -17,7 +17,8 @@ Shot-hit bench: the sim, the production CV pipeline and the scoring pytest in on
 
 `ros2 launch sim shot_hit.launch.py [speeds:='0.5 1'] [only_stationary:=true]`.
 target_state:=truth is the aim bench: target_state_truth publishes the true
-TargetState in place of target_tracker, so every miss is point_to_cv_target's.
+TargetState and nothing else runs upstream of /cv/target_state but
+target_driver, so every miss is point_to_cv_target's.
 Stops when the tests finish; Ctrl-C (or SIGINT/SIGTERM to this launch) stops
 the whole stack. `run_tests:=false` brings up the stack alone, which is how
 test_shot_hit.py's cv_stack fixture launches it under a bare pytest/colcon test.
@@ -69,7 +70,9 @@ def _stack(context):
     import shot_hit_harness as harness
 
     headless = _is_true(context, 'headless')
+    truth = context.launch_configurations['target_state'] == 'truth'
     sim_args = {'spawn_target': 'true', 'target_speed': '0.0', 'target_spin_hz': '0.0',
+                'cv_emulator': str(not truth).lower(),
                 'real_time_factor': context.launch_configurations['real_time_factor']}
     if headless:
         sim_args.update(gui='false', rviz='false')
@@ -95,17 +98,17 @@ def _stack(context):
 
     # The production CV pipeline, bare (no auto.launch.py params): target_selector
     # picks from the emulator's panel_detections, target_tracker estimates the
-    # spin centre, point_to_cv_target solves the lead and fires at up to
+    # spin center, point_to_cv_target solves the lead and fires at up to
     # TEST_FIRE_HZ, mcb_relay forwards it to /dji_serial_bridge/cv_target.
+    # truth swaps the first two, and the emulator, for target_state_truth.
     def cv_node(executable, package='thornbots_pkg', **params):
         return Node(package=package, executable=executable, name=executable,
                     output='screen', parameters=[{'use_sim_time': True, **params}])
 
-    truth = context.launch_configurations['target_state'] == 'truth'
+    estimate = ([cv_node('target_state_truth', package='sim')] if truth
+                else [cv_node('target_selector'), cv_node('target_tracker')])
     actions = [
-        sim, robot_tf,
-        cv_node('target_selector'),
-        cv_node('target_state_truth', package='sim') if truth else cv_node('target_tracker'),
+        sim, robot_tf, *estimate,
         cv_node('point_to_cv_target',
                 cv_target_publish_rate_hz=harness.TEST_FIRE_HZ,
                 fire_rate_hz=harness.TEST_FIRE_HZ + 10.0),
@@ -159,7 +162,8 @@ def generate_launch_description():
                               description='miss distance (m) still counted as a hit'),
         DeclareLaunchArgument('target_state', default_value='tracker',
                               choices=['tracker', 'truth'],
-                              description='truth: aim bench, true TargetState, no tracker'),
+                              description='truth: aim bench, true TargetState, '
+                                          'no emulator, selector or tracker'),
         DeclareLaunchArgument('target_path', default_value='lateral',
                               choices=['lateral', 'radial', 'diagonal'],
                               description='across the view, down the camera ray, or both'),

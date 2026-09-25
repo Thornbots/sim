@@ -32,8 +32,9 @@ falling behind 40 Hz costs points. Shots leave from `sentry_v2`'s `muzzle`
 frame (see the `cv_head_aim.py` note).
 
 `target_state:=truth` makes it the aim bench: `target_state_truth` publishes
-the target's true `TargetState` in place of `target_tracker`, so a miss is
-`point_to_cv_target`'s and not the estimate's (see its note below). The floors
+the target's true `TargetState`, and the emulator, `target_selector` and
+`target_tracker` don't run, so a miss is `point_to_cv_target`'s and not the
+estimate's (see its note below). The floors
 are the same placeholders on both until the aim bench has been measured.
 `target_path:=radial` or `diagonal` moves the target along the camera ray
 instead of across it, and `shooter_speed:=1.0` drives our own chassis back and
@@ -193,6 +194,7 @@ to zero for a clean run:
 
 ```bash
 spawn_target:=true            # target_driver, cv_target_emulator, cv_head_aim
+cv_emulator:=false            # leave cv_target_emulator out
 target_speed:=2.0 target_spin_hz:=1.5
 cv_noise_pos_stddev:=0.005    # Gaussian position noise, m
 cv_dropout_probability:=0.1   # per-sample detection drop
@@ -681,24 +683,20 @@ watchdog. Inside, `noise_pos_stddev` (0.005m), `dropout_probability` (0.1) and
 
 ### target_state_truth.py: the aim bench's perfect knowledge
 
-Stands in for `target_tracker` under `shot_hit.launch.py target_state:=truth`.
-It publishes one `TargetState` per `/cv/robot_panels` message, copying that
-message's stamp and `robot_track_id`, so `point_to_cv_target` sees the same
-timing, latency and track ids as it does behind the tracker. The state is
-`/target/ground_truth_odom` at that stamp: the emulator stamps detections with
-the truth sample they came from, so the match is exact, and a sample more
-than 20 ms off is dropped as aged out of the 2 s history.
+Stands in for the whole of Part 2 (emulator, `target_selector`,
+`target_tracker`) under `shot_hit.launch.py target_state:=truth`; only
+`target_driver` runs upstream of it. On its own timer at `publish_rate_hz`
+(60, the emulator's camera rate) it publishes the newest
+`/target/ground_truth_odom` sample, stamped with that sample's time and sent
+at once, with no latency added. That is the contract `TargetState.msg` sets
+for Part 2: the state describes the target at its stamp.
 
 Panel 0 (front) is always the tracked panel: `yaw` is the chassis yaw,
-unwrapped, `radius` is `panel_radius_x` and `other_radius` `panel_radius_y`.
-`z_offset`/`other_z_offset` carry the stagger (front/back `+stagger/2`,
-left/right `-stagger/2`); the tracker leaves both at 0, its one-height model.
-`variance` is zero and `valid` always true. `panel_stagger_m` has to follow
-`cv_target_emulator`'s, which `CvStack.set_target` does per case.
-
-`target_selector` still runs: `point_to_cv_target` takes its liveness and
-track id from `/cv/panel_detection`, so dropouts and track loss still reach
-the aim solve.
+unwrapped, and `radius` is `[panel_radius_x, panel_radius_y]`. `z_offset`
+carries the stagger, `[+stagger/2, -stagger/2]` (front/back above, left/right
+below). `valid` is always true, `confidence` 1, `robot_track_id` fixed at 1,
+and `variance` zero. There is no field of view or occlusion. `panel_stagger_m`
+has to follow the case's layout, which `CvStack.set_target` sets per case.
 
 ### cv_head_aim.py
 
