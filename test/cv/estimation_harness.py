@@ -38,12 +38,17 @@ from rclpy.parameter import Parameter
 from shot_hit_harness import (
     interpolate, LaunchTree, PANEL_RADIUS_X, PANEL_RADIUS_Y, SimTimeNode, TARGET_PATHS,
 )
+from sim.cv_head_aim_core import solve_head_angles
+from std_msgs.msg import Float64
 
 DEFAULT_DURATION = 30.0  # sim seconds scored per case, after SETTLE_S
 SETTLE_S = 3.0  # sim seconds after the track restarts before steady-state scoring
 # Detections off this long at each case start, past target_tracker's
-# track_max_gap_s (0.5), so every case starts a fresh track.
+# track_max_gap_s (0.5), so every case starts a fresh track. The sampler
+# points the head at the true target meanwhile: cv_head_aim holds with no
+# target, and a head left at the last case's path end can miss the next.
 RESET_S = 1.0
+HEADPITCH_LIMIT = 0.6  # rad, cv_head_aim's clamp
 TRUTH_HISTORY_S = 2.0
 DEFAULT_LOG_DIR = '/tmp/estimation_test_logs'
 # --blackout: blackout_s of no detections every period, shorter than
@@ -69,12 +74,16 @@ class EstimationSampler(SimTimeNode):
         self._last_cmd_s = None
         self._truth = []  # [(stamp_s, center, velocity, yaw unwrapped, yaw_rate)]
         self._root_xy = (0.0, 0.0)  # ours, from /sim/raw_odom
+        self._root_pose = (np.zeros(3), 0.0)  # position, yaw
+        self.aim_head = False  # command the head at truth; run_case sets it for RESET_S
         self._pending = []  # [(stamp_s, arrival_s, TargetState)]
         self.records = []  # one dict per scored state
         self.create_subscription(Odometry, '/target/ground_truth_odom', self._on_truth, 50)
         self.create_subscription(TargetState, '/cv/target_state', self._on_state, 50)
         self.create_subscription(Odometry, '/sim/raw_odom', self._on_root_odom, 10)
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.pan_pub = self.create_publisher(Float64, '/head_pan_cmd', 10)
+        self.pitch_pub = self.create_publisher(Float64, '/head_pitch_cmd', 10)
 
     def _now_s(self):
         return self.get_clock().now().nanoseconds / 1e9
@@ -92,6 +101,17 @@ class EstimationSampler(SimTimeNode):
                             yaw, v.angular.z))
         self._truth = [h for h in self._truth if stamp - h[0] <= TRUTH_HISTORY_S]
         self._resolve(stamp)
+        if self.aim_head:
+            self._aim_head_at(self._truth[-1][1])
+
+    def _aim_head_at(self, center):
+        root, yaw = self._root_pose
+        d = center - root
+        c, s = math.cos(yaw), math.sin(yaw)
+        head_yaw, head_pitch = solve_head_angles((c * d[0] + s * d[1], -s * d[0] + c * d[1], d[2]))
+        self.pan_pub.publish(Float64(data=head_yaw))
+        self.pitch_pub.publish(Float64(data=max(-HEADPITCH_LIMIT,
+                                                min(HEADPITCH_LIMIT, head_pitch))))
 
     def _on_state(self, msg):
         self._pending.append((self._stamp_s(msg.header.stamp), self._now_s(), msg))
@@ -115,7 +135,11 @@ class EstimationSampler(SimTimeNode):
 
     def _on_root_odom(self, msg):
         """Keep our position; bounce our chassis along y at shooter_speed, x held at 0."""
-        self._root_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        self._root_xy = (p.x, p.y)
+        self._root_pose = (np.array([p.x, p.y, p.z]),
+                           math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                      1.0 - 2.0 * (q.y * q.y + q.z * q.z)))
         if self.shooter_speed <= 0.0:
             return
         now_s = self._stamp_s(msg.header.stamp)
@@ -204,8 +228,9 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
     """
     Restart the track on (speed, spin_hz, stagger, path), then score every state.
 
-    Detections go off for RESET_S so the tracker drops the old track, then
-    come back; states are scored from there for SETTLE_S + duration.
+    Detections go off for RESET_S so the tracker drops the old track, while
+    the head turns to the target, then come back; states are scored from
+    there for SETTLE_S + duration.
     """
     stack.set_params('target_driver', target_speed=speed, spin_hz=spin_hz,
                      **TARGET_PATHS[path])
@@ -213,7 +238,9 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
                      **(BLACKOUT if blackout else {'blackout_period_s': 0.0}))
     sampler = EstimationSampler(stagger, shooter_speed)
     try:
+        sampler.aim_head = True
         sampler.spin_for(RESET_S)
+        sampler.aim_head = False
         sampler._pending, sampler.records = [], []
         stack.set_params('cv_target_emulator', detections_enabled=True)
         start_s = sampler._now_s()

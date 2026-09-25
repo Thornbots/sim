@@ -152,15 +152,19 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `cv_target_emulator`, `shot_hit_harness`) moved to it too. Pitch limits
   (+-0.6 rad), suspension travel, spring rate and damping are placeholders,
   not CAD values.
-- **The C2 estimation bench (`estimation.launch.py`) is built, not run as a
-  suite.** It scores Part 2's state, not hits. A headless probe on
-  2026-09-25 (8 s cases, not a baseline): staggered stationary facing panel
-  1.2 cm p95; 2 m/s with `blackout` and 1 m/s with our chassis moving both
-  ~35 cm p95 and ~10 s to converge. `LIMITS` is empty; every cell passes on
-  liveness until three runs fill it.
+- **The C2 estimation bench (`estimation.launch.py`) has run once**
+  (2026-09-25, GUI, `../log/cv_runs/est_c2_1`). It scores Part 2's state,
+  not hits. Moving cells score 2-3x worse on gz than offline (facing p95
+  0.18-0.31 m against 0.06-0.12); not yet traced. `LIMITS` is empty; every
+  cell passes on liveness until three runs fill it.
+- **`cv_head_aim` holds the head when there's no target**, so a case can
+  start with the target out of view. `estimation_harness` aims the head at
+  the truth during each case's reset; before that, staggered stationary
+  after 4 m/s scored nothing.
 - **Tune Part 2 offline first:** `tools/estimation_offline.py` runs
   target_driver, the emulator and the tracker without ROS, scored like C2,
   in seconds. gz C2 decides; the offline copy leaves out the head slewing.
+  Its `TRACKER` defaults copy the node's; keep them in step.
 - **`cv_target_emulator` adds D435-like ray noise** (depth 0.0036 r^2,
   bearing 0.003 r) on top of the 5 mm. Datasheet estimates, not measured.
 - **Launch long runs with `dexec.sh -d`, not a foreground `dexec.sh`.** On
@@ -169,9 +173,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `kill_launch.sh -l`), nine stacks all publishing `/clock`. Before a run,
   check `ps -eo pid,ppid,cmd | grep install/` for such orphans too.
 - **Panels are canted 15 deg in the game (S122), and not everywhere here.**
-  The emulator and the scorer's facing test keep the cant; both rviz views
-  draw panels vertical, and a hit is scored as distance to the panel
-  centre, not a crossing of the canted square (`../ROADMAP.md` Caveats).
+  The emulator, the scorer's facing test and both rviz views keep the cant;
+  a hit is still scored as distance to the panel centre, not a crossing of
+  the canted square (`../ROADMAP.md` Caveats).
 - **C2's target is still `target_driver`'s phantom.** A spawned opponent
   moved by `set_pose` steps at the call rate and its gz pose lags the
   integrator, so truth stays `target_driver`'s. Spawn a visual one when YOLO

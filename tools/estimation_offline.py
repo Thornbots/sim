@@ -49,10 +49,12 @@ RATE_HZ = 60.0
 PATHS = {'lateral': (0.0, 3.0, 2.4), 'radial': (90.0, 3.5, 2.0), 'diagonal': (45.0, 3.0, 2.0)}
 TRACKER = {'panel_radius_m': 0.27, 'meas_noise_base_m': 0.03, 'meas_noise_range_coeff': 0.01,
            'meas_noise_lateral_m': 0.04, 'q_accel': 2.0, 'q_yaw_accel': 5.0,
-           'q_radius': 0.02, 'gate_nis': 16.3, 'max_outliers': 3, 'track_max_gap_s': 0.5}
+           'q_radius': 0.02, 'gate_nis': 16.3, 'max_outliers': 3, 'track_max_gap_s': 0.5,
+           'facing_std': 0.3, 'extra': {'q_jerk': 3.0, 'accel_tau_s': 1.0}}
 # 'noise' is isotropic; depth_coeff and lateral_rad add a D435-like ray model:
 # depth std = depth_coeff * range^2, lateral std = lateral_rad * range.
-EKF_KWARGS = ('q_jerk', 'accel_tau_s', 'accel_prior_std', 'q_dz')
+EKF_KWARGS = ('q_jerk', 'accel_tau_s', 'accel_prior_std', 'q_dz', 'still', 'q_still_pos',
+              'q_still_yaw')
 EMULATOR = {'noise': 0.005, 'dropout': 0.1, 'latency': 0.06, 'depth_coeff': 0.0,
             'lateral_rad': 0.0}
 D435 = {'noise': 0.0, 'depth_coeff': 0.0036, 'lateral_rad': 0.003}
@@ -221,7 +223,7 @@ def main(argv=None):
     p.add_argument('--d435', action='store_true', help='D435-like ray noise, not 5 mm')
     p.add_argument('--metrics', default='facing_panel_m,center_m,velocity_m_s,yaw_rate_rad_s')
     args = p.parse_args(argv)
-    tracker = dict(TRACKER)
+    tracker = dict(TRACKER, extra=dict(TRACKER['extra']))
     for kv in args.set:
         k, v = kv.split('=')
         if k in EKF_KWARGS:
