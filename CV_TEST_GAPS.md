@@ -3,8 +3,8 @@
 Open gaps found reviewing the CV test suites on 2026-09-09. Spans two
 submodules, so it lives here rather than in either one.
 
-Gaps 1, 3, 5, 6 and 7 are closed. Gap 2 is half closed and half deliberately
-deferred (the moving-shooter case, with the scaffolding for it in place).
+Gaps 1, 3, 5, 6 and 7 are closed. Gap 2 is closed in unit tests and waits on the
+aim bench's first `shooter_speed` run.
 Gap 8, moving-target hit rate, is open.
 
 **The moving lead=on shot-hit cells are red, and that is the intended
@@ -72,11 +72,13 @@ into the table passes all four table-driven tests unchanged, at 0.076%
 flight-time and 0.3mm aim error. So closing this gap is adding rows — no new
 math, no test changes.
 
-The shot-hit bench can now drive the shooter (2026-09-23, not yet run):
-`shooter_speed:=` bounces our chassis along y during every case, so
-`point_to_cv_target` fires with real `/pose` velocity. `target_path:=radial`
-and `diagonal` drive the target down the camera ray, which nothing did
-before. Both work with either `target_state:=` bench.
+The aim bench drives the shooter (2026-09-25, not yet run):
+`shooter_speed:=` bounces our `root` along y during every case, `/pose`
+carries its velocity, and each shot carries it too. `target_path:=radial` and
+`diagonal` drive the target down the camera ray. `plan_shot`'s own-motion
+correction is unit-tested by flying the shot
+(`test_plan_moving_shooter_*`); before it, the node aimed as if still and
+would have missed by ~0.15 m at 1 m/s.
 
 ## 3. `KalmanFilter6D.predicted()` aliasing — FIXED 2026-09-09
 

@@ -150,11 +150,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `cv_target_emulator`, `shot_hit_harness`) moved to it too. Pitch limits
   (+-0.6 rad), suspension travel, spring rate and damping are placeholders,
   not CAD values.
-- **The tracker bench (gz, `target_state:=tracker`) hasn't run since Part 1
-  was rewritten** (2026-09-24). Its old "state leak" was Part 1 aiming a
-  stationary target at panel 0 whichever way the last case left it facing;
-  Part 1 now aims at the facing panel. It runs center aim: chase on gz's
-  gimbal needs a measured settle time and margin, not yet tuned.
+- **The gz shot-hit bench is gone.** Part 2 is scored on its state, not on
+  hits, by the C2 estimation bench (`CV_SPLIT_PLAN.md` Phase 2).
 - **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard
   corners at 4 m/s and keeps it: the head's reaction torque gets past the
   yaw lock. The real robot is expected to drift 1-5 deg too. Noted, not
@@ -186,9 +183,10 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **`noise_correction`'s growth_ratio compares the two halves of a run**, so
   a run that starts clean fails hardest. Don't read its verdict as absolute
   accuracy.
-- **The aim bench (`target_state:=truth`) is gz-free and passes 10/10.**
-  A point shooter with a perfect gimbal; README.md has the setup. Floors are
-  still the placeholders (`CV_SPLIT_PLAN.md` 1.7).
+- **The aim bench (`shot_hit.launch.py`) is gz-free and passes 10/10**
+  with a still shooter. A point shooter with a perfect gimbal; README.md has
+  the setup. Floors are still the placeholders (`CV_SPLIT_PLAN.md` 1.7).
+  `shooter_speed:=1.0` (a moving `root`, 1.8) hasn't run yet.
 - **Shot-hit results are optimistic.** Detection noise (0.005 m) is far
   cleaner than a D435, and slew limits and target accelerations are
   estimates.

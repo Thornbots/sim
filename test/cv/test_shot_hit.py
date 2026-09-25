@@ -30,12 +30,13 @@ the mean of hit rate and hits per expected shot (shot_hit_harness.score), so
 falling behind 40 Hz costs points. Floors: STATIONARY_MIN_HIT_RATE for the
 stationary case, MOVING_MIN_HIT_RATE for the moving ones. Do not relax them.
 
-Launches gz-sim, so marked `integration` and skipped by a plain
-`colcon test`; `ros2 launch sim shot_hit.launch.py` runs it. Options:
---shot-speeds, --shot-duration, --hit-radius, --panel-layout,
---skip-stationary, --only-stationary, --headless, --log-dir, --external-stack,
---real-time-factor, --target-state (truth = the aim bench, no tracker),
---target-path (lateral/radial/diagonal), --shooter-speed (our chassis moving).
+The C1 aim bench: no gz, a point shooter with a perfect gimbal and a
+perfectly known target (see shot_hit_harness.py). Launches a ROS stack, so
+marked `integration` and skipped by a plain `colcon test`; `ros2 launch sim
+shot_hit.launch.py` runs it. Options: --shot-speeds, --shot-duration,
+--hit-radius, --panel-layout, --skip-stationary, --only-stationary,
+--headless, --log-dir, --external-stack, --target-path
+(lateral/radial/diagonal), --shooter-speed.
 """
 import os
 
@@ -50,14 +51,13 @@ STATIONARY = 'stationary'
 
 @pytest.fixture(scope='module')
 def cv_stack(request, ros_context):
-    """Launch the sim and CV pipeline once for every case in this module."""
+    """Launch the aim bench's stack once for every case in this module."""
     config = request.config
     log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     stack = harness.CvStack(config.getoption('--headless'), log_dir,
                             external=config.getoption('--external-stack'),
-                            real_time_factor=config.getoption('--real-time-factor'),
-                            target_state=config.getoption('--target-state'))
+                            shooter_speed=config.getoption('--shooter-speed'))
     try:
         stack.start()
         yield stack
@@ -97,8 +97,9 @@ def test_shot_hit(layout, case, request, cv_stack):
     duration = config.getoption('--shot-duration') or harness.DEFAULT_DURATION
     hit_radius = config.getoption('--hit-radius') or harness.DEFAULT_HIT_RADIUS
     path = config.getoption('--target-path')
-    shooter_speed = config.getoption('--shooter-speed')
-    motion = f', {path} path' + (f', shooter {shooter_speed} m/s' if shooter_speed else '')
+    motion = f', {path} path'
+    if config.getoption('--shooter-speed') > 0.0:
+        motion += f', shooter {config.getoption("--shooter-speed")} m/s'
 
     if case == STATIONARY:
         speed, spin_hz = 0.0, 0.0
@@ -114,8 +115,7 @@ def test_shot_hit(layout, case, request, cv_stack):
     print(f'\n=== {label} ===')
 
     sampler, dropped = harness.run_case(cv_stack, speed, spin_hz, duration, hit_radius,
-                                        stagger=LAYOUTS[layout], path=path,
-                                        shooter_speed=shooter_speed)
+                                        stagger=LAYOUTS[layout], path=path)
     total = harness.summarize(label, sampler, dropped, duration)
 
     assert sampler.shots_fired > 0, (

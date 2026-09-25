@@ -89,15 +89,13 @@ def pytest_addoption(parser):
         '--panel-layout', choices=['flat', 'staggered', 'both'], default='both',
         help='target panel heights: flat, staggered by 90% of a panel, or both')
     group.addoption(
-        '--target-state', choices=['tracker', 'truth'], default='tracker',
-        help='truth: the aim bench, target_state_truth in place of target_tracker')
-    group.addoption(
         '--target-path', choices=['lateral', 'radial', 'diagonal'], default='lateral',
         help="target_driver's path for every case: across the view, down the "
              'camera ray, or both (shot_hit_harness.TARGET_PATHS)')
     group.addoption(
         '--shooter-speed', type=float, default=0.0,
-        help='m/s our own chassis drives back and forth along y during every case')
+        help='our own chassis speed (m/s) the stack was launched with, for labels '
+             "and shots.jsonl; shot_hit.launch.py's shooter_speed sets the motion")
     group.addoption(
         '--skip-stationary', action='store_true',
         help='skip the speed=0/spin=0 baseline case')
