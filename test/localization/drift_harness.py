@@ -951,6 +951,9 @@ def scenario_noise_correction(gui, backend, use_ekf):
         sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner "
                '(-1.5,-1.5) before tracing it')
 
+        # A3: under none, odom->root is the robot's own position, so its
+        # magnitude says nothing; score ground-truth error instead.
+        metric = 'truth error' if backend == 'none' else f'|{edge} xy|'
         samples = []
         OBSERVE_SECONDS = 30.0  # lowered from 60.0 on 2026-07-27 for faster
         # tuning iteration -- still long enough for a first/second-half
@@ -965,15 +968,18 @@ def scenario_noise_correction(gui, backend, use_ekf):
             vx, vy, duration = OBSTACLE_LOOP_LEGS[i % len(OBSTACLE_LOOP_LEGS)]
             i += 1
             helper.drive(vx, vy, duration)
-            p = helper.get_correction_tf(timeout=2.0)
-            if p is not None:
+            if backend == 'none':
+                mag = _truth_error(helper)
+            else:
+                p = helper.get_correction_tf(timeout=2.0)
+                mag = None if p is None else math.hypot(p[0], p[1])
+            if mag is not None:
                 elapsed = helper.now_s() - t0
-                mag = math.hypot(p[0], p[1])
                 samples.append((elapsed, mag))
-                sc.log(f't={elapsed:5.1f}s  |{edge} xy|={mag:.4f} m')
+                sc.log(f't={elapsed:5.1f}s  {metric}={mag:.4f} m')
 
         if len(samples) < 3:
-            sc.result(False, f'too few {edge} samples ({len(samples)}) '
+            sc.result(False, f'too few {metric} samples ({len(samples)}) '
                       'to assess boundedness')
             return sc
 
@@ -994,7 +1000,7 @@ def scenario_noise_correction(gui, backend, use_ekf):
         GROWTH_THRESHOLD = 2.0  # second half shouldn't be >2x first half
         ok = growth_ratio < GROWTH_THRESHOLD and not log_errs
         sc.result(ok,
-                  f'max|xy|={max_mag:.4f} m, first_half_max={first_half_max:.4f}, '
+                  f'max {metric}={max_mag:.4f} m, first_half_max={first_half_max:.4f}, '
                   f'second_half_max={second_half_max:.4f}, '
                   f'growth_ratio={growth_ratio:.2f} (threshold {GROWTH_THRESHOLD}), '
                   f'log_errors={len(log_errs)}')
@@ -1255,7 +1261,11 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, obstacles=None):
                 return sc
             sc.log(f'actor_driver spawned {ACTOR_COUNT} moving boxes crossing the loop')
 
-        # Drive the loop. Sampling the correction TF each leg.
+        # Drive the loop, sampling each leg. Under none, odom->root is the
+        # robot's own position, so its change from the pre-loop value is
+        # just the loop; score ground-truth error instead (A3).
+        metric = ('truth error' if backend == 'none'
+                  else f'|{edge} - pre-loop {edge}|')
         OBSERVE_SECONDS = 30.0
         samples = []
         t0 = helper.now_s()
@@ -1274,16 +1284,20 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, obstacles=None):
             # drive() already stops the robot at the end of each leg;
             # this just extends that stop.
             helper.spin_for(OBSTACLE_LOOP_DWELL_SECONDS)
-            p = helper.get_correction_tf(timeout=2.0)
-            if p is not None:
+            if backend == 'none':
+                delta = _truth_error(helper)
+            else:
+                p = helper.get_correction_tf(timeout=2.0)
+                delta = None if p is None else math.hypot(
+                    p[0] - pose_before[0], p[1] - pose_before[1])
+            if delta is not None:
                 elapsed = helper.now_s() - t0
-                delta = math.hypot(p[0] - pose_before[0], p[1] - pose_before[1])
                 samples.append(delta)
-                sc.log(f't={elapsed:5.1f}s  |{edge} - pre-loop {edge}|='
-                       f'{delta:.4f} m{_truth_error_str(helper)}')
+                truth = '' if backend == 'none' else _truth_error_str(helper)
+                sc.log(f't={elapsed:5.1f}s  {metric}={delta:.4f} m{truth}')
 
         if len(samples) < 3:
-            sc.result(False, f'too few {edge} samples ({len(samples)}) to '
+            sc.result(False, f'too few {metric} samples ({len(samples)}) to '
                       'assess boundedness')
             return sc
 
@@ -1309,7 +1323,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, obstacles=None):
         obstacle_note = {'box': ' past the obstacle',
                          'actors': ' among moving actors'}.get(obstacles, '')
         sc.result(ok,
-                  f'max|{edge} - pre-loop {edge}| = {max_delta:.4f} m '
+                  f'max {metric} = {max_delta:.4f} m '
                   f'over {OBSERVE_SECONDS:.0f}s driving the cornering '
                   f'loop{obstacle_note} (threshold {MAX_DELTA_THRESHOLD} m), '
                   f'log_errors={len(log_errs)}')
@@ -1376,14 +1390,19 @@ def scenario_moving_obstacles(gui, backend, use_ekf):
         sc, gui, backend, use_ekf, obstacles='actors')
 
 
-def _truth_error_str(helper):
-    """Return '  truth_error=N m' (parent->root against /sim/raw_odom), or ''."""
+def _truth_error(helper):
+    """Distance (m) from parent->root to /sim/raw_odom, or None if either is missing."""
     root_pos = helper.get_root_position(timeout=0.5)
     truth_xy = helper._raw_odom_xy
     if root_pos is None or truth_xy is None:
-        return ''
-    err = math.hypot(root_pos[0] - truth_xy[0], root_pos[1] - truth_xy[1])
-    return f'  truth_error={err:.4f} m'
+        return None
+    return math.hypot(root_pos[0] - truth_xy[0], root_pos[1] - truth_xy[1])
+
+
+def _truth_error_str(helper):
+    """Return '  truth_error=N m' (see _truth_error), or ''."""
+    err = _truth_error(helper)
+    return '' if err is None else f'  truth_error={err:.4f} m'
 
 
 # Minimum spread (m) the correction TF must show across odom_stuck's
@@ -1411,7 +1430,8 @@ def scenario_odom_stuck(gui, backend, use_ekf):
         f'update_min_d/minimum_travel_distance gate is driven by odom-'
         f'reported travel and may never re-open once odom is frozen -- a '
         f'failure here is a diagnostic finding about the stack, not '
-        f'necessarily a test bug.')
+        f'necessarily a test bug. A pass does not mean the robot is '
+        f'tracked: at 4 m/s it is lost, and README.md says why.')
     stack = helper = None
     try:
         stack, helper = run_stack(
