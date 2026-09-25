@@ -48,9 +48,9 @@ behind (`keep_up` 0.98). Use `:=1` as the control.
 0) chases the facing panel and fires every tick, `< 0` is shotgating: hold
 the center line and time the fire. `gimbal_lag_s` defaults to 0, the perfect gimbal. Each cell has
 its own floor in `FLOORS` (`test/cv/shot_hit_harness.py`), the lowest score
-over three runs minus 10 points. The ten lateral, still-shooter cells are
-seeded from one run until three exist; any other cell falls back to the
-placeholders and says so. `target_path:=radial` or `diagonal`
+over three runs minus 10 points. Forty cells are measured: both layouts on
+lateral, radial and diagonal with a still shooter, and lateral at
+`shooter_speed:=1.0`. Any other cell falls back to the placeholders and says so. `target_path:=radial` or `diagonal`
 moves the target along the camera ray instead of across it, and
 `shooter_speed:=1.0` bounces our own chassis along y (within 1 m of
 `POINT_SHOOTER`) through every case.
