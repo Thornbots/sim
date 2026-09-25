@@ -194,6 +194,10 @@ class CvTargetEmulator(Node):
         self.declare_parameter('noise_pos_stddev', 0.005)
         self.declare_parameter('dropout_probability', 0.1)
         self.declare_parameter('publish_latency_s', 0.06)
+        # How much later than the sampled pose each detection is stamped: the
+        # camera's capture latency, for target_tracker's camera_latency_s to
+        # undo. Delivery waits at least this long too.
+        self.declare_parameter('camera_latency_s', 0.0)
         self.declare_parameter('yaw_joint_name', 'headlink')
         self.declare_parameter('pitch_joint_name', 'headpitch')
         self.declare_parameter('panel_radius_x', PANEL_RADIUS_X)
@@ -453,14 +457,17 @@ class CvTargetEmulator(Node):
 
         # Stamp with the time the sampled target pose describes, not now:
         # that pose is up to one target_driver period old, which at 1.5Hz
-        # spin is ~9 deg of yaw the stamp would otherwise hide.
-        # publish_latency_s is purely the delivery delay from here on.
-        sample_stamp = self._target_stamp
-        latency_s = self.get_parameter('publish_latency_s').value
+        # spin is ~9 deg of yaw the stamp would otherwise hide. The camera
+        # latency then makes the stamp late, as a real camera's is;
+        # publish_latency_s is the delivery delay.
+        camera_latency_s = self.get_parameter('camera_latency_s').value
+        stamp = (rclpy.time.Time.from_msg(self._target_stamp)
+                 + rclpy.duration.Duration(seconds=camera_latency_s)).to_msg()
+        latency_s = max(self.get_parameter('publish_latency_s').value, camera_latency_s)
         publish_at = self.get_clock().now() + rclpy.duration.Duration(seconds=latency_s)
         self._pending.append({
             'publish_at': publish_at,
-            'sample_stamp': sample_stamp,
+            'stamp': stamp,
             'array': array_detections,
         })
 
@@ -571,7 +578,7 @@ class CvTargetEmulator(Node):
         still_pending = []
         for item in self._pending:
             if now >= item['publish_at']:
-                stamp = item['sample_stamp']  # sample time, not flush time
+                stamp = item['stamp']  # sample time plus camera latency
                 array_msg = PanelDetectionArray()
                 array_msg.header.stamp = stamp
                 array_msg.header.frame_id = 'camera'

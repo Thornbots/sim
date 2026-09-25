@@ -652,9 +652,10 @@ stand-in approach as `pose_emulator`. That skips SDF, spawning and bridges, but
 the target is invisible in the gz GUI; check it with topic echoes.
 
 Both stamp from `self.get_clock().now()` (sim `/clock`). `cv_target_emulator`
-stamps `panel_detections` headers at sample time and holds messages in a
-queue for `publish_latency_s`, so downstream `now - header.stamp` shows the
-delay.
+stamps `panel_detections` headers at sample time plus `camera_latency_s` (0),
+and holds messages in a queue for `publish_latency_s` (at least the camera
+latency), so downstream `now - header.stamp` shows the delay. A late stamp is
+the camera latency `target_tracker`'s own `camera_latency_s` has to undo.
 
 The default path runs laterally at `x=3.0m`, `y in [-2.4, 2.4]`, `z=0.3m`.
 `path_angle_deg` turns it about `(center_x, center_y)`: 90 runs along x, down

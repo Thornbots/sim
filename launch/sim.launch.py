@@ -220,6 +220,11 @@ def generate_launch_description():
         "0.06 is a placeholder pending a real measurement (see point_to_cv_target's "
         'LatencyStat / plan verification item 9), not a measured number.'
     )
+    cv_camera_latency_s_arg = DeclareLaunchArgument(
+        'cv_camera_latency_s', default_value='0.0',
+        description='How much later than its sample cv_target_emulator stamps a '
+        "detection: camera latency for target_tracker's camera_latency_s to undo"
+    )
     world = LaunchConfiguration('world')
     robot_name = LaunchConfiguration('robot_name')
 
@@ -567,6 +572,9 @@ def generate_launch_description():
             'publish_latency_s': ParameterValue(
                 LaunchConfiguration('cv_publish_latency_s'), value_type=float
             ),
+            'camera_latency_s': ParameterValue(
+                LaunchConfiguration('cv_camera_latency_s'), value_type=float
+            ),
         }],
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
@@ -627,6 +635,7 @@ def generate_launch_description():
         cv_dropout_probability_arg,
         cv_panel_stagger_m_arg,
         cv_publish_latency_s_arg,
+        cv_camera_latency_s_arg,
         gz_resource_path,
         ign_resource_path,
         OpaqueFunction(function=_world_with_rtf),
