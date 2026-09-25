@@ -52,6 +52,9 @@ def test_errors_read_in_their_own_units():
     err = state_errors(_state(center=(3.05, 0.5, 0.3), vel=(0.0, 2.3, 0.0), yaw=0.45,
                               w=8.0), TRUTH, STAGGER, RADII, VIEWER)
     assert math.isclose(err['center_m'], 0.05)
+    # Us at the origin, the target at (3, 0.5): x is mostly along the ray.
+    assert math.isclose(err['center_along_m'], 0.05 * 3.0 / math.hypot(3.0, 0.5), rel_tol=1e-4)
+    assert math.isclose(err['center_across_m'], 0.05 * 0.5 / math.hypot(3.0, 0.5), rel_tol=1e-4)
     assert math.isclose(err['velocity_m_s'], 0.3)
     assert math.isclose(err['yaw_rad'], 0.05)
     assert math.isclose(err['yaw_rate_rad_s'], 1.0)

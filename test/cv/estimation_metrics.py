@@ -24,8 +24,8 @@ import numpy as np
 QUARTER_TURN = math.pi / 2.0
 # Panel error the track must stay under to count as converged: half a panel.
 CONVERGED_M = 0.05
-METRICS = ('facing_panel_m', 'panel_m', 'center_m', 'velocity_m_s', 'yaw_rad', 'yaw_rate_rad_s',
-           'radius_m', 'z_offset_m')
+METRICS = ('facing_panel_m', 'panel_m', 'center_m', 'center_along_m', 'center_across_m',
+           'velocity_m_s', 'yaw_rad', 'yaw_rate_rad_s', 'radius_m', 'z_offset_m')
 
 
 def cell_id(layout, speed, path, shooter_speed, blackout, camera_latency_s):
@@ -45,7 +45,8 @@ def state_errors(state, truth, stagger, radii, viewer):
 
     truth: (center, velocity, yaw, yaw_rate), yaw unwrapped; radii: the true
     (front/back, left/right) radii; viewer: our (x, y), for facing_panel_m, the
-    error on the true panel facing us, the one Part 1 aims at. The state's
+    error on the true panel facing us, the one Part 1 aims at, and the
+    center error split along and across the ray from us. The state's
     panel k is matched to the
     true panel m quarter turns on, m the rounding of their yaw difference,
     so tracking another panel of the same robot is not an error; its pairs
@@ -66,12 +67,16 @@ def state_errors(state, truth, stagger, radii, viewer):
                                   radii[true_pair] * math.sin(yaw_t), true_dz[true_pair]])
         panel_err.append(float(np.linalg.norm(est - true)))
     to_viewer = math.atan2(viewer[1] - center[1], viewer[0] - center[0])
+    ray = (-math.cos(to_viewer), -math.sin(to_viewer))  # from us to the target
+    dx, dy = c[0] - center[0], c[1] - center[1]
     facing = max(range(4), key=lambda j: math.cos(yaw + j * QUARTER_TURN - to_viewer))
     errors = {
         'facing_panel_m': panel_err[(facing - m) % 4],
         'panel_m': sum(panel_err) / 4.0,
         'panel_max_m': max(panel_err),
         'center_m': float(np.linalg.norm(c - center)),
+        'center_along_m': abs(dx * ray[0] + dy * ray[1]),
+        'center_across_m': abs(dx * ray[1] - dy * ray[0]),
         'velocity_m_s': float(np.linalg.norm(v - vel)),
         'yaw_rad': abs(state.yaw - yaw - m * QUARTER_TURN),
         'yaw_rate_rad_s': abs(state.yaw_rate - yaw_rate),
