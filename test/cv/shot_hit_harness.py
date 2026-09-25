@@ -715,8 +715,11 @@ class CvStack:
     def __init__(self, headless, log_dir, external=False, real_time_factor='0',
                  target_state='tracker'):
         self.launch = None
-        # truth: target_state_truth stands in for target_tracker (the aim bench).
-        self.estimator = 'target_state_truth' if target_state == 'truth' else 'target_tracker'
+        # truth: target_state_truth stands in for the emulator, selector and
+        # tracker (the aim bench).
+        self.truth = target_state == 'truth'
+        self.estimators = (['target_state_truth'] if self.truth
+                           else ['target_selector', 'target_tracker'])
         if not external:
             self.launch = LaunchTree(
                 'stack',
@@ -751,7 +754,7 @@ class CvStack:
                 timeout=60.0,
                 description='/sim/raw_odom + /target/ground_truth_odom publishing')
             ready = ['point_to_cv_target', 'mcb_relay', 'robot_state_publisher',
-                     'target_selector', self.estimator]
+                     *self.estimators]
             probe.wait_until(lambda: probe.nodes_up(*ready), timeout=15.0,
                              description=f'{", ".join(ready)} nodes up')
         finally:
@@ -773,10 +776,11 @@ class CvStack:
         """Set the target's speed, spin rate, panel stagger and path; raise if refused."""
         self._set(self._set_params, 'target_driver',
                   {'target_speed': speed, 'spin_hz': spin_hz, **TARGET_PATHS[path]})
-        self._set(self._set_emulator_params, 'cv_target_emulator',
-                  {'panel_stagger_m': stagger})
-        if self.estimator == 'target_state_truth':
+        if self.truth:
             self._set(self._set_truth_params, 'target_state_truth',
+                      {'panel_stagger_m': stagger})
+        else:
+            self._set(self._set_emulator_params, 'cv_target_emulator',
                       {'panel_stagger_m': stagger})
         print(f'[stack] target set to speed={speed} m/s, spin={spin_hz:.2f} Hz, '
               f'panel stagger={stagger:.3f} m, {path} path')
