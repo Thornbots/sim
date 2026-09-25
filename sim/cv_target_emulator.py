@@ -206,7 +206,9 @@ class CvTargetEmulator(Node):
         # rad * range (about a pixel). Estimates, not measurements.
         self.declare_parameter('noise_depth_range_coeff', 0.0036)
         self.declare_parameter('noise_lateral_rad', 0.003)
-        self.declare_parameter('dropout_probability', 0.1)
+        # Per panel per frame, independent draws. A placeholder (3%, the user's
+        # call 2026-09-25), not measured; real YOLO misses likely come in runs.
+        self.declare_parameter('dropout_probability', 0.03)
         self.declare_parameter('publish_latency_s', 0.06)
         # How much later than the sampled pose each detection is stamped: the
         # camera's capture latency, for target_tracker's camera_latency_s to

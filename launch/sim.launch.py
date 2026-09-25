@@ -209,7 +209,7 @@ def generate_launch_description():
                     'front/back sit half above centre, left/right half below'
     )
     cv_dropout_probability_arg = DeclareLaunchArgument(
-        'cv_dropout_probability', default_value='0.1',
+        'cv_dropout_probability', default_value='0.03',
         description='Per-sample probability (0-1) cv_target_emulator drops an '
                     'otherwise-valid detection'
     )
