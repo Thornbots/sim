@@ -268,8 +268,11 @@ class CvTargetEmulator(Node):
         self.create_subscription(JointState, '/sim/raw_joint_states', self.on_joint_states, 10)
         self.create_subscription(Odometry, '/target/ground_truth_odom', self.on_target_odom, 10)
 
+        # Frames come from target samples at most publish_rate_hz apart; the
+        # timer runs 4x faster so none waits long for its camera pose.
         rate_hz = self.get_parameter('publish_rate_hz').value
-        self.timer = self.create_timer(1.0 / rate_hz, self.on_timer)
+        self._min_frame_gap_s = 0.5 / rate_hz
+        self.timer = self.create_timer(0.25 / rate_hz, self.on_timer)
 
         self.get_logger().info(
             f'cv_target_emulator ready: hfov={self.hfov:.3f} vfov={self.vfov:.3f} '
@@ -324,24 +327,27 @@ class CvTargetEmulator(Node):
                 return a, b, (t - a[0]) / span if span > 0 else 1.0
         return hist[0], hist[0], 0.0
 
-    def _sample(self):
-        """
-        Set target and camera state to the newest unused target sample the camera covers.
-
-        Head joints and chassis position are interpolated to the sample's
-        stamp; chassis rotation is the nearest odom sample's. Returns False
-        when no new sample is covered yet.
-        """
+    def _new_samples(self):
+        """Unused target samples the camera histories cover, oldest first, one per frame gap."""
         if not (self._root_hist and self._joint_hist and self._target_hist):
-            return False
+            return []
         covered_t = min(self._root_hist[-1][0], self._joint_hist[-1][0])
-        sample = next((s for s in reversed(self._target_hist)
-                       if s[0] <= covered_t
-                       and (self._last_sample_t is None or s[0] > self._last_sample_t)), None)
-        if sample is None:
-            return False
+        samples = []
+        for s in self._target_hist:
+            last = self._last_sample_t
+            if s[0] <= covered_t and (last is None or s[0] >= last + self._min_frame_gap_s):
+                samples.append(s)
+                self._last_sample_t = s[0]
+        return samples
+
+    def _sample(self, sample):
+        """
+        Set target and camera state to one target sample's stamp.
+
+        Head joints and chassis position are interpolated to it; chassis
+        rotation is the nearest odom sample's.
+        """
         t, self._target_pos, self._target_rot, self._target_stamp = sample
-        self._last_sample_t = t
 
         a, b, f = self._bracket(self._root_hist, t)
         self._root_pos = a[1] + f * (b[1] - a[1])
@@ -349,7 +355,6 @@ class CvTargetEmulator(Node):
         a, b, f = self._bracket(self._joint_hist, t)
         self._head_yaw = a[1] + f * (b[1] - a[1])
         self._head_pitch = a[2] + f * (b[2] - a[2])
-        return True
 
     def _panel_poses(self):
         """
@@ -464,9 +469,16 @@ class CvTargetEmulator(Node):
 
     def on_timer(self):
         self._flush_pending()
-
-        if self._masked() or not self._sample():
+        samples = self._new_samples()  # used up even while masked
+        if self._masked():
             return
+        for sample in samples:
+            self._sample(sample)
+            self._frame()
+        self._flush_pending()
+
+    def _frame(self):
+        """Build one camera frame's detections from the sampled state and queue them."""
         if self._root_frame_id and self._target_frame_id \
                 and self._root_frame_id != self._target_frame_id:
             self.get_logger().warn(
@@ -559,7 +571,8 @@ class CvTargetEmulator(Node):
         stamp = (rclpy.time.Time.from_msg(self._target_stamp)
                  + rclpy.duration.Duration(seconds=camera_latency_s)).to_msg()
         latency_s = max(self.get_parameter('publish_latency_s').value, camera_latency_s)
-        publish_at = self.get_clock().now() + rclpy.duration.Duration(seconds=latency_s)
+        publish_at = (rclpy.time.Time.from_msg(self._target_stamp)
+                      + rclpy.duration.Duration(seconds=latency_s))
         self._pending.append({
             'publish_at': publish_at,
             'stamp': stamp,
