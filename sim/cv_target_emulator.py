@@ -42,6 +42,7 @@ detection, yellow absent when nothing qualifies) for rviz visualization
 only -- not consumed by point_to_cv_target. See README.md's ## Notes for
 the FK chain, dwell-count guard, and REP-103-vs-optical rationale.
 """
+from collections import deque
 import math
 
 from dji_serial_bridge.msg import PanelDetection, PanelDetectionArray
@@ -246,6 +247,12 @@ class CvTargetEmulator(Node):
         self._target_rot = None
         self._target_frame_id = None
         self._target_stamp = None
+        # Stamped histories, so each frame's camera pose is the one at its
+        # target sample's stamp, not whatever arrived last. (t_s, ...)
+        self._root_hist = deque(maxlen=200)  # (t, pos, rot), 100 Hz
+        self._joint_hist = deque(maxlen=2000)  # (t, yaw, pitch), every gz step
+        self._target_hist = deque(maxlen=60)  # (t, pos, rot, stamp msg)
+        self._last_sample_t = None
         self._pending = []  # [dict(publish_at, sample_stamp, array)]
 
         # In-frustum dwell tracking (per README.md's dwell-count guard --
@@ -270,28 +277,79 @@ class CvTargetEmulator(Node):
             f"{self.get_parameter('range_far').value:.2f}]"
         )
 
+    def _stamp_s(self, stamp):
+        t = rclpy.time.Time.from_msg(stamp)
+        if t.nanoseconds == 0:
+            t = self.get_clock().now()
+        return t.nanoseconds / 1e9
+
     def on_root_odom(self, msg):
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
-        self._root_pos = np.array([p.x, p.y, p.z])
-        self._root_rot = _rotation_from_quaternion(q.x, q.y, q.z, q.w)
+        self._root_hist.append((self._stamp_s(msg.header.stamp), np.array([p.x, p.y, p.z]),
+                                _rotation_from_quaternion(q.x, q.y, q.z, q.w)))
         self._root_frame_id = msg.header.frame_id
 
     def on_joint_states(self, msg):
         yaw_name = self.get_parameter('yaw_joint_name').value
         pitch_name = self.get_parameter('pitch_joint_name').value
+        yaw = pitch = None
         if yaw_name in msg.name:
-            self._head_yaw = msg.position[msg.name.index(yaw_name)]
+            yaw = msg.position[msg.name.index(yaw_name)]
         if pitch_name in msg.name:
-            self._head_pitch = msg.position[msg.name.index(pitch_name)]
+            pitch = msg.position[msg.name.index(pitch_name)]
+        if yaw is None and pitch is None:
+            return
+        if self._joint_hist:
+            _, last_yaw, last_pitch = self._joint_hist[-1]
+            yaw = last_yaw if yaw is None else yaw
+            pitch = last_pitch if pitch is None else pitch
+        self._joint_hist.append((self._stamp_s(msg.header.stamp), yaw or 0.0, pitch or 0.0))
 
     def on_target_odom(self, msg):
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
-        self._target_pos = np.array([p.x, p.y, p.z])
-        self._target_rot = _rotation_from_quaternion(q.x, q.y, q.z, q.w)
+        self._target_hist.append((self._stamp_s(msg.header.stamp), np.array([p.x, p.y, p.z]),
+                                  _rotation_from_quaternion(q.x, q.y, q.z, q.w),
+                                  msg.header.stamp))
         self._target_frame_id = msg.header.frame_id
-        self._target_stamp = msg.header.stamp
+
+    @staticmethod
+    def _bracket(hist, t):
+        """Return (a, b, frac) around time t in a stamped history, t within its span."""
+        for i in range(len(hist) - 1, 0, -1):
+            if hist[i - 1][0] <= t:
+                a, b = hist[i - 1], hist[i]
+                span = b[0] - a[0]
+                return a, b, (t - a[0]) / span if span > 0 else 1.0
+        return hist[0], hist[0], 0.0
+
+    def _sample(self):
+        """
+        Set target and camera state to the newest unused target sample the camera covers.
+
+        Head joints and chassis position are interpolated to the sample's
+        stamp; chassis rotation is the nearest odom sample's. Returns False
+        when no new sample is covered yet.
+        """
+        if not (self._root_hist and self._joint_hist and self._target_hist):
+            return False
+        covered_t = min(self._root_hist[-1][0], self._joint_hist[-1][0])
+        sample = next((s for s in reversed(self._target_hist)
+                       if s[0] <= covered_t
+                       and (self._last_sample_t is None or s[0] > self._last_sample_t)), None)
+        if sample is None:
+            return False
+        t, self._target_pos, self._target_rot, self._target_stamp = sample
+        self._last_sample_t = t
+
+        a, b, f = self._bracket(self._root_hist, t)
+        self._root_pos = a[1] + f * (b[1] - a[1])
+        self._root_rot = a[2] if f < 0.5 else b[2]
+        a, b, f = self._bracket(self._joint_hist, t)
+        self._head_yaw = a[1] + f * (b[1] - a[1])
+        self._head_pitch = a[2] + f * (b[2] - a[2])
+        return True
 
     def _panel_poses(self):
         """
@@ -407,7 +465,7 @@ class CvTargetEmulator(Node):
     def on_timer(self):
         self._flush_pending()
 
-        if self._root_pos is None or self._target_pos is None or self._masked():
+        if self._masked() or not self._sample():
             return
         if self._root_frame_id and self._target_frame_id \
                 and self._root_frame_id != self._target_frame_id:

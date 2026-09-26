@@ -21,6 +21,7 @@ on /pose -- the same topic/message real hardware's Type-C board sends.
 thornbots_pkg's pose_translator is the only downstream consumer for both
 sim and real hardware, so sim's job here is purely wire-format parity.
 """
+from collections import deque
 import math
 import random
 
@@ -44,6 +45,9 @@ class PoseEmulator(Node):
         self.declare_parameter('pitch_joint_name', 'headpitch')
         self.pitch_joint_name = self.get_parameter('pitch_joint_name').value
         self.head_pitch = 0.0
+        # (t_ns, yaw, pitch) per joint state, so /pose carries the head
+        # angles at its own stamp rather than whichever arrived last.
+        self._joint_hist = deque(maxlen=500)
 
         # Real hardware's wheel odometry accumulates drift (wheel slip,
         # encoder error -- worse on the arena's "Bumpy Road" zone) that
@@ -139,6 +143,22 @@ class PoseEmulator(Node):
             self.head_yaw = msg.position[msg.name.index(self.yaw_joint_name)]
         if self.pitch_joint_name in msg.name:
             self.head_pitch = msg.position[msg.name.index(self.pitch_joint_name)]
+        t_ns = rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds
+        self._joint_hist.append((t_ns, self.head_yaw, self.head_pitch))
+
+    def _head_at(self, stamp):
+        """Head (yaw, pitch) interpolated to stamp; the newest sample if stamp is past it."""
+        t_ns = rclpy.time.Time.from_msg(stamp).nanoseconds
+        hist = self._joint_hist
+        if not hist or t_ns >= hist[-1][0]:
+            return self.head_yaw, self.head_pitch
+        for i in range(len(hist) - 1, 0, -1):
+            t0, yaw0, pitch0 = hist[i - 1]
+            if t0 <= t_ns:
+                t1, yaw1, pitch1 = hist[i]
+                f = (t_ns - t0) / (t1 - t0) if t1 > t0 else 1.0
+                return yaw0 + f * (yaw1 - yaw0), pitch0 + f * (pitch1 - pitch0)
+        return hist[0][1], hist[0][2]
 
     def trigger_jerk(self):
         """
@@ -282,8 +302,9 @@ class PoseEmulator(Node):
         pose.y = y
         pose.vel_x = vel_x
         pose.vel_y = vel_y
-        pose.head_pitch = float(self.head_pitch)
-        pose.head_yaw = float(self.head_yaw)
+        head_yaw, head_pitch = self._head_at(msg.header.stamp)
+        pose.head_pitch = float(head_pitch)
+        pose.head_yaw = float(head_yaw)
         self.pose_pub.publish(pose)
 
 
