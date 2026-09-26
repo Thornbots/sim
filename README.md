@@ -91,8 +91,9 @@ the detections off our head's camera. `target_selector` and `target_tracker`
 build the `TargetState`, and `point_to_cv_target` aims the head; nothing
 fires. Each case switches detections off for 1 s so the tracker starts a
 fresh track, then scores every state for 3 s + 30 s against the truth at the
-state's own stamp, so a late stamp scores as error. It runs about 4x real
-time with rviz up (`real_time_factor:=1` for real time):
+state's own stamp, so a late stamp scores as error. The ten cells take
+about a minute with rviz up, ~6x real time (`real_time_factor:=1` for real
+time); `target_tracker` sets that ceiling:
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash

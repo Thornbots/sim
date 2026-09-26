@@ -162,9 +162,12 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   exact at any speed, and holds sim time for the nodes under test
   (`/cv/target_state`, `/cv/target`, the scorer's `/bench/progress`), up to
   `pace_slack_s` past each period. Separate Python world nodes on a paced
-  `sim_clock` managed 0.5x, or 8x with ticks dropped; this runs ~4x with
-  rviz, every rate exact. Root sits at z 0 and yaw 0, and the head is gz's
-  PD on the arm inertias; `LIMITS` is empty until three runs fill it.
+  `sim_clock` managed 0.5x, or 8x with ticks dropped; this runs the ten
+  cells in 54 s with rviz (~6x), every rate exact. `target_tracker` is the
+  ceiling; `pace_slack_s` above 0.02 buys 10-12x by letting the nodes
+  under test lag sim time, head loop included, so keep the default. Root
+  sits at z 0 and yaw 0, and the head is gz's PD on the arm inertias;
+  `LIMITS` is empty until three runs fill it.
 - **`bench_world` duplicates C2's share of `target_driver`,
   `cv_target_emulator`, `cv_head_aim` and `pose_emulator`**, which the gz
   sim and C1 still use. A change to one of those that should reach C2 has
