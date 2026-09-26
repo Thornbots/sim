@@ -95,7 +95,9 @@ def _stack(context):
             'enable_target_tracker': 'false',
         }.items())
 
-    tracker = {'camera_latency_s': float(cfg['tracker_camera_latency_s'] or camera_latency)}
+    # Sim stamps /pose at the true sample time, so no pose latency to undo.
+    tracker = {'camera_latency_s': float(cfg['tracker_camera_latency_s'] or camera_latency),
+               'pose_latency_s': 0.0}
     if cfg['process_noise_accel']:
         tracker['process_noise_accel'] = float(cfg['process_noise_accel'])
     actions = [sim, robot_tf, cv_node('target_selector'),
