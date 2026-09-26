@@ -136,7 +136,7 @@ class LaunchTree:
                 signal_group(pgid, signal.SIGKILL)
                 self.proc.wait(timeout=10)
         # Launch signals only its direct children, so a grandchild can
-        # outlive it in the group (head_slider_relay's `ign topic` did).
+        # outlive it in the group (head_slider_relay's `gz topic` did).
         if signal_group(pgid, 0):
             print(f'[{self.name}] processes outlived the launch in group '
                   f'{pgid}; SIGKILLing them.')
@@ -165,7 +165,7 @@ def check_no_orphans(label):
     try:
         out = subprocess.run(
             ['bash', '-c',
-             "ps aux | grep -E 'ign gazebo|gz sim|slam_toolbox|amcl|"
+             "ps aux | grep -E 'gz sim|slam_toolbox|amcl|"
              "map_server|ekf_filter_node|pose_translator|pose_emulator' | "
              'grep -v grep | '
              # Excludes the suite's own processes: `--backend amcl` on
