@@ -121,7 +121,7 @@
 
   <gazebo>
     <!-- /sim/raw_odom at 100 Hz, the Type-C board's /pose rate. -->
-    <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
       <odom_frame>odom</odom_frame>
       <robot_base_frame>root</robot_base_frame>
       <publish_odom_tf>true</publish_odom_tf>
@@ -129,11 +129,11 @@
       <odom_publish_frequency>100</odom_publish_frequency>
     </plugin>
     <!-- Every joint, so robot_state_publisher can place the wheels too. -->
-    <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher"/>
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher"/>
     <!-- Head yaw and pitch track /head_pan_cmd and /head_pitch_cmd (rad).
          d_gain is sized for the real gimbal: about 0.031 kg m^2 about the
          yaw axis and 0.009 about pitch, near critical damping at p 75. -->
-    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>headlink</joint_name>
       <topic>/model/sentry/joint/headlink/cmd_pos</topic>
       <p_gain>75</p_gain>
@@ -144,7 +144,7 @@
       <cmd_max>50</cmd_max>
       <cmd_min>-50</cmd_min>
     </plugin>
-    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>headpitch</joint_name>
       <topic>/model/sentry/joint/headpitch/cmd_pos</topic>
       <p_gain>75</p_gain>
@@ -159,7 +159,7 @@
          velocity as commanded, zero angular velocity (a hard yaw lock), and
          zero vertical velocity, so the chassis settles onto its springs at
          about 1 cm/s but can't bounce. -->
-    <plugin filename="ignition-gazebo-velocity-control-system" name="ignition::gazebo::systems::VelocityControl">
+    <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
       <topic>/model/sentry/cmd_vel</topic>
     </plugin>
   </gazebo>

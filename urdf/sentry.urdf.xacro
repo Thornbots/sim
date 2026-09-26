@@ -343,7 +343,7 @@
     </gazebo>
   </xacro:if>
   <gazebo>
-    <plugin filename="ignition-gazebo-odometry-publisher-system" name="ignition::gazebo::systems::OdometryPublisher">
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
       <odom_frame>odom</odom_frame>
       <robot_base_frame>root</robot_base_frame>
       <publish_odom_tf>true</publish_odom_tf>
@@ -356,7 +356,7 @@
         <argument>-p use_sim_time:=true</argument>
       </ros>
     </plugin>
-    <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher">
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
       <joint_name>headlink</joint_name>
       <joint_name>headpitch</joint_name>
       <joint_name>odowheel_x</joint_name>
@@ -402,7 +402,7 @@
          needs to counteract windup, and cmd_max/effort (see the joint's
          own limit above) raised well past what's needed so torque is
          never the bottleneck, only the joint's velocity limit is. -->
-    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>headlink</joint_name>
       <topic>/model/sentry/joint/headlink/cmd_pos</topic>
       <p_gain>75</p_gain>
@@ -417,7 +417,7 @@
          (rad, within headpitch's +/-0.6 limit) on
          /model/sentry/joint/headpitch/cmd_pos and this PID tracks it, so
          the camera can be tilted from the gz GUI or a bridged ROS topic. -->
-    <plugin filename="ignition-gazebo-joint-position-controller-system" name="ignition::gazebo::systems::JointPositionController">
+    <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>headpitch</joint_name>
       <topic>/model/sentry/joint/headpitch/cmd_pos</topic>
       <p_gain>75</p_gain>
@@ -442,7 +442,7 @@
          above), so it's on wasd_teleop.py/whatever publishes /cmd_vel to
          not command it, matching the real robot's holonomic,
          never-turns behavior by convention rather than by construction. -->
-    <plugin filename="ignition-gazebo-velocity-control-system" name="ignition::gazebo::systems::VelocityControl">
+    <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
       <topic>/model/sentry/cmd_vel</topic>
     </plugin>
   </gazebo>
