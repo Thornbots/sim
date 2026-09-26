@@ -244,12 +244,19 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   vectors; a backwards rf2o once scored 1% error on magnitude.
 - ARCC zone coordinates (`../ARCC_2026_SENTRY_CONTEXT.md` Figures 3-1 to
   3-9) aren't in the world yet.
-- **Jazzy moves `sim` from gz Fortress to Harmonic.** Both xacros'
-  `ignition-gazebo-*-system` plugins become `gz-sim-*-system`,
-  `head_slider_relay.py`'s `ign topic`/`ignition.msgs.Double` become
-  `gz topic`/`gz.msgs.Double`, the `ign gazebo` cleanup pattern in
-  `drift_harness.py` becomes `gz sim`. `install-sim.sh`'s `pip install trimesh`
-  fails under Ubuntu 24.04's PEP 668. Full list: `../JAZZY_PLAN.md`.
+- **This branch (`jazzy`) runs on gz Harmonic (gz-sim 8).** Plugins are
+  `gz-sim-*-system`, and every CLI call is `gz topic`/`gz service` with
+  `gz.msgs.*` types; Harmonic ships no `ign`. Builds and passes the unit
+  tests on stock `ros:jazzy`, and the headless world spawns the robot
+  with `/clock`, `/scan_raw` and `/pose` flowing. Suites not yet run
+  (`../JAZZY_PLAN.md` step 4).
+- **Noble has no apt `python3-trimesh` and rosdep has no key for it**
+  (only `python3-trimesh-pip`). It only serves `tools/simplify_urdf.py`,
+  which also needs pip's `fast_simplification`, so it stays out of
+  `package.xml`; install both by hand when regenerating `urdf/sentry_v2`.
+- **`sentry*.urdf.xacro`'s `<gz_frame_id>` warns "not defined in SDF"**
+  under Harmonic's sdformat, but gz-sensors still reads it (`/scan_raw`
+  arrives with `frame_id: lidar`).
 
 ## Committing
 

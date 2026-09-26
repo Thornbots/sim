@@ -143,7 +143,7 @@ either. `--show-args` on either launch lists the rest.
 
 ## Build
 
-`Dockerfile.thornbots` installs neither `ros-humble-ros-gz` nor this package.
+`Dockerfile.thornbots` installs neither `ros-jazzy-ros-gz` nor this package.
 On a fresh container, run `install-sim.sh` once from a container terminal. It
 installs gz from apt and builds `sim`:
 
@@ -623,7 +623,7 @@ axis segment, which `sim.launch.py` bridges as `/head_pan_cmd` and
 relay forwards the slider to it.
 
 The image has no gz-transport Python bindings. The relay reads with a
-long-lived `ign topic -e` and writes with a fresh `ign topic -p` per message,
+long-lived `gz topic -e` and writes with a fresh `gz topic -p` per message,
 each costing tens of ms of discovery. When one blocking loop did both, slider
 ticks queued and the head crawled toward stale positions. Reader and publisher
 are now separate threads sharing the latest value, with an `Event` that drops
@@ -632,7 +632,7 @@ values arriving mid-publish.
 ### auto_explore.py: teleport
 
 Teleport writes the gz world pose through `/world/<world>/set_pose` via
-`ign service`; ROS has no equivalent. It works because root is a free 6DOF body
+`gz service`; ROS has no equivalent. It works because root is a free 6DOF body
 with no parent joint. gz only honours a pose write on a link its `FreeGroup`
 API sees as free (an older URDF with a prismatic chain ignored it). Each
 teleport sets orientation to identity. On the old model nothing has collision,
@@ -678,7 +678,7 @@ from every edge and always clear, across the south, west and north edges.
 
 Moves go through `sim.launch.py`'s `set_pose_bridge`, gz's `set_pose` as a
 ROS `SetEntityPose` service, one async call per box per tick. The first
-version started an `ign service` process (Ruby) per call, and ticks lagged to
+version started a `gz service` process (Ruby) per call, and ticks lagged to
 ~0.19 s of sim time. The default paths clear the ARCC26 map's walls by at
 least 0.4 m.
 
