@@ -29,13 +29,16 @@ workaround here; it applies to every _other_ first-party package.
 Everything under `test/` is pytest, collected by `colcon test`. The suites
 that launch `sim` + `thornbots_pkg` end to end carry the `integration` marker and
 are deselected by `setup.cfg`, so a plain `colcon test --packages-select sim`
-runs the unit tests only:
+runs the unit tests only. `sim` is `ament_cmake` now, so `--pytest-args`
+doesn't reach it; run pytest directly for the integration tier:
 
 ```bash
 ../isaac_ros_common/scripts/dexec.sh -- colcon test --packages-select sim
-../isaac_ros_common/scripts/dexec.sh -- \
-  colcon test --packages-select sim --pytest-args ' -m integration'
+../isaac_ros_common/scripts/dexec.sh -- bash -c 'cd src/sim && python3 -m pytest test -m integration'
 ```
+
+A new Python node needs a `scripts/<name>` wrapper (copy one) and a rebuild;
+edits to existing modules are live through the symlink install.
 
 Both suites run from a launch file, so `kill_launch.sh <pid>` on the outer
 launch stops everything, per-scenario stacks included (`--show-args` lists
@@ -153,12 +156,20 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `cv_target_emulator`, `shot_hit_harness`) moved to it too. Pitch limits
   (+-0.6 rad), suspension travel, spring rate and damping are placeholders,
   not CAD values.
-- **The C2 estimation bench (`estimation.launch.py`) has run once**
-  (2026-09-25, GUI, `../log/cv_runs/est_c2_1`). It scores Part 2's state,
-  not hits. Moving cells read 0.12-0.51 m facing p95 and swing up to 2x
-  between runs; not yet traced. `LIMITS` is empty; every
-  cell passes on liveness until three runs fill it.
-- **`cv_head_aim` holds the head when there's no target**, so a case can
+- **C2 (`estimation.launch.py`) runs on `bench_world`, not gz** (the
+  user's call, 2026-09-25): it fakes detections, so it needs no physics.
+  One C++ loop steps target, chassis and head every 1 ms, so its rates are
+  exact at any speed, and holds sim time for the nodes under test
+  (`/cv/target_state`, `/cv/target`, the scorer's `/bench/progress`), up to
+  `pace_slack_s` past each period. Separate Python world nodes on a paced
+  `sim_clock` managed 0.5x, or 8x with ticks dropped; this runs ~4x with
+  rviz, every rate exact. Root sits at z 0 and yaw 0, and the head is gz's
+  PD on the arm inertias; `LIMITS` is empty until three runs fill it.
+- **`bench_world` duplicates C2's share of `target_driver`,
+  `cv_target_emulator`, `cv_head_aim` and `pose_emulator`**, which the gz
+  sim and C1 still use. A change to one of those that should reach C2 has
+  to be made in `src/bench_world.cpp` too.
+- **The head controller holds the head when there's no target**, so a case can
   start with the target out of view. `estimation_harness` aims the head at
   the truth during each case's reset; before that, staggered stationary
   after 4 m/s scored nothing.
@@ -178,10 +189,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   The emulator, the scorer's facing test and both rviz views keep the cant;
   a hit is still scored as distance to the panel centre, not a crossing of
   the canted square (`../ROADMAP.md` Caveats).
-- **C2's target is still `target_driver`'s phantom.** A spawned opponent
-  moved by `set_pose` steps at the call rate and its gz pose lags the
-  integrator, so truth stays `target_driver`'s. Spawn a visual one when YOLO
-  sees rendered frames (`CV_SPLIT_PLAN.md` 2.0).
+- **C2's target is a phantom** with exact truth. Spawn a visual one in gz
+  when YOLO sees rendered frames (`CV_SPLIT_PLAN.md` 2.0).
 - **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard
   corners at 4 m/s and keeps it: the head's reaction torque gets past the
   yaw lock. The real robot is expected to drift 1-5 deg too. Noted, not
@@ -236,8 +245,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `ignition-gazebo-*-system` plugins become `gz-sim-*-system`,
   `head_slider_relay.py`'s `ign topic`/`ignition.msgs.Double` become
   `gz topic`/`gz.msgs.Double`, the `ign gazebo` cleanup pattern in
-  `drift_harness.py` becomes `gz sim`, and `setup.cfg`'s dashed keys and
-  `setup.py`'s `tests_require` go. `install-sim.sh`'s `pip install trimesh`
+  `drift_harness.py` becomes `gz sim`. `install-sim.sh`'s `pip install trimesh`
   fails under Ubuntu 24.04's PEP 668. Full list: `../JAZZY_PLAN.md`.
 
 ## Committing

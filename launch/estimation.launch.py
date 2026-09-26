@@ -13,15 +13,16 @@
 # limitations under the License.
 
 """
-C2 estimation bench: target_tracker's TargetState against the truth, on gz.
+C2 estimation bench: target_tracker's TargetState against the truth, no gz.
 
 `ros2 launch sim estimation.launch.py [speeds:='0.5 1'] [blackout:=true]`.
-gz runs our sentry_v2 with target_driver's phantom target, cv_target_emulator
-turns it into detections off the real head's camera, target_selector and
-target_tracker build the TargetState, and point_to_cv_target plus cv_head_aim
-keep the head on it. Nothing fires. pytest (test_estimation.py) scores each
-state at its stamp. Stops when the tests finish; Ctrl-C stops everything.
-`run_tests:=false` brings up the stack alone.
+bench_world (C++, one lockstep loop) is the clock, the phantom target, our
+chassis and head, /pose, the head controller and the detections off our
+head's camera. target_selector and target_tracker build the TargetState, and
+point_to_cv_target aims the head through bench_world's controller.
+Nothing fires. pytest (test_estimation.py) scores each state at its stamp.
+Stops when the tests finish; Ctrl-C stops everything. `run_tests:=false`
+brings up the stack alone.
 """
 import os
 import sys
@@ -69,23 +70,15 @@ def cv_node(executable, package='thornbots_pkg', **params):
 def _stack(context):
     cfg = context.launch_configurations
     headless = _is_true(context, 'headless')
-    camera_latency = cfg['camera_latency_s']
-    sim_args = {'spawn_target': 'true', 'target_speed': '0.0', 'target_spin_hz': '0.0',
-                'real_time_factor': cfg['real_time_factor'],
-                'cv_camera_latency_s': camera_latency}
-    if headless:
-        sim_args.update(gui='false', rviz='false')
-    else:
-        sim_args['rviz_config'] = os.path.join(
-            get_package_share_directory('sim'), 'rviz', 'estimation.rviz')
-    sim = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(
-            get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
-        launch_arguments=sim_args.items())
+    camera_latency = float(cfg['camera_latency_s'])
+    # rate 0: as fast as the nodes under test keep up (bench_world's gates).
+    world = {'rate': max(0.0, float(cfg['real_time_factor'])),
+             'clock_step_s': float(cfg['clock_step_s']),
+             'pace_slack_s': float(cfg['pace_slack_s']),
+             'camera_latency_s': camera_latency}
 
-    # TF chain only: sim runs no robot_state_publisher. The enable_*:=false
-    # args skip auto.launch.py's copies of the CV nodes below, and
-    # localization_mode:=none skips map_server/amcl.
+    # TF chain only. The enable_*:=false args skip auto.launch.py's copies
+    # of the CV nodes below, and localization_mode:=none skips map_server/amcl.
     robot_tf = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
@@ -100,10 +93,20 @@ def _stack(context):
                'pose_latency_s': 0.0}
     if cfg['process_noise_accel']:
         tracker['process_noise_accel'] = float(cfg['process_noise_accel'])
-    actions = [sim, robot_tf, cv_node('target_selector'),
-               cv_node('target_tracker', **tracker), cv_node('point_to_cv_target')]
+    actions = [
+        # The world is its own clock, so no use_sim_time.
+        Node(package='sim', executable='bench_world', name='bench_world', output='screen',
+             parameters=[world]),
+        robot_tf, cv_node('target_selector'), cv_node('target_tracker', **tracker),
+        cv_node('point_to_cv_target'),
+    ]
     if not headless:
         actions.append(cv_node('target_state_markers', package='sim'))
+        actions.append(Node(
+            package='rviz2', executable='rviz2', name='rviz2', output='screen',
+            arguments=['-d', os.path.join(get_package_share_directory('sim'), 'rviz',
+                                          'estimation.rviz')],
+            parameters=[{'use_sim_time': True}]))
     if _is_true(context, 'run_tests'):
         actions += _tests(context, _test_dir())
     return actions
@@ -142,9 +145,15 @@ def generate_launch_description():
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('headless', default_value='false',
-                              description='skip the gz GUI and rviz2'),
+                              description='skip rviz2'),
         DeclareLaunchArgument('real_time_factor', default_value='0',
-                              description='sim speed cap; 0 = as fast as it runs'),
+                              description='sim seconds per wall second; 0 = as fast '
+                                          'as the stack keeps up'),
+        DeclareLaunchArgument('clock_step_s', default_value='0.005',
+                              description="bench_world's /clock period (s)"),
+        DeclareLaunchArgument('pace_slack_s', default_value='0.02',
+                              description='how far (s) sim time may run past each '
+                                          "gate's period at real_time_factor:=0"),
         DeclareLaunchArgument('speeds', default_value='',
                               description="target speeds (m/s), e.g. '0.5 1'; "
                                           'empty = the aim bench sweep'),
