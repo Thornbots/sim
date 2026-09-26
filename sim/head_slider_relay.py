@@ -19,7 +19,7 @@ The GUI topic is /model/<model>/joint/<joint>/0/cmd_pos, not
 ROS-bridgeable; the custom topics are declared in sentry.urdf.xacro, so
 both the GUI slider and /head_pan_cmd|/head_pitch_cmd can drive the
 same JointPositionController plugin on headlink/headpitch. Shells out
-to `ign topic` (no gz-transport Python bindings here); reader and
+to `gz topic` (no gz-transport Python bindings here); reader and
 publisher run on separate threads to avoid input lag -- see README.md
 for why.
 """
@@ -44,7 +44,7 @@ _prctl = ctypes.CDLL(None, use_errno=True).prctl
 
 
 def _die_with_parent():
-    # `ign` execs into ign-transport-topic, which keeps this setting. Without
+    # `gz` execs into gz-transport's topic tool, which keeps this setting. Without
     # it, launch's SIGINT to this process alone orphaned the echo forever.
     _prctl(PR_SET_PDEATHSIG, int(signal.SIGTERM))
 
@@ -55,14 +55,14 @@ def relay_one(src_topic, dst_topic):
     has_update = threading.Event()
 
     def read_slider():
-        # stdbuf -oL: `ign topic -e` fully-buffers its stdout when it isn't
+        # stdbuf -oL: `gz topic -e` fully-buffers its stdout when it isn't
         # a TTY (writing to this pipe), so without forcing line buffering
         # here its "data: X" lines never actually reach us in real time --
         # they'd only show up once the OS pipe buffer happens to fill,
         # which for a human dragging a slider slowly could be effectively
         # never.
         echo = subprocess.Popen(
-            ['stdbuf', '-oL', 'ign', 'topic', '-e', '-t', src_topic],
+            ['stdbuf', '-oL', 'gz', 'topic', '-e', '-t', src_topic],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
             preexec_fn=_die_with_parent,
         )
@@ -81,7 +81,7 @@ def relay_one(src_topic, dst_topic):
             with lock:
                 value = latest['value']
             subprocess.run(
-                ['ign', 'topic', '-t', dst_topic, '-m', 'ignition.msgs.Double',
+                ['gz', 'topic', '-t', dst_topic, '-m', 'gz.msgs.Double',
                  '-p', f'data: {value}'],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )

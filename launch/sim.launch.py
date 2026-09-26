@@ -241,17 +241,6 @@ def generate_launch_description():
             os.environ.get('GZ_SIM_RESOURCE_PATH', ''),
         ])
     )
-    # Older Ignition (Fortress/Edifice) reads this variable name instead of
-    # GZ_SIM_RESOURCE_PATH; set both so it works either way.
-    ign_resource_path = SetEnvironmentVariable(
-        name='IGN_GAZEBO_RESOURCE_PATH',
-        value=os.pathsep.join([
-            os.path.dirname(pkg_share),
-            pkg_share,
-            os.environ.get('IGN_GAZEBO_RESOURCE_PATH', ''),
-        ])
-    )
-
     # --- Start gz sim (server + optional GUI) with the requested world.
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -337,7 +326,7 @@ def generate_launch_description():
     # pose_emulator below, which repackages it into the same pose interface
     # real hardware speaks. That plugin (see the model xacro) only
     # publishes on the gz-transport topic
-    # /world/<world>/model/<robot_name>/joint_state as ignition.msgs.Model --
+    # /world/<world>/model/<robot_name>/joint_state as gz.msgs.Model --
     # it does NOT talk to ROS on its own, hence this bridge.
     gz_joint_state_topic = [
         '/world/ARCC_Field_2026/model/', robot_name, '/joint_state'
@@ -357,7 +346,7 @@ def generate_launch_description():
     # as /sim/raw_joint_states above: real hardware has no raw /odom topic
     # either, only its Type-C pose interface. That plugin (see
     # the model xacro) only publishes on the gz-transport topic
-    # /model/<robot_name>/odometry as ignition.msgs.Odometry, not to ROS.
+    # /model/<robot_name>/odometry as gz.msgs.Odometry, not to ROS.
     gz_odom_topic = ['/model/', robot_name, '/odometry']
     odom_bridge = Node(
         package='ros_gz_bridge',
@@ -440,7 +429,7 @@ def generate_launch_description():
     # --- Teleport the chassis in sim via sim/auto_explore.py's grid sweep.
     # root has no parent joint any more (see the model xacro), so gz's
     # physics now honors a direct world-pose write on it; auto_explore.py
-    # calls gz's own `/world/<world>/set_pose` service through `ign service`.
+    # calls gz's own `/world/<world>/set_pose` service through `gz service`.
     # set_pose_bridge offers the same service to ROS as
     # ros_gz_interfaces/srv/SetEntityPose, so actor_driver.py can call it
     # every tick without starting a process per call.
@@ -639,7 +628,6 @@ def generate_launch_description():
         cv_publish_latency_s_arg,
         cv_camera_latency_s_arg,
         gz_resource_path,
-        ign_resource_path,
         OpaqueFunction(function=_world_with_rtf),
         gz_sim,
         gz_sim_headless,

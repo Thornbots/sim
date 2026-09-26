@@ -19,7 +19,7 @@ Visits a fixed (x, y) grid in a snake pattern, teleporting the chassis
 to each point and dwelling briefly so SLAM integrates a scan there --
 no obstacle avoidance/reactive driving, it just jumps regardless of
 what's there. "Teleport" is a `/world/<world>/set_pose` gz-transport
-call via `ign service`; each call is preceded by a model_only
+call via `gz service`; each call is preceded by a model_only
 WorldReset to zero joint state first. See README.md for why/how both
 are safe here.
 """
@@ -42,7 +42,7 @@ GRID_SPACING = 0.5      # m between adjacent grid points
 
 DWELL_SECONDS = 1.0      # s between teleports, so SLAM gets a settled scan
 # at each pose before the next jump
-SERVICE_TIMEOUT = 2.0    # s -- ign service call timeout
+SERVICE_TIMEOUT = 2.0    # s -- gz service call timeout
 
 
 def build_grid():
@@ -69,10 +69,10 @@ def build_grid():
     return waypoints
 
 
-def _ign_service(service, reqtype, reptype, req):
+def _gz_service(service, reqtype, reptype, req):
     try:
         result = subprocess.run(
-            ['ign', 'service', '-s', f'/world/{WORLD_NAME}/{service}',
+            ['gz', 'service', '-s', f'/world/{WORLD_NAME}/{service}',
              '--reqtype', reqtype, '--reptype', reptype,
              '--timeout', str(int(SERVICE_TIMEOUT * 1000)),
              '--req', req],
@@ -92,8 +92,8 @@ def reset_joints():
     "initial joint state" for it to reset to) -- only actual joints get
     reset.
     """
-    return _ign_service(
-        'control', 'ignition.msgs.WorldControl', 'ignition.msgs.Boolean',
+    return _gz_service(
+        'control', 'gz.msgs.WorldControl', 'gz.msgs.Boolean',
         'reset: {model_only: true}',
     )
 
@@ -120,15 +120,15 @@ def set_model_pose(name, x, y, z):
         f'position: {{x: {x}, y: {y}, z: {z}}}, '
         f'orientation: {{x: 0, y: 0, z: 0, w: 1}}'
     )
-    return _ign_service(
-        'set_pose', 'ignition.msgs.Pose', 'ignition.msgs.Boolean', req,
+    return _gz_service(
+        'set_pose', 'gz.msgs.Pose', 'gz.msgs.Boolean', req,
     )
 
 
 def remove_model(name):
     """Delete a model from the running world; False if gz refused or timed out."""
-    return _ign_service(
-        'remove', 'ignition.msgs.Entity', 'ignition.msgs.Boolean',
+    return _gz_service(
+        'remove', 'gz.msgs.Entity', 'gz.msgs.Boolean',
         f"name: '{name}', type: MODEL",
     )
 
