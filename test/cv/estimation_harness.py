@@ -15,11 +15,11 @@
 """
 C2 estimation-bench machinery: scores target_tracker's TargetState against truth.
 
-estimation.launch.py runs gz with our sentry_v2, target_driver's phantom
-target, cv_target_emulator's detections off the real head's camera, and the
+estimation.launch.py runs bench_world (the clock, the phantom target, our
+chassis and head, and detections off our head's camera; C++, no gz) and the
 real Part 2 (target_selector, target_tracker). point_to_cv_target and
-cv_head_aim keep the head on the target; nothing fires. Each TargetState is
-compared with target_driver's truth at its own header.stamp, so a wrong stamp
+bench_world's head controller keep the head on the target; nothing fires. Each TargetState is
+compared with bench_world's truth at its own header.stamp, so a wrong stamp
 scores as error. Importable only -- test_estimation.py holds the assertions.
 see ../../README.md for design rationale
 """
@@ -39,13 +39,13 @@ from shot_hit_harness import (
     interpolate, LaunchTree, PANEL_RADIUS_X, PANEL_RADIUS_Y, SimTimeNode, TARGET_PATHS,
 )
 from sim.cv_head_aim_core import solve_head_angles
-from std_msgs.msg import Float64
+from std_msgs.msg import Float64, Header
 
 DEFAULT_DURATION = 30.0  # sim seconds scored per case, after SETTLE_S
 SETTLE_S = 3.0  # sim seconds after the track restarts before steady-state scoring
 # Detections off this long at each case start, past target_tracker's
 # track_max_gap_s (0.5), so every case starts a fresh track. The sampler
-# points the head at the true target meanwhile: cv_head_aim holds with no
+# points the head at the true target meanwhile: the head controller holds with no
 # target, and a head left at the last case's path end can miss the next.
 RESET_S = 1.0
 HEADPITCH_LIMIT = 0.6  # rad, cv_head_aim's clamp
@@ -54,7 +54,7 @@ DEFAULT_LOG_DIR = '/tmp/estimation_test_logs'
 # --blackout: blackout_s of no detections every period, shorter than
 # track_max_gap_s, so the tracker coasts and must pick the target up again.
 BLACKOUT = {'blackout_period_s': 2.0, 'blackout_s': 0.3}
-# --shooter-speed drives our gz chassis along y within this of the origin.
+# --shooter-speed drives our chassis along y within this of the origin.
 SHOOTER_HALF_WIDTH = 1.0
 SHOOTER_CMD_PERIOD_S = 0.05
 # Steady-state p95 limits per cell, metric -> m or rad: the worst of three
@@ -84,6 +84,9 @@ class EstimationSampler(SimTimeNode):
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.pan_pub = self.create_publisher(Float64, '/head_pan_cmd', 10)
         self.pitch_pub = self.create_publisher(Float64, '/head_pitch_cmd', 10)
+        # The truth stamp scored up to, so sim_clock's paced mode (rate 0)
+        # doesn't run ahead of this scorer.
+        self.progress_pub = self.create_publisher(Header, '/bench/progress', 10)
 
     def _now_s(self):
         return self.get_clock().now().nanoseconds / 1e9
@@ -91,16 +94,17 @@ class EstimationSampler(SimTimeNode):
     def _on_truth(self, msg):
         p, q, v = msg.pose.pose.position, msg.pose.pose.orientation, msg.twist.twist
         stamp = self._stamp_s(msg.header.stamp)
-        yaw = 2.0 * math.atan2(q.z, q.w)  # target_driver publishes yaw-only
+        yaw = 2.0 * math.atan2(q.z, q.w)  # bench_world publishes yaw-only
         if self._truth:
             prev = self._truth[-1][3]
             yaw = prev + math.atan2(math.sin(yaw - prev), math.cos(yaw - prev))
-        # target_driver's twist is world-frame, despite child_frame_id.
+        # The truth twist is world-frame, despite child_frame_id.
         self._truth.append((stamp, np.array([p.x, p.y, p.z]),
                             np.array([v.linear.x, v.linear.y, v.linear.z]),
                             yaw, v.angular.z))
         self._truth = [h for h in self._truth if stamp - h[0] <= TRUTH_HISTORY_S]
         self._resolve(stamp)
+        self.progress_pub.publish(Header(stamp=msg.header.stamp))
         if self.aim_head:
             self._aim_head_at(self._truth[-1][1])
 
@@ -166,8 +170,8 @@ class EstimationStack:
     The C2 stack, launched once and reused for every case.
 
     launch/estimation.launch.py defines it; with external=True it is already
-    running (it started this pytest). Between cases only target_driver's
-    motion and cv_target_emulator's stagger and masking change.
+    running (it started this pytest). Between cases only bench_world's target
+    motion, panel stagger and masking change.
     """
 
     def __init__(self, headless, log_dir, external=False, extra_args=()):
@@ -183,8 +187,7 @@ class EstimationStack:
         self.node = rclpy.create_node(
             'estimation_stack',
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
-        self._clients = {name: self.node.create_client(SetParameters, f'/{name}/set_parameters')
-                         for name in ('target_driver', 'cv_target_emulator')}
+        self._client = self.node.create_client(SetParameters, '/bench_world/set_parameters')
 
     def start(self):
         for path in (self.states_path, self.summary_path):
@@ -195,17 +198,17 @@ class EstimationStack:
         try:
             probe.wait_until(lambda: bool(probe._truth), timeout=120.0,
                              description='/target/ground_truth_odom publishing')
-            ready = ['target_driver', 'cv_target_emulator', 'target_selector',
-                     'target_tracker', 'point_to_cv_target', 'cv_head_aim']
+            ready = ['bench_world', 'target_selector', 'target_tracker', 'point_to_cv_target']
             probe.wait_until(lambda: probe.nodes_up(*ready), timeout=60.0,
                              description=f'{", ".join(ready)} nodes up')
         finally:
             probe.destroy_node()
 
-    def set_params(self, name, **params):
-        client = self._clients[name]
+    def set_params(self, **params):
+        """Set bench_world's target and detection parameters."""
+        client = self._client
         if not client.wait_for_service(timeout_sec=10.0):
-            raise RuntimeError(f'/{name}/set_parameters not available')
+            raise RuntimeError('/bench_world/set_parameters not available')
         msgs = []
         for k, v in params.items():
             kind = Parameter.Type.BOOL if isinstance(v, bool) else Parameter.Type.DOUBLE
@@ -215,7 +218,7 @@ class EstimationStack:
         rclpy.spin_until_future_complete(self.node, future, timeout_sec=10.0)
         result = future.result()
         if result is None or not all(r.successful for r in result.results):
-            raise RuntimeError(f'{name} rejected {params}')
+            raise RuntimeError(f'bench_world rejected {params}')
 
     def stop(self):
         if self.launch is not None:
@@ -232,9 +235,8 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
     the head turns to the target, then come back; states are scored from
     there for SETTLE_S + duration.
     """
-    stack.set_params('target_driver', target_speed=speed, spin_hz=spin_hz,
-                     **TARGET_PATHS[path])
-    stack.set_params('cv_target_emulator', panel_stagger_m=stagger, detections_enabled=False,
+    stack.set_params(target_speed=speed, spin_hz=spin_hz, **TARGET_PATHS[path])
+    stack.set_params(panel_stagger_m=stagger, detections_enabled=False,
                      **(BLACKOUT if blackout else {'blackout_period_s': 0.0}))
     sampler = EstimationSampler(stagger, shooter_speed)
     try:
@@ -242,7 +244,7 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
         sampler.spin_for(RESET_S)
         sampler.aim_head = False
         sampler._pending, sampler.records = [], []
-        stack.set_params('cv_target_emulator', detections_enabled=True)
+        stack.set_params(detections_enabled=True)
         start_s = sampler._now_s()
         sampler.spin_for(SETTLE_S + duration)
     finally:

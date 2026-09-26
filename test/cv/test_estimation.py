@@ -13,14 +13,14 @@
 # limitations under the License.
 
 """
-C2 estimation bench: target_tracker's TargetState against the truth, on gz.
+C2 estimation bench: target_tracker's TargetState against the truth, no gz.
 
 The same cells as the aim bench (test_shot_hit.py): stationary, then each
 speed, flat and staggered. Each case restarts the track and scores every
 state at its own stamp (estimation_harness.py). A cell asserts that states
 arrive and mostly go valid, plus its p95 limits once LIMITS has them (the
 worst of three runs plus a margin, tools/estimation_limits.py). Nothing fires.
-Launches gz, so marked `integration`; `ros2 launch sim estimation.launch.py`
+Launches the whole stack, so marked `integration`; `ros2 launch sim estimation.launch.py`
 runs it. Options: --shot-speeds, --shot-duration, --panel-layout,
 --target-path, --shooter-speed, --blackout, --camera-latency,
 --skip-stationary, --only-stationary, --headless, --log-dir, --external-stack.

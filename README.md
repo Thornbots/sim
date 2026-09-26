@@ -3,9 +3,14 @@
 sim holds the robot's integration tests. The localization drift suite starts a
 `gz sim` model of the `ARCC_Field_2026` field, spawns the `sentry` robot from
 `urdf/sentry_v2.urdf.xacro`, and runs the real `thornbots_pkg` stack against
-it. The CV aim bench runs no gz: it scores `point_to_cv_target` against a
-perfectly known target. gz on the CV side is for Part 2 only, turning noisy
-detections into a target model (`../CV_SPLIT_PLAN.md`, Estimation).
+it. The two CV benches run no gz. The aim bench scores `point_to_cv_target`
+against a perfectly known target; the estimation bench scores how well Part 2
+turns noisy detections into a target model (`../CV_SPLIT_PLAN.md`,
+Estimation).
+
+The package is C++ and Python in one: `ament_cmake` builds `src/`'s
+`bench_world`, and `ament_cmake_python` installs the `sim` module, with one
+`scripts/` wrapper per Python node.
 
 ## Run the tests
 
@@ -79,14 +84,15 @@ source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 launch sim shot_hit.launch.py
 ```
 
-The CV estimation bench (C2) scores Part 2, not hits. gz runs our
-`sentry_v2`, `target_driver` moves the phantom target through the same ten
-cells, `cv_target_emulator` turns it into detections off the real head's
-camera, and `target_selector` and `target_tracker` build the `TargetState`.
-`point_to_cv_target` and `cv_head_aim` keep the head on it; nothing fires.
-Each case switches detections off for 1 s so the tracker starts a fresh
-track, then scores every state for 3 s + 30 s against `target_driver`'s truth
-at the state's own stamp, so a late stamp scores as error:
+The CV estimation bench (C2) scores Part 2, not hits. `bench_world` (C++)
+is the whole world in one lockstep loop: `/clock`, the phantom target through
+the same ten cells, our chassis and head, `/pose`, the head controller and
+the detections off our head's camera. `target_selector` and `target_tracker`
+build the `TargetState`, and `point_to_cv_target` aims the head; nothing
+fires. Each case switches detections off for 1 s so the tracker starts a
+fresh track, then scores every state for 3 s + 30 s against the truth at the
+state's own stamp, so a late stamp scores as error. It runs about 4x real
+time with rviz up (`real_time_factor:=1` for real time):
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash
@@ -173,16 +179,16 @@ Everything under `test/` is pytest, and `colcon test` collects it.
 | unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, `cv/test_estimation_metrics.py`, ament copyright/flake8/pep257 | Python + pytest |
 | integration | `localization/test_localization_drift.py`, `localization/test_ekf_ground_truth.py` | gz-sim and a launch tree |
 | integration | `cv/test_shot_hit.py` | a launch tree, no gz |
-| integration | `cv/test_estimation.py` | gz-sim and a launch tree |
+| integration | `cv/test_estimation.py` | a launch tree, no gz |
 
 `setup.cfg` deselects the `integration` marker, so a plain `colcon test` runs
-only the unit tests and finishes in seconds. A `-m` on the command line
-overrides that:
+only the unit tests and finishes in seconds. pytest's own `-m` overrides that
+(`colcon test`'s `--pytest-args` only reaches `ament_python` packages):
 
 ```bash
 colcon test --packages-select sim
-colcon test --packages-select sim --pytest-args ' -m integration'
-colcon test-result --verbose
+colcon test-result --test-result-base build/sim --verbose
+cd src/sim && python3 -m pytest test -m integration
 ```
 
 The drift suite starts gz-sim once and a fresh `thornbots_pkg` stack for each
