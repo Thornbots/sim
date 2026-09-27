@@ -288,6 +288,17 @@ cv_dropout_probability:=0.03  # per-sample detection drop, placeholder
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
 
+To watch a run from another machine, start the Foxglove bridge next to it:
+
+```bash
+ros2 launch sim foxglove.launch.py   # port:=8765
+```
+
+In Foxglove (desktop or browser, any OS), choose "Open connection", then
+"Foxglove WebSocket", then `ws://<this host's tailscale IP>:8765`. It sees
+every topic in the container's DDS domain, and sends only the ones a panel
+subscribes to, so leave image panels closed over a slow link.
+
 `sim.launch.py` starts gz, spawns the robot, bridges its lidar, joint, odometry,
 camera and head-command topics to ROS, and runs `pose_emulator`, which
 publishes `/pose` the way the Type-C board does. It runs no
