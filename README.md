@@ -299,10 +299,15 @@ In Foxglove (desktop or browser, any OS), choose "Open connection", then
 every topic in the container's DDS domain, and sends only the ones a panel
 subscribes to, so leave image panels closed over a slow link.
 
-For the localization suite, import `foxglove/localization.json` (Layouts,
-then "Import from file"). It sets the 3D panel's display frame to `map` and turns
-on the robot model, `/map`, `/scan`, `/amcl_pose` and `/localization/odom`;
-a fresh 3D panel shows none of these.
+A fresh Foxglove 3D panel shows none of our displays. `foxglove/` has one
+layout per rviz config, the same displays, fixed frame and view: `config.json`
+for `sim.launch.py` and the localization suite, `estimation.json` and
+`cv_target.json` for the two CV benches. Import one (the layout menu, then
+"Import from file"). After editing an rviz config, regenerate them:
+
+```bash
+python3 tools/rviz_to_foxglove.py   # --check: exit 1 if one is stale
+```
 
 `sim.launch.py` starts gz, spawns the robot, bridges its lidar, joint, odometry,
 camera and head-command topics to ROS, and runs `pose_emulator`, which

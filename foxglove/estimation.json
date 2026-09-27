@@ -1,0 +1,75 @@
+{
+  "configById": {
+    "3D!estimation": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 8.0,
+        "phi": 55.62,
+        "thetaOffset": 90.09,
+        "target": [
+          1.5,
+          0.0,
+          0.3
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.01,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "odom",
+      "scene": {},
+      "transforms": {},
+      "topics": {
+        "/robot_description": {
+          "visible": true
+        },
+        "/sim/raw_odom": {
+          "visible": true,
+          "type": "arrow",
+          "color": "#ffffffff"
+        },
+        "/target_markers": {
+          "visible": true
+        },
+        "/cv/panel_polygon": {
+          "visible": true,
+          "color": "#ffff00ff"
+        },
+        "/cv/target_state_markers": {
+          "visible": true
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameId": "odom",
+          "size": 20,
+          "divisions": 20,
+          "color": "#a0a0a480"
+        }
+      },
+      "publish": {
+        "type": "point"
+      },
+      "imageMode": {}
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": "3D!estimation"
+}

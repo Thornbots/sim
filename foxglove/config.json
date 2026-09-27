@@ -1,17 +1,17 @@
 {
   "configById": {
-    "3D!drift": {
+    "3D!config": {
       "cameraState": {
         "perspective": true,
-        "distance": 16,
-        "phi": 45,
-        "thetaOffset": 45,
-        "targetOffset": [
-          0,
-          0,
-          0
-        ],
+        "distance": 10.575,
+        "phi": 47.01,
+        "thetaOffset": 93.22,
         "target": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "targetOffset": [
           0,
           0,
           0
@@ -31,23 +31,27 @@
       "scene": {},
       "transforms": {},
       "topics": {
+        "/scan": {
+          "visible": true,
+          "pointSize": 3,
+          "colorMode": "flat",
+          "flatColor": "#ffffffff"
+        },
         "/robot_description": {
           "visible": true
         },
         "/map": {
           "visible": true
         },
-        "/scan": {
+        "/sim/raw_odom": {
           "visible": true,
-          "pointSize": 4,
-          "colorMode": "flat",
-          "flatColor": "#ff3030ff"
-        },
-        "/amcl_pose": {
-          "visible": true
+          "type": "arrow",
+          "color": "#ff0000ff"
         },
         "/localization/odom": {
-          "visible": true
+          "visible": true,
+          "type": "arrow",
+          "color": "#0000ffff"
         }
       },
       "layers": {
@@ -56,13 +60,19 @@
           "visible": true,
           "frameId": "map",
           "size": 20,
-          "divisions": 20
+          "divisions": 20,
+          "color": "#a0a0a480"
         }
       },
       "publish": {
         "type": "point"
       },
       "imageMode": {}
+    },
+    "Image!config": {
+      "imageMode": {
+        "imageTopic": "/color/image_raw"
+      }
     }
   },
   "globalVariables": {},
@@ -70,5 +80,10 @@
   "playbackConfig": {
     "speed": 1
   },
-  "layout": "3D!drift"
+  "layout": {
+    "first": "3D!config",
+    "second": "Image!config",
+    "direction": "row",
+    "splitPercentage": 70
+  }
 }
