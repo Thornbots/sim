@@ -65,7 +65,7 @@ TRUTH_HISTORY_S = 1.0  # ground truth kept for interpolating impact-time poses
 FIRE_LATENCY_S = 0.05
 # The shooter: root starts here in odom and never rotates; shots leave from
 # it toward the newest aim point. shooter_speed bounces it along y within
-# SHOOTER_HALF_WIDTH of here (CV_SPLIT_PLAN.md 1.8).
+# SHOOTER_HALF_WIDTH of here.
 POINT_SHOOTER = (0.0, 0.0, 0.4)
 SHOOTER_HALF_WIDTH = 1.0
 
@@ -86,7 +86,7 @@ STATIONARY_MIN_HIT_RATE = 0.5
 # spinning target. A placeholder stating intent, not a measurement, for
 # cells FLOORS doesn't list yet.
 MOVING_MIN_HIT_RATE = 0.25
-# Per-cell floors (CV_SPLIT_PLAN.md 1.7): the lowest score over three runs
+# Per-cell floors: the lowest score over three runs
 # minus FLOOR_MARGIN, printed from their scores.jsonl by tools/shot_floors.py.
 # Three chase-mode runs per path and shooter speed, 4x, 2026-09-25; the
 # comment on each is its three scores. Unlisted cells use the placeholders.

@@ -130,25 +130,23 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `real_time_factor:=0`; keep `:=1` as the control. rf2o now matches every
   scan in its callback (`thornbots_workspace#11`); its `ros2_ws` copy is
   shadowed, so rebuild it in `isaac_ros-dev` before trusting a run.
-- **`suite:=ekf` and shot-hit predate the A2M8 lidar and rf2o's per-scan
-  matching** (800 beams, 0.15 m `range_min`, 0.01 m noise; was 3000, 0.2 m,
-  0.03 m). Re-run them before quoting their numbers.
 - **`odom_stuck` passes but localization is lost, and that is accepted**
   (the user's call, 2026-09-25). Its check stays liveness only. rf2o's
   `/odom` seed freezes with `/odom`, and 0.4 m between 10 Hz scans at
   4 m/s is too far to match unseeded, so `odom->root` stays inside ~1 m
   and amcl rotates its estimate (up to 0.66 rad) to fit the scan.
   README.md's scenario list has the details.
-- **One robot bring-up can leave `amcl` unconfigured.** Its reply to
-  `/amcl/change_state` times out (`failed to send response`), the lifecycle
-  manager never activates it, and the scenario fails on "map->odom never
-  became available". Seen once in six bring-ups; not yet chased.
+- **A robot bring-up can stall for good on a lost lifecycle reply.** A
+  node's reply to `change_state` times out in DDS (`failed to send
+  response`), Nav2's lifecycle manager waits on it with no timeout, and
+  nothing activates. Seen on `amcl` and `map_server`, on Humble and Jazzy.
+  The drift harness waits for `parent->root` after each robot start and
+  restarts the stack once if it never comes (`_wait_for_root_chain`). The
+  robot can hit the same race at boot; unfixed there.
 - **The drift suite passes 7/7 on `sentry_v2` at `--backend amcl --use-ekf`,**
-  unthrottled with the A2M8 lidar and per-scan rf2o, GUI on, 212 s
-  (2026-09-24: drift_correction 0.14 m, with obstacle 0.17 m,
-  moving_obstacles 0.18 m, against 0.40 m). Before
-  those changes it also passed at real time, shared sim,
-  `restart_sim:=true` and a scenario alone alike.
+  unthrottled with the A2M8 lidar and per-scan rf2o, GUI on, 227 s
+  (2026-09-26: drift_correction 0.16 m, with obstacle 0.15 m,
+  moving_obstacles 0.17 m, against 0.40 m).
   Anything spawned into the world must clear the robot, which now collides:
   a box spawned inside the chassis stalls gz's contact solver and `/clock`.
 - **`sentry_v2` spawns by default; `model:=sentry` is the old model.** The
@@ -192,8 +190,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   The emulator, the scorer's facing test and both rviz views keep the cant;
   a hit is still scored as distance to the panel centre, not a crossing of
   the canted square (`../ROADMAP.md` Caveats).
-- **C2's target is a phantom** with exact truth. Spawn a visual one in gz
-  when YOLO sees rendered frames (`CV_SPLIT_PLAN.md` 2.0).
+- **C2's target is a phantom** with exact truth. A visual one in gz comes
+  with E2E, once YOLO sees rendered frames (`../E2E_PLAN.md`).
 - **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard
   corners at 4 m/s and keeps it: the head's reaction torque gets past the
   yaw lock. The real robot is expected to drift 1-5 deg too. Noted, not
@@ -213,8 +211,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   until 2026-09-24.
 - **Wanted: a localization scenario with finite acceleration.** `drive()`
   steps `/cmd_vel` to 4 m/s and stops within one 0.1 s tick.
-- **The EKF beats raw `/odom` at 4 m/s, real time** (`suite:=ekf`), since
-  rf2o got `fixed_heading` and an `/odom` prior (`../sentry_localization`).
+- **The EKF beats raw `/odom` by 95%** (`suite:=ekf`, unthrottled,
+  2026-09-26: 0.0075 m fused mean against 0.1415 m), since rf2o got
+  `fixed_heading` and an `/odom` prior (`../sentry_localization`).
   Both were needed: without the prior rf2o undershot legs that start from
   rest, whatever the blind sector. rf2o's sign is right; don't invert its
   warping again.
@@ -246,14 +245,16 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   3-9) aren't in the world yet.
 - **This branch (`jazzy`) runs on gz Harmonic (gz-sim 8).** Plugins are
   `gz-sim-*-system`, and every CLI call is `gz topic`/`gz service` with
-  `gz.msgs.*` types; Harmonic ships no `ign`. Builds and passes the unit
-  tests on stock `ros:jazzy`, and the headless world spawns the robot
-  with `/clock`, `/scan_raw` and `/pose` flowing. Suites not yet run
-  (`../JAZZY_PLAN.md` step 4).
-- **Noble has no apt `python3-trimesh` and rosdep has no key for it**
-  (only `python3-trimesh-pip`). It only serves `tools/simplify_urdf.py`,
-  which also needs pip's `fast_simplification`, so it stays out of
-  `package.xml`; install both by hand when regenerating `urdf/sentry_v2`.
+  `gz.msgs.*` types; Harmonic ships no `ign`. On the laptop (2026-09-26)
+  the drift suite, `suite:=ekf`, C1 and C2 give Humble's results.
+- **robot_localization 3.8 logs "Failed to meet update rate!" at ERROR**
+  (Humble's printed it untagged), unthrottled, with no effect on the pose.
+  `scan_log_for_errors` skips that line.
+- **`trimesh` isn't in `package.xml`**: noble has no apt `python3-trimesh`
+  and rosdep only a pip key. `install-sim.sh` pips it; only
+  `tools/simplify_urdf.py` uses it, and that also needs pip's
+  `fast_simplification`, installed by hand when regenerating
+  `urdf/sentry_v2`.
 - **`sentry*.urdf.xacro`'s `<gz_frame_id>` warns "not defined in SDF"**
   under Harmonic's sdformat, but gz-sensors still reads it (`/scan_raw`
   arrives with `frame_id: lidar`).
