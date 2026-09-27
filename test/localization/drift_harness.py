@@ -43,6 +43,7 @@ import subprocess
 import sys
 import time
 
+from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rcl_interfaces.srv import GetParameters, SetParameters
@@ -1621,6 +1622,107 @@ def scenario_odom_stuck(gui, backend, use_ekf):
         teardown_stack(stack, helper)
 
 
+# lidar_self_filter's blind sector during scan_degraded, radians in the
+# lidar frame: 300 deg blanked, leaving a 60 deg arc (a robot parked
+# against the lidar). Its normal sector is restored afterwards.
+SCAN_BLACKOUT_SECTOR = (0.5, 0.5 + math.radians(300.0))
+SCAN_FILTER_DEFAULT_SECTOR = (0.09, 1.41)
+
+
+def _set_scan_blind_sector(helper, start, end):
+    """Set lidar_self_filter's blind sector; it reads both params every scan."""
+    params = [Parameter('blind_angle_start', Parameter.Type.DOUBLE, start).to_parameter_msg(),
+              Parameter('blind_angle_end', Parameter.Type.DOUBLE, end).to_parameter_msg()]
+    reply = helper.call(SetParameters, '/lidar_self_filter/set_parameters',
+                        SetParameters.Request(parameters=params))
+    rejected = [r.reason for r in reply.results if not r.successful]
+    if rejected:
+        raise RuntimeError(f'lidar_self_filter rejected params: {rejected}')
+
+
+def scenario_scan_degraded(gui, backend, use_ekf):
+    sc = Scenario(
+        'scan_degraded',
+        'blanks 300 deg of /scan (lidar_self_filter blind sector) for two '
+        'legs of the cornering loop at 0.15 slip, then restores it for two '
+        'more laps. The only scenario that breaks rf2o instead of /odom. '
+        'Scores ground-truth error of the full estimate (parent->root '
+        'against /sim/raw_odom) on every sample, before, during and after '
+        'the blackout, against MAX_DELTA_THRESHOLD, and logs '
+        "/scan_odom/quality's grades.")
+    stack = helper = None
+    blanked = False
+    grades = {}
+
+    def on_quality(msg):
+        for st in msg.status:
+            tier = next((kv.value for kv in st.values if kv.key == 'tier'), '?')
+            grades[(phase, tier)] = grades.get((phase, tier), 0) + 1
+
+    phase = 'before'
+    try:
+        stack, helper = run_stack(
+            gui, backend, use_ekf, odom_noise_enabled=False,
+            odom_slip_ratio=0.15)
+        if not wait_for_stack_ready(sc, helper):
+            sc.result(False, 'stack failed to reach a healthy /scan rate '
+                      'in time -- see log above')
+            return sc
+        if helper.wait_for_correction_tf(timeout=45.0) is None:
+            sc.result(False, 'correction TF never became available within 45s')
+            return sc
+        helper.create_subscription(
+            DiagnosticArray, '/scan_odom/quality', on_quality, 50)
+
+        _reposition_to_loop_start(helper)
+        samples = []
+
+        def leg(i, label):
+            vx, vy, duration = OBSTACLE_LOOP_LEGS[i % len(OBSTACLE_LOOP_LEGS)]
+            helper.drive(vx, vy, duration)
+            helper.spin_for(OBSTACLE_LOOP_DWELL_SECONDS)
+            err = _truth_error(helper)
+            if err is not None:
+                samples.append((label, err))
+                sc.log(f'{label:6s} leg {i}: truth error {err:.4f} m')
+
+        for i in range(4):
+            leg(i, 'before')
+        phase = 'during'
+        _set_scan_blind_sector(helper, *SCAN_BLACKOUT_SECTOR)
+        blanked = True
+        sc.log(f'blanked /scan outside a '
+               f'{360 - math.degrees(SCAN_BLACKOUT_SECTOR[1] - SCAN_BLACKOUT_SECTOR[0]):.0f}'
+               ' deg arc')
+        for i in range(4, 6):
+            leg(i, 'during')
+        _set_scan_blind_sector(helper, *SCAN_FILTER_DEFAULT_SECTOR)
+        blanked = False
+        phase = 'after'
+        for i in range(6, 14):
+            leg(i, 'after')
+
+        sc.log('/scan_odom/quality grades: ' + ', '.join(
+            f'{p}/{t}={n}' for (p, t), n in sorted(grades.items())))
+        if len(samples) < 10:
+            sc.result(False, f'too few truth-error samples ({len(samples)})')
+            return sc
+        worst = max(samples, key=lambda s: s[1])
+        log_errs = scan_log_for_errors(stack.log_text())
+        ok = worst[1] < MAX_DELTA_THRESHOLD and not log_errs
+        sc.result(ok, f'max truth error {worst[1]:.4f} m ({worst[0]} the '
+                  f'blackout; threshold {MAX_DELTA_THRESHOLD} m), '
+                  f'log_errors={len(log_errs)}')
+        return sc
+    finally:
+        if blanked and helper is not None:
+            try:
+                _set_scan_blind_sector(helper, *SCAN_FILTER_DEFAULT_SECTOR)
+            except Exception:
+                pass
+        teardown_stack(stack, helper)
+
+
 SCENARIOS = {
     'baseline': scenario_baseline,
     'noise_correction': scenario_noise_correction,
@@ -1629,6 +1731,7 @@ SCENARIOS = {
     'moving_obstacles': scenario_moving_obstacles,
     'jerk_with_motion': scenario_jerk_with_motion,
     'odom_stuck': scenario_odom_stuck,
+    'scan_degraded': scenario_scan_degraded,
 }
 
 
