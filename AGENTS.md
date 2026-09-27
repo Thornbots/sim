@@ -164,8 +164,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   can't be the gate: it is stamped at publish time, and pacing on it let
   the tracker fall 0.12-0.21 s behind capture (2026-09-26). The ten cells
   take ~75 s with rviz (~5x); `target_tracker` is the ceiling. Root
-  sits at z 0 and yaw 0, and the head is gz's PD on the arm inertias;
-  `LIMITS` is empty until three runs fill it.
+  sits at z 0 and yaw 0, and the head is gz's PD on the arm inertias.
+  `LIMITS` holds the ten default cells, from five 2026-09-26 runs; the
+  C3, latency and blackout cells only report until they have runs.
 - **`bench_world` duplicates C2's share of `target_driver`,
   `cv_target_emulator`, `cv_head_aim` and `pose_emulator`**, which the gz
   sim and C1 still use. A change to one of those that should reach C2 has
