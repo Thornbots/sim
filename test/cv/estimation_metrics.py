@@ -13,8 +13,9 @@
 # limitations under the License.
 
 """
-The estimation bench's scoring math, no ROS: one TargetState's errors against truth,
-and a case summary.
+The estimation bench's scoring math, with no ROS.
+
+One TargetState's errors against truth, and a case summary.
 
 estimation_harness.py feeds it; test_estimation_metrics.py pins it.
 """
