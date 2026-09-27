@@ -17,7 +17,7 @@
 Print shot_hit_harness.FLOORS from the aim bench's scores.jsonl over several runs.
 
 `python3 tools/shot_floors.py RUN_DIR [RUN_DIR ...]`, each a --log-dir.
-Floor per cell = lowest score - margin (CV_SPLIT_PLAN.md 1.7: three runs,
+Floor per cell = lowest score - margin (three runs,
 10 points). Cells seen in fewer runs than given are flagged.
 """
 import argparse
