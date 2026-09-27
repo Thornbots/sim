@@ -72,6 +72,21 @@ over `shot_hit_harness.py`) and `test_cv_head_aim.py` (plain pytest, no stack
 needed). Pass `-s` when running pytest directly, or the measured numbers these
 suites print get captured.
 
+Every integration run ends with a `suite timing` table (`sim/suite_timing.py`):
+wall seconds per case split into sim start, bring-up, reset, settle, scored
+and teardown, plus the RTF over the spans with a sim clock. Harnesses wrap
+their overhead in `suite_timing.phase()`; anything else in a case counts as
+scored. Read it before and after any speed change.
+
+**Check every run before trusting it** (the user's rule, 2026-09-27): a
+bench can pass with rviz dead or a stack node crashed.
+`tools/check_bench_log.py` on the `dexec.sh -d` log, plus
+`/tmp/localization_drift_tests/*.log` for drift and EKF, prints the table
+and exits 1 on a mid-run crash, a missing display or a wait that gave up.
+`dexec.sh` doesn't forward `DISPLAY`; if the container has none, prefix the
+launch with `env DISPLAY=:2` (`ls /tmp/.X11-unix`), or pytest's preflight
+stops a GUI run at once.
+
 Before launching anything, check for a live session:
 
 ```bash

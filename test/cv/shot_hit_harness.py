@@ -54,6 +54,7 @@ from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
+from sim import suite_timing
 from std_msgs.msg import ColorRGBA, Header
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -328,6 +329,10 @@ class SimTimeNode(Node):
     def _stamp_s(header_stamp):
         return header_stamp.sec + header_stamp.nanosec / 1e9
 
+    def now_s(self):
+        """Sim time in seconds; 0.0 until the first /clock message."""
+        return self.get_clock().now().nanoseconds / 1e9
+
     def spin_for(self, seconds):
         """
         Spin for `seconds` of sim time, so a real-time factor under 1 doesn't shorten the case.
@@ -339,7 +344,7 @@ class SimTimeNode(Node):
         start = None
         while time.monotonic() < wall_end:
             rclpy.spin_once(self, timeout_sec=0.1)
-            now = self.get_clock().now().nanoseconds / 1e9
+            now = self.now_s()
             if start is None and now > 0.0:
                 start = now
             if start is not None and now - start >= seconds:
@@ -367,6 +372,15 @@ class SimTimeNode(Node):
     def nodes_up(self, *names):
         live = {n for n, _ in self.get_node_names_and_namespaces()}
         return all(n in live for n in names)
+
+
+def check_nodes(node, names):
+    """Raise if any of the stack's nodes is gone: its numbers would be meaningless."""
+    live = {n for n, _ in node.get_node_names_and_namespaces()}
+    missing = [n for n in names if n not in live]
+    if missing:
+        raise RuntimeError(f'stack nodes not running: {missing}; see stack.log in '
+                           '--log-dir, or the launch log when a launch file started this')
 
 
 class ShotHitSampler(SimTimeNode):
@@ -705,6 +719,11 @@ class CvStack:
 
     def __init__(self, headless, log_dir, external=False, shooter_speed=0.0):
         self.launch = None
+        # Checked up at start and after every case; see check_nodes.
+        self.nodes = ['sim_clock', 'target_driver', 'shooter_driver', 'point_shooter',
+                      'target_state_truth', 'point_to_cv_target', 'mcb_relay']
+        if not headless:
+            self.nodes.append('rviz2')
         self.shooter_speed = shooter_speed  # fixed for the run; launch sets the motion
         if not external:
             self.launch = LaunchTree(
@@ -729,18 +748,18 @@ class CvStack:
     def start(self):
         for path in (self.shots_path, self.panel_hits_path, self.scores_path):
             open(path, 'w').close()
-        if self.launch is not None:
-            self.launch.start()
-        probe = ShotHitSampler(hit_radius=0.0)
-        try:
-            probe.wait_until(lambda: probe._target_pos is not None, timeout=60.0,
-                             description='/target/ground_truth_odom publishing')
-            ready = ['sim_clock', 'target_driver', 'shooter_driver', 'point_shooter',
-                     'target_state_truth', 'point_to_cv_target', 'mcb_relay']
-            probe.wait_until(lambda: probe.nodes_up(*ready), timeout=15.0,
-                             description=f'{", ".join(ready)} nodes up')
-        finally:
-            probe.destroy_node()
+        with suite_timing.phase('bringup'):
+            if self.launch is not None:
+                self.launch.start()
+            probe = ShotHitSampler(hit_radius=0.0)
+            try:
+                probe.wait_until(lambda: probe._target_pos is not None, timeout=60.0,
+                                 description='/target/ground_truth_odom publishing')
+                probe.wait_until(lambda: probe.nodes_up(*self.nodes), timeout=15.0,
+                                 description=f'{", ".join(self.nodes)} nodes up')
+                check_nodes(probe, self.nodes)
+            finally:
+                probe.destroy_node()
 
     def _set(self, client, name, params):
         if not client.wait_for_service(timeout_sec=10.0):
@@ -764,8 +783,9 @@ class CvStack:
               f'panel stagger={stagger:.3f} m, {path} path')
 
     def stop(self):
-        if self.launch is not None:
-            self.launch.stop()
+        with suite_timing.phase('teardown'):
+            if self.launch is not None:
+                self.launch.stop()
         self.node.destroy_node()
 
 
@@ -775,17 +795,24 @@ def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0, path='lat
 
     Shots fired during the SETTLE_S window are discarded.
     """
-    stack.set_target(speed, spin_hz, stagger, path)
-    # At TEST_FIRE_HZ a 1s lifetime keeps ~40 markers; fast targets scatter
-    # shots across the view, so theirs expire sooner still.
-    sampler = ShotHitSampler(hit_radius=hit_radius,
-                             marker_lifetime_s=1.0 / max(1.0, speed),
-                             panel_stagger=stagger)
+    with suite_timing.phase('reset'):
+        stack.set_target(speed, spin_hz, stagger, path)
+        # At TEST_FIRE_HZ a 1s lifetime keeps ~40 markers; fast targets scatter
+        # shots across the view, so theirs expire sooner still.
+        sampler = ShotHitSampler(hit_radius=hit_radius,
+                                 marker_lifetime_s=1.0 / max(1.0, speed),
+                                 panel_stagger=stagger)
+        sampler.wait_until(lambda: sampler.now_s() > 0.0, 5.0, 'the first /clock')
+    suite_timing.set_sim_clock(sampler.now_s)
     try:
-        sampler.spin_for(SETTLE_S)
+        with suite_timing.phase('settle'):
+            sampler.spin_for(SETTLE_S)
         sampler.reset_score()
-        sampler.spin_for(duration)
+        with suite_timing.phase('scored'):
+            sampler.spin_for(duration)
+        check_nodes(sampler, stack.nodes)
     finally:
+        suite_timing.set_sim_clock(None)
         dropped = sampler.finish()
         sampler.destroy_node()
     case = {'speed': speed, 'spin_hz': round(spin_hz, 3), 'panel_stagger_m': stagger,

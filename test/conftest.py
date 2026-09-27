@@ -18,12 +18,17 @@ Shared options and fixtures for sim's test suites.
 Both stack-launching suites (test/localization, test/cv) carry the
 `integration` marker and are deselected by setup.cfg's default addopts,
 so a plain `colcon test --packages-select sim` stays fast and doesn't
-collide with a live sim session. Opt in with
-`colcon test --packages-select sim --pytest-args ' -m integration'`, or
-use `ros2 launch sim localization_tests.launch.py` or `ros2 launch sim
-shot_hit.launch.py`, whose args map onto the options declared here.
+collide with a live sim session. Opt in with `python3 -m pytest test -m
+integration` from src/sim (colcon's --pytest-args doesn't reach an
+ament_cmake package), or a suite's launch file, whose args map onto the
+options declared here. Integration runs end with a per-phase time split
+(sim.suite_timing).
 """
+import ctypes
+import os
+
 import pytest
+from sim import suite_timing
 
 
 def pytest_addoption(parser):
@@ -139,3 +144,57 @@ def ros_context():
 @pytest.fixture
 def gui(request):
     return not request.config.getoption('--headless')
+
+
+@pytest.fixture(scope='module', autouse=True)
+def _timed_suite(request):
+    with suite_timing.suite(request.module.__name__):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _timed_case(request):
+    if request.node.get_closest_marker('integration') is None:
+        yield
+        return
+    with suite_timing.case(request.node.name):
+        yield
+
+
+def _display_error():
+    """Return why no X window can open here, or None if one can."""
+    display = os.environ.get('DISPLAY')
+    if not display:
+        return 'DISPLAY is unset'
+    try:
+        x11 = ctypes.cdll.LoadLibrary('libX11.so.6')
+    except OSError:
+        return None  # can't check; gz and rviz2 will say
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    handle = x11.XOpenDisplay(display.encode())
+    if not handle:
+        return f'cannot open DISPLAY={display}'
+    x11.XCloseDisplay(handle)
+    return None
+
+
+def pytest_collection_finish(session):
+    """Stop a GUI integration run up front if no window can open."""
+    if session.config.getoption('--headless') or not any(
+            item.get_closest_marker('integration') for item in session.items):
+        return
+    error = _display_error()
+    if error:
+        pytest.exit(f'{error}, so gz sim and rviz2 would die at start. Set DISPLAY '
+                    '(ls /tmp/.X11-unix) or pass --headless / headless:=true.',
+                    returncode=pytest.ExitCode.USAGE_ERROR)
+
+
+def pytest_terminal_summary(terminalreporter):
+    lines = suite_timing.report()
+    if lines:
+        terminalreporter.section('suite timing')
+        for line in lines:
+            terminalreporter.write_line(line)
