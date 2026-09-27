@@ -190,8 +190,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   The emulator, the scorer's facing test and both rviz views keep the cant;
   a hit is still scored as distance to the panel centre, not a crossing of
   the canted square (`../ROADMAP.md` Caveats).
-- **C2's target is a phantom** with exact truth. A visual one in gz comes
-  with E2E, once YOLO sees rendered frames (`../E2E_PLAN.md`).
+- **C2's target is a phantom** with exact truth. E2E adds a gz model with
+  armor plates for `roi_depth_node`'s depth; no sim test runs YOLO
+  (`../E2E_PLAN.md`).
 - **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard
   corners at 4 m/s and keeps it: the head's reaction torque gets past the
   yaw lock. The real robot is expected to drift 1-5 deg too. Noted, not
