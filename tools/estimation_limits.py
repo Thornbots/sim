@@ -18,8 +18,9 @@ Print estimation_harness.LIMITS from the C2 bench's estimation.jsonl over severa
 
 `python3 tools/estimation_limits.py RUN_DIR [RUN_DIR ...]`, each a log_dir:=.
 Limit per cell and metric = worst p95 x (1 + margin), margin 0.25 by default
-(CV_SPLIT_PLAN.md 2.0: three runs plus a margin). Cells seen in fewer runs
-than given are flagged.
+(CV_SPLIT_PLAN.md 2.0: three runs plus a margin), and never under --floor, so
+a metric that reads exactly 0 (a still target's velocity) doesn't fail on any
+noise. Cells seen in fewer runs than given are flagged.
 """
 import argparse
 import collections
@@ -36,6 +37,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument('runs', nargs='+', help='log dirs, one per run')
     parser.add_argument('--margin', type=float, default=0.25)
+    parser.add_argument('--floor', type=float, default=0.01, help='m, rad, m/s or rad/s')
     args = parser.parse_args(argv)
 
     p95 = collections.defaultdict(lambda: collections.defaultdict(list))
@@ -54,7 +56,8 @@ def main(argv=None):
         note = '' if seen[cell] == len(args.runs) else f'  # {seen[cell]} of {len(args.runs)} runs'
         print(f"    '{cell}': {{{note}")
         for key, values in p95[cell].items():
-            print(f"        '{key}': {max(values) * (1.0 + args.margin):.4f},"
+            limit = max(max(values) * (1.0 + args.margin), args.floor)
+            print(f"        '{key}': {limit:.4f},"
                   f"  # {', '.join(f'{v:.4f}' for v in values)}")
         print('    },')
     print('}')
