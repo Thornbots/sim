@@ -17,22 +17,39 @@ Turns thornbots_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd so the sim
 
 This is why the head moves during CV testing.
 
-/cv/target is dji_serial_bridge/msg/CVTarget, a ROOT-FRAME aim POSITION
-as of the plan's Phase 4/5. Mirrors what Type-C actually receives: a
-position and nothing else, no feedforward, so any setpoint-tracking lag
-against a moving target shows up here too (the point, per the plan --
-see README.md's ### cv_head_aim.py Notes).
+/cv/target is dji_serial_bridge/msg/CVTarget, a world-frame (odom) aim
+POSITION, held and turned into root each tick at the newest odom->root,
+the way the MCB holds it with its odometry. Mirrors what Type-C actually
+receives: a position and nothing else, no feedforward, so any
+setpoint-tracking lag against a moving target shows up here too (see
+README.md's ### cv_head_aim.py Notes).
 """
 from dji_serial_bridge.msg import CVTarget
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
 from sensor_msgs.msg import JointState
 from sim.cv_head_aim_core import solve_head_angles, wrap_to_pi
 from std_msgs.msg import Float64
+import tf2_ros
+from tf2_ros import TransformException
 
 HEADPITCH_LOWER = -0.6          # sentry.urdf.xacro: headpitch lower
 HEADPITCH_UPPER = 0.6           # sentry.urdf.xacro: headpitch upper
+
+
+def _to_frame(transform, p):
+    """Apply a geometry_msgs/Transform to point p."""
+    t, q = transform.translation, transform.rotation
+    # v' = v + 2w(u x v) + 2u x (u x v), u = (q.x, q.y, q.z)
+    u = (q.x, q.y, q.z)
+
+    def cross(a, b):
+        return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+    c1 = cross(u, p)
+    c2 = cross(u, c1)
+    return tuple(p[i] + 2.0 * q.w * c1[i] + 2.0 * c2[i] + (t.x, t.y, t.z)[i] for i in range(3))
 
 
 class CvHeadAim(Node):
@@ -46,6 +63,8 @@ class CvHeadAim(Node):
         self.declare_parameter('pitch_cmd_topic', '/head_pitch_cmd')
         self.declare_parameter('yaw_joint_name', 'headlink')
         self.declare_parameter('pitch_joint_name', 'headpitch')
+        self.declare_parameter('root_frame', 'root')
+        self.declare_parameter('odom_frame', 'odom')
         self.declare_parameter('gain', 1.0)
         self.declare_parameter('control_rate_hz', 30.0)
         # Slew limits (rad/s) so the sim head can't turn faster than a real
@@ -55,6 +74,8 @@ class CvHeadAim(Node):
 
         self.yaw_joint_name = self.get_parameter('yaw_joint_name').value
         self.pitch_joint_name = self.get_parameter('pitch_joint_name').value
+        self.root_frame = self.get_parameter('root_frame').value
+        self.odom_frame = self.get_parameter('odom_frame').value
         self.gain = self.get_parameter('gain').value
         control_rate_hz = self.get_parameter('control_rate_hz').value
         self.max_yaw_step = self.get_parameter('max_yaw_rate').value / control_rate_hz
@@ -64,6 +85,10 @@ class CvHeadAim(Node):
         self._head_pitch = 0.0
         self._have_joint_states = False
         self._latest_target = None  # most recent confidence>0 CVTarget, or None
+
+        # Non-blocking lookups only: /tf shares this node's executor.
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         self.pan_pub = self.create_publisher(
             Float64, self.get_parameter('pan_cmd_topic').value, 10)
@@ -93,7 +118,8 @@ class CvHeadAim(Node):
 
         self.get_logger().info(
             f"cv_head_aim ready: {self.get_parameter('cv_target_topic').value}"
-            f" (root-frame position) -> {self.get_parameter('pan_cmd_topic').value} /"
+            f' ({self.odom_frame} position, via {self.root_frame})'
+            f" -> {self.get_parameter('pan_cmd_topic').value} /"
             f" {self.get_parameter('pitch_cmd_topic').value}"
             f' (gain={self.gain}, control_rate_hz={control_rate_hz}, max rate'
             f" yaw={self.get_parameter('max_yaw_rate').value} "
@@ -115,7 +141,15 @@ class CvHeadAim(Node):
         if not self._have_joint_states or msg is None:
             return
 
-        target_yaw, target_pitch = solve_head_angles((msg.x, msg.y, msg.z))
+        try:
+            tf = self.tf_buffer.lookup_transform(self.root_frame, self.odom_frame, Time())
+        except TransformException as ex:
+            self.get_logger().error(
+                f'TF lookup {self.root_frame}<-{self.odom_frame} failed: {ex}',
+                throttle_duration_sec=1.0)
+            return
+        aim_root = _to_frame(tf.transform, (msg.x, msg.y, msg.z))
+        target_yaw, target_pitch = solve_head_angles(aim_root)
         target_pitch = max(HEADPITCH_LOWER, min(HEADPITCH_UPPER, target_pitch))
 
         # headlink is continuous (no position limit -- see

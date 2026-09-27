@@ -190,10 +190,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `cv_target_emulator`, `cv_head_aim` and `pose_emulator`**, which the gz
   sim and the aiming bench still use. A change to one of those that should
   reach the estimation bench has to be made in `src/bench_world.cpp` too.
-- **Every `/cv/target` reader assumes `root`, and `CVTarget` is now
-  documented as `odom`** (2026-09-27): `cv_head_aim.py`, `bench_world.cpp`,
-  `shot_hit_harness.py`. Convert at our own current pose when
-  `point_to_cv_target` switches; `../CV_SPLIT_PLAN.md` W.3's open issues.
+- **`/cv/target` is an `odom` point since 2026-09-27.** `cv_head_aim.py`,
+  `bench_world.cpp` and `shot_hit_harness.py` aim from our current pose, as
+  the MCB should; `../CV_SPLIT_PLAN.md` W.3.
 - **The head controller holds the head when there's no target**, so a case can
   start with the target out of view. `estimation_harness` aims the head at
   the truth during each case's reset; before that, staggered stationary
