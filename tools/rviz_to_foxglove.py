@@ -85,7 +85,8 @@ def convert(rviz_path):
         'cameraState': _camera(vm['Views']['Current']),
         'followMode': 'follow-pose',
         'followTf': frame,
-        'scene': {},
+        # Foxglove reads STL as Y-up by default; ROS and rviz meshes are Z-up.
+        'scene': {'meshUpAxis': 'z_up'},
         'transforms': {},
         'topics': {},
         'layers': {},

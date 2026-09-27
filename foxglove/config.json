@@ -28,7 +28,9 @@
       },
       "followMode": "follow-pose",
       "followTf": "map",
-      "scene": {},
+      "scene": {
+        "meshUpAxis": "z_up"
+      },
       "transforms": {},
       "topics": {
         "/scan": {
