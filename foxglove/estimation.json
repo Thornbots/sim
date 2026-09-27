@@ -28,7 +28,9 @@
       },
       "followMode": "follow-pose",
       "followTf": "odom",
-      "scene": {},
+      "scene": {
+        "meshUpAxis": "z_up"
+      },
       "transforms": {},
       "topics": {
         "/robot_description": {
