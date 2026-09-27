@@ -19,7 +19,8 @@ Foxglove websocket bridge, for watching a test run from another machine.
 it (their `foxglove:=` arg). It stands down if the port is already taken, so a
 standalone bridge and a test's don't collide. Read-only: viewers can't
 publish, call services or set parameters on a running test. use_sim_time
-follows /clock, which every bench publishes.
+follows /clock, which every bench publishes. latch_holder keeps /tf_static,
+/map and /robot_description visible across the drift suite's stack restarts.
 """
 import socket
 
@@ -38,7 +39,9 @@ def _bridge(context):
     port = int(context.launch_configurations['port'])
     if _port_in_use(port):
         return [LogInfo(msg=f'foxglove: port {port} already serving, not starting another')]
-    return [Node(
+    # Keeps the bridge's latched subscriptions latched across stack restarts.
+    holder = Node(package='sim', executable='latch_holder', output='log')
+    return [holder, Node(
         package='foxglove_bridge',
         executable='foxglove_bridge',
         name='foxglove_bridge',
@@ -47,7 +50,7 @@ def _bridge(context):
             'port': port,
             'address': context.launch_configurations['address'],
             'use_sim_time': True,
-            'capabilities': ['connectionGraph', 'assets'],
+            'capabilities': ['assets'],
         }],
     )]
 

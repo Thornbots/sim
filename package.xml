@@ -20,6 +20,7 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>foxglove_bridge</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
   <depend>rclcpp</depend>
   <depend>eigen</depend>
   <depend>rclpy</depend>
