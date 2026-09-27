@@ -49,7 +49,8 @@ target's panels in rviz.
 `real_time_factor:=0` (the default) runs it as fast as the stack keeps up.
 `sim_clock` steps sim time 2 ms at a time and holds each step until
 `/cv/target_state`, `/pose`, `/cv/target` and the scorer's `/bench/progress`
-are stamped within one period of it, so no node falls behind. A fixed
+are stamped within one period of it, so no node falls behind; a topic with
+no publisher left (the scorer between cases) stops holding it. A fixed
 `real_time_factor` above 0 doesn't wait: 8x lost 2-5 points. On 2026-09-25
 the paced clock ran 6.6-6.8x and scored every cell within half a point of
 three 4x runs, `keep_up` 1.00. Use `:=1` as the control.
@@ -92,9 +93,11 @@ build the `TargetState`, and `point_to_cv_target` aims the head; nothing
 fires. Each case switches detections off for 1 s so the tracker starts a
 fresh track, then scores every state for 3 s + 30 s against the truth at the
 state's own stamp, so a late stamp scores as error. The ten cells take
-~75 s with rviz up, ~5x real time (`real_time_factor:=1` for real time).
-Sim time waits for the nodes under test, `target_tracker`'s input among
-them (`/cv/tracker/measurement`):
+~53 s with rviz up, ~6.5x real time while scoring (`real_time_factor:=1` for
+real time). Sim time waits for the nodes under test, `target_tracker`'s input
+among them (`/cv/tracker/measurement`), but only on frames that carried a
+detection, since the tracker echoes nothing for an empty one. A gate whose
+publisher has gone, like the scorer between cases, stops holding it at once:
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash
@@ -193,9 +196,6 @@ colcon test-result --test-result-base build/sim --verbose
 cd src/sim && python3 -m pytest test -m integration
 ```
 
-The drift suite starts gz-sim once and a fresh `thornbots_pkg` stack for each
-scenario, resetting the sim between them (see "Run the tests");
-`restart_sim:=true` restarts gz per scenario instead. The aim bench launches
 An integration run ends with a `suite timing` table: wall seconds per case
 in sim start, bring-up, reset, settle, scored and teardown, and the RTF.
 A GUI run stops at once if no window can open (set `DISPLAY`, or
@@ -211,6 +211,9 @@ python3 tools/check_bench_log.py /tmp/localization_drift_tests/*.log  # drift an
 It prints the result and the timing table, and exits 1 when a node crashed
 mid-run, a GUI couldn't open or a wait gave up.
 
+The drift suite starts gz-sim once and a fresh `thornbots_pkg` stack for each
+scenario, resetting the sim between them (see "Run the tests");
+`restart_sim:=true` restarts gz per scenario instead. The aim bench launches
 its stack once for all its cases, through `shot_hit.launch.py
 run_tests:=false` when pytest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
