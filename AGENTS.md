@@ -245,7 +245,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   vectors; a backwards rf2o once scored 1% error on magnitude.
 - ARCC zone coordinates (`../ARCC_2026_SENTRY_CONTEXT.md` Figures 3-1 to
   3-9) aren't in the world yet.
-- **This branch (`jazzy`) runs on gz Harmonic (gz-sim 8).** Plugins are
+- **`sim` runs on gz Harmonic (gz-sim 8) since the Jazzy move.** Plugins are
   `gz-sim-*-system`, and every CLI call is `gz topic`/`gz service` with
   `gz.msgs.*` types; Harmonic ships no `ign`. On the laptop (2026-09-26)
   the drift suite, `suite:=ekf`, C1 and C2 give Humble's results.
