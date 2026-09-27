@@ -136,10 +136,13 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   4 m/s is too far to match unseeded, so `odom->root` stays inside ~1 m
   and amcl rotates its estimate (up to 0.66 rad) to fit the scan.
   README.md's scenario list has the details.
-- **One robot bring-up can leave `amcl` unconfigured.** Its reply to
-  `/amcl/change_state` times out (`failed to send response`), the lifecycle
-  manager never activates it, and the scenario fails on "map->odom never
-  became available". Seen once in six bring-ups; not yet chased.
+- **A robot bring-up can stall for good on a lost lifecycle reply.** A
+  node's reply to `change_state` times out in DDS (`failed to send
+  response`), Nav2's lifecycle manager waits on it with no timeout, and
+  nothing activates. Seen on `amcl` and `map_server`, on Humble and Jazzy.
+  The drift harness waits for `parent->root` after each robot start and
+  restarts the stack once if it never comes (`_wait_for_root_chain`). The
+  robot can hit the same race at boot; unfixed there.
 - **The drift suite passes 7/7 on `sentry_v2` at `--backend amcl --use-ekf`,**
   unthrottled with the A2M8 lidar and per-scan rf2o, GUI on, 227 s
   (2026-09-26: drift_correction 0.16 m, with obstacle 0.15 m,
