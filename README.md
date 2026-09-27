@@ -41,7 +41,7 @@ There is no gz, robot or tracker. `sim_clock` publishes `/clock`,
 `point_shooter` puts `root` in `odom` (`POINT_SHOOTER`, 0.4 m up) and
 publishes `/pose`, `target_driver` moves the phantom target and
 `target_state_truth` publishes its true `TargetState`. Each shot leaves
-`root` toward the newest `/cv/target` aim before its exit time, carrying
+`root` toward the newest `/cv/target` aim (an `odom` point) before its exit time, carrying
 `root`'s velocity: a perfect gimbal that holds each 40 Hz aim until the
 next. So a miss is `point_to_cv_target`'s math and nothing else. It draws the
 target's panels in rviz.
@@ -528,6 +528,14 @@ The suite runs them in this order.
    and turns its estimate (up to 0.66 rad) to fit the scan. Losing the robot
    here is a known limit of this sensor set, not a defect; the scenario stays
    a liveness check.
+8. `scan_degraded` is the one scenario that breaks rf2o instead of `/odom`.
+   After one lap of the cornering loop at 0.15 slip it sets
+   `lidar_self_filter`'s blind sector to 300 deg for two legs, leaving a 60
+   deg arc (a robot parked against the lidar), then restores it for two more
+   laps. It scores ground-truth error of `parent->root` against
+   `/sim/raw_odom` after every leg, before, during and after the blackout,
+   against `MAX_DELTA_THRESHOLD`, and logs `/scan_odom/quality`'s grades per
+   phase.
 
 Two checks were removed. `jerk_stationary` (2026-07-23) re-verified a documented limit
 of the travel gate instead of testing recovery. A no-leak-before-motion check
@@ -836,8 +844,9 @@ Subscribes `/cv/target` (from `thornbots_pkg`'s `point_to_cv_target`, so run
 `auto.launch.py` alongside `sim.launch.py spawn_target:=true`) and
 `/sim/raw_joint_states`, and publishes `/head_pan_cmd`/`/head_pitch_cmd`: the
 sim's gimbal when the full stack runs in gz. No test scores its shots; the
-aiming bench has its own perfect gimbal. `CVTarget.x/y/z` is a root-frame
-position, so the old `atan2(x, z)` bearing controller was replaced.
+aiming bench has its own perfect gimbal. `CVTarget.x/y/z` is an `odom`
+position; each tick it goes into root at the newest `odom->root`, the way
+the MCB holds it, then through the solve below.
 
 `cv_head_aim_core.solve_head_angles()` inverts the FK chain from root to the
 `muzzle` frame (root -> body -> headlink(yaw) -> headpitch(pitch) ->
@@ -864,7 +873,7 @@ from the yaw axis, and pitch follows from the elevation seen from the muzzle
 at that azimuth. The muzzle is on the pitch axis, so pitching never moves it.
 Head yaw is minus the azimuth, because `headlink` turns about -z.
 
-Type-C probably has the same bug. It receives a root-frame position and runs its
+Type-C probably has the same bug. It receives a world-frame position and runs its
 own gimbal solve, and only the firmware knows where the real barrel sits, so
 raise it with the firmware team (see `ros2_dji_serial_bridge/README.md`).
 

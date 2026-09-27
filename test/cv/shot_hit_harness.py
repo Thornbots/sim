@@ -21,7 +21,7 @@ phantom target and its true TargetState. Scores each firing CVTarget on
 predicts. Importable only -- test_shot_hit.py holds the assertions.
 
 Each shot leaves root's true position at its exit time toward the newest aim
-before then (a perfect gimbal), at 25 m/s (ARCC_2026_SENTRY_CONTEXT.md's cap)
+before then, an odom point (a perfect gimbal), at 25 m/s (ARCC_2026_SENTRY_CONTEXT.md's cap)
 plus our chassis velocity, flies straight, and is checked against all 4 armor
 panels (layout duplicated from cv_target_emulator.py) at impact: a hit needs
 the path within hit_radius of a panel's center AND arriving inside its
@@ -399,7 +399,7 @@ class ShotHitSampler(SimTimeNode):
         self.marker_lifetime_s = marker_lifetime_s
 
         self._shooter_history = []  # [(stamp_s, pos, vel)], last TRUTH_HISTORY_S
-        self._aims = []  # [(stamp_s, root-frame aim)], last second
+        self._aims = []  # [(stamp_s, odom aim point)], last second
         self._target_pos = None
         self._truth_history = []  # [(stamp_s, pos, yaw)], last TRUTH_HISTORY_S
         self._target_rot = None
@@ -460,13 +460,15 @@ class ShotHitSampler(SimTimeNode):
         """
         Return a shot's (muzzle position, world velocity) leaving at t.
 
-        The gun points along the newest root-frame aim (root never rotates), and
-        the projectile carries our chassis velocity on top of MUZZLE_SPEED.
+        The gun points from where we are at t through the newest odom aim
+        point, and the projectile carries our chassis velocity on top of
+        MUZZLE_SPEED.
         """
         aims = [a for stamp, a in self._aims if stamp <= t]
         aim = aims[-1] if aims else self._aims[0][1]
         pos, vel = interpolate(self._shooter_history, t)
-        return pos, MUZZLE_SPEED * aim / (np.linalg.norm(aim) + 1e-9) + vel
+        gun = aim - pos
+        return pos, MUZZLE_SPEED * gun / (np.linalg.norm(gun) + 1e-9) + vel
 
     def _on_shooter_odom(self, msg):
         p, v = msg.pose.pose.position, msg.twist.twist.linear

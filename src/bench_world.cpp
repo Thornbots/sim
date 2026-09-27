@@ -438,7 +438,9 @@ private:
   void control_head()
   {
     if (!aim_) {return;}
-    auto [yaw, pitch] = solve_head_angles(*aim_);
+    // /cv/target is an odom point; root never turns here, so root-frame is
+    // a translation, taken at our current pose the way the MCB would.
+    auto [yaw, pitch] = solve_head_angles(*aim_ - Vector3d(xy_.x(), xy_.y(), 0.0));
     pitch = clamp(pitch, -kPitchLimit, kPitchLimit);
     const double yaw_step = max_yaw_rate_ / head_rate_hz_;
     const double pitch_step = max_pitch_rate_ / head_rate_hz_;
