@@ -169,3 +169,29 @@ def test_sim_model_matches_urdf():
                 assert sim[name][k] is None, name
             else:
                 assert sim[name][k] == pytest.approx(ref[name][k], abs=EXACT_TOL), name
+
+
+ARMOR_JOINTS = tuple(f'armor_{k}link' for k in range(4))
+
+
+def test_armor_frames_match_sim_model():
+    # The E2E detector stand-in and shot scoring read the panels from sim's
+    # model; the stack's TF tree carries thornbots_pkg's copy.
+    ref = _joint_origins(URDF, ARMOR_JOINTS)
+    sim = _joint_origins(SIM_URDF, ARMOR_JOINTS)
+    for name in ARMOR_JOINTS:
+        assert sim[name][0] == pytest.approx(ref[name][0], abs=EXACT_TOL), name
+        assert sim[name][1] == pytest.approx(ref[name][1], abs=EXACT_TOL), name
+
+
+def test_armor_frames_follow_rules():
+    # S122: normal 75 deg from straight up. S126: lower edges within 100 mm.
+    root = ET.parse(SIM_URDF).getroot()
+    heights = {link.get('name'): float(link.find('visual/geometry/box').get('size').split()[2])
+               for link in root.iter('link') if link.get('name', '').startswith('armor_')}
+    lower_edges = []
+    for name, (xyz, rpy, _) in _joint_origins(SIM_URDF, ARMOR_JOINTS).items():
+        assert -rpy[1] == pytest.approx(math.radians(15.0), abs=math.radians(0.5)), name
+        lower_edges.append(xyz[2] - heights[name[:-4]] / 2 * math.cos(rpy[1]))
+    assert max(lower_edges) - min(lower_edges) <= 0.100
+    assert min(lower_edges) >= 0.060

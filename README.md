@@ -381,6 +381,26 @@ the chassis collision hull up to 0.362 m. Scans don't notice (see the lidar
 note below), but the hull is wrong. Fix it in Onshape by mating the guard to
 the head, or drop it in `sentry_v2.yaml`'s `drop` list.
 
+The export has all four armor modules, and the tool emits one fixed link per
+module face, `armor_0` to `armor_3`, found by the face part's mesh file
+(`armor.face_mesh`). Each frame sits at the face centre with +x along the
+outward normal and +y horizontal, and carries a box of the face's size as
+visual and collision, so depth sees it and shots can hit it. From the CAD
+(2026-09-27):
+
+- The faces sit on the diagonals, between the wheels: `armor_0` at +45 deg
+  from the gun, then every 90 deg anticlockwise. Face centres are 0.252 m
+  from the chassis axis.
+- `armor_0` and `armor_2` sit at 0.230 m, `armor_1` and `armor_3` at
+  0.136 m, so the lower edges are 94 mm apart (S126 allows 100).
+- Every normal is 75.0 deg from straight up (S122's 15 deg cant).
+- The face is 135 x 125 mm, the Small Armor Module's, the only size in
+  ARCC 2026.
+
+The regenerated meshes aren't byte-identical across trimesh versions, so when
+only the URDF text should change, keep the committed meshes
+(`git checkout -- urdf/sentry_v2/meshes`).
+
 `sentry_v2.urdf.xacro` wraps the generated URDF for gz: colours, the lidar and
 camera sensors, the plugins, and a `muzzle` frame (see the `cv_head_aim.py`
 note). `thornbots_pkg`'s `sentry.urdf.xacro` carries the same frames and

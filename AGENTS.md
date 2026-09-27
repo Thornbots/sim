@@ -276,9 +276,11 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `scan_log_for_errors` skips that line.
 - **`trimesh` isn't in `package.xml`**: noble has no apt `python3-trimesh`
   and rosdep only a pip key. `install-sim.sh` pips it; only
-  `tools/simplify_urdf.py` uses it, and that also needs pip's
-  `fast_simplification`, installed by hand when regenerating
-  `urdf/sentry_v2`.
+  `tools/simplify_urdf.py` uses it, and regenerating `urdf/sentry_v2` also
+  needs `fast_simplification`, `scipy==1.13.1` and `networkx==3.3`, pipped
+  by hand with `--no-deps` so the system numpy survives. The export
+  (`/home/tmp/sentry_export` on the laptop) isn't mounted in the container;
+  copy it under the workspace root for the run and delete it after.
 - **`sentry*.urdf.xacro`'s `<gz_frame_id>` warns "not defined in SDF"**
   under Harmonic's sdformat, but gz-sensors still reads it (`/scan_raw`
   arrives with `frame_id: lidar`).
