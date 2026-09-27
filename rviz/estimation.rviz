@@ -7,7 +7,7 @@ Panels:
     Property Tree Widget:
       Expanded: ~
       Splitter Ratio: 0.5
-    Tree Height: 446
+    Tree Height: 467
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -44,14 +44,18 @@ Visualization Manager:
       Filter (blacklist): ""
       Filter (whitelist): ""
       Frame Timeout: 15
+      Frames:
+        All Enabled: true
       Marker Scale: 0.5
       Name: TF
       Show Arrows: false
       Show Axes: true
       Show Names: false
+      Tree:
+        {}
       Update Interval: 0
       Value: false
-    - Alpha: 0.6
+    - Alpha: 0.6000000238418579
       Class: rviz_default_plugins/RobotModel
       Collision Enabled: false
       Description File: ""
@@ -63,6 +67,106 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /robot_description
       Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+        armor_0:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        armor_1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        armor_2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        armor_3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        body:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        camera:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        carrier_0:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        carrier_1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        carrier_2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        carrier_3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        head:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        head_pitch:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        lidar:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        muzzle:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        root:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        wheel_0:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        wheel_1:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        wheel_2:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        wheel_3:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+      Mass Properties:
+        Inertia: false
+        Mass: false
       Name: RobotModel
       TF Prefix: ""
       Update Interval: 0
@@ -71,6 +175,19 @@ Visualization Manager:
     - Angle Tolerance: 0.10000000149011612
       Class: rviz_default_plugins/Odometry
       Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.30000001192092896
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
         Value: false
       Enabled: true
       Keep: 1
@@ -79,12 +196,12 @@ Visualization Manager:
       Shape:
         Alpha: 1
         Axes Length: 0.5
-        Axes Radius: 0.05
+        Axes Radius: 0.05000000074505806
         Color: 255; 255; 255
-        Head Length: 0.1
-        Head Radius: 0.05
-        Shaft Length: 0.4
-        Shaft Radius: 0.02
+        Head Length: 0.10000000149011612
+        Head Radius: 0.05000000074505806
+        Shaft Length: 0.4000000059604645
+        Shaft Radius: 0.019999999552965164
         Value: Arrow
       Topic:
         Depth: 1
@@ -98,7 +215,9 @@ Visualization Manager:
       Enabled: true
       Name: Truth + detection (emulator)
       Namespaces:
-        {}
+        cv_target: true
+        cv_target_aim: true
+        cv_target_panels: true
       Topic:
         Depth: 1
         Durability Policy: Volatile
@@ -114,6 +233,7 @@ Visualization Manager:
       Topic:
         Depth: 1
         Durability Policy: Volatile
+        Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /cv/panel_polygon
@@ -122,7 +242,10 @@ Visualization Manager:
       Enabled: true
       Name: Tracker TargetState
       Namespaces:
-        {}
+        state_accel: true
+        state_center: true
+        state_panels: true
+        state_velocity: true
       Topic:
         Depth: 1
         Durability Policy: Volatile
@@ -166,21 +289,22 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.6
+      Pitch: 0.6000000238418579
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 3.14
+      Yaw: 3.140000104904175
     Saved: ~
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1141
+  Height: 1166
   Hide Left Dock: false
   Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd0000000100000000000002d900000438fc0200000003fb000000100044006900730070006c006100790073010000003b0000025c000000c700fffffffb0000000a00560069006500770073010000029d00000184000000a000fffffffb0000000800540069006d006501000004270000004c0000003700ffffff0000049d0000043800000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Time:
     collapsed: false
   Views:
     collapsed: false
   Width: 1916
   X: 2
-  Y: 57
+  Y: 32
