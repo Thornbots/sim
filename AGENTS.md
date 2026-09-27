@@ -250,7 +250,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **The aiming bench (`shot_hit.launch.py`) is gz-free and passes 10/10**
   on every path and at `shooter_speed:=1.0`. A point shooter with a perfect
   gimbal; README.md has the setup. `FLOORS` holds 40 cells from three runs
-  each (2026-09-25, chase, 4x), through `tools/shot_floors.py`. Radial or
+  each on sentry_v2's armor panels (2026-09-27, chase, unthrottled at ~8x),
+  through `tools/shot_floors.py`. Radial or
   diagonal with a moving shooter has no floor yet.
 - **Shot-hit results are optimistic.** Detection noise (0.005 m) is far
   cleaner than a D435, and slew limits and target accelerations are
