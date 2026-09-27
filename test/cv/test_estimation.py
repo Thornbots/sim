@@ -13,9 +13,9 @@
 # limitations under the License.
 
 """
-C2 estimation bench: target_tracker's TargetState against the truth, no gz.
+Estimation bench: target_tracker's TargetState against the truth, no gz.
 
-The same cells as the aim bench (test_shot_hit.py): stationary, then each
+The same cells as the aiming bench (test_shot_hit.py): stationary, then each
 speed, flat and staggered. Each case restarts the track and scores every
 state at its own stamp (estimation_harness.py). A cell asserts that states
 arrive and mostly go valid, plus its p95 limits once LIMITS has them (the
@@ -41,7 +41,7 @@ MIN_VALID_FRACTION = 0.5  # liveness, not a tuned figure
 
 @pytest.fixture(scope='module')
 def est_stack(request, ros_context):
-    """Launch the C2 stack once for every case in this module."""
+    """Launch the estimation bench stack once for every case in this module."""
     config = request.config
     log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// C2's world in one lockstep loop, no gz: /clock, the phantom target
+// The estimation bench's world in one lockstep loop, no gz: /clock, the phantom target
 // (target_driver.py's path), our chassis and head (gz's joint controllers on
 // the arm inertias), /pose, the head controller (cv_head_aim.py) and the
 // detections (cv_target_emulator.py). Physics steps every physics_step_s;

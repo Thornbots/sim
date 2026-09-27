@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-C1 aim bench: point_to_cv_target against a perfectly known target, no gz.
+Aiming bench: point_to_cv_target against a perfectly known target, no gz.
 
 `ros2 launch sim shot_hit.launch.py [speeds:='0.5 1'] [only_stationary:=true]`.
 sim_clock publishes /clock, point_shooter puts root at POINT_SHOOTER

@@ -51,7 +51,7 @@ each one's args):
 
 Both time everything in sim seconds. The drift suite defaults to
 `real_time_factor:=0`, as fast as the machine allows: gz can't step past
-its own physics, and the gz-free aim bench's `sim_clock` waits for each
+its own physics, and the gz-free aiming bench's `sim_clock` waits for each
 stage's output. `real_time_factor:=1` is the control when a result looks
 off.
 
@@ -103,7 +103,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 - **gz is the only engine. We are not switching to SAPIEN**; it was tried and
   removed (README.md).
-- **Ask before starting any sim test run**, the shot-hit bench or the drift
+- **Ask before starting any sim test run**, the aiming bench or the drift
   suite, even when the next run seems the obvious step. The user may have
   tuning to do first.
 - **GUI on, not headless**, for both `sim` and the drift suite; the user watches
@@ -169,7 +169,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `cv_target_emulator`, `shot_hit_harness`) moved to it too. Pitch limits
   (+-0.6 rad), suspension travel, spring rate and damping are placeholders,
   not CAD values.
-- **C2 (`estimation.launch.py`) runs on `bench_world`, not gz** (the
+- **The estimation bench (`estimation.launch.py`) runs on `bench_world`, not gz** (the
   user's call, 2026-09-25): it fakes detections, so it needs no physics.
   One C++ loop steps target, chassis and head every 1 ms, so its rates are
   exact at any speed, and holds sim time for the nodes under test, up to
@@ -186,16 +186,16 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `tools/estimation_limits.py`) covers all 60 cells at 2x the worst Jazzy
   run; about a quarter of runs trip one limit on a spin-rate or radius
   outlier.
-- **`bench_world` duplicates C2's share of `target_driver`,
+- **`bench_world` duplicates the estimation bench's share of `target_driver`,
   `cv_target_emulator`, `cv_head_aim` and `pose_emulator`**, which the gz
-  sim and C1 still use. A change to one of those that should reach C2 has
-  to be made in `src/bench_world.cpp` too.
+  sim and the aiming bench still use. A change to one of those that should
+  reach the estimation bench has to be made in `src/bench_world.cpp` too.
 - **The head controller holds the head when there's no target**, so a case can
   start with the target out of view. `estimation_harness` aims the head at
   the truth during each case's reset; before that, staggered stationary
   after 4 m/s scored nothing.
 - **Every CV test runs with ROS** (the user's rule, 2026-09-25): tune and
-  score Part 2 on C2, never on a copy of the nodes outside ROS. The
+  score Part 2 on the estimation bench, never on a copy of the nodes outside ROS. The
   offline estimator (`tools/estimation_offline.py`) was removed for that:
   it left out the head slewing and its tracker defaults drifted from the
   node's. Pure-numpy unit tests of the `*_core.py` modules stay.
@@ -210,7 +210,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   The emulator, the scorer's facing test and both rviz views keep the cant;
   a hit is still scored as distance to the panel centre, not a crossing of
   the canted square (`../ROADMAP.md` Caveats).
-- **C2's target is a phantom** with exact truth. E2E adds a gz model with
+- **The estimation bench's target is a phantom** with exact truth. E2E adds a gz model with
   armor plates for `roi_depth_node`'s depth; no sim test runs YOLO
   (`../E2E_PLAN.md`).
 - **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard
@@ -244,7 +244,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **`noise_correction`'s growth_ratio compares the two halves of a run**, so
   a run that starts clean fails hardest. Don't read its verdict as absolute
   accuracy.
-- **The aim bench (`shot_hit.launch.py`) is gz-free and passes 10/10**
+- **The aiming bench (`shot_hit.launch.py`) is gz-free and passes 10/10**
   on every path and at `shooter_speed:=1.0`. A point shooter with a perfect
   gimbal; README.md has the setup. `FLOORS` holds 40 cells from three runs
   each (2026-09-25, chase, 4x), through `tools/shot_floors.py`. Radial or
@@ -267,7 +267,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **`sim` runs on gz Harmonic (gz-sim 8) since the Jazzy move.** Plugins are
   `gz-sim-*-system`, and every CLI call is `gz topic`/`gz service` with
   `gz.msgs.*` types; Harmonic ships no `ign`. On the laptop (2026-09-26)
-  the drift suite, `suite:=ekf`, C1 and C2 give Humble's results.
+  the drift suite, `suite:=ekf`, the aiming and estimation benches give Humble's results.
 - **robot_localization 3.8 logs "Failed to meet update rate!" at ERROR**
   (Humble's printed it untagged), unthrottled, with no effect on the pose.
   `scan_log_for_errors` skips that line.

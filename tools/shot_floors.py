@@ -14,7 +14,7 @@
 # limitations under the License.
 
 """
-Print shot_hit_harness.FLOORS from the aim bench's scores.jsonl over several runs.
+Print shot_hit_harness.FLOORS from the aiming bench's scores.jsonl over several runs.
 
 `python3 tools/shot_floors.py RUN_DIR [RUN_DIR ...]`, each a --log-dir.
 Floor per cell = lowest score - margin (three runs,

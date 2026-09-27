@@ -31,7 +31,7 @@ falling behind 40 Hz costs points. Floors are per cell (shot_hit_harness.FLOORS,
 three runs' lowest minus 10 points), falling back to STATIONARY_MIN_HIT_RATE or
 MOVING_MIN_HIT_RATE for a cell not measured yet. Do not relax them.
 
-The C1 aim bench: no gz, a point shooter with a perfect gimbal and a
+The Aiming bench: no gz, a point shooter with a perfect gimbal and a
 perfectly known target (see shot_hit_harness.py). Launches a ROS stack, so
 marked `integration` and skipped by a plain `colcon test`; `ros2 launch sim
 shot_hit.launch.py` runs it. Options: --shot-speeds, --shot-duration,
@@ -52,7 +52,7 @@ STATIONARY = 'stationary'
 
 @pytest.fixture(scope='module')
 def cv_stack(request, ros_context):
-    """Launch the aim bench's stack once for every case in this module."""
+    """Launch the aiming bench's stack once for every case in this module."""
     config = request.config
     log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)

@@ -1,4 +1,4 @@
-# C1 aim bench (shot_hit.launch.py). Every topic is depth 1: rviz reads one message
+# Aiming bench (shot_hit.launch.py). Every topic is depth 1: rviz reads one message
 # per topic per frame, so a deeper queue only shows older data.
 Panels:
   - Class: rviz_common/Displays

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-C2 estimation bench: target_tracker's TargetState against the truth, no gz.
+Estimation bench: target_tracker's TargetState against the truth, no gz.
 
 `ros2 launch sim estimation.launch.py [speeds:='0.5 1'] [blackout:=true]`.
 bench_world (C++, one lockstep loop) is the clock, the phantom target, our
@@ -156,7 +156,7 @@ def generate_launch_description():
                                           "gate's period at real_time_factor:=0"),
         DeclareLaunchArgument('speeds', default_value='',
                               description="target speeds (m/s), e.g. '0.5 1'; "
-                                          'empty = the aim bench sweep'),
+                                          'empty = the aiming bench sweep'),
         DeclareLaunchArgument('duration', default_value='',
                               description='sim-time seconds scored per case'),
         DeclareLaunchArgument('target_path', default_value='lateral',

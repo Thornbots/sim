@@ -1,4 +1,4 @@
-# C2 estimation bench (estimation.launch.py): target_tracker's model against the truth.
+# Estimation bench (estimation.launch.py): target_tracker's model against the truth.
 # Every topic is depth 1: rviz reads one message per topic per frame.
 Panels:
   - Class: rviz_common/Displays

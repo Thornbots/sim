@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Ground-truth stand-in for target_tracker: the aim bench's perfect knowledge.
+Ground-truth stand-in for target_tracker: the aiming bench's perfect knowledge.
 
 Publishes the target's true TargetState on /cv/target_state for each
 /target/ground_truth_odom sample as it arrives (60 Hz, target_driver's
