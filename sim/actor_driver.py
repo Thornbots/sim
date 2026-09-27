@@ -25,7 +25,6 @@ velocity. A blocked box steps to the nearest clear spot on its path. The
 caller removes the actors (`<prefix>_<i>`). see README.md for design rationale
 """
 import math
-import subprocess
 
 from geometry_msgs.msg import Pose
 from nav_msgs.msg import Odometry
@@ -34,7 +33,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from ros_gz_interfaces.msg import Entity
 from ros_gz_interfaces.srv import SetEntityPose
-from sim.auto_explore import WORLD_NAME
+from sim.auto_explore import spawn_model, WORLD_NAME
 
 # Default layout: three segments crossing the drift suite's 3m loop
 # (corners +-1.5), clear of the ARCC26 map's walls by >= 0.4m. Each inner
@@ -223,15 +222,9 @@ class ActorDriver(Node):
             actor.u = u
             x, y = actor.position(u)
             sdf = box_sdf(actor.name, x, y, self.size, self.height, self.mass)
-            result = subprocess.run(
-                # create overrides the SDF <pose> with -x/-y/-z (default 0).
-                ['ros2', 'run', 'ros_gz_sim', 'create', '-string', sdf,
-                 '-name', actor.name, '-allow_renaming', 'false',
-                 '-x', str(x), '-y', str(y), '-z', str(self.height / 2.0)],
-                capture_output=True, text=True, timeout=30.0)
-            if result.returncode != 0:
-                self.get_logger().error(
-                    f'spawning {actor.name} failed: {result.stdout}{result.stderr}')
+            # create overrides the SDF <pose> (default 0).
+            if not spawn_model(actor.name, sdf, x, y, self.height / 2.0):
+                self.get_logger().error(f'spawning {actor.name} failed')
                 raise RuntimeError(f'spawning {actor.name} failed')
             actor.spawned = True
             self.get_logger().info(f'spawned {actor.name} at ({x:.2f}, {y:.2f})')
