@@ -20,7 +20,8 @@ seconds per wall second, in steps of the measured wall time (publish_rate_hz).
 rate 0 runs as fast as the stack keeps up: sim time moves in step_s steps,
 and never more than one period (plus a step) past the newest header.stamp on
 any pace_topics entry ("topic pkg/msg/Type period_s"). A topic silent for
-max_wait_s of wall time stops holding the clock until it publishes again;
+max_wait_s of wall time, or with no publisher left, stops holding the clock
+until it publishes again;
 with no topic holding it (at startup, say), the clock runs at 1x.
 """
 import threading
@@ -101,7 +102,12 @@ class SimClock(Node):
             with self._cond:
                 deadline = time.monotonic() + self.max_wait_s
                 while (waiting := self._blocking(next_ns)) and time.monotonic() < deadline:
-                    self._cond.wait(timeout=deadline - time.monotonic())
+                    # A gate with no publisher left (the scorer between cases)
+                    # never catches up.
+                    for topic in waiting:
+                        if self.count_publishers(topic) == 0:
+                            self._gates[topic][2] = False
+                    self._cond.wait(timeout=min(0.01, deadline - time.monotonic()))
                 for topic in waiting:  # silent too long: stop holding the clock for it
                     self._gates[topic][2] = False
                     self.get_logger().warn(f'sim_clock: {topic} silent, no longer pacing on it')

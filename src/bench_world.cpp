@@ -19,13 +19,16 @@
 // /clock goes out every clock_step_s. rate 0 runs as fast as the nodes under
 // test keep up: sim time waits while a live gate topic's newest stamp is more
 // than its period plus pace_slack_s behind, and runs at 1x with no gate live
-// (at startup, say). See README.md.
+// (at startup, say). A gate with no publisher left stops holding it at once,
+// and the tracker's waits only on frames that carried a detection, since it
+// echoes nothing for an empty one. See README.md.
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -137,6 +140,7 @@ struct Gate
   std::optional<double> last;
   bool live = false;
   bool detection_stamped = false;  // last is a detection stamp, delivered late
+  std::deque<double> owed{};  // detection gates: published non-empty frames not yet echoed
 };
 
 struct Pending
@@ -283,6 +287,7 @@ private:
     Gate & g = gates_[topic];
     g.last = g.last ? std::max(*g.last, stamp) : stamp;
     g.live = true;
+    while (!g.owed.empty() && g.owed.front() <= stamp + 1e-9) {g.owed.pop_front();}
     gate_cv_.notify_all();
   }
 
@@ -303,23 +308,36 @@ private:
     auto blocking = [&] {
         std::vector<std::string> out;
         for (auto & [topic, g] : gates_) {
+          if (!g.live || (g.detection_stamped && g.owed.empty())) {continue;}
+          const double behind = g.detection_stamped ? g.owed.front() : *g.last;
           const double allow = g.period + pace_slack_s_ + (g.detection_stamped ? delivery : 0.0);
-          if (g.live && *g.last + allow < next_t) {out.push_back(topic);}
+          if (behind + allow < next_t) {out.push_back(topic);}
         }
         return out;
       };
     const auto deadline = std::chrono::steady_clock::now() +
-      std::chrono::duration<double>(max_wait_s_);
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<double>(max_wait_s_));
     std::vector<std::string> waiting;
     while (!stop_ && !(waiting = blocking()).empty()) {
-      if (gate_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
+      // A gate with no publisher left (the scorer between cases) never catches up.
+      for (const auto & topic : waiting) {
+        if (count_publishers(topic) == 0) {
+          gates_[topic].live = false;
+          gates_[topic].owed.clear();
+        }
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
         for (const auto & topic : blocking()) {
           gates_[topic].live = false;
+          gates_[topic].owed.clear();
           RCLCPP_WARN(get_logger(), "bench_world: %s silent, no longer pacing on it",
             topic.c_str());
         }
         return true;
       }
+      gate_cv_.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(10)));
     }
     return true;
   }
@@ -587,7 +605,13 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     while (!pending_.empty() && pending_.front().publish_at <= t_ + 1e-9) {
-      det_pub_->publish(pending_.front().msg);
+      const PanelDetectionArray & msg = pending_.front().msg;
+      if (!msg.detections.empty()) {
+        std::lock_guard<std::mutex> gate_lock(gate_mutex_);
+        Gate & g = gates_["/cv/tracker/measurement"];
+        if (g.live) {g.owed.push_back(from_stamp(msg.header.stamp));}
+      }
+      det_pub_->publish(msg);
       pending_.erase(pending_.begin());
     }
   }
