@@ -226,6 +226,7 @@ class LocalizationTestHelper(Node):
         # drive() to gate each leg on actual distance traveled rather than
         # a wall-clock timer -- see drive()'s docstring for why.
         self._raw_odom_xy = None
+        self._raw_odom_yaw = 0.0
         self.create_subscription(
             Odometry, '/sim/raw_odom', self._on_raw_odom, 10)
 
@@ -234,7 +235,10 @@ class LocalizationTestHelper(Node):
 
     def _on_raw_odom(self, msg):
         p = msg.pose.pose.position
+        q = msg.pose.pose.orientation
         self._raw_odom_xy = (p.x, p.y)
+        self._raw_odom_yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                        1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
     def wait_for_raw_odom(self, timeout=10.0):
         deadline = time.monotonic() + timeout
@@ -408,7 +412,9 @@ class LocalizationTestHelper(Node):
         Steer toward the leg's endpoint, re-aiming every tick off /sim/raw_odom.
 
         Runs until within `WAYPOINT_TOLERANCE`, tapering speed near
-        the target to avoid corner oscillation. `duration` (sim
+        the target to avoid corner oscillation. VelocityControl reads
+        /cmd_vel in root's frame and root can yaw, so each command is
+        rotated out of odom by the true yaw. `duration` (sim
         seconds) is only a safety cap. See README.md for the design
         history.
         """
@@ -441,9 +447,10 @@ class LocalizationTestHelper(Node):
             if dist <= WAYPOINT_TOLERANCE:
                 break
             speed_now = min(speed, dist / CONTROL_PERIOD)
+            c, s = math.cos(self._raw_odom_yaw), math.sin(self._raw_odom_yaw)
             msg = Twist()
-            msg.linear.x = speed_now * dx / dist
-            msg.linear.y = speed_now * dy / dist
+            msg.linear.x = speed_now * (c * dx + s * dy) / dist
+            msg.linear.y = speed_now * (-s * dx + c * dy) / dist
             self.cmd_vel_pub.publish(msg)
             self.spin_for(CONTROL_PERIOD)
         else:
