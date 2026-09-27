@@ -675,6 +675,8 @@ class Scenario:
 # --------------------------------------------------------------------------
 
 RESTART_SIM = False
+# Wall seconds for a robot stack's TF chain to reach root; it takes ~1 s.
+BRINGUP_TIMEOUT_S = 30.0
 # sim.launch.py's spawn x/y, which is also amcl.yaml's initial_pose.
 SPAWN_XY = (0.0, 0.0)
 # pose_emulator params a scenario may set; the rest keep their launch values.
@@ -817,11 +819,34 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
     except Exception:
         helper.destroy_node()
         raise
-    _robot_runs += 1
-    robot = LaunchTree('robot', _launch_cmd({**args, 'part': 'robot'}),
-                       os.path.join(LOG_DIR, f'robot_{_robot_runs}.log'))
-    robot.start()
-    return ScenarioStack(robot, _sim), helper
+    for attempt in (1, 2):
+        _robot_runs += 1
+        robot = LaunchTree('robot', _launch_cmd({**args, 'part': 'robot'}),
+                           os.path.join(LOG_DIR, f'robot_{_robot_runs}.log'))
+        robot.start()
+        if attempt == 2 or _wait_for_root_chain(helper, BRINGUP_TIMEOUT_S):
+            return ScenarioStack(robot, _sim), helper
+        print(f'[robot] {parent_frame}->root not up after {BRINGUP_TIMEOUT_S:.0f}s; '
+              'restarting the robot stack once (bring-up race, see '
+              '_wait_for_root_chain)')
+        robot.stop()
+
+
+def _wait_for_root_chain(helper, timeout):
+    """
+    Wait until parent_frame->root resolves; False on timeout.
+
+    Two bring-up races leave it missing for good: a lifecycle
+    change_state reply lost in DDS discovery (Nav2's manager then waits
+    forever; Humble too), and Jazzy's EKF never leaving "Waiting for
+    clock". run_stack restarts once; a second failure scores as usual.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if helper.get_root_position(timeout=0.5) is not None:
+            return True
+        helper._spin_wall(0.5)
+    return False
 
 
 def teardown_stack(stack, helper):
