@@ -110,7 +110,7 @@ quarter turn), spin rate, radius and height per pair. `blackout:=true` drops eve
 undo it (`tracker_camera_latency_s:=0` to leave it undone).
 `shooter_speed:=1.0`, `target_path:=`, `speeds:=` and `panel_layout:=` work
 as on the aim bench, and `process_noise_accel:=` sets the tracker's. A cell
-passes on liveness until `LIMITS` in `test/cv/estimation_harness.py` has
+passes on liveness until `LIMITS` in `test/cv/estimation_limits_data.py` has
 limits for it:
 
 ```bash
