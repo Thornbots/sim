@@ -13,7 +13,8 @@
 # limitations under the License.
 
 """
-C2's scoring math, no ROS: one TargetState's errors against truth, and a case summary.
+The estimation bench's scoring math, no ROS: one TargetState's errors against truth,
+and a case summary.
 
 estimation_harness.py feeds it; test_estimation_metrics.py pins it.
 """

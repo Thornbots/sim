@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-C2 estimation-bench machinery: scores target_tracker's TargetState against truth.
+Estimation-bench machinery: scores target_tracker's TargetState against truth.
 
 estimation.launch.py runs bench_world (the clock, the phantom target, our
 chassis and head, and detections off our head's camera; C++, no gz) and the
@@ -165,7 +165,7 @@ class EstimationSampler(SimTimeNode):
 
 class EstimationStack:
     """
-    The C2 stack, launched once and reused for every case.
+    The estimation bench stack, launched once and reused for every case.
 
     launch/estimation.launch.py defines it; with external=True it is already
     running (it started this pytest). Between cases only bench_world's target

@@ -3,7 +3,7 @@
 sim holds the robot's integration tests. The localization drift suite starts a
 `gz sim` model of the `ARCC_Field_2026` field, spawns the `sentry` robot from
 `urdf/sentry_v2.urdf.xacro`, and runs the real `thornbots_pkg` stack against
-it. The two CV benches run no gz. The aim bench scores `point_to_cv_target`
+it. The two CV benches run no gz. The aiming bench scores `point_to_cv_target`
 against a perfectly known target; the estimation bench scores how well Part 2
 turns noisy detections into a target model (`../CV_SPLIT_PLAN.md`,
 Estimation).
@@ -28,7 +28,7 @@ ros2 launch sim localization_tests.launch.py
 
 `suite:=ekf` runs the EKF ground-truth test instead.
 
-The CV aim bench runs ten shot-hit cases, all with lead on: a stationary
+The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
 neighbouring panels staggered 90% of a panel's height apart
 (`panel_layout:=` picks one). It launches the stack once and only changes the
@@ -85,7 +85,7 @@ source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 launch sim shot_hit.launch.py
 ```
 
-The CV estimation bench (C2) scores Part 2, not hits. `bench_world` (C++)
+The CV estimation bench scores Part 2, not hits. `bench_world` (C++)
 is the whole world in one lockstep loop: `/clock`, the phantom target through
 the same ten cells, our chassis and head, `/pose`, the head controller and
 the detections off our head's camera. `target_selector` and `target_tracker`
@@ -112,7 +112,7 @@ quarter turn), spin rate, radius and height per pair. `blackout:=true` drops eve
 `camera_latency_s:=0.03` stamps detections late and tells the tracker to
 undo it (`tracker_camera_latency_s:=0` to leave it undone).
 `shooter_speed:=1.0`, `target_path:=`, `speeds:=` and `panel_layout:=` work
-as on the aim bench, and `process_noise_accel:=` sets the tracker's. A cell
+as on the aiming bench, and `process_noise_accel:=` sets the tracker's. A cell
 passes on liveness until `LIMITS` in `test/cv/estimation_limits_data.py` has
 limits for it:
 
@@ -134,7 +134,7 @@ a verdict looks off. Both
 shut down when the tests finish, and Ctrl-C stops everything, stacks included.
 
 The localization launch defaults to `real_time_factor:=0`, which lets gz run
-as fast as the machine allows, and so does the aim bench. Every test times
+as fast as the machine allows, and so does the aiming bench. Every test times
 itself in sim seconds, so a faster sim shortens the wall-clock run without
 shortening what gets scored. On the dev laptop with `sentry_v2`, the drift
 suite runs about 1.2x real time, GUI or headless alike.
@@ -213,7 +213,7 @@ mid-run, a GUI couldn't open or a wait gave up.
 
 The drift suite starts gz-sim once and a fresh `thornbots_pkg` stack for each
 scenario, resetting the sim between them (see "Run the tests");
-`restart_sim:=true` restarts gz per scenario instead. The aim bench launches
+`restart_sim:=true` restarts gz per scenario instead. The aiming bench launches
 its stack once for all its cases, through `shot_hit.launch.py
 run_tests:=false` when pytest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
@@ -786,9 +786,9 @@ and bearing std `noise_lateral_rad * range` (0.003, about a pixel). Both are
 datasheet estimates; measure them on the robot. Set both to 0 for the old
 5 mm-only noise.
 
-### target_state_truth.py: the aim bench's perfect knowledge
+### target_state_truth.py: the aiming bench's perfect knowledge
 
-Stands in for the whole of Part 2 on the aim bench (`shot_hit.launch.py`).
+Stands in for the whole of Part 2 on the aiming bench (`shot_hit.launch.py`).
 For each `/target/ground_truth_odom` sample it
 publishes the target's `TargetState` at once, stamped with that sample's time:
 the contract `TargetState.msg` sets for Part 2, a state describing the target
@@ -805,7 +805,7 @@ zero. `panel_stagger_m` follows the case's layout (`CvStack.set_target`).
 
 ### point_shooter.py
 
-Our chassis on the aim bench. A second `target_driver`, named
+Our chassis on the aiming bench. A second `target_driver`, named
 `shooter_driver`, with no spin and its output remapped to
 `/shooter/ground_truth_odom`, bounces along y at `shooter_speed` with the
 same braking; `point_shooter` republishes each sample at once as `odom->root`
@@ -825,7 +825,7 @@ Subscribes `/cv/target` (from `thornbots_pkg`'s `point_to_cv_target`, so run
 `auto.launch.py` alongside `sim.launch.py spawn_target:=true`) and
 `/sim/raw_joint_states`, and publishes `/head_pan_cmd`/`/head_pitch_cmd`: the
 sim's gimbal when the full stack runs in gz. No test scores its shots; the
-aim bench has its own perfect gimbal. `CVTarget.x/y/z` is a root-frame
+aiming bench has its own perfect gimbal. `CVTarget.x/y/z` is a root-frame
 position, so the old `atan2(x, z)` bearing controller was replaced.
 
 `cv_head_aim_core.solve_head_angles()` inverts the FK chain from root to the

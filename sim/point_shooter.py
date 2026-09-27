@@ -13,12 +13,12 @@
 # limitations under the License.
 
 """
-The aim bench's own chassis: odom->root TF and /pose from a truth odometry.
+The aiming bench's own chassis: odom->root TF and /pose from a truth odometry.
 
 Subscribes /shooter/ground_truth_odom (a second target_driver, spin 0) and
 republishes each sample at once, stamped with its sample time: odom->root on
 /tf, and RobotPose on /pose with root-frame velocity, as the MCB would send.
-No noise, no latency: C1's perfect model of our own motion.
+No noise, no latency: the aiming bench's perfect model of our own motion.
 """
 import math
 

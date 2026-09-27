@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pin estimation_metrics.py, C2's scoring math. Plain pytest, no ROS."""
+"""Pin estimation_metrics.py, the estimation bench's scoring math. Plain pytest, no ROS."""
 import math
 from types import SimpleNamespace
 

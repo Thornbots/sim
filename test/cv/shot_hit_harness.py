@@ -138,7 +138,7 @@ FLOORS = {
 # "typically 1-2 Hz" range (ARCC_2026_SENTRY_CONTEXT.md).
 SPIN_HZ_AT_MIN_SPEED = 2.0
 SPIN_HZ_AT_MAX_SPEED = 1.0
-# target_driver paths (ROADMAP C3's depth case): lateral crosses the
+# target_driver paths (the depth case): lateral crosses the
 # view at constant range, radial runs down the camera ray, diagonal does both.
 # Each keeps the nearest panel past ~1.2 m and inside the FOV at the ends.
 TARGET_PATHS = {
@@ -708,7 +708,7 @@ class ShotHitSampler(SimTimeNode):
 
 class CvStack:
     """
-    The aim bench's stack, launched once and reused for every case.
+    The aiming bench's stack, launched once and reused for every case.
 
     launch/shot_hit.launch.py defines the stack. With external=True that launch
     is already running (it started this pytest) and this only waits for it;

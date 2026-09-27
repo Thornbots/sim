@@ -14,7 +14,7 @@
 # limitations under the License.
 
 """
-Print test/cv/estimation_limits_data.py from C2 runs' estimation.jsonl.
+Print test/cv/estimation_limits_data.py from the estimation bench runs' estimation.jsonl.
 
 `python3 tools/estimation_limits.py RUN_DIR ... > test/cv/estimation_limits_data.py`,
 each RUN_DIR a log_dir:=, any mix of cases. Limit per cell and metric = worst

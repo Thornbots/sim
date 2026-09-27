@@ -86,7 +86,7 @@ def test_random_angles_round_trip():
 
 
 def test_solved_ray_passes_through_the_target_point():
-    """The end-to-end condition the shot-hit bench scores: miss distance, not bearing."""
+    """The end-to-end condition the aiming bench scores: miss distance, not bearing."""
     for target in [(3.0, 0.0, 0.3), (2.7, 0.0, 0.3), (1.0, -1.0, 0.0),
                    (-4.0, 2.0, 1.2), (0.5, 0.0, 0.3), (0.0, -3.0, 0.1)]:
         theta_y, theta_p = solve_head_angles(target)
