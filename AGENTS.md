@@ -157,13 +157,13 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **C2 (`estimation.launch.py`) runs on `bench_world`, not gz** (the
   user's call, 2026-09-25): it fakes detections, so it needs no physics.
   One C++ loop steps target, chassis and head every 1 ms, so its rates are
-  exact at any speed, and holds sim time for the nodes under test
-  (`/cv/target_state`, `/cv/target`, the scorer's `/bench/progress`), up to
-  `pace_slack_s` past each period. Separate Python world nodes on a paced
-  `sim_clock` managed 0.5x, or 8x with ticks dropped; this runs the ten
-  cells in 54 s with rviz (~6x), every rate exact. `target_tracker` is the
-  ceiling; `pace_slack_s` above 0.02 buys 10-12x by letting the nodes
-  under test lag sim time, head loop included, so keep the default. Root
+  exact at any speed, and holds sim time for the nodes under test, up to
+  `pace_slack_s` past each period: `target_tracker`'s input
+  (`/cv/tracker/measurement`, plus the detections' delivery delay),
+  `/cv/target`, and the scorer's `/bench/progress`. `/cv/target_state`
+  can't be the gate: it is stamped at publish time, and pacing on it let
+  the tracker fall 0.12-0.21 s behind capture (2026-09-26). The ten cells
+  take ~75 s with rviz (~5x); `target_tracker` is the ceiling. Root
   sits at z 0 and yaw 0, and the head is gz's PD on the arm inertias;
   `LIMITS` is empty until three runs fill it.
 - **`bench_world` duplicates C2's share of `target_driver`,

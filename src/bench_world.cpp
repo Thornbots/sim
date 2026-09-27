@@ -40,7 +40,6 @@
 #include "dji_serial_bridge/msg/cv_target.hpp"
 #include "dji_serial_bridge/msg/panel_detection_array.hpp"
 #include "dji_serial_bridge/msg/robot_pose.hpp"
-#include "dji_serial_bridge/msg/target_state.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -58,7 +57,6 @@ using dji_serial_bridge::msg::CVTarget;
 using dji_serial_bridge::msg::PanelDetection;
 using dji_serial_bridge::msg::PanelDetectionArray;
 using dji_serial_bridge::msg::RobotPose;
-using dji_serial_bridge::msg::TargetState;
 using visualization_msgs::msg::Marker;
 using visualization_msgs::msg::MarkerArray;
 
@@ -138,6 +136,7 @@ struct Gate
   double period;
   std::optional<double> last;
   bool live = false;
+  bool detection_stamped = false;  // last is a detection stamp, delivered late
 };
 
 struct Pending
@@ -247,17 +246,19 @@ public:
           }
           on_gate("/cv/target", from_stamp(m->header.stamp));
         }));
-    subs_.push_back(create_subscription<TargetState>(
-        "/cv/target_state", qos, [this](TargetState::ConstSharedPtr m) {
-          on_gate("/cv/target_state", from_stamp(m->header.stamp));
+    // The tracker stamps TargetState at publish time, so a backlog doesn't
+    // show there; it echoes each detection it folds in here instead.
+    subs_.push_back(create_subscription<std_msgs::msg::Header>(
+        "/cv/tracker/measurement", qos, [this](std_msgs::msg::Header::ConstSharedPtr m) {
+          on_gate("/cv/tracker/measurement", from_stamp(m->stamp));
         }));
     subs_.push_back(create_subscription<std_msgs::msg::Header>(
         "/bench/progress", qos, [this](std_msgs::msg::Header::ConstSharedPtr m) {
           on_gate("/bench/progress", from_stamp(m->stamp));
         }));
-    // The nodes under test: the tracker's state per frame, the aim node's
+    // The nodes under test: the tracker's input per frame, the aim node's
     // 30 Hz tick, and the scorer.
-    gates_["/cv/target_state"] = Gate{1.0 / frame_rate_hz_, std::nullopt, false};
+    gates_["/cv/tracker/measurement"] = Gate{1.0 / frame_rate_hz_, std::nullopt, false, true};
     gates_["/cv/target"] = Gate{1.0 / 30.0, std::nullopt, false};
     gates_["/bench/progress"] = Gate{1.0 / truth_rate_hz_, std::nullopt, false};
 
@@ -289,6 +290,12 @@ private:
   // Returns false when no gate is live.
   bool wait_gates(double next_t)
   {
+    double delivery;  // how far a detection's stamp trails its publish time
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      delivery = std::max(live_["publish_latency_s"], live_["camera_latency_s"]) -
+        live_["camera_latency_s"];
+    }
     std::unique_lock<std::mutex> lock(gate_mutex_);
     if (std::none_of(gates_.begin(), gates_.end(), [](auto & g) {return g.second.live;})) {
       return false;
@@ -296,7 +303,8 @@ private:
     auto blocking = [&] {
         std::vector<std::string> out;
         for (auto & [topic, g] : gates_) {
-          if (g.live && *g.last + g.period + pace_slack_s_ < next_t) {out.push_back(topic);}
+          const double allow = g.period + pace_slack_s_ + (g.detection_stamped ? delivery : 0.0);
+          if (g.live && *g.last + allow < next_t) {out.push_back(topic);}
         }
         return out;
       };
