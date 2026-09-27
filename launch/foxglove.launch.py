@@ -15,17 +15,41 @@
 """
 Foxglove websocket bridge, for watching a test run from another machine.
 
-`ros2 launch sim foxglove.launch.py [port:=8765]`, next to any bench or sim
-launch; it finds their topics over DDS. Open Foxglove, choose
-"Open connection", "Foxglove WebSocket", `ws://<this host>:8765`. Only topics a
-panel subscribes to are sent. use_sim_time follows /clock, which every bench
-publishes.
+`ros2 launch sim foxglove.launch.py [port:=8765]`. The test launches include
+it (their `foxglove:=` arg). It stands down if the port is already taken, so a
+standalone bridge and a test's don't collide. Read-only: viewers can't
+publish, call services or set parameters on a running test. use_sim_time
+follows /clock, which every bench publishes.
 """
+import socket
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
+
+
+def _port_in_use(port):
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+
+def _bridge(context):
+    port = int(context.launch_configurations['port'])
+    if _port_in_use(port):
+        return [LogInfo(msg=f'foxglove: port {port} already serving, not starting another')]
+    return [Node(
+        package='foxglove_bridge',
+        executable='foxglove_bridge',
+        name='foxglove_bridge',
+        output='log',
+        parameters=[{
+            'port': port,
+            'address': context.launch_configurations['address'],
+            'use_sim_time': True,
+            'capabilities': ['connectionGraph', 'assets'],
+        }],
+    )]
 
 
 def generate_launch_description():
@@ -33,15 +57,5 @@ def generate_launch_description():
         DeclareLaunchArgument('port', default_value='8765'),
         DeclareLaunchArgument('address', default_value='0.0.0.0',
                               description='Interface to listen on; 0.0.0.0 is all'),
-        Node(
-            package='foxglove_bridge',
-            executable='foxglove_bridge',
-            name='foxglove_bridge',
-            output='screen',
-            parameters=[{
-                'port': ParameterValue(LaunchConfiguration('port'), value_type=int),
-                'address': LaunchConfiguration('address'),
-                'use_sim_time': True,
-            }],
-        ),
+        OpaqueFunction(function=_bridge),
     ])
