@@ -30,7 +30,7 @@ describes. Among presenting panels also inside the camera's FOV/range, ALL are
 published on cv/panel_detections (PanelDetectionArray), the real
 roi_depth_node's output shape; target_selector alone publishes the pick on
 cv/panel_detection. The most head-on one only drives the rviz markers.
-Corners are the panel's true PANEL_SIZE square (ground truth, not
+Corners are the panel's true PANEL_WIDTH x PANEL_HEIGHT face (ground truth, not
 depth-approximated like the real roi_depth_node), built from its outward
 normal so they carry the same S122 cant. Target position is REP-103
 relative to the camera (x=forward, y=left, z=up), NOT optical --
@@ -148,27 +148,19 @@ _HEADPITCH_ORIGIN_T = (-0.00760542, -0.100122, 0.14235)
 _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
 _CAMERALINK_T = (0.0920381, 0.0948673, 0.0566588)
 
-# 4 armor panels spaced 90 degrees apart around the chassis center (front,
-# left, back, right), matching a standard RoboMaster-class robot's layout
-# per ARCC_2026_SENTRY_CONTEXT.md's "Opponent robot characteristics". Not
-# an authoritative extracted spec (this repo's rulebook notes don't have
-# exact construction dimensions yet -- see ARCC_2026_SENTRY_CONTEXT.md's
-# "Not yet extracted" list) -- panel_radius_x/y below approximate a public
-# RoboMaster Standard-class footprint (~600mm front-back, ~480mm
-# left-right) rather than a single square layout.
+# 4 armor panels spaced 90 degrees apart around the chassis center, as on
+# sentry_v2's armor_0..3 frames (test_urdf_constants.py pins these). The URDF's
+# panels sit at 45 deg + k x 90 deg; offset 0 here is armor_0, which only
+# relabels the target's yaw.
 _PANEL_OFFSETS_RAD = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
-PANEL_RADIUS_X = 0.30  # front/back, ~600mm chassis length / 2
-PANEL_RADIUS_Y = 0.24  # left/right, ~480mm chassis width / 2
+PANEL_RADIUS_X = 0.252  # front/back (armor_0/armor_2)
+PANEL_RADIUS_Y = 0.252  # left/right (armor_1/armor_3)
 _PANEL_NAMES = ('front', 'left', 'back', 'right')
 _PANEL_USES_RADIUS_X = (True, False, True, False)  # front/back vs left/right
-# Small Armor Module (Standard-class, most ARCC opponents) approximated as
-# a flat 0.1m x 0.1m square. NOT sourced from ARCC_2026_SENTRY_CONTEXT.md --
-# that doc gives mounting angle/height/offsets but no panel face dimensions
-# (checked 2026-07-29). This is the pass/fail line for shot_hit_harness.py's
-# DEFAULT_HIT_RADIUS = PANEL_SIZE/2, so treat any hit-rate number as
-# calibrated on an approximation, not a confirmed spec, until a real
-# dimension is found.
-PANEL_SIZE = 0.1
+# The face, width along the ground by height, from sentry_v2's CAD: the Small
+# Armor Module's front plate, the only armor size in ARCC 2026.
+PANEL_WIDTH = 0.135
+PANEL_HEIGHT = 0.125
 # S122 (ARCC_2026_SENTRY_CONTEXT.md "Mounting angle"): panel outward normal
 # makes a 75-degree angle with straight-up, i.e. canted ~15 degrees off
 # pure-horizontal (90 degrees would be flush-vertical) -- not the z=0
@@ -437,13 +429,13 @@ class CvTargetEmulator(Node):
             0.0, self.get_parameter('noise_depth_range_coeff').value * range_m ** 2)
         fwd_n, left_n, up_n = rel + np.random.normal(0.0, stddev, 3) + lateral + depth * ray
 
-        half = PANEL_SIZE / 2.0
+        hw, hh = PANEL_WIDTH / 2.0, PANEL_HEIGHT / 2.0
         noise = np.array([fwd_n - fwd, left_n - left, up_n - up])
         corners_world = [
-            panel_pos - half * right_dir + half * up_dir,  # TL
-            panel_pos + half * right_dir + half * up_dir,  # TR
-            panel_pos + half * right_dir - half * up_dir,  # BR
-            panel_pos - half * right_dir - half * up_dir,  # BL
+            panel_pos - hw * right_dir + hh * up_dir,  # TL
+            panel_pos + hw * right_dir + hh * up_dir,  # TR
+            panel_pos + hw * right_dir - hh * up_dir,  # BR
+            panel_pos - hw * right_dir - hh * up_dir,  # BL
         ]
 
         def to_point32(world_pt):
@@ -589,7 +581,7 @@ class CvTargetEmulator(Node):
         presents, noisy-detected (yellow) shown only while a panel
         actually qualified and wasn't dropped, so losing track is visible
         as the yellow box disappearing rather than freezing in place --
-        drawn as a PANEL_SIZE box (like the ground truth panels), not a
+        drawn as a panel-sized box (like the ground truth panels), not a
         point, since a detection is a panel-sized region, not a single
         point in space. A white arrow from the camera along its current
         aim direction (cam_rot's local +Z) shows where the head is
@@ -649,8 +641,8 @@ class CvTargetEmulator(Node):
             panel.pose.orientation.z = qz
             panel.pose.orientation.w = qw
             panel.scale.x = 0.02
-            panel.scale.y = PANEL_SIZE
-            panel.scale.z = PANEL_SIZE
+            panel.scale.y = PANEL_WIDTH
+            panel.scale.z = PANEL_HEIGHT
             panel.color.b = 1.0
             panel.color.g = 1.0
             panel.color.a = 0.5
@@ -673,7 +665,7 @@ class CvTargetEmulator(Node):
             det.pose.orientation.z = qz
             det.pose.orientation.w = qw
             det.scale.x = 0.02
-            det.scale.y = det.scale.z = PANEL_SIZE
+            det.scale.y, det.scale.z = PANEL_WIDTH, PANEL_HEIGHT
             det.color.r = 1.0
             det.color.g = 1.0
             det.color.a = 0.9

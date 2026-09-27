@@ -173,14 +173,14 @@ def _rotation_from_quaternion(x, y, z, w):
 _PANEL_OFFSETS_RAD = (0.0, math.pi / 2.0, math.pi, -math.pi / 2.0)
 _PANEL_USES_RADIUS_X = (True, False, True, False)
 PANEL_NAMES = ('front', 'left', 'back', 'right')  # _PANEL_OFFSETS_RAD order
-PANEL_RADIUS_X = 0.30  # chassis-center-to-panel offset, front/back
-PANEL_RADIUS_Y = 0.24  # chassis-center-to-panel offset, left/right
-# Small Armor Module is a flat 0.1m x 0.1m square (ARCC_2026_SENTRY_CONTEXT.md
-# "What an armor panel actually looks like" / cv_target_emulator.PANEL_SIZE).
-PANEL_SIZE = 0.1
-DEFAULT_HIT_RADIUS = PANEL_SIZE / 2.0  # inscribed-circle half-side
-# The staggered layout: neighbouring panels 90% of a panel's height apart.
-STAGGERED_PANEL_M = 0.9 * PANEL_SIZE
+# sentry_v2's armor frames (test_urdf_constants.py pins these to the URDF).
+PANEL_RADIUS_X = 0.252  # chassis-center-to-panel offset, front/back
+PANEL_RADIUS_Y = 0.252  # chassis-center-to-panel offset, left/right
+PANEL_WIDTH = 0.135  # the Small Armor Module (ARCC 2026's only size), from the CAD
+PANEL_HEIGHT = 0.125
+DEFAULT_HIT_RADIUS = PANEL_HEIGHT / 2.0  # the face's inscribed circle
+# The staggered layout: sentry_v2's neighbouring panels are this far apart.
+STAGGERED_PANEL_M = 0.0947
 # Hit-registration cone: a shot arriving from behind this angle couldn't
 # have registered on the real panel even if geometrically on-target.
 # Deliberately NOT the same number as cv_target_emulator.py's
@@ -643,7 +643,7 @@ class ShotHitSampler(SimTimeNode):
                 cp, sp = math.cos(half_pitch), math.sin(half_pitch)
                 o = m.pose.orientation
                 o.x, o.y, o.z, o.w = -sy * sp, cy * sp, sy * cp, cy * cp
-                m.scale.x, m.scale.y, m.scale.z = 0.01, PANEL_SIZE, PANEL_SIZE
+                m.scale.x, m.scale.y, m.scale.z = 0.01, PANEL_WIDTH, PANEL_HEIGHT
                 m.color.r, m.color.g, m.color.b = 0.2, 0.4, 1.0
                 markers.append(m)
 
