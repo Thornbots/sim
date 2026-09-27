@@ -125,7 +125,7 @@ def _tests(context, test_dir):
     for arg, opt in (('duration', '--shot-duration'), ('log_dir', '--log-dir')):
         if cfg[arg]:
             cmd += [opt, cfg[arg]]
-    for arg in ('skip_stationary', 'only_stationary', 'blackout'):
+    for arg in ('skip_stationary', 'only_stationary', 'blackout', 'headless'):
         if _is_true(context, arg):
             cmd.append('--' + arg.replace('_', '-'))
     cmd += cfg['pytest_args'].split()

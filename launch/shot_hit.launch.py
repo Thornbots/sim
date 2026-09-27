@@ -141,7 +141,7 @@ def _tests(context, test_dir):
                      ('log_dir', '--log-dir')):
         if context.launch_configurations[arg]:
             cmd += [opt, context.launch_configurations[arg]]
-    for arg in ('skip_stationary', 'only_stationary'):
+    for arg in ('skip_stationary', 'only_stationary', 'headless'):
         if _is_true(context, arg):
             cmd.append('--' + arg.replace('_', '-'))
     cmd += context.launch_configurations['pytest_args'].split()

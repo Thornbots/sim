@@ -37,8 +37,10 @@ from rcl_interfaces.srv import SetParameters
 import rclpy
 from rclpy.parameter import Parameter
 from shot_hit_harness import (
-    interpolate, LaunchTree, PANEL_RADIUS_X, PANEL_RADIUS_Y, SimTimeNode, TARGET_PATHS,
+    check_nodes, interpolate, LaunchTree, PANEL_RADIUS_X, PANEL_RADIUS_Y, SimTimeNode,
+    TARGET_PATHS,
 )
+from sim import suite_timing
 from sim.cv_head_aim_core import solve_head_angles
 from std_msgs.msg import Float64, Header
 
@@ -87,9 +89,6 @@ class EstimationSampler(SimTimeNode):
         # doesn't run ahead of this scorer.
         self.progress_pub = self.create_publisher(Header, '/bench/progress', 10)
 
-    def _now_s(self):
-        return self.get_clock().now().nanoseconds / 1e9
-
     def _on_truth(self, msg):
         p, q, v = msg.pose.pose.position, msg.pose.pose.orientation, msg.twist.twist
         stamp = self._stamp_s(msg.header.stamp)
@@ -117,7 +116,7 @@ class EstimationSampler(SimTimeNode):
                                                 min(HEADPITCH_LIMIT, head_pitch))))
 
     def _on_state(self, msg):
-        self._pending.append((self._stamp_s(msg.header.stamp), self._now_s(), msg))
+        self._pending.append((self._stamp_s(msg.header.stamp), self.now_s(), msg))
 
     def _resolve(self, truth_s):
         keep = []
@@ -175,6 +174,10 @@ class EstimationStack:
 
     def __init__(self, headless, log_dir, external=False, extra_args=()):
         self.launch = None
+        # Checked up at start and after every case (check_nodes).
+        self.nodes = ['bench_world', 'target_selector', 'target_tracker', 'point_to_cv_target']
+        if not headless:
+            self.nodes += ['target_state_markers', 'rviz2']
         if not external:
             self.launch = LaunchTree(
                 'stack',
@@ -191,17 +194,18 @@ class EstimationStack:
     def start(self):
         for path in (self.states_path, self.summary_path):
             open(path, 'w').close()
-        if self.launch is not None:
-            self.launch.start()
-        probe = EstimationSampler(stagger=0.0)
-        try:
-            probe.wait_until(lambda: bool(probe._truth), timeout=120.0,
-                             description='/target/ground_truth_odom publishing')
-            ready = ['bench_world', 'target_selector', 'target_tracker', 'point_to_cv_target']
-            probe.wait_until(lambda: probe.nodes_up(*ready), timeout=60.0,
-                             description=f'{", ".join(ready)} nodes up')
-        finally:
-            probe.destroy_node()
+        with suite_timing.phase('bringup'):
+            if self.launch is not None:
+                self.launch.start()
+            probe = EstimationSampler(stagger=0.0)
+            try:
+                probe.wait_until(lambda: bool(probe._truth), timeout=120.0,
+                                 description='/target/ground_truth_odom publishing')
+                probe.wait_until(lambda: probe.nodes_up(*self.nodes), timeout=60.0,
+                                 description=f'{", ".join(self.nodes)} nodes up')
+                check_nodes(probe, self.nodes)
+            finally:
+                probe.destroy_node()
 
     def set_params(self, **params):
         """Set bench_world's target and detection parameters."""
@@ -220,8 +224,9 @@ class EstimationStack:
             raise RuntimeError(f'bench_world rejected {params}')
 
     def stop(self):
-        if self.launch is not None:
-            self.launch.stop()
+        with suite_timing.phase('teardown'):
+            if self.launch is not None:
+                self.launch.stop()
         self.node.destroy_node()
 
 
@@ -234,19 +239,27 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
     the head turns to the target, then come back; states are scored from
     there for SETTLE_S + duration.
     """
-    stack.set_params(target_speed=speed, spin_hz=spin_hz, **TARGET_PATHS[path])
-    stack.set_params(panel_stagger_m=stagger, detections_enabled=False,
-                     **(BLACKOUT if blackout else {'blackout_period_s': 0.0}))
-    sampler = EstimationSampler(stagger, shooter_speed)
+    with suite_timing.phase('reset'):
+        stack.set_params(target_speed=speed, spin_hz=spin_hz, **TARGET_PATHS[path])
+        stack.set_params(panel_stagger_m=stagger, detections_enabled=False,
+                         **(BLACKOUT if blackout else {'blackout_period_s': 0.0}))
+        sampler = EstimationSampler(stagger, shooter_speed)
+    suite_timing.set_sim_clock(sampler.now_s)
     try:
-        sampler.aim_head = True
-        sampler.spin_for(RESET_S)
-        sampler.aim_head = False
-        sampler._pending, sampler.records = [], []
-        stack.set_params(detections_enabled=True)
-        start_s = sampler._now_s()
-        sampler.spin_for(SETTLE_S + duration)
+        with suite_timing.phase('reset'):
+            sampler.aim_head = True
+            sampler.spin_for(RESET_S)
+            sampler.aim_head = False
+            sampler._pending, sampler.records = [], []
+            stack.set_params(detections_enabled=True)
+        start_s = sampler.now_s()
+        with suite_timing.phase('settle'):
+            sampler.spin_for(SETTLE_S)
+        with suite_timing.phase('scored'):
+            sampler.spin_for(duration)
+        check_nodes(sampler, stack.nodes)
     finally:
+        suite_timing.set_sim_clock(None)
         sampler.stop_shooter()
         records = sampler.records
         sampler.destroy_node()

@@ -178,7 +178,7 @@ Everything under `test/` is pytest, and `colcon test` collects it.
 
 | Tier | Files | Needs |
 | --- | --- | --- |
-| unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, `cv/test_estimation_metrics.py`, ament copyright/flake8/pep257 | Python + pytest |
+| unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, `cv/test_estimation_metrics.py`, `test_suite_timing.py`, ament copyright/flake8/pep257 | Python + pytest |
 | integration | `localization/test_localization_drift.py`, `localization/test_ekf_ground_truth.py` | gz-sim and a launch tree |
 | integration | `cv/test_shot_hit.py` | a launch tree, no gz |
 | integration | `cv/test_estimation.py` | a launch tree, no gz |
@@ -196,6 +196,21 @@ cd src/sim && python3 -m pytest test -m integration
 The drift suite starts gz-sim once and a fresh `thornbots_pkg` stack for each
 scenario, resetting the sim between them (see "Run the tests");
 `restart_sim:=true` restarts gz per scenario instead. The aim bench launches
+An integration run ends with a `suite timing` table: wall seconds per case
+in sim start, bring-up, reset, settle, scored and teardown, and the RTF.
+A GUI run stops at once if no window can open (set `DISPLAY`, or
+`headless:=true`), and the CV benches fail a case whose stack lost a node.
+Before trusting a run's numbers, check its launch log, which `ros2 launch`
+names at the top of its output:
+
+```bash
+python3 tools/check_bench_log.py ~/.ros/log/<run>/launch.log
+python3 tools/check_bench_log.py /tmp/localization_drift_tests/*.log  # drift and EKF suites
+```
+
+It prints the result and the timing table, and exits 1 when a node crashed
+mid-run, a GUI couldn't open or a wait gave up.
+
 its stack once for all its cases, through `shot_hit.launch.py
 run_tests:=false` when pytest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
