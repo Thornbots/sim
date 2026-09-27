@@ -39,8 +39,8 @@ from launch.actions import (
     SetLaunchConfiguration,
     TimerAction,
 )
-from launch.conditions import IfCondition, UnlessCondition
-from launch.event_handlers import OnProcessStart
+from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     Command, LaunchConfiguration, PathJoinSubstitution)
@@ -241,25 +241,16 @@ def generate_launch_description():
             os.environ.get('GZ_SIM_RESOURCE_PATH', ''),
         ])
     )
-    # --- Start gz sim (server + optional GUI) with the requested world.
+    # --- Start the gz sim server with the requested world. The GUI comes up
+    # separately once the robot is in (gz_gui below): a GUI started with the
+    # server takes its first state before the spawn and never shows the robot.
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])
         ),
         launch_arguments={
-            'gz_args': [world, ' -r'],  # -r == run immediately, not paused
+            'gz_args': [world, ' -r -s'],  # -r: run, not paused; -s: server only
         }.items(),
-        condition=IfCondition(LaunchConfiguration('gui')),
-    )
-
-    gz_sim_headless = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])
-        ),
-        launch_arguments={
-            'gz_args': [world, ' -r -s'],  # -s == server only, no GUI
-        }.items(),
-        condition=UnlessCondition(LaunchConfiguration('gui')),
     )
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
@@ -303,6 +294,17 @@ def generate_launch_description():
             target_action=clock_bridge,
             on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
         )
+    )
+    gz_gui = RegisterEventHandler(
+        OnProcessExit(
+            target_action=spawn_robot,
+            on_exit=[IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(PathJoinSubstitution(
+                    [FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])),
+                launch_arguments={'gz_args': '-g'}.items(),
+            )],
+        ),
+        condition=IfCondition(LaunchConfiguration('gui')),
     )
 
     # --- Bridge the gpu_lidar sensor's /scan topic (defined in the model xacro)
@@ -630,7 +632,6 @@ def generate_launch_description():
         gz_resource_path,
         OpaqueFunction(function=_world_with_rtf),
         gz_sim,
-        gz_sim_headless,
         clock_bridge,
         scan_bridge,
         joint_state_bridge,
@@ -645,6 +646,7 @@ def generate_launch_description():
         camera_color_info_bridge,
         camera_depth_info_bridge,
         delayed_spawn_robot,
+        gz_gui,
         pose_emulator,
         target_driver,
         cv_target_emulator,
