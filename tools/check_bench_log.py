@@ -37,6 +37,7 @@ PATTERNS = [
     ('ODE contact overflow', re.compile(r'hash table bucket overflow'), False),
 ]
 RESULT = re.compile(r'=+ .*\b(passed|failed|error)\b.* in [\d.]+s')
+PREFIX = re.compile(r'^\[([\w.-]+)\] ')
 
 
 def check(path):
@@ -45,12 +46,15 @@ def check(path):
         lines = f.read().splitlines()
     fatal, notes, report = [], [], []
     interrupted = set()
+    reported = set()  # processes that printed pytest's result: their exit is the verdict
     shutting_down = in_timing = False
     for line in lines:
         text = re.sub(r'\x1b\[[0-9;]*m', '', line)
         body = re.sub(r'^\[[\w.-]+\] ', '', text)  # launch's per-process prefix
         if 'suite timing' in body:
             in_timing = True
+        if RESULT.search(body) and (m := PREFIX.match(text)):
+            reported.add(m.group(1))
         if in_timing:
             report.append(body)
             if RESULT.search(body):
@@ -64,7 +68,9 @@ def check(path):
             interrupted.add(m.group(1))
         elif m := DIED.search(text):
             proc, code = m.group(2), int(m.group(3))
-            if not shutting_down and proc not in interrupted:
+            if proc in reported:
+                pass  # failed tests exit 1; the result line above already says so
+            elif not shutting_down and proc not in interrupted:
                 fatal.append(f'crashed mid-run: {proc} (exit {code})')
             elif code not in (-2, -15, 0):
                 notes.append(f'unclean shutdown: {proc} (exit {code})')
