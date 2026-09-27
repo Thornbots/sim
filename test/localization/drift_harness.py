@@ -858,10 +858,15 @@ def scan_log_for_errors(log_text):
     Return the suspicious lines from a stack's combined launch log.
 
     Suspicious means ERROR-level, a traceback, or a segfault indicator.
+    robot_localization's "Failed to meet update rate!" is skipped: Jazzy logs
+    it at ERROR (Humble untagged), and at RTF 0 sim time outruns the EKF's
+    33 ms budget without any effect on the pose.
     """
     bad = []
     for line in log_text.splitlines():
         low = line.lower()
+        if 'failed to meet update rate' in low:
+            continue
         if '[error]' in low or 'traceback' in low or 'segmentation fault' in low:
             bad.append(line)
     return bad
