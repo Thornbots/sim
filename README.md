@@ -92,8 +92,9 @@ build the `TargetState`, and `point_to_cv_target` aims the head; nothing
 fires. Each case switches detections off for 1 s so the tracker starts a
 fresh track, then scores every state for 3 s + 30 s against the truth at the
 state's own stamp, so a late stamp scores as error. The ten cells take
-about a minute with rviz up, ~6x real time (`real_time_factor:=1` for real
-time); `target_tracker` sets that ceiling:
+~75 s with rviz up, ~5x real time (`real_time_factor:=1` for real time).
+Sim time waits for the nodes under test, `target_tracker`'s input among
+them (`/cv/tracker/measurement`):
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash
