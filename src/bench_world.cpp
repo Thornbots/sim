@@ -70,7 +70,9 @@ const Vector3d kHeadpitchOrigin(-0.00760542, -0.100122, 0.14235);
 const Vector3d kCameraOrigin(0.0920381, 0.0948673, 0.0566588);
 const Vector3d kMuzzleOrigin(0.0, 0.1128, 0.0);
 constexpr double kPitchLimit = 0.6;  // rad, URDF headpitch
-constexpr double kPanelSize = 0.1;
+// The Small Armor Module's face (ARCC 2026's only size), from sentry_v2's CAD.
+constexpr double kPanelWidth = 0.135;  // along the ground
+constexpr double kPanelHeight = 0.125;
 const double kPanelNormalFromUp = 75.0 * M_PI / 180.0;  // S122 cant
 
 double wrap_pi(double a) {return std::atan2(std::sin(a), std::cos(a));}
@@ -172,7 +174,7 @@ public:
         {"noise_lateral_rad", 0.003}, {"dropout_probability", 0.03},
         {"publish_latency_s", 0.06}, {"camera_latency_s", 0.0},
         {"blackout_period_s", 0.0}, {"blackout_s", 0.0},
-        {"panel_radius_x", 0.30}, {"panel_radius_y", 0.24}, {"panel_stagger_m", 0.0}})
+        {"panel_radius_x", 0.252}, {"panel_radius_y", 0.252}, {"panel_stagger_m", 0.0}})
     {
       live_[name] = declare_parameter(name, value);
     }
@@ -576,10 +578,10 @@ private:
 
       PanelDetection d;
       d.header = arr.header;
-      const double h = kPanelSize / 2.0;
+      const double hw = kPanelWidth / 2.0, hh = kPanelHeight / 2.0;
       const Vector3d corners[4] = {
-        p.pos - h * p.right + h * p.up, p.pos + h * p.right + h * p.up,
-        p.pos + h * p.right - h * p.up, p.pos - h * p.right - h * p.up};
+        p.pos - hw * p.right + hh * p.up, p.pos + hw * p.right + hh * p.up,
+        p.pos + hw * p.right - hh * p.up, p.pos - hw * p.right - hh * p.up};
       for (int i = 0; i < 4; ++i) {
         const Vector3d c = rot.transpose() * (corners[i] - cam) + noise;
         d.corners[i].x = c.x();
@@ -679,7 +681,8 @@ private:
       m.pose.position.z = p.pos.z();
       set_orientation(m, p);
       m.scale.x = 0.02;
-      m.scale.y = m.scale.z = kPanelSize;
+      m.scale.y = kPanelWidth;
+      m.scale.z = kPanelHeight;
       m.color.b = m.color.g = 1.0;
       m.color.a = 0.5;
       arr.markers.push_back(m);
@@ -692,7 +695,8 @@ private:
       det.pose.position.z = detected_->pos.z();
       set_orientation(det, *detected_);
       det.scale.x = 0.02;
-      det.scale.y = det.scale.z = kPanelSize;
+      det.scale.y = kPanelWidth;
+      det.scale.z = kPanelHeight;
       det.color.r = det.color.g = 1.0;
       det.color.a = 0.9;
     } else {

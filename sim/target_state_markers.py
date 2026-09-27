@@ -30,7 +30,7 @@ from geometry_msgs.msg import Point
 import rclpy
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
-from sim.cv_target_emulator import canted_panel_quat, PANEL_SIZE
+from sim.cv_target_emulator import canted_panel_quat, PANEL_HEIGHT, PANEL_WIDTH
 from visualization_msgs.msg import Marker, MarkerArray
 
 LIFETIME_NS = 500_000_000  # a state that stops arriving clears in 0.5 s
@@ -103,7 +103,7 @@ class TargetStateMarkers(Node):
                                         z=msg.center.z + dz)
             o = panel.pose.orientation
             o.x, o.y, o.z, o.w = canted_panel_quat(yaw)
-            panel.scale.x, panel.scale.y, panel.scale.z = 0.02, PANEL_SIZE, PANEL_SIZE
+            panel.scale.x, panel.scale.y, panel.scale.z = 0.02, PANEL_WIDTH, PANEL_HEIGHT
             out.append(panel)
         out.append(self._arrow(msg, 'state_velocity', msg.velocity,
                                self.velocity_scale_s, (1.0, 0.0, 1.0)))

@@ -24,8 +24,8 @@ One test per case, stationary then each speed, all with point_to_cv_target's
 lead on and firing at up to TEST_FIRE_HZ (40), far above the real launcher, to
 stress tracking. The stack launches once per run (the cv_stack fixture); each
 case only changes how the target moves. Every case runs twice: flat panels,
-then staggered (neighbours STAGGERED_PANEL_M, 90% of a panel's height,
-apart); --panel-layout picks one. Each case prints and asserts a score,
+then staggered (neighbours STAGGERED_PANEL_M apart, as on sentry_v2);
+--panel-layout picks one. Each case prints and asserts a score,
 the mean of hit rate and hits per expected shot (shot_hit_harness.score), so
 falling behind 40 Hz costs points. Floors are per cell (shot_hit_harness.FLOORS,
 three runs' lowest minus 10 points), falling back to STATIONARY_MIN_HIT_RATE or

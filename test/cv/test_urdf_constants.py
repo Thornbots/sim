@@ -32,6 +32,7 @@ bare Python 3 + pytest install. Launches nothing, so not `integration`.
 import ast
 import math
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -195,3 +196,46 @@ def test_armor_frames_follow_rules():
         lower_edges.append(xyz[2] - heights[name[:-4]] / 2 * math.cos(rpy[1]))
     assert max(lower_edges) - min(lower_edges) <= 0.100
     assert min(lower_edges) >= 0.060
+
+
+HARNESS = os.path.join(SIM_DIR, 'test', 'cv', 'shot_hit_harness.py')
+BENCH_WORLD = os.path.join(SIM_DIR, 'src', 'bench_world.cpp')
+GEOMETRY_TOL = 0.001  # the benches round the CAD to the millimetre
+
+
+def _urdf_armor():
+    """Return (mean radius, stagger, width, height) of sim's armor faces."""
+    root = ET.parse(SIM_URDF).getroot()
+    sizes = [tuple(float(v) for v in link.find('visual/geometry/box').get('size').split())
+             for link in root.iter('link') if link.get('name', '').startswith('armor_')]
+    xyz = [v[0] for v in _joint_origins(SIM_URDF, ARMOR_JOINTS).values()]
+    radius = sum(math.hypot(x, y) for x, y, _ in xyz) / len(xyz)
+    return radius, xyz[0][2] - xyz[1][2], sizes[0][1], sizes[0][2]
+
+
+def test_bench_panels_match_urdf():
+    # The aiming and estimation benches fake the target from these, so their
+    # scores stand for sentry_v2 only while they agree with its armor frames.
+    radius, stagger, width, height = _urdf_armor()
+    for path in (EMULATOR, HARNESS):
+        c = _module_constants(path, ('PANEL_RADIUS_X', 'PANEL_RADIUS_Y',
+                                     'PANEL_WIDTH', 'PANEL_HEIGHT'))
+        assert c['PANEL_RADIUS_X'] == pytest.approx(radius, abs=GEOMETRY_TOL), path
+        assert c['PANEL_RADIUS_Y'] == pytest.approx(radius, abs=GEOMETRY_TOL), path
+        assert c['PANEL_WIDTH'] == pytest.approx(width, abs=GEOMETRY_TOL), path
+        assert c['PANEL_HEIGHT'] == pytest.approx(height, abs=GEOMETRY_TOL), path
+    staggered = _module_constants(HARNESS, ('STAGGERED_PANEL_M',))['STAGGERED_PANEL_M']
+    assert staggered == pytest.approx(stagger, abs=GEOMETRY_TOL)
+
+    with open(BENCH_WORLD) as f:
+        cpp = f.read()
+
+    def cpp_num(pattern):
+        m = re.search(pattern, cpp)
+        assert m, f'{BENCH_WORLD} no longer matches {pattern}'
+        return float(m.group(1))
+    assert cpp_num(r'kPanelWidth = ([\d.]+)') == pytest.approx(width, abs=GEOMETRY_TOL)
+    assert cpp_num(r'kPanelHeight = ([\d.]+)') == pytest.approx(height, abs=GEOMETRY_TOL)
+    for axis in 'xy':
+        assert cpp_num(rf'"panel_radius_{axis}", ([\d.]+)') == pytest.approx(
+            radius, abs=GEOMETRY_TOL)
