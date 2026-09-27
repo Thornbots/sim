@@ -39,9 +39,11 @@ from launch.actions import (
     RegisterEventHandler,
     TimerAction,
 )
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 
 # Installed as a symlink into share/sim/launch (--symlink-install), so the real
 # path leads back to src/sim; the constant covers a copying install.
@@ -143,6 +145,14 @@ def _launch(context):
     return _tests(context) if _is_true(context, 'run_tests') else _stack(context)
 
 
+def _foxglove():
+    # launch/foxglove.launch.py; it stands down if the port is taken.
+    return IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('sim'), 'launch', 'foxglove.launch.py')),
+        condition=IfCondition(LaunchConfiguration('foxglove')))
+
+
 def generate_launch_description():
     args = [
         DeclareLaunchArgument('run_tests', default_value='true',
@@ -171,7 +181,9 @@ def generate_launch_description():
                               description='ekf suite; empty = the pytest default'),
         DeclareLaunchArgument('ekf_seconds', default_value='',
                               description='ekf suite; empty = the pytest default'),
+        DeclareLaunchArgument('foxglove', default_value=LaunchConfiguration('run_tests'),
+                              description='Foxglove bridge on :8765; defaults to run_tests'),
         DeclareLaunchArgument('pytest_args', default_value='',
                               description="extra pytest args, e.g. '-x'"),
     ]
-    return LaunchDescription(args + [OpaqueFunction(function=_launch)])
+    return LaunchDescription(args + [OpaqueFunction(function=_launch), _foxglove()])

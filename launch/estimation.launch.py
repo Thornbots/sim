@@ -39,9 +39,11 @@ from launch.actions import (
     OpaqueFunction,
     RegisterEventHandler,
 )
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 # Installed as a symlink into share/sim/launch (--symlink-install), so the real
@@ -140,6 +142,14 @@ def _tests(context, test_dir):
     return [tests, done]
 
 
+def _foxglove():
+    # launch/foxglove.launch.py; it stands down if the port is taken.
+    return IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('sim'), 'launch', 'foxglove.launch.py')),
+        condition=IfCondition(LaunchConfiguration('foxglove')))
+
+
 def generate_launch_description():
     args = [
         DeclareLaunchArgument('run_tests', default_value='true',
@@ -183,7 +193,9 @@ def generate_launch_description():
         DeclareLaunchArgument('log_dir', default_value='',
                               description='where estimation.jsonl and '
                                           'estimation_states.jsonl go'),
+        DeclareLaunchArgument('foxglove', default_value=LaunchConfiguration('run_tests'),
+                              description='Foxglove bridge on :8765; defaults to run_tests'),
         DeclareLaunchArgument('pytest_args', default_value='',
                               description="extra pytest args, e.g. '-k flat'"),
     ]
-    return LaunchDescription(args + [OpaqueFunction(function=_stack)])
+    return LaunchDescription(args + [OpaqueFunction(function=_stack), _foxglove()])
