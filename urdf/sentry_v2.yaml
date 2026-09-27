@@ -44,6 +44,12 @@ suspension:
 # Collision hulls leave out parts reaching below this height (m, output frame).
 collision_min_z: 0.03
 
+# Armor modules: one frame per face part (the module's front plate, 135 x 125 mm: the Small
+# Armor Module, the only size in ARCC 2026). The export garbles the part names; every face
+# shares this mesh.
+armor:
+  face_mesh: '^_{7}9\.stl$'
+
 sensors:
   lidar: lidar
   camera: camera_cover

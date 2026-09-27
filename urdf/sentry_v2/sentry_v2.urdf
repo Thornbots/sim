@@ -64,6 +64,14 @@
     <collision><geometry><sphere radius="0.0949"/></geometry></collision>
   </link>
   <joint name="wheel_3_spin" type="continuous"><parent link="carrier_3"/><child link="wheel_3"/><origin xyz="0 0 0"/><axis xyz="-1 -2.67949e-08 0"/></joint>
+  <link name="armor_0"><visual><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></visual><collision><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></collision></link>
+  <joint name="armor_0link" type="fixed"><parent link="root"/><child link="armor_0"/><origin xyz="0.178162 0.178426 0.230361" rpy="0 -0.261856 0.785329"/></joint>
+  <link name="armor_1"><visual><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></visual><collision><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></collision></link>
+  <joint name="armor_1link" type="fixed"><parent link="root"/><child link="armor_1"/><origin xyz="-0.177935 0.177863 0.135661" rpy="0 -0.261856 2.35613"/></joint>
+  <link name="armor_2"><visual><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></visual><collision><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></collision></link>
+  <joint name="armor_2link" type="fixed"><parent link="root"/><child link="armor_2"/><origin xyz="-0.178505 -0.178235 0.230361" rpy="0 -0.261856 -2.35627"/></joint>
+  <link name="armor_3"><visual><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></visual><collision><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></collision></link>
+  <joint name="armor_3link" type="fixed"><parent link="root"/><child link="armor_3"/><origin xyz="0.177593 -0.177673 0.135661" rpy="0 -0.261856 -0.785464"/></joint>
   <link name="lidar"/>
   <joint name="lidarlink" type="fixed"><parent link="head"/><child link="lidar"/><origin xyz="-0.119391 -0.18501 0.0968001"/></joint>
   <link name="camera"/>
