@@ -82,8 +82,11 @@ def _stack(context):
         launch_arguments=sim_args.items())
 
     backend = config['backend']
+    # No CV: nothing here scores it, and it costs CPU the stack under test needs.
     robot_args = {'real_hardware': 'false', 'localization_mode': backend,
-                  'use_ekf': config['use_ekf'], 'load_map': 'true'}
+                  'use_ekf': config['use_ekf'], 'load_map': 'true',
+                  'enable_target_tracker': 'false', 'enable_target_selector': 'false',
+                  'enable_cv_target_bridge': 'false'}
     if backend == 'slam':
         # slam_toolbox's localization mode needs a .posegraph, which the default
         # map (clean_map) lacks; ARCC26 is the one map that has one.
