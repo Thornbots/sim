@@ -19,12 +19,14 @@ Visits a fixed (x, y) grid in a snake pattern, teleporting the chassis
 to each point and dwelling briefly so SLAM integrates a scan there --
 no obstacle avoidance/reactive driving, it just jumps regardless of
 what's there. "Teleport" is a `/world/<world>/set_pose` gz-transport
-call via `gz service`; each call is preceded by a model_only
+call, in process (a `gz service` CLI call costs ~0.3 s); each call is preceded by a model_only
 WorldReset to zero joint state first. See README.md for why/how both
 are safe here.
 """
-import subprocess
+import importlib
+import re
 
+from google.protobuf import text_format
 import rclpy
 from rclpy.node import Node
 
@@ -69,18 +71,49 @@ def build_grid():
     return waypoints
 
 
+_gz_node = None
+
+
+def _gz_msg(type_name):
+    """'gz.msgs.WorldControl' -> gz.msgs10.world_control_pb2.WorldControl."""
+    name = type_name.rsplit('.', 1)[1]
+    module = re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower() + '_pb2'
+    return getattr(importlib.import_module(f'gz.msgs10.{module}'), name)
+
+
+def _gz_call(service, req, rep_cls):
+    """Call a world service with a gz.msgs request; the reply, or None on timeout."""
+    global _gz_node
+    from gz.transport13 import Node as GzNode  # gz-sim hosts only
+    if _gz_node is None:
+        _gz_node = GzNode()
+    ok, rep = _gz_node.request(f'/world/{WORLD_NAME}/{service}', req, type(req), rep_cls,
+                               int(SERVICE_TIMEOUT * 1000))
+    return rep if ok else None
+
+
+def _gz_request(service, req, rep_cls):
+    """_gz_call for a gz.msgs.Boolean reply; True if gz replied true."""
+    rep = _gz_call(service, req, rep_cls)
+    return rep is not None and rep.data
+
+
 def _gz_service(service, reqtype, reptype, req):
-    try:
-        result = subprocess.run(
-            ['gz', 'service', '-s', f'/world/{WORLD_NAME}/{service}',
-             '--reqtype', reqtype, '--reptype', reptype,
-             '--timeout', str(int(SERVICE_TIMEOUT * 1000)),
-             '--req', req],
-            capture_output=True, text=True, timeout=SERVICE_TIMEOUT + 1.0,
-        )
-    except subprocess.TimeoutExpired:
-        return False
-    return 'true' in result.stdout
+    """_gz_request with a text-format request, as `gz service --req` takes."""
+    req_cls = _gz_msg(reqtype)
+    return _gz_request(service, text_format.Parse(req, req_cls()), _gz_msg(reptype))
+
+
+def spawn_model(name, sdf, x, y, z):
+    """
+    Spawn an SDF string as `name` at (x, y, z); False if gz refused.
+
+    What `ros2 run ros_gz_sim create -string` does, without a process per
+    model. The pose overrides the SDF's own <pose>, as create's -x/-y/-z do.
+    """
+    req = _gz_msg('gz.msgs.EntityFactory')(sdf=sdf, name=name, allow_renaming=False)
+    req.pose.position.x, req.pose.position.y, req.pose.position.z = x, y, z
+    return _gz_request('create', req, _gz_msg('gz.msgs.Boolean'))
 
 
 def reset_joints():
@@ -123,6 +156,13 @@ def set_model_pose(name, x, y, z):
     return _gz_service(
         'set_pose', 'gz.msgs.Pose', 'gz.msgs.Boolean', req,
     )
+
+
+def model_names():
+    """Names of every model in the world, or None if gz didn't answer."""
+    _gz_msg('gz.msgs.Model')  # Scene's nested type; parsing fails unless loaded
+    rep = _gz_call('scene/info', _gz_msg('gz.msgs.Empty')(), _gz_msg('gz.msgs.Scene'))
+    return None if rep is None else [m.name for m in rep.model]
 
 
 def remove_model(name):

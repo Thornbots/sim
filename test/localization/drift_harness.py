@@ -51,7 +51,8 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.parameter import Parameter, parameter_value_to_python
 from sensor_msgs.msg import LaserScan
-from sim.auto_explore import remove_model, teleport
+from sim import suite_timing
+from sim.auto_explore import model_names, remove_model, spawn_model, teleport
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformListener
 
@@ -287,7 +288,7 @@ class LocalizationTestHelper(Node):
         while time.monotonic() < deadline:
             if self._scan_count >= min_scans:
                 return True
-            self._spin_wall(0.5)
+            self._spin_wall(0.1)
         return False
 
     def get_correction_tf(self, timeout=2.0):
@@ -328,10 +329,11 @@ class LocalizationTestHelper(Node):
         t = tf.transform.translation
         return (t.x, t.y)
 
-    def wait_for_correction_tf(self, timeout=30.0, poll=0.5):
+    def wait_for_correction_tf(self, timeout=30.0, poll=0.1):
+        # timeout=0: a blocking lookup sleeps without spinning, so nothing arrives.
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            v = self.get_correction_tf(timeout=0.5)
+            v = self.get_correction_tf(timeout=0.0)
             if v is not None:
                 return v
             self._spin_wall(poll)
@@ -557,16 +559,14 @@ OBSTACLE_LOOP_DWELL_SECONDS = 1.0
 # --------------------------------------------------------------------------
 
 def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
-                       size=OBSTACLE_SIZE, height=OBSTACLE_HEIGHT,
-                       timeout=15.0):
+                       size=OBSTACLE_SIZE, height=OBSTACLE_HEIGHT):
     """
     Spawn a static box into the running sim world, once.
 
-    Same `ros_gz_sim create -string <inline SDF>` mechanism as
-    spawn_robot, run as a subprocess so it can fire mid-scenario
-    instead of at stack startup. `size` is the x/y footprint, `height`
-    is z (NOT a cube), based at the ground. The next scenario's reset
-    removes it from the shared sim. See README.md.
+    gz's create service (auto_explore.spawn_model), so it can fire
+    mid-scenario instead of at stack startup. `size` is the x/y
+    footprint, `height` is z (NOT a cube), based at the ground. The next
+    scenario's reset removes it from the shared sim. See README.md.
     """
     x, y = xy
     sdf = (
@@ -579,16 +579,9 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
         '<diffuse>0.1 0.1 0.8 1</diffuse></material></visual>'
         '</link></model></sdf>'
     ).format(name=name, x=x, y=y, z=height / 2.0, s=size, h=height)
-    # create overrides the SDF <pose> with -x/-y/-z (default 0), which
-    # buried half the box.
-    cmd = ['ros2', 'run', 'ros_gz_sim', 'create', '-string', sdf,
-           '-name', name, '-allow_renaming', 'false',
-           '-x', str(x), '-y', str(y), '-z', str(height / 2.0)]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f'spawning obstacle {name!r} failed (rc={result.returncode}): '
-            f'{result.stdout}\n{result.stderr}')
+    # create overrides the SDF <pose> (default 0), which buried half the box.
+    if not spawn_model(name, sdf, x, y, height / 2.0):
+        raise RuntimeError(f'spawning obstacle {name!r} failed')
     _spawned_models.append(name)
 
 
@@ -684,6 +677,7 @@ EMULATOR_PARAMS = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stdde
                    'odom_jerk_stddev', 'odom_jerk_bias_enabled', 'odom_jerk_bias_x',
                    'odom_jerk_bias_y', 'odom_slip_ratio')
 _sim = None
+_helper = None  # shared over the run with the sim; see _shared_helper
 _emulator_defaults = None
 _spawned_models = []
 _robot_runs = 0  # numbers each scenario's robot log, so a failed bring-up keeps its own
@@ -725,9 +719,13 @@ def _start_sim(gui, helper):
         'headless': str(not gui).lower(), 'real_time_factor': REAL_TIME_FACTOR,
     }), os.path.join(LOG_DIR, 'sim.log'))
     sim.start()
-    if not helper.wait_for_raw_odom(timeout=90.0):
-        sim.stop()
-        raise RuntimeError('sim never published /sim/raw_odom; see sim.log')
+    deadline = time.monotonic() + 90.0
+    while not helper.wait_for_raw_odom(timeout=1.0):
+        died = _deaths(sim.log_text())
+        if died or time.monotonic() > deadline:
+            sim.stop()
+            raise RuntimeError('sim never published /sim/raw_odom; see sim.log'
+                               + ''.join(f'\n  {line}' for line in died))
     reply = helper.call(GetParameters, '/pose_emulator/get_parameters',
                         GetParameters.Request(names=list(EMULATOR_PARAMS)), timeout=30.0)
     defaults = {name: parameter_value_to_python(v)
@@ -735,14 +733,53 @@ def _start_sim(gui, helper):
     return sim, defaults
 
 
+def _deaths(log_text):
+    """Return a launch log's 'process has died' lines: a node that crashed or never started."""
+    return [line for line in log_text.splitlines() if 'process has died' in line]
+
+
 def stop_sim():
     """Stop the shared sim, if one is up. Safe to call when none is."""
     global _sim
-    stop_actor_driver()
-    if _sim is not None:
-        _sim.stop()
-        _sim = None
+    with suite_timing.phase('teardown'):
+        stop_actor_driver()
+        _drop_helper(_helper)
+        if _sim is not None:
+            _sim.stop()
+            _sim = None
     _spawned_models.clear()
+
+
+def _drop_helper(helper):
+    """Destroy a helper node, forgetting it if it's the shared one."""
+    global _helper
+    if helper is None:
+        return
+    suite_timing.set_sim_clock(None)
+    helper.destroy_node()
+    if helper is _helper:
+        _helper = None
+
+
+def _shared_helper(parent_frame, child_frame):
+    """
+    Return the run's helper node, its TF buffer emptied for the next stack.
+
+    A fresh node waits ~0.7 s wall for its first /clock. Reuse is safe
+    only because the shared sim's time never runs backwards. The last
+    stack is down by now, so a short spin drains its queued /tf before the
+    clear, and no lookup can chain through its transforms.
+    """
+    global _helper
+    if _helper is not None and (_helper.parent_frame, _helper.child_frame) != (
+            parent_frame, child_frame):
+        _drop_helper(_helper)
+    if _helper is None:
+        _helper = LocalizationTestHelper(parent_frame, child_frame)
+    else:
+        _helper._spin_wall(0.1)
+        _helper.tf_buffer.clear()
+    return _helper
 
 
 def _reset_sim(helper, emulator_params):
@@ -753,10 +790,18 @@ def _reset_sim(helper, emulator_params):
     for name in _spawned_models:
         if not remove_model(name):
             raise RuntimeError(f'could not remove {name!r} from the world')
-    _spawned_models.clear()
     if not teleport(*SPAWN_XY):
         raise RuntimeError('teleport back to spawn failed')
     helper.spin_for(0.5)
+    # gz removes on its next step. A box left in the loop is an unmapped
+    # obstacle for every later scenario.
+    names = model_names()
+    if names is None:
+        raise RuntimeError('gz scene/info did not answer')
+    left = sorted(set(names) & set(_spawned_models))
+    if left:
+        raise RuntimeError(f'still in the world after removal: {left}')
+    _spawned_models.clear()
     params = [Parameter(name, value=float(value) if type(value) is int else value)
               .to_parameter_msg()
               for name, value in {**_emulator_defaults, **emulator_params}.items()]
@@ -800,36 +845,42 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
         'use_ekf': str(use_ekf).lower(),
     }
     parent_frame, child_frame = BACKEND_FRAMES[backend]
-    helper = LocalizationTestHelper(parent_frame, child_frame)
-
     if RESTART_SIM:
+        helper = LocalizationTestHelper(parent_frame, child_frame)
+        suite_timing.set_sim_clock(helper.now_s)
         args.update({k: str(v).lower() if isinstance(v, bool) else v
                      for k, v in emulator.items()})
         stack = LaunchTree('stack', _launch_cmd(args), os.path.join(LOG_DIR, 'stack.log'))
         stack.start()
         return stack, helper
 
+    if _sim is not None and (_sim.proc.poll() is not None or _deaths(_sim.log_text())):
+        print('[sim] the shared sim exited or lost a process; starting a new one')
+        stop_sim()
+    with suite_timing.phase('reset'):
+        helper = _shared_helper(parent_frame, child_frame)
+    suite_timing.set_sim_clock(helper.now_s)
     try:
-        if _sim is not None and _sim.proc.poll() is not None:
-            print('[sim] the shared sim exited; starting a new one')
-            stop_sim()
         if _sim is None:
-            _sim, _emulator_defaults = _start_sim(gui, helper)
-        _reset_sim(helper, emulator)
+            with suite_timing.phase('sim_start'):
+                _sim, _emulator_defaults = _start_sim(gui, helper)
+        with suite_timing.phase('reset'):
+            _reset_sim(helper, emulator)
     except Exception:
-        helper.destroy_node()
+        _drop_helper(helper)
         raise
-    for attempt in (1, 2):
-        _robot_runs += 1
-        robot = LaunchTree('robot', _launch_cmd({**args, 'part': 'robot'}),
-                           os.path.join(LOG_DIR, f'robot_{_robot_runs}.log'))
-        robot.start()
-        if attempt == 2 or _wait_for_root_chain(helper, BRINGUP_TIMEOUT_S):
-            return ScenarioStack(robot, _sim), helper
-        print(f'[robot] {parent_frame}->root not up after {BRINGUP_TIMEOUT_S:.0f}s; '
-              'restarting the robot stack once (bring-up race, see '
-              '_wait_for_root_chain)')
-        robot.stop()
+    with suite_timing.phase('bringup'):
+        for attempt in (1, 2):
+            _robot_runs += 1
+            robot = LaunchTree('robot', _launch_cmd({**args, 'part': 'robot'}),
+                               os.path.join(LOG_DIR, f'robot_{_robot_runs}.log'))
+            robot.start()
+            if attempt == 2 or _wait_for_root_chain(helper, BRINGUP_TIMEOUT_S):
+                return ScenarioStack(robot, _sim), helper
+            print(f'[robot] {parent_frame}->root not up after {BRINGUP_TIMEOUT_S:.0f}s; '
+                  'restarting the robot stack once (bring-up race, see '
+                  '_wait_for_root_chain)')
+            robot.stop()
 
 
 def _wait_for_root_chain(helper, timeout):
@@ -843,18 +894,20 @@ def _wait_for_root_chain(helper, timeout):
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if helper.get_root_position(timeout=0.5) is not None:
+        if helper.get_root_position(timeout=0.0) is not None:
             return True
-        helper._spin_wall(0.5)
+        helper._spin_wall(0.1)
     return False
 
 
 def teardown_stack(stack, helper):
-    stop_actor_driver()
-    if helper is not None:
-        helper.destroy_node()
-    if stack is not None:
-        stack.stop()
+    """Stop a scenario's robot stack; the shared helper lives until stop_sim()."""
+    with suite_timing.phase('teardown'):
+        stop_actor_driver()
+        if helper is not _helper:
+            _drop_helper(helper)
+        if stack is not None:
+            stack.stop()
 
 
 def wait_for_stack_ready(sc, helper, min_scans=10, timeout=60.0):
@@ -868,7 +921,8 @@ def wait_for_stack_ready(sc, helper, min_scans=10, timeout=60.0):
     unhealthy or too-slow stack invalidates the scenario's
     timing-sensitive assertions), not something to silently paper over.
     """
-    ok = helper.wait_for_scans_flowing(min_scans=min_scans, timeout=timeout)
+    with suite_timing.phase('bringup'):
+        ok = helper.wait_for_scans_flowing(min_scans=min_scans, timeout=timeout)
     if ok:
         sc.log(f'stack ready: >= {min_scans} /scan messages received')
     else:
