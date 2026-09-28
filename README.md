@@ -145,6 +145,15 @@ bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
 picks the moving cases. `headless:=true` drops the gz GUI and rviz from
 either. `--show-args` on either launch lists the rest.
 
+`tools/run_suite.sh drift|ekf|shot_hit|estimation [args]` wraps any of these
+launches: it refuses to start over a running stack, tees the output to
+`/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.py` on it. It exits 0
+only when pytest passed and the checker trusts the run:
+
+```bash
+src/sim/tools/run_suite.sh drift scenario:=odom_stuck
+```
+
 ## Build
 
 `Dockerfile.thornbots` installs neither `ros-jazzy-ros-gz` nor this package.
