@@ -17,7 +17,7 @@ Launches gz sim with the ARCC_Field_2026 world and spawns the sentry robot.
 
 The robot is urdf/<model>.urdf.xacro.
 
-Usage: `ros2 launch sim sim.launch.py [gui:=false] [rviz:=false]
+Usage: `ros2 launch sim sim.launch.py [gui:=false] [rviz:=false] [foxglove:=false]
 [world:=/abs/path.sdf] [model:=sentry] [real_time_factor:=0] [odom_noise_enabled:=true]`.
 model defaults to sentry_v2. To fire a one-time odom "jerk" (odom_jerk_stddev:= sets its
 size in meters), once sim is up:
@@ -102,6 +102,10 @@ def generate_launch_description():
     rviz_arg = DeclareLaunchArgument(
         'rviz', default_value='true',
         description='Set to false to skip launching rviz2'
+    )
+    foxglove_arg = DeclareLaunchArgument(
+        'foxglove', default_value='true',
+        description='Foxglove bridge on :8765 (launch/foxglove.launch.py)'
     )
     rviz_config_arg = DeclareLaunchArgument(
         'rviz_config', default_value=default_rviz_config,
@@ -603,6 +607,13 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
 
+    # Stands down if the port is taken, e.g. by a test launch's own bridge.
+    foxglove = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('sim'), 'launch', 'foxglove.launch.py')),
+        condition=IfCondition(LaunchConfiguration('foxglove')),
+    )
+
     return LaunchDescription([
         world_arg,
         model_arg,
@@ -613,6 +624,7 @@ def generate_launch_description():
         yaw_arg,
         gui_arg,
         rviz_arg,
+        foxglove_arg,
         rviz_config_arg,
         camera_arg,
         real_time_factor_arg,
@@ -656,4 +668,5 @@ def generate_launch_description():
         cv_target_emulator,
         cv_head_aim,
         rviz,
+        foxglove,
     ])
