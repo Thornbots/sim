@@ -45,14 +45,16 @@ import time
 
 from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import Twist
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import OccupancyGrid, Odometry
 from rcl_interfaces.srv import GetParameters, SetParameters
 import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.parameter import Parameter, parameter_value_to_python
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import LaserScan
 from sim import suite_timing
+from sim.actor_driver import DEFAULT_PATHS as ACTOR_PATHS, dist_to_segment
 from sim.auto_explore import model_names, remove_model, spawn_model, teleport
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformListener
@@ -230,9 +232,28 @@ class LocalizationTestHelper(Node):
         self._raw_odom_yaw = 0.0
         self.create_subscription(
             Odometry, '/sim/raw_odom', self._on_raw_odom, 10)
+        # Latched, as slam_toolbox and map_server publish it.
+        self._map = None
+        self.create_subscription(
+            OccupancyGrid, '/map', self._on_map,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
     def _on_scan(self, msg):
         self._scan_count += 1
+
+    def _on_map(self, msg):
+        self._map = msg
+
+    def wait_for_map(self, newer_than_s, timeout=30.0):
+        """Return the first /map stamped after newer_than_s (sim s), or None on timeout."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            m = self._map
+            if m is not None and (m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
+                                  > newer_than_s):
+                return m
+            self._spin_wall(0.1)
+        return None
 
     def _on_raw_odom(self, msg):
         p = msg.pose.pose.position
@@ -643,6 +664,42 @@ def stop_actor_driver():
     if _actor_driver is not None:
         _actor_driver.stop()
         _actor_driver = None
+
+
+# Half the actors' 0.3 m box plus a margin for localization error: the band
+# around each path whose /map cells a box's faces can mark.
+ACTOR_BAND_M = 0.3
+
+
+def _actor_band_occupied(grid):
+    """World (x, y) of occupied /map cells within ACTOR_BAND_M of an actor path."""
+    info = grid.info
+    res, ox, oy = info.resolution, info.origin.position.x, info.origin.position.y
+    reach = int(math.ceil(ACTOR_BAND_M / res))
+    cells = set()
+    for i in range(ACTOR_COUNT):
+        ax, ay, bx, by = ACTOR_PATHS[4 * i:4 * i + 4]
+        steps = max(1, int(math.hypot(bx - ax, by - ay) / (res / 2)))
+        for k in range(steps + 1):
+            x, y = ax + (bx - ax) * k / steps, ay + (by - ay) * k / steps
+            cx, cy = int((x - ox) // res), int((y - oy) // res)
+            for dx in range(-reach, reach + 1):
+                for dy in range(-reach, reach + 1):
+                    wx, wy = ox + (cx + dx + 0.5) * res, oy + (cy + dy + 0.5) * res
+                    inside = 0 <= cx + dx < info.width and 0 <= cy + dy < info.height
+                    if inside and dist_to_segment(wx, wy, ax, ay, bx, by) <= ACTOR_BAND_M:
+                        cells.add((cx + dx, cy + dy))
+    return {(round(ox + (cx + 0.5) * res, 3), round(oy + (cy + 0.5) * res, 3))
+            for cx, cy in cells if grid.data[cy * info.width + cx] > 50}
+
+
+def _remove_actors():
+    """Take the actors out of the world now, not at the next reset."""
+    stop_actor_driver()
+    for i in range(ACTOR_COUNT):
+        name = f'{ACTOR_PREFIX}_{i}'
+        if name in _spawned_models and remove_model(name):
+            _spawned_models.remove(name)
 
 
 class Scenario:
@@ -1347,6 +1404,15 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None):
                    f'the loop this scenario is about to drive, see '
                    f'OBSTACLE_LOOP_LEGS')
         elif obstacles == 'actors':
+            # Under slam, /map's cells on the actors' paths before they
+            # spawn, to tell a ghost wall from the saved map's own.
+            band_before = None
+            if backend == 'slam':
+                grid = helper.wait_for_map(helper.now_s())
+                band_before = None if grid is None else _actor_band_occupied(grid)
+                if band_before is None:
+                    sc.result(False, 'no fresh /map before the actors spawned')
+                    return sc
             if not start_actor_driver(helper):
                 sc.result(False, 'actor_driver did not spawn its actors; see '
                           f'actor_driver_{_actor_runs}.log')
@@ -1402,8 +1468,23 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None):
             sc.result(False, 'actor_driver exited mid-loop; see '
                       f'actor_driver_{_actor_runs}.log')
             return sc
-        # TODO: under backend slam, sample /map on the actors' paths at
-        # the end and fail if their cells stayed occupied.
+        ghosts = []
+        if obstacles == 'actors' and backend == 'slam':
+            # Remove the actors, drive one more lap so slam_toolbox's scan
+            # buffer (10) holds only scans without them, then read a /map
+            # built after it. A path cell occupied now but not before
+            # the actors spawned is a robot kept as a wall.
+            _remove_actors()
+            for vx, vy, duration in OBSTACLE_LOOP_LEGS:
+                helper.drive(vx, vy, duration)
+            grid = helper.wait_for_map(helper.now_s())
+            if grid is None:
+                sc.result(False, 'no fresh /map after the actors left')
+                return sc
+            ghosts = sorted(_actor_band_occupied(grid) - band_before)
+            sc.log(f'/map cells within {ACTOR_BAND_M} m of the actor paths: '
+                   f'{len(band_before)} occupied before, {len(ghosts)} newly '
+                   f'occupied after{": " + str(ghosts[:10]) if ghosts else ""}')
 
         max_delta = max(samples)
         log_errs = scan_log_for_errors(stack.log_text())
@@ -1411,14 +1492,16 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None):
             log_errs += scan_log_for_errors(_actor_driver.log_text())
 
         ok = (max_delta < MAX_DELTA_THRESHOLD
-              and not log_errs)
+              and not log_errs and not ghosts)
         obstacle_note = {'box': ' past the obstacle',
                          'actors': ' among moving actors'}.get(obstacles, '')
         sc.result(ok,
                   f'max {metric} = {max_delta:.4f} m '
                   f'over {OBSERVE_SECONDS:.0f}s driving the cornering '
                   f'loop{obstacle_note} (threshold {MAX_DELTA_THRESHOLD} m), '
-                  f'log_errors={len(log_errs)}')
+                  + (f'ghost map cells={len(ghosts)}, ' if backend == 'slam'
+                     and obstacles == 'actors' else '')
+                  + f'log_errors={len(log_errs)}')
         return sc
     finally:
         teardown_stack(stack, helper)
