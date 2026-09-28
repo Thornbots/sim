@@ -85,7 +85,7 @@ def _stack(context):
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
         launch_arguments={
-            'real_hardware': 'false', 'localization_mode': 'none', 'use_ekf': 'false',
+            'real_hardware': 'false', 'localization_mode': 'none', 'use_rf2o': 'false',
             'enable_cv_target_bridge': 'false', 'enable_target_selector': 'false',
             'enable_target_tracker': 'false',
         }.items())

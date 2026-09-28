@@ -15,7 +15,7 @@
 """
 Ground-truth accuracy probe for EKF-fused odometry.
 
-That is backend='none' plus use_ekf=True in drift_harness's terms. Answers
+That is backend='none' plus use_rf2o=True in drift_harness's terms. Answers
 what the drift suite structurally can't (see README.md): does fusing
 /scan_odom into /odom via ekf_node actually beat raw /odom, scored against
 /sim/raw_odom? Importable machinery only -- test_ekf_ground_truth.py holds
@@ -135,8 +135,8 @@ def run(gui, slip_ratio, drift_stddev, observe_seconds):
     probe = None
     try:
         # Wheel odometry error ON -- the whole point (see module docstring).
-        # backend='none' (no map layer), use_ekf=True -- the old standalone
-        # 'ekf' backend, in the drift suite's two-axis backend/use_ekf terms.
+        # backend='none' (no map layer), use_rf2o=True -- the old standalone
+        # 'ekf' backend, in the drift suite's two-axis backend/use_rf2o terms.
         stack, helper = _drift.run_stack(
             gui, 'none', True,
             odom_noise_enabled=True,
