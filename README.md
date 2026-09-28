@@ -277,6 +277,7 @@ ros2 launch sim sim.launch.py x:=1.0 y:=0.5 yaw:=0.0     # spawn pose (z:= too)
 ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
 ros2 launch sim sim.launch.py camera:=true               # add the camera, bridge /color and /depth
 ros2 launch sim sim.launch.py model:=sentry              # the old collision-free model
+ros2 launch sim sim.launch.py foxglove:=false            # no Foxglove bridge on :8765
 ```
 
 `model:=` picks the robot: `sentry_v2` (the default, from the CAD) or
@@ -313,7 +314,8 @@ cv_dropout_probability:=0.03  # per-sample detection drop, placeholder
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
 
-To watch a run from another machine, start the Foxglove bridge next to it:
+`sim.launch.py` and every test launch start a Foxglove bridge on port 8765
+(`foxglove:=false` turns it off). To run one next to anything else:
 
 ```bash
 ros2 launch sim foxglove.launch.py   # port:=8765

@@ -76,7 +76,9 @@ def _stack(context):
     config = context.launch_configurations
     part = config['part']
     gui = 'false' if _is_true(context, 'headless') else 'true'
-    sim_args = {'gui': gui, 'rviz': gui, 'real_time_factor': config['real_time_factor']}
+    # foxglove: this launch's own bridge (_foxglove) covers the whole run.
+    sim_args = {'gui': gui, 'rviz': gui, 'foxglove': 'false',
+                'real_time_factor': config['real_time_factor']}
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
