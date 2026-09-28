@@ -87,6 +87,12 @@ and exits 1 on a mid-run crash, a missing display or a wait that gave up.
 launch with `env DISPLAY=:2` (`ls /tmp/.X11-unix`), or pytest's preflight
 stops a GUI run at once.
 
+`tools/run_suite.sh` does the live-session check, the launch and the
+`check_bench_log.py` pass in one go; the T3 `Sim:` actions in `../t3.json`
+call it through `docker exec -it` so Ctrl-C reaches the stack. From the host
+it needs a TTY (`dexec.sh` has none), so use the launches above for detached
+runs.
+
 Before launching anything, check for a live session:
 
 ```bash
