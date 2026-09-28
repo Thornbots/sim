@@ -21,7 +21,8 @@ so a plain `colcon test --packages-select sim` stays fast and doesn't
 collide with a live sim session. Opt in with `python3 -m pytest test -m
 integration` from src/sim (colcon's --pytest-args doesn't reach an
 ament_cmake package), or a suite's launch file, whose args map onto the
-options declared here. Integration runs end with a per-phase time split
+options declared here. `on_demand` tests are skipped even then unless
+--run-on-demand. Integration runs end with a per-phase time split
 (sim.suite_timing).
 """
 import ctypes
@@ -41,6 +42,10 @@ def pytest_addoption(parser):
         '--restart-sim', action='store_true',
         help='bring the sim up fresh for every localization scenario instead '
              'of once per run (the old behaviour; compare verdicts with it)')
+    group.addoption(
+        '--run-on-demand', action='store_true',
+        help='also run on_demand tests (test_ekf_ground_truth.py), which the '
+             'standard integration tier skips')
     group.addoption(
         '--real-time-factor', default='0',
         help="sim.launch.py's real_time_factor for every stack a suite "
@@ -182,6 +187,16 @@ def _display_error():
         return f'cannot open DISPLAY={display}'
     x11.XCloseDisplay(handle)
     return None
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip on_demand tests unless --run-on-demand."""
+    if config.getoption('--run-on-demand'):
+        return
+    skip = pytest.mark.skip(reason='on_demand: pass --run-on-demand, or suite:=ekf')
+    for item in items:
+        if item.get_closest_marker('on_demand'):
+            item.add_marker(skip)
 
 
 def pytest_collection_finish(session):

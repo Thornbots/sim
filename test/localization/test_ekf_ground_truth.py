@@ -20,7 +20,8 @@ structurally can't answer (see README.md). Runs the stack at backend='none'
 with use_rf2o=True, drives the same cornering loop the drift scenarios use,
 and compares mean position error.
 
-Marked `integration` (launches gz-sim), so a plain `colcon test` skips it;
+Marked `integration` (launches gz-sim) and `on_demand` (a specialized check,
+not part of the standard tier), so `pytest -m integration` skips it too;
 `ros2 launch sim localization_tests.launch.py suite:=ekf` runs it. Options:
 --headless, --ekf-slip-ratio, --ekf-drift-stddev, --ekf-seconds (sim
 seconds), --speed, --real-time-factor.
@@ -29,7 +30,7 @@ import drift_harness
 import ekf_diag_harness
 import pytest
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.on_demand]
 
 
 def test_ekf_beats_raw_odom(request, gui, ros_context):
