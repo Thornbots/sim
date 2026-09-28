@@ -243,7 +243,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   warping again.
 - **Under `--backend none` the drift scenarios score ground-truth error**
   (`_truth_error`), since `odom->root` there is the robot's
-  own motion. Built 2026-09-25, not yet run.
+  own motion. Six pass at `--use-rf2o` (2026-09-28); `scan_degraded`
+  fails there by design, since nothing corrects once the scan recovers.
 - **`noise_correction`'s growth_ratio compares the two halves of a run**, so
   a run that starts clean fails hardest. Don't read its verdict as absolute
   accuracy.
