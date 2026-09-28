@@ -27,8 +27,9 @@ below) and use_rf2o (whether odom->root is EKF-fused, layerable on any
 backend -- the old standalone 'ekf' backend is now backend='none' plus
 use_rf2o=True). Scenarios, in SCENARIOS order: baseline, noise_correction,
 drift_correction, drift_correction_obstacle, moving_obstacles,
-real_accel, jerk_with_motion, odom_stuck, scan_degraded. See README.md for WHY THIS EXISTS, BACKENDS (per-backend TF
-edge), and SCENARIOS (pass conditions/rationale).
+real_accel, jerk_with_motion, odom_stuck, scan_degraded. See README.md
+for WHY THIS EXISTS, BACKENDS (per-backend TF edge), and SCENARIOS (pass
+conditions/rationale).
 
 One sim per run: the first run_stack() starts gz, and every scenario after
 that resets the robot and pose_emulator and relaunches only auto.launch.py.
