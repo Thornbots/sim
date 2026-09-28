@@ -179,6 +179,8 @@ public:
       live_[name] = declare_parameter(name, value);
     }
     detections_enabled_ = declare_parameter("detections_enabled", true);
+    // Setting it puts the target at rest mid-path, facing this yaw (rad).
+    declare_parameter("target_reset_yaw", 0.0);
     frame_rate_hz_ = declare_parameter("frame_rate_hz", 60.0);
     hfov_ = declare_parameter("horizontal_fov", 1.5184);
     const double aspect = declare_parameter("image_height", 480) /
@@ -212,6 +214,10 @@ public:
             live_[p.get_name()] = p.as_double();
           } else if (p.get_name() == "detections_enabled") {
             detections_enabled_ = p.as_bool();
+          } else if (p.get_name() == "target_reset_yaw") {
+            s_ = vs_ = omega_ = 0.0;
+            direction_ = 1.0;
+            target_yaw_ = wrap_pi(p.as_double());
           }
         }
         rcl_interfaces::msg::SetParametersResult result;
