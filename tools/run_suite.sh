@@ -48,8 +48,9 @@ fi
 echo
 echo "== check_bench_log.py (launch log: $LOG)"
 python3 "$SIM_DIR/tools/check_bench_log.py" "${LOGS[@]}"; CHECK=$?
-# pytest's summary line, colors stripped: "== 9 passed, 1 failed in 58.38s =="
-SUMMARY=$(sed 's/\x1b\[[0-9;]*m//g' "$LOG" | grep -E '=+ .* in [0-9.]+s =+' | tail -1)
+# pytest's summary line, colors stripped: "== 9 passed, 1 failed in 58.38s ==";
+# past 60s pytest appends "(0:03:34)" after the seconds.
+SUMMARY=$(sed 's/\x1b\[[0-9;]*m//g' "$LOG" | grep -E '=+ .* in [0-9.]+s( \([0-9:]+\))? =+' | tail -1)
 if [[ "$SUMMARY" != *passed* || "$SUMMARY" =~ failed|error ]]; then
     echo "run_suite.sh: pytest did not pass: ${SUMMARY:-no summary line}" >&2
     exit 1
