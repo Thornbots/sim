@@ -23,9 +23,9 @@ time, so the stack can run at any real_time_factor.
 
 Two independent axes, mirroring auto.launch.py: backend
 {slam,amcl,none} (who owns map->odom -- 'mapping' isn't offered, see
-below) and use_ekf (whether odom->root is EKF-fused, layerable on any
+below) and use_rf2o (whether odom->root is EKF-fused, layerable on any
 backend -- the old standalone 'ekf' backend is now backend='none' plus
-use_ekf=True). Scenarios, in SCENARIOS order: baseline, noise_correction,
+use_rf2o=True). Scenarios, in SCENARIOS order: baseline, noise_correction,
 drift_correction, drift_correction_obstacle, moving_obstacles,
 jerk_with_motion, odom_stuck. See README.md for WHY THIS EXISTS, BACKENDS (per-backend TF
 edge), and SCENARIOS (pass conditions/rationale).
@@ -472,7 +472,7 @@ class LocalizationTestHelper(Node):
 LOG_DIR = '/tmp/localization_drift_tests'
 
 # Which TF edge each backend's "correction" actually shows up on -- see
-# README.md's BACKENDS section. Independent of --use-ekf: map->odom is
+# README.md's BACKENDS section. Independent of --use-rf2o: map->odom is
 # always owned by slam/amcl regardless of EKF fusion underneath it; 'none'
 # has no map layer at all, so odom->root (whatever's feeding it) is the
 # only edge there is.
@@ -821,7 +821,7 @@ def _reset_sim(helper, emulator_params):
     helper.call(Trigger, '/pose_emulator/reset', Trigger.Request())
 
 
-def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
+def run_stack(gui, backend, use_rf2o, odom_noise_enabled, odom_jerk_stddev=None,
               odom_drift_stddev=None, odom_jitter_stddev=None,
               odom_slip_ratio=0.02, odom_jerk_bias_xy=None):
     """
@@ -850,7 +850,7 @@ def run_stack(gui, backend, use_ekf, odom_noise_enabled, odom_jerk_stddev=None,
         'headless': str(not gui).lower(),
         'real_time_factor': REAL_TIME_FACTOR,
         'backend': backend,
-        'use_ekf': str(use_ekf).lower(),
+        'use_rf2o': str(use_rf2o).lower(),
     }
     parent_frame, child_frame = BACKEND_FRAMES[backend]
     if RESTART_SIM:
@@ -963,7 +963,7 @@ def scan_log_for_errors(log_text):
 # Scenarios
 # --------------------------------------------------------------------------
 
-def scenario_baseline(gui, backend, use_ekf):
+def scenario_baseline(gui, backend, use_rf2o):
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
     sc = Scenario('baseline', f'no noise: stack comes up cleanly, {edge} '
@@ -972,7 +972,7 @@ def scenario_baseline(gui, backend, use_ekf):
     stack = helper = None
     try:
         stack, helper = run_stack(
-            gui, backend, use_ekf, odom_noise_enabled=False)
+            gui, backend, use_rf2o, odom_noise_enabled=False)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
                       'in time -- see log above')
@@ -1016,7 +1016,7 @@ def scenario_baseline(gui, backend, use_ekf):
         teardown_stack(stack, helper)
 
 
-def scenario_noise_correction(gui, backend, use_ekf):
+def scenario_noise_correction(gui, backend, use_rf2o):
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
     sc = Scenario('noise_correction',
@@ -1026,7 +1026,7 @@ def scenario_noise_correction(gui, backend, use_ekf):
     stack = helper = None
     try:
         stack, helper = run_stack(
-            gui, backend, use_ekf, odom_noise_enabled=True)
+            gui, backend, use_rf2o, odom_noise_enabled=True)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
                       'in time -- see log above')
@@ -1134,7 +1134,7 @@ def _leg_for_displacement(dx, dy, speed=4.0):
     return speed * dx / distance, speed * dy / distance, duration
 
 
-def scenario_jerk_with_motion(gui, backend, use_ekf):
+def scenario_jerk_with_motion(gui, backend, use_rf2o):
     sc = Scenario('jerk_with_motion',
                   f'models getting hit by another robot or running into a '
                   f'wall -- a discrete collision impulse, not gradual wheel '
@@ -1174,7 +1174,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
     JERK_STDDEV = 0.24
     try:
         stack, helper = run_stack(
-            gui, backend, use_ekf, odom_noise_enabled=False,
+            gui, backend, use_rf2o, odom_noise_enabled=False,
             odom_jerk_stddev=JERK_STDDEV, odom_jerk_bias_xy=OBSTACLE_XY)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
@@ -1300,7 +1300,7 @@ def scenario_jerk_with_motion(gui, backend, use_ekf):
 MAX_DELTA_THRESHOLD = 0.40  # meters
 
 
-def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, obstacles=None):
+def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None):
     """
     Drive the cornering loop shared by both drift_correction scenarios.
 
@@ -1316,7 +1316,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, obstacles=None):
     stack = helper = None
     try:
         stack, helper = run_stack(
-            gui, backend, use_ekf, odom_noise_enabled=False,
+            gui, backend, use_rf2o, odom_noise_enabled=False,
             odom_slip_ratio=0.15)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
@@ -1424,7 +1424,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, obstacles=None):
         teardown_stack(stack, helper)
 
 
-def scenario_drift_correction_obstacle(gui, backend, use_ekf):
+def scenario_drift_correction_obstacle(gui, backend, use_rf2o):
     sc = Scenario(
         'drift_correction_obstacle',
         'strictly harder version of drift_correction: same hard-cornering '
@@ -1445,10 +1445,10 @@ def scenario_drift_correction_obstacle(gui, backend, use_ekf):
         'needle versus drift_correction -- see BACKENDS in the module '
         'docstring.')
     return _run_cornering_loop_scenario(
-        sc, gui, backend, use_ekf, obstacles='box')
+        sc, gui, backend, use_rf2o, obstacles='box')
 
 
-def scenario_drift_correction(gui, backend, use_ekf):
+def scenario_drift_correction(gui, backend, use_rf2o):
     sc = Scenario(
         'drift_correction',
         'tests lidar relocalization performance against accumulated '
@@ -1467,10 +1467,10 @@ def scenario_drift_correction(gui, backend, use_ekf):
         'matching on raw /scan, feeding /scan_odom into ekf_node, so lidar '
         'data does drive odom->root here -- see BACKENDS in the module '
         'docstring for the scan-to-scan vs scan-to-map distinction.')
-    return _run_cornering_loop_scenario(sc, gui, backend, use_ekf)
+    return _run_cornering_loop_scenario(sc, gui, backend, use_rf2o)
 
 
-def scenario_moving_obstacles(gui, backend, use_ekf):
+def scenario_moving_obstacles(gui, backend, use_rf2o):
     sc = Scenario(
         'moving_obstacles',
         'drift_correction with three unmapped boxes (actor_driver) crossing '
@@ -1479,7 +1479,7 @@ def scenario_moving_obstacles(gui, backend, use_ekf):
         'sample also logs map->root error against /sim/raw_odom. Also fails '
         'if actor_driver dies mid-loop. Compare against drift_correction.')
     return _run_cornering_loop_scenario(
-        sc, gui, backend, use_ekf, obstacles='actors')
+        sc, gui, backend, use_rf2o, obstacles='actors')
 
 
 def _truth_error(helper):
@@ -1505,7 +1505,7 @@ def _truth_error_str(helper):
 ODOM_STUCK_MIN_TF_SPREAD = 0.01  # meters
 
 
-def scenario_odom_stuck(gui, backend, use_ekf):
+def scenario_odom_stuck(gui, backend, use_rf2o):
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
     sc = Scenario(
@@ -1527,7 +1527,7 @@ def scenario_odom_stuck(gui, backend, use_ekf):
     stack = helper = None
     try:
         stack, helper = run_stack(
-            gui, backend, use_ekf, odom_noise_enabled=False)
+            gui, backend, use_rf2o, odom_noise_enabled=False)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
                       'in time -- see log above')
@@ -1644,7 +1644,7 @@ def _set_scan_blind_sector(helper, start, end):
         raise RuntimeError(f'lidar_self_filter rejected params: {rejected}')
 
 
-def scenario_scan_degraded(gui, backend, use_ekf):
+def scenario_scan_degraded(gui, backend, use_rf2o):
     sc = Scenario(
         'scan_degraded',
         'blanks 300 deg of /scan (lidar_self_filter blind sector) for two '
@@ -1666,7 +1666,7 @@ def scenario_scan_degraded(gui, backend, use_ekf):
     phase = 'before'
     try:
         stack, helper = run_stack(
-            gui, backend, use_ekf, odom_noise_enabled=False,
+            gui, backend, use_rf2o, odom_noise_enabled=False,
             odom_slip_ratio=0.15)
         if not wait_for_stack_ready(sc, helper):
             sc.result(False, 'stack failed to reach a healthy /scan rate '
@@ -1761,7 +1761,7 @@ def set_real_time_factor(rtf):
     REAL_TIME_FACTOR = rtf
 
 
-def run_scenario(name, gui, backend, use_ekf):
+def run_scenario(name, gui, backend, use_rf2o):
     """
     Run one scenario by name and returns its Scenario record.
 
@@ -1769,5 +1769,5 @@ def run_scenario(name, gui, backend, use_ekf):
     run, not one per scenario).
     """
     print(f'\n=== Running scenario: {name} (backend={backend}, '
-          f'use_ekf={use_ekf}) ===')
-    return SCENARIOS[name](gui, backend, use_ekf)
+          f'use_rf2o={use_rf2o}) ===')
+    return SCENARIOS[name](gui, backend, use_rf2o)

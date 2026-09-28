@@ -57,13 +57,13 @@ off.
 
 Every scenario failing "stack NOT ready" means the container has the old
 discovery-server DDS profile; see the `isaac-ros-docker` skill. The
-target configs are `--backend amcl --use-ekf` for drift and the defaults for
+target configs are `--backend amcl --use-rf2o` for drift and the defaults for
 shot-hit; `README.md`'s "Running the current target tests" lists the commands.
 
-`--backend` is `slam`, `amcl`, or `none` (who owns `map->odom`). `--use-ekf` is
+`--backend` is `slam`, `amcl`, or `none` (who owns `map->odom`). `--use-rf2o` is
 a separate axis and layers EKF fusion of `odom->root` on top of any of them;
 there is no `ekf` backend. It is on by default, matching `auto.launch.py`;
-`--no-use-ekf` is the way back to raw `/odom` passthrough.
+`--no-use-rf2o` is the way back to raw `/odom` passthrough.
 
 `test/localization/` is `test_localization_drift.py` (one test per scenario) and
 `test_ekf_ground_truth.py`, both over `drift_harness.py`/`ekf_diag_harness.py`.
@@ -158,7 +158,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   The drift harness waits for `parent->root` after each robot start and
   restarts the stack once if it never comes (`_wait_for_root_chain`). The
   robot can hit the same race at boot; unfixed there.
-- **The drift suite passes 7/7 on `sentry_v2` at `--backend amcl --use-ekf`,**
+- **The drift suite passes 7/7 on `sentry_v2` at `--backend amcl --use-rf2o`,**
   unthrottled with the A2M8 lidar and per-scan rf2o, GUI on, 227 s
   (2026-09-26: drift_correction 0.16 m, with obstacle 0.15 m,
   moving_obstacles 0.17 m, against 0.40 m).

@@ -140,7 +140,7 @@ shortening what gets scored. On the dev laptop with `sentry_v2`, the drift
 suite runs about 1.2x real time, GUI or headless alike.
 
 Add an argument to run part of a suite. `scenario:=odom_stuck` runs one drift
-scenario and `backend:=slam` or `use_ekf:=false` changes the stack. For the
+scenario and `backend:=slam` or `use_rf2o:=false` changes the stack. For the
 bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
 picks the moving cases. `headless:=true` drops the gz GUI and rviz from
 either. `--show-args` on either launch lists the rest.
@@ -458,8 +458,8 @@ at the scan plane, and still needs checking against a real `/scan_raw` (see
 
 Integration suite for `sentry_localization`'s drift and jerk correction
 against `pose_emulator.py`'s noise model. It mirrors `auto.launch.py`'s two
-axes: `--backend slam/amcl/none` (who owns `map->odom`) and `--use-ekf` /
-`--no-use-ekf` (whether `odom->root` is EKF-fused; on by default, matching
+axes: `--backend slam/amcl/none` (who owns `map->odom`) and `--use-rf2o` /
+`--no-use-rf2o` (whether `odom->root` is EKF-fused; on by default, matching
 `auto.launch.py`). For each scenario it resets the shared sim, launches the
 robot stack, drives, samples the correction TF, asserts, and stops the robot
 stack. The sim itself stops after the last scenario.
@@ -478,9 +478,9 @@ Each scenario watches the edge the backend owns (`BACKEND_FRAMES`):
 | --- | --- | --- |
 | `slam` | `map->odom` | distance since last scan (`minimum_travel_distance`) |
 | `amcl` | `map->odom` | `update_min_d`/`update_min_a` |
-| `none` | `odom->root` | no map node; `ekf_node` unless `--no-use-ekf`, then raw `/odom` |
+| `none` | `odom->root` | no map node; `ekf_node` unless `--no-use-rf2o`, then raw `/odom` |
 
-`--use-ekf` swaps `odom->root`'s source to `ekf_node` and leaves `map->odom`
+`--use-rf2o` swaps `odom->root`'s source to `ekf_node` and leaves `map->odom`
 alone. `mapping` isn't offered, since it builds a map rather than being scored
 against one.
 
@@ -496,7 +496,7 @@ so should `moving_obstacles`.
 amcl with and without EKF under slip, measured 2026-07-26 against a 0.30m
 bound; verdicts shown against today's 0.40m `MAX_DELTA_THRESHOLD`:
 
-| `odom_slip_ratio` | `amcl` | `amcl` + `use_ekf:=true` |
+| `odom_slip_ratio` | `amcl` | `amcl` + `use_rf2o:=true` |
 | --- | --- | --- |
 | 0.0 | 0.1478 m (PASS) | 0.2043 m (PASS) |
 | 0.25 | 0.4033 m (**FAIL**) | 0.1642 m (PASS) |
@@ -504,7 +504,7 @@ bound; verdicts shown against today's 0.40m `MAX_DELTA_THRESHOLD`:
 At zero slip `/odom` is near perfect and fusing rf2o's noise only hurts.
 Under slip the EKF turns a fail into a pass. That was the first sign it helps
 a backend that owns a map. 0.25 is harsher than the defaults (0.02, or 0.15 in drift
-scenarios). `slam --use-ekf` measured worse than plain `slam`; see
+scenarios). `slam --use-rf2o` measured worse than plain `slam`; see
 `sentry_localization/README.md`.
 
 #### Scenarios
@@ -547,7 +547,7 @@ The suite runs them in this order.
    and pairwise TF spread exceeds `ODOM_STUCK_MIN_TF_SPREAD` (1cm).
    Measured 2026-07-27: `amcl` fails, stuck at 0.0000m for 30s, because the
    scan-match gate runs on odom-reported travel and frozen odom never reopens
-   it. The stack really does depend on odometry to stay live. `amcl --use-ekf`
+   it. The stack really does depend on odometry to stay live. `amcl --use-rf2o`
    passes at 1.3071m, because the EKF keeps reporting travel. Passing isn't
    tracking: 2026-09-25 it passed at 1.35m while `odom->root` stayed inside
    about 1m and ground-truth error cycled 0.2-3.9m per lap. rf2o seeds each

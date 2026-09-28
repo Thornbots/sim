@@ -22,7 +22,7 @@ themselves live in drift_harness.py.
 Launches gz-sim and the full sentry stack, so every test here is marked
 `integration` and skipped by a plain `colcon test`;
 `ros2 launch sim localization_tests.launch.py` runs it. Options: --backend
-{slam,amcl,none}, --use-ekf, --scenario NAME, --headless, --speed M/S,
+{slam,amcl,none}, --use-rf2o, --scenario NAME, --headless, --speed M/S,
 --real-time-factor, --restart-sim (see test/conftest.py). See README.md for WHY THIS
 EXISTS, BACKENDS and SCENARIOS.
 """
@@ -73,12 +73,12 @@ def real_time_factor(request):
 
 def test_scenario(scenario_name, request, gui, ros_context):
     backend = request.config.getoption('--backend')
-    use_ekf = request.config.getoption('--use-ekf')
+    use_rf2o = request.config.getoption('--use-rf2o')
 
-    sc = drift_harness.run_scenario(scenario_name, gui, backend, use_ekf)
+    sc = drift_harness.run_scenario(scenario_name, gui, backend, use_rf2o)
 
     detail = '\n'.join(sc.details)
     if sc.skipped:
         pytest.skip(detail)
     assert sc.passed, f'{scenario_name} (backend={backend}, ' \
-                      f'use_ekf={use_ekf}) failed:\n{detail}'
+                      f'use_rf2o={use_rf2o}) failed:\n{detail}'

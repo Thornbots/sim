@@ -17,7 +17,7 @@ Asserts that EKF fusion of /scan_odom into /odom actually beats raw /odom.
 
 Scored against /sim/raw_odom ground truth -- the question the drift suite
 structurally can't answer (see README.md). Runs the stack at backend='none'
-with use_ekf=True, drives the same cornering loop the drift scenarios use,
+with use_rf2o=True, drives the same cornering loop the drift scenarios use,
 and compares mean position error.
 
 Marked `integration` (launches gz-sim), so a plain `colcon test` skips it;
