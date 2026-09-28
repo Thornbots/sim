@@ -241,6 +241,9 @@ def generate_launch_description():
             os.environ.get('GZ_SIM_RESOURCE_PATH', ''),
         ])
     )
+    # --- gz-transport resolves the hostname unless GZ_IP is set, which cost
+    # 20 s per process on a host with slow DNS. Everything here is local.
+    gz_ip = SetEnvironmentVariable(name='GZ_IP', value=os.environ.get('GZ_IP', '127.0.0.1'))
     # --- Start the gz sim server with the requested world. The GUI comes up
     # separately once the robot is in (gz_gui below): a GUI started with the
     # server takes its first state before the spawn and never shows the robot.
@@ -630,6 +633,7 @@ def generate_launch_description():
         cv_publish_latency_s_arg,
         cv_camera_latency_s_arg,
         gz_resource_path,
+        gz_ip,
         OpaqueFunction(function=_world_with_rtf),
         gz_sim,
         clock_bridge,

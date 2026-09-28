@@ -132,6 +132,11 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Open
 
+- **gz-transport needs `GZ_IP`** on a host whose DNS stalls on its own
+  hostname (this laptop, 2026-09-28: `getent hosts archlinux` takes 10 s).
+  Without it every gz `Node()` took 20 s, pose_emulator's `trigger_jerk`
+  outlived the harness's 10 s wait, and each run's first reset took 21 s.
+  `sim.launch.py` and `auto_explore._gz_call` default it to `127.0.0.1`.
 - **Sim speed: the full stack caps at RTF ~1.55, cause unknown.** Idle
   `sim.launch.py` sits there with GUI or headless, rviz or not, and with the
   field collision simplified, so neither physics nor rendering sets it.

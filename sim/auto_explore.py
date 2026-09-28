@@ -24,6 +24,7 @@ WorldReset to zero joint state first. See README.md for why/how both
 are safe here.
 """
 import importlib
+import os
 import re
 
 from google.protobuf import text_format
@@ -86,6 +87,9 @@ def _gz_call(service, req, rep_cls):
     global _gz_node
     from gz.transport13 import Node as GzNode  # gz-sim hosts only
     if _gz_node is None:
+        # Without GZ_IP a Node resolves the hostname first, 20 s on a host
+        # whose DNS stalls (2026-09-28): longer than any caller waits.
+        os.environ.setdefault('GZ_IP', '127.0.0.1')
         _gz_node = GzNode()
     ok, rep = _gz_node.request(f'/world/{WORLD_NAME}/{service}', req, type(req), rep_cls,
                                int(SERVICE_TIMEOUT * 1000))
