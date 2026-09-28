@@ -408,12 +408,14 @@ class LocalizationTestHelper(Node):
             raise RuntimeError('trigger_odom_stuck call timed out')
         return future.result()
 
-    def drive(self, vx, vy, duration):
+    def drive(self, vx, vy, duration, accel=None):
         """
         Steer toward the leg's endpoint, re-aiming every tick off /sim/raw_odom.
 
         Runs until within `WAYPOINT_TOLERANCE`, tapering speed near
-        the target to avoid corner oscillation. VelocityControl reads
+        the target to avoid corner oscillation. `accel` (m/s^2, default
+        DRIVE_ACCEL) ramps speed up from rest and brakes into the endpoint;
+        None steps it. VelocityControl reads
         /cmd_vel in root's frame and root can yaw, so each command is
         rotated out of odom by the true yaw. `duration` (sim
         seconds) is only a safety cap. See README.md for the design
@@ -422,7 +424,11 @@ class LocalizationTestHelper(Node):
         WAYPOINT_TOLERANCE = 0.03  # meters, against ground truth
         CONTROL_PERIOD = 0.1  # seconds; matches the spin_for() tick below
         speed = math.hypot(vx, vy)
+        accel = DRIVE_ACCEL if accel is None else accel
         safety_deadline = self.now_s() + max(duration * 3.0, duration + 5.0)
+        if accel:
+            # A triangular profile's time, the slowest a ramp can make a leg.
+            safety_deadline += 2.0 * math.sqrt(speed * duration / accel)
 
         if speed <= 1e-6 or not self.wait_for_raw_odom():
             # No direction to aim toward, or ground-truth odom never
@@ -441,6 +447,7 @@ class LocalizationTestHelper(Node):
 
         start_x, start_y = self._raw_odom_xy
         target_x, target_y = start_x + vx * duration, start_y + vy * duration
+        speed_cmd = 0.0
         while self.now_s() < safety_deadline:
             cur_x, cur_y = self._raw_odom_xy
             dx, dy = target_x - cur_x, target_y - cur_y
@@ -448,6 +455,13 @@ class LocalizationTestHelper(Node):
             if dist <= WAYPOINT_TOLERANCE:
                 break
             speed_now = min(speed, dist / CONTROL_PERIOD)
+            if accel:
+                # Up by accel per tick, and no faster than stops in dist
+                # braking at accel from the next tick on.
+                a_t = accel * CONTROL_PERIOD
+                speed_now = min(speed_now, speed_cmd + a_t,
+                                math.sqrt(a_t * a_t + 2.0 * accel * dist) - a_t)
+            speed_cmd = speed_now
             c, s = math.cos(self._raw_odom_yaw), math.sin(self._raw_odom_yaw)
             msg = Twist()
             msg.linear.x = speed_now * (c * dx + s * dy) / dist
@@ -514,6 +528,10 @@ OBSTACLE_HEIGHT = 0.8  # meters, based at the ground (z=[0, OBSTACLE_HEIGHT])
 # been re-validated against MAX_DELTA_THRESHOLD or jerk_with_motion's
 # timing and may need those re-tuned.
 DRIVE_SPEED = 4.0
+
+# Acceleration limit (m/s^2) on every drive() leg, or None to step to
+# DRIVE_SPEED within one control tick. --drive-accel sets it.
+DRIVE_ACCEL = None
 
 # sim.launch.py's real_time_factor for every stack; '0' = unthrottled. Set
 # from --real-time-factor by set_real_time_factor().
@@ -1754,6 +1772,11 @@ def set_drive_speed(speed):
     global DRIVE_SPEED, OBSTACLE_LOOP_LEGS
     DRIVE_SPEED = speed
     OBSTACLE_LOOP_LEGS = _make_loop_legs(speed)
+
+
+def set_drive_accel(accel):
+    global DRIVE_ACCEL
+    DRIVE_ACCEL = accel
 
 
 def set_real_time_factor(rtf):
