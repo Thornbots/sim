@@ -211,6 +211,15 @@ python3 tools/check_bench_log.py /tmp/localization_drift_tests/*.log  # drift an
 It prints the result and the timing table, and exits 1 when a node crashed
 mid-run, a GUI couldn't open or a wait gave up.
 
+rf2o's match grades (`/scan_odom/quality`), for setting
+`sentry_localization/config/rf2o.yaml`: record beside a suite, then
+summarise.
+
+```bash
+python3 tools/rf2o_quality.py record /tmp/q.jsonl   # Ctrl-C when the suite ends
+python3 tools/rf2o_quality.py summary /tmp/q.jsonl
+```
+
 The drift suite starts gz-sim once and a fresh `thornbots_pkg` stack for each
 scenario, resetting the sim between them (see "Run the tests");
 `restart_sim:=true` restarts gz per scenario instead. The aiming bench launches
