@@ -1527,9 +1527,10 @@ def _truth_error(helper):
 
 
 def _truth_error_str(helper):
-    """Return '  truth_error=N m' (see _truth_error), or ''."""
+    """Return '  truth_error=N m  true_yaw=N deg' (see _truth_error), or ''."""
     err = _truth_error(helper)
-    return '' if err is None else f'  truth_error={err:.4f} m'
+    yaw = f'  true_yaw={math.degrees(helper._raw_odom_yaw):.2f} deg'
+    return yaw if err is None else f'  truth_error={err:.4f} m{yaw}'
 
 
 # Minimum spread (m) the correction TF must show across odom_stuck's
@@ -1613,7 +1614,8 @@ def scenario_odom_stuck(gui, backend, use_rf2o):
                     o = helper.tf_buffer.lookup_transform(
                         'odom', 'root', rclpy.time.Time()).transform.translation
                     err_str += (f'  odom->root=({o.x:.3f}, {o.y:.3f})'
-                                f'  truth={truth_xy}')
+                                f'  truth={truth_xy}'
+                                f'  true_yaw={math.degrees(helper._raw_odom_yaw):.2f} deg')
                 except Exception:
                     pass
                 sc.log(f't={elapsed:5.1f}s  {edge} = '
