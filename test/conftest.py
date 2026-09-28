@@ -67,6 +67,10 @@ def pytest_addoption(parser):
         '--speed', type=float, default=None,
         help='m/s for the cornering loop; see drift_harness.DRIVE_SPEED, '
              'other speeds are not re-validated against the thresholds')
+    group.addoption(
+        '--drive-accel', type=float, default=None,
+        help='m/s^2 limit on every drift-suite leg (drift_harness.DRIVE_ACCEL); '
+             'default: step to speed within one tick')
 
     group.addoption(
         '--ekf-slip-ratio', type=float, default=0.05,

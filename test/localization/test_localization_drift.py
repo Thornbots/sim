@@ -23,8 +23,8 @@ Launches gz-sim and the full sentry stack, so every test here is marked
 `integration` and skipped by a plain `colcon test`;
 `ros2 launch sim localization_tests.launch.py` runs it. Options: --backend
 {slam,amcl,none}, --use-rf2o, --scenario NAME, --headless, --speed M/S,
---real-time-factor, --restart-sim (see test/conftest.py). See README.md for WHY THIS
-EXISTS, BACKENDS and SCENARIOS.
+--drive-accel M/S^2, --real-time-factor, --restart-sim (see test/conftest.py).
+See README.md for WHY THIS EXISTS, BACKENDS and SCENARIOS.
 """
 import drift_harness
 import pytest
@@ -64,6 +64,11 @@ def drive_speed(request):
     speed = request.config.getoption('--speed')
     if speed is not None:
         drift_harness.set_drive_speed(speed)
+
+
+@pytest.fixture(scope='module', autouse=True)
+def drive_accel(request):
+    drift_harness.set_drive_accel(request.config.getoption('--drive-accel'))
 
 
 @pytest.fixture(scope='module', autouse=True)

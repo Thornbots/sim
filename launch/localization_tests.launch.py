@@ -115,6 +115,8 @@ def _tests(context):
         cmd.append('--headless')
     if config['speed']:
         cmd += ['--speed', config['speed']]
+    if config['drive_accel']:
+        cmd += ['--drive-accel', config['drive_accel']]
     if _is_true(context, 'restart_sim'):
         cmd.append('--restart-sim')
     if suite == 'drift':
@@ -175,6 +177,8 @@ def generate_launch_description():
                               description='one drift scenario; empty = all'),
         DeclareLaunchArgument('speed', default_value='',
                               description='cornering-loop m/s; empty = 4.0'),
+        DeclareLaunchArgument('drive_accel', default_value='',
+                              description='m/s^2 ramp on every drift leg; empty = step'),
         DeclareLaunchArgument('ekf_slip_ratio', default_value='',
                               description='ekf suite; empty = the pytest default'),
         DeclareLaunchArgument('ekf_drift_stddev', default_value='',
