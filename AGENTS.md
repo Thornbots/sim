@@ -238,8 +238,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **`ros_gz_sim create` ignores the SDF `<pose>`**; pass `-x/-y/-z` or the
   model lands at the origin. `spawn_box_obstacle` buried half its box this way
   until 2026-09-24.
-- **Wanted: a localization scenario with finite acceleration.** `drive()`
-  steps `/cmd_vel` to 4 m/s and stops within one 0.1 s tick.
+- **`drive()` ramps every leg at `DRIVE_ACCEL` (20 m/s^2)**, and
+  `real_accel` at 1.2 (the user's numbers, 2026-09-28). `--drive-accel 0`
+  steps to 4 m/s within one 0.1 s tick, as every run before then did.
 - **The EKF beats raw `/odom` by 90-95%** (`suite:=ekf`, unthrottled), since rf2o got
   `fixed_heading` and an `/odom` prior (`../sentry_localization`).
   Both were needed: without the prior rf2o undershot legs that start from
