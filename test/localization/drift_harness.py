@@ -52,7 +52,7 @@ import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.parameter import Parameter, parameter_value_to_python
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import JointState, LaserScan
 from sim import suite_timing
 from sim.auto_explore import model_names, remove_model, spawn_model, teleport
 from std_srvs.srv import Trigger
@@ -231,6 +231,12 @@ class LocalizationTestHelper(Node):
         self._raw_odom_yaw = 0.0
         self.create_subscription(
             Odometry, '/sim/raw_odom', self._on_raw_odom, 10)
+        # True chassis and head yaw (rad): latest, and the range since
+        # reset_yaw_range(), every message counted (T16).
+        self._head_yaw = None
+        self.create_subscription(
+            JointState, '/sim/raw_joint_states', self._on_raw_joints, 10)
+        self.reset_yaw_range()
 
     def _on_scan(self, msg):
         self._scan_count += 1
@@ -241,6 +247,26 @@ class LocalizationTestHelper(Node):
         self._raw_odom_xy = (p.x, p.y)
         self._raw_odom_yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                                         1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        self._yaw_range[0] = min(self._yaw_range[0], self._raw_odom_yaw)
+        self._yaw_range[1] = max(self._yaw_range[1], self._raw_odom_yaw)
+
+    def _on_raw_joints(self, msg):
+        if 'headlink' in msg.name:
+            self._head_yaw = msg.position[msg.name.index('headlink')]
+            self._head_yaw_range[0] = min(self._head_yaw_range[0], self._head_yaw)
+            self._head_yaw_range[1] = max(self._head_yaw_range[1], self._head_yaw)
+
+    def reset_yaw_range(self):
+        self._yaw_range = [math.inf, -math.inf]
+        self._head_yaw_range = [math.inf, -math.inf]
+
+    def yaw_range_str(self):
+        """Return 'true yaw a..b deg, head yaw c..d deg' since reset_yaw_range()."""
+        def fmt(r):
+            return 'none' if r[0] > r[1] else (
+                f'{math.degrees(r[0]):.2f}..{math.degrees(r[1]):.2f} deg')
+        return (f'true yaw {fmt(self._yaw_range)}, '
+                f'head yaw {fmt(self._head_yaw_range)}')
 
     def wait_for_raw_odom(self, timeout=10.0):
         deadline = time.monotonic() + timeout
@@ -1386,6 +1412,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None,
                   else f'|{edge} - pre-loop {edge}|')
         OBSERVE_SECONDS = 30.0
         samples = []
+        helper.reset_yaw_range()
         t0 = helper.now_s()
         i = 0
         while helper.now_s() - t0 < OBSERVE_SECONDS:
@@ -1413,6 +1440,8 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None,
                 samples.append(delta)
                 truth = '' if backend == 'none' else _truth_error_str(helper)
                 sc.log(f't={elapsed:5.1f}s  {metric}={delta:.4f} m{truth}')
+
+        sc.log(f'over the loop, every message: {helper.yaw_range_str()}')
 
         if len(samples) < 3:
             sc.result(False, f'too few {metric} samples ({len(samples)}) to '
@@ -1584,6 +1613,7 @@ def scenario_odom_stuck(gui, backend, use_rf2o):
 
         helper.call_trigger_odom_stuck()
         sc.log('triggered odom_stuck: /pose now pinned at (0, 0)')
+        helper.reset_yaw_range()
         scans_before_drive = helper._scan_count
 
         OBSERVE_SECONDS = 30.0
@@ -1622,6 +1652,8 @@ def scenario_odom_stuck(gui, backend, use_rf2o):
                 sc.log(f't={elapsed:5.1f}s  {edge} = '
                        f'(x={p[0]:.4f}, y={p[1]:.4f}, yaw={p[2]:.4f})'
                        f'{err_str}')
+
+        sc.log(f'after odom_stuck, every message: {helper.yaw_range_str()}')
 
         if len(samples) < 3:
             sc.result(False, f'too few {edge} samples ({len(samples)}) to '
