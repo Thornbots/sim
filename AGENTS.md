@@ -240,7 +240,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `fixed_heading` and an `/odom` prior (`../sentry_localization`).
   Both were needed: without the prior rf2o undershot legs that start from
   rest, whatever the blind sector. rf2o's sign is right; don't invert its
-  warping again.
+  warping again. 2026-09-28 reads 75-80% (T13 in `../ROADMAP.md`), and
+  gives the same verdict at `real_time_factor:=1` as unthrottled: 0.036 m
+  against 0.185 m at RTF 0.97, 0.030 m against 0.122 m unthrottled.
 - **Under `--backend none` the drift scenarios score ground-truth error**
   (`_truth_error`), since `odom->root` there is the robot's
   own motion. Six pass at `--use-rf2o` (2026-09-28); `scan_degraded`
