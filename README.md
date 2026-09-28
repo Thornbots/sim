@@ -592,7 +592,11 @@ The suite runs them in this order.
    motion was already near zero. amcl has no motion to spread its particles
    and turns its estimate (up to 0.66 rad) to fit the scan. Losing the robot
    here is a known limit of this sensor set, not a defect; the scenario stays
-   a liveness check.
+   a liveness check. The gz robot itself doesn't turn: over a 120 s run
+   (2026-09-28) every `/sim/raw_odom` message held true yaw within
+   -0.15..0.00 deg and the head within -0.28..0.07 deg, while `map->odom`
+   yaw sat at -0.3 to -0.58 rad. A turning robot in rviz is amcl's
+   estimate. The scenario logs both ranges at the end.
 9. `scan_degraded` is the one scenario that breaks rf2o instead of `/odom`.
    After one lap of the cornering loop at 0.15 slip it sets
    `lidar_self_filter`'s blind sector to 300 deg for two legs, leaving a 60
