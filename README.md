@@ -530,7 +530,7 @@ The suite runs them in this order.
    unmapped boxes across its south, west and north edges at 1.0, 2.0 and 0.5
    m/s. It scores like `drift_correction`, on `MAX_DELTA_THRESHOLD`, and logs
    each sample's `map->root` error against `/sim/raw_odom`. It also fails if
-   `actor_driver` dies mid-loop. Under `slam`, ROADMAP A4 also wants the
+   `actor_driver` dies mid-loop. Under `slam`, a ROADMAP.md todo also wants the
    actors' cells checked in `/map` at the end; that check isn't built yet.
    Under `none` it scores ground-truth error, like `drift_correction`.
 6. `jerk_with_motion` (slam/amcl) models a collision impulse. Each trial fires

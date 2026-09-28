@@ -224,7 +224,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   export's grounded part and isn't mated to the head, so the chassis hull
   reaches 0.362 m. Harmless for scans; fix it in Onshape (mate it) or in
   `sentry_v2.yaml`'s `drop` list.
-- **`moving_obstacles` (ROADMAP A4) runs and passes.** Its boxes have no
+- **`moving_obstacles` runs and passes.** Its boxes have no
   collision (the lidar sees visuals; box-on-field-mesh contact cost ~3x
   sim speed), so they never touch the robot and `actor_driver` keeps them
   >= 1 m from it along the loop's route. Seen crossing the loop in gz. The
@@ -242,7 +242,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   rest, whatever the blind sector. rf2o's sign is right; don't invert its
   warping again.
 - **Under `--backend none` the drift scenarios score ground-truth error**
-  (`_truth_error`, ROADMAP A3), since `odom->root` there is the robot's
+  (`_truth_error`), since `odom->root` there is the robot's
   own motion. Built 2026-09-25, not yet run.
 - **`noise_correction`'s growth_ratio compares the two halves of a run**, so
   a run that starts clean fails hardest. Don't read its verdict as absolute

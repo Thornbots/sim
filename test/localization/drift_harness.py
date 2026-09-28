@@ -1043,7 +1043,7 @@ def scenario_noise_correction(gui, backend, use_ekf):
         sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner "
                '(-1.5,-1.5) before tracing it')
 
-        # A3: under none, odom->root is the robot's own position, so its
+        # Under none, odom->root is the robot's own position, so its
         # magnitude says nothing; score ground-truth error instead.
         metric = 'truth error' if backend == 'none' else f'|{edge} xy|'
         samples = []
@@ -1355,7 +1355,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, obstacles=None):
 
         # Drive the loop, sampling each leg. Under none, odom->root is the
         # robot's own position, so its change from the pre-loop value is
-        # just the loop; score ground-truth error instead (A3).
+        # just the loop; score ground-truth error instead.
         metric = ('truth error' if backend == 'none'
                   else f'|{edge} - pre-loop {edge}|')
         OBSERVE_SECONDS = 30.0
@@ -1402,7 +1402,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_ekf, obstacles=None):
             sc.result(False, 'actor_driver exited mid-loop; see '
                       f'actor_driver_{_actor_runs}.log')
             return sc
-        # TODO(A4): under backend slam, sample /map on the actors' paths at
+        # TODO: under backend slam, sample /map on the actors' paths at
         # the end and fail if their cells stayed occupied.
 
         max_delta = max(samples)
