@@ -531,9 +531,10 @@ The suite runs them in this order.
    jerks) for a fixed 30s (60s before 2026-07-27). The second half's samples
    must stay under 2x the first half's max. The window doesn't exit early, so
    a stalled TF can't cause an open-ended drive.
-3. `drift_correction` drives the same square, no obstacle. The instant
-   reversals at 4.0 m/s build dead-reckoning error faster than the scan-match
-   gate follows, and the wobble is the backend correcting it at each dwell.
+3. `drift_correction` drives the same square, no obstacle. The hard
+   reversals at 4.0 m/s (20 m/s^2 ramps) build dead-reckoning error faster
+   than the scan-match gate follows, and the wobble is the backend
+   correcting it at each dwell.
 4. `drift_correction_obstacle` adds a static box at the loop centre
    mid-scenario, absent from the world and the map. It shares driving and
    threshold with `drift_correction`, so comparing the two isolates the
@@ -545,7 +546,11 @@ The suite runs them in this order.
    `actor_driver` dies mid-loop. Under `slam`, ROADMAP.md T3 also wants the
    actors' cells checked in `/map` at the end; that check isn't built yet.
    Under `none` it scores ground-truth error, like `drift_correction`.
-6. `jerk_with_motion` (slam/amcl) models a collision impulse. Each trial fires
+6. `real_accel` drives the `drift_correction` square with every leg ramped
+   at `REAL_ACCEL` (1.2 m/s^2, close to the real chassis) instead of
+   `DRIVE_ACCEL` (20), so a 3 m side peaks near 1.9 m/s. Same metric and
+   threshold as `drift_correction`.
+7. `jerk_with_motion` (slam/amcl) models a collision impulse. Each trial fires
    `trigger_jerk`, drives one leg to the next corner, then requires a
    correction proportional to the jerk or an end state within
    `MAX_DELTA_THRESHOLD`. Jerks are biased toward `OBSTACLE_XY` so they don't
@@ -553,7 +558,7 @@ The suite runs them in this order.
    so the robot still lands on its corner. `JERK_WITH_MOTION_REPEATS` (8)
    trials share one stack (relaunching costs 15-20s each) and all must pass.
    A closing lap follows.
-7. `odom_stuck` models a dead encoder: `trigger_odom_stuck` pins `/pose` x/y
+8. `odom_stuck` models a dead encoder: `trigger_odom_stuck` pins `/pose` x/y
    and velocity at zero with fresh timestamps. It checks liveness only, since
    there is no valid odometry to bound drift against: scans keep processing
    and pairwise TF spread exceeds `ODOM_STUCK_MIN_TF_SPREAD` (1cm).
@@ -570,7 +575,7 @@ The suite runs them in this order.
    and turns its estimate (up to 0.66 rad) to fit the scan. Losing the robot
    here is a known limit of this sensor set, not a defect; the scenario stays
    a liveness check.
-8. `scan_degraded` is the one scenario that breaks rf2o instead of `/odom`.
+9. `scan_degraded` is the one scenario that breaks rf2o instead of `/odom`.
    After one lap of the cornering loop at 0.15 slip it sets
    `lidar_self_filter`'s blind sector to 300 deg for two legs, leaving a 60
    deg arc (a robot parked against the lidar), then restores it for two more

@@ -41,6 +41,9 @@ def test_ekf_beats_raw_odom(request, gui, ros_context):
     speed = request.config.getoption('--speed')
     if speed is not None:
         drift_harness.set_drive_speed(speed)
+    accel = request.config.getoption('--drive-accel')
+    if accel is not None:
+        drift_harness.set_drive_accel(accel)
 
     result = ekf_diag_harness.run(gui, slip_ratio, drift_stddev, seconds)
     assert result is not None, \

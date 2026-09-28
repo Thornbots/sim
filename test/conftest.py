@@ -69,8 +69,8 @@ def pytest_addoption(parser):
              'other speeds are not re-validated against the thresholds')
     group.addoption(
         '--drive-accel', type=float, default=None,
-        help='m/s^2 limit on every drift-suite leg (drift_harness.DRIVE_ACCEL); '
-             'default: step to speed within one tick')
+        help='m/s^2 limit on every drift-suite leg (drift_harness.DRIVE_ACCEL, '
+             'default 20); 0 steps to speed within one tick')
 
     group.addoption(
         '--ekf-slip-ratio', type=float, default=0.05,

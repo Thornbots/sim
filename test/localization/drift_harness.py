@@ -27,7 +27,7 @@ below) and use_rf2o (whether odom->root is EKF-fused, layerable on any
 backend -- the old standalone 'ekf' backend is now backend='none' plus
 use_rf2o=True). Scenarios, in SCENARIOS order: baseline, noise_correction,
 drift_correction, drift_correction_obstacle, moving_obstacles,
-jerk_with_motion, odom_stuck. See README.md for WHY THIS EXISTS, BACKENDS (per-backend TF
+real_accel, jerk_with_motion, odom_stuck, scan_degraded. See README.md for WHY THIS EXISTS, BACKENDS (per-backend TF
 edge), and SCENARIOS (pass conditions/rationale).
 
 One sim per run: the first run_stack() starts gz, and every scenario after
@@ -415,7 +415,7 @@ class LocalizationTestHelper(Node):
         Runs until within `WAYPOINT_TOLERANCE`, tapering speed near
         the target to avoid corner oscillation. `accel` (m/s^2, default
         DRIVE_ACCEL) ramps speed up from rest and brakes into the endpoint;
-        None steps it. VelocityControl reads
+        0 steps it. VelocityControl reads
         /cmd_vel in root's frame and root can yaw, so each command is
         rotated out of odom by the true yaw. `duration` (sim
         seconds) is only a safety cap. See README.md for the design
@@ -529,9 +529,14 @@ OBSTACLE_HEIGHT = 0.8  # meters, based at the ground (z=[0, OBSTACLE_HEIGHT])
 # timing and may need those re-tuned.
 DRIVE_SPEED = 4.0
 
-# Acceleration limit (m/s^2) on every drive() leg, or None to step to
-# DRIVE_SPEED within one control tick. --drive-accel sets it.
-DRIVE_ACCEL = None
+# Acceleration limit (m/s^2) on every drive() leg, or 0 to step to
+# DRIVE_SPEED within one control tick. --drive-accel sets it. 20 is the
+# user's upper bound (2026-09-28); real_accel drives at REAL_ACCEL.
+DRIVE_ACCEL = 20.0
+
+# Close to the real chassis (the user, 2026-09-28): a 3 m side peaks near
+# 1.9 m/s and never reaches DRIVE_SPEED.
+REAL_ACCEL = 1.2
 
 # sim.launch.py's real_time_factor for every stack; '0' = unthrottled. Set
 # from --real-time-factor by set_real_time_factor().
@@ -1318,7 +1323,8 @@ def scenario_jerk_with_motion(gui, backend, use_rf2o):
 MAX_DELTA_THRESHOLD = 0.40  # meters
 
 
-def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None):
+def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None,
+                                 accel=None):
     """
     Drive the cornering loop shared by both drift_correction scenarios.
 
@@ -1327,7 +1333,8 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None):
     and differ only in `obstacles` (None, 'box' or 'actors'), so they can
     be compared directly against the same MAX_DELTA_THRESHOLD. Mutates and returns `sc` (the
     caller's Scenario) via sc.result()/sc.log(), same convention as
-    every other scenario_* function.
+    every other scenario_* function. `accel` overrides DRIVE_ACCEL on the
+    loop's legs (real_accel).
     """
     parent, child = BACKEND_FRAMES[backend]
     edge = f'{parent}->{child}'
@@ -1383,7 +1390,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None):
         while helper.now_s() - t0 < OBSERVE_SECONDS:
             vx, vy, duration = OBSTACLE_LOOP_LEGS[i % len(OBSTACLE_LOOP_LEGS)]
             i += 1
-            helper.drive(vx, vy, duration)
+            helper.drive(vx, vy, duration, accel=accel)
             # Stationary dwell -- see OBSTACLE_LOOP_DWELL_SECONDS's
             # comment: originally added to let the scan/TF pipeline catch
             # up to real-time before the next fast leg, rather than
@@ -1471,7 +1478,7 @@ def scenario_drift_correction(gui, backend, use_rf2o):
         'drift_correction',
         'tests lidar relocalization performance against accumulated '
         'cornering error: drives a hard-cornering loop (OBSTACLE_LOOP_LEGS, '
-        'real 4.0 m/s, instant direction reversals at each corner) with no '
+        'real 4.0 m/s, hard direction reversals at each corner) with no '
         'obstacle spawned -- the hard corners accumulate real '
         'dead-reckoning error faster than amcl can track it live; the '
         'correction TF visibly snaps back onto the map once the robot '
@@ -1498,6 +1505,16 @@ def scenario_moving_obstacles(gui, backend, use_rf2o):
         'if actor_driver dies mid-loop. Compare against drift_correction.')
     return _run_cornering_loop_scenario(
         sc, gui, backend, use_rf2o, obstacles='actors')
+
+
+def scenario_real_accel(gui, backend, use_rf2o):
+    sc = Scenario(
+        'real_accel',
+        f'drift_correction with every loop leg ramped at REAL_ACCEL '
+        f'({REAL_ACCEL} m/s^2, close to the real chassis) instead of '
+        f'DRIVE_ACCEL, so legs peak near 1.9 m/s. Same metric and '
+        'MAX_DELTA_THRESHOLD; compare against drift_correction.')
+    return _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, accel=REAL_ACCEL)
 
 
 def _truth_error(helper):
@@ -1755,6 +1772,7 @@ SCENARIOS = {
     'drift_correction': scenario_drift_correction,
     'drift_correction_obstacle': scenario_drift_correction_obstacle,
     'moving_obstacles': scenario_moving_obstacles,
+    'real_accel': scenario_real_accel,
     'jerk_with_motion': scenario_jerk_with_motion,
     'odom_stuck': scenario_odom_stuck,
     'scan_degraded': scenario_scan_degraded,

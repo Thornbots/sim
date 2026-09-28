@@ -68,7 +68,9 @@ def drive_speed(request):
 
 @pytest.fixture(scope='module', autouse=True)
 def drive_accel(request):
-    drift_harness.set_drive_accel(request.config.getoption('--drive-accel'))
+    accel = request.config.getoption('--drive-accel')
+    if accel is not None:
+        drift_harness.set_drive_accel(accel)
 
 
 @pytest.fixture(scope='module', autouse=True)
