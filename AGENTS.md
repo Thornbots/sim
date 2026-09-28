@@ -30,7 +30,8 @@ Everything under `test/` is pytest, collected by `colcon test`. The suites
 that launch `sim` + `thornbots_pkg` end to end carry the `integration` marker and
 are deselected by `setup.cfg`, so a plain `colcon test --packages-select sim`
 runs the unit tests only. `sim` is `ament_cmake` now, so `--pytest-args`
-doesn't reach it; run pytest directly for the integration tier:
+doesn't reach it; run pytest directly for the integration tier. The
+`on_demand` EKF test is skipped there; `run_suite.sh ekf` runs it:
 
 ```bash
 ../isaac_ros_common/scripts/dexec.sh -- colcon test --packages-select sim

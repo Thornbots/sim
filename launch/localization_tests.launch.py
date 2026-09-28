@@ -119,6 +119,8 @@ def _tests(context):
         cmd += ['--drive-accel', config['drive_accel']]
     if _is_true(context, 'restart_sim'):
         cmd.append('--restart-sim')
+    if suite == 'ekf':
+        cmd.append('--run-on-demand')
     if suite == 'drift':
         cmd += ['--backend', config['backend'],
                 '--use-rf2o' if _is_true(context, 'use_rf2o') else '--no-use-rf2o']

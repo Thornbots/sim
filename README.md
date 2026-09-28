@@ -26,7 +26,8 @@ source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 launch sim localization_tests.launch.py
 ```
 
-`suite:=ekf` runs the EKF ground-truth test instead.
+`suite:=ekf` runs the EKF ground-truth test instead. It is on demand, not part
+of the standard run: run it after changing the EKF or rf2o config.
 
 The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
@@ -191,9 +192,10 @@ Everything under `test/` is pytest, and `colcon test` collects it.
 | Tier | Files | Needs |
 | --- | --- | --- |
 | unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, `cv/test_estimation_metrics.py`, `test_suite_timing.py`, ament copyright/flake8/pep257 | Python + pytest |
-| integration | `localization/test_localization_drift.py`, `localization/test_ekf_ground_truth.py` | gz-sim and a launch tree |
+| integration | `localization/test_localization_drift.py` | gz-sim and a launch tree |
 | integration | `cv/test_shot_hit.py` | a launch tree, no gz |
 | integration | `cv/test_estimation.py` | a launch tree, no gz |
+| on demand | `localization/test_ekf_ground_truth.py` | gz-sim and a launch tree |
 
 `setup.cfg` deselects the `integration` marker, so a plain `colcon test` runs
 only the unit tests and finishes in seconds. pytest's own `-m` overrides that
@@ -204,6 +206,11 @@ colcon test --packages-select sim
 colcon test-result --test-result-base build/sim --verbose
 cd src/sim && python3 -m pytest test -m integration
 ```
+
+The on-demand tier is specialized checks run only when their subject
+changes, such as the EKF ground-truth test after an `ekf.yaml` edit. It
+carries `integration` too, but is skipped without `--run-on-demand`;
+`suite:=ekf` passes it.
 
 An integration run ends with a `suite timing` table: wall seconds per case
 in sim start, bring-up, reset, settle, scored and teardown, and the RTF.
