@@ -491,7 +491,10 @@ same thresholds. `jerk_with_motion` is skipped for `none`: `ekf_node` fuses
 `/odom` velocity only (`odom0_config`), with no travel gate, so neither
 expectation is defined. With no map to miss a feature from, `drift_correction`
 and `drift_correction_obstacle` should read about the same under `none`, and
-so should `moving_obstacles`.
+so should `moving_obstacles`. They do: 0.022, 0.037 and 0.020 m, with
+`noise_correction` at 0.040 m (2026-09-28, `--use-rf2o`, unthrottled).
+`scan_degraded` fails under `none` (0.63 m during, 0.64 m after): with no
+map layer nothing pulls the error back once the scan recovers.
 
 amcl with and without EKF under slip, measured 2026-07-26 against a 0.30m
 bound; verdicts shown against today's 0.40m `MAX_DELTA_THRESHOLD`:
