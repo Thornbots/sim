@@ -35,7 +35,6 @@ One sim per run: the first run_stack() starts gz, and every scenario after
 that resets the robot and pose_emulator and relaunches only auto.launch.py.
 set_restart_sim(True) (--restart-sim) brings the sim up fresh per scenario.
 """
-import ctypes
 import math
 import os
 import shlex
@@ -55,6 +54,7 @@ from rclpy.parameter import Parameter, parameter_value_to_python
 from sensor_msgs.msg import JointState, LaserScan
 from sim import suite_timing
 from sim.auto_explore import model_names, remove_model, spawn_model, teleport
+from sim.parent_death import die_with_parent
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformListener
 
@@ -68,13 +68,8 @@ from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformLi
 # here as it is for those host-side scripts).
 # --------------------------------------------------------------------------
 
-PR_SET_PDEATHSIG = 1
-_prctl = ctypes.CDLL(None, use_errno=True).prctl
-
-
-def interrupt_with_parent():
-    """Popen preexec_fn: SIGINT this child when the process that started it dies."""
-    _prctl(PR_SET_PDEATHSIG, int(signal.SIGINT))
+# Popen preexec_fn: SIGINT this child when the process that started it dies.
+interrupt_with_parent = die_with_parent(signal.SIGINT)
 
 
 def signal_group(pgid, sig):
