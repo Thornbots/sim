@@ -54,7 +54,9 @@ SIM_URDF = os.path.join(SIM_DIR, 'urdf', 'sentry_v2', 'sentry_v2.urdf')
 SIM_XACRO = os.path.join(SIM_DIR, 'urdf', 'sentry_v2.urdf.xacro')
 EMULATOR = os.path.join(SIM_DIR, 'sim', 'cv_target_emulator.py')
 
-CHAIN_JOINTS = ('fastened_2', 'headlink', 'headpitch', 'cameralink', 'muzzlelink')
+# thornbots_pkg's head hangs off root; sim's goes root -> fastened_2 (identity)
+# -> headlink, so the chains agree while fastened_2 stays identity.
+CHAIN_JOINTS = ('headlink', 'headpitch', 'cameralink', 'muzzlelink')
 EXACT_TOL = 1e-12
 
 
@@ -122,8 +124,7 @@ def _assert_chain_matches_urdf(py_path, end_link):
     end = f'_{end_link.upper()}_T'
     consts = _module_constants(py_path, CHAIN_CONSTANTS + (end,))
 
-    assert consts['_T_FASTENED_2'][2] == pytest.approx(
-        joints['fastened_2'][1][2], abs=EXACT_TOL)
+    assert consts['_T_FASTENED_2'][2] == pytest.approx(0.0, abs=EXACT_TOL)
 
     assert consts['_HEADLINK_ORIGIN_R'][2] == pytest.approx(
         joints['headlink'][1][2], abs=EXACT_TOL)
@@ -148,7 +149,7 @@ def test_head_aim_core_matches_urdf():
         joints['headlink'][0], abs=EXACT_TOL)
     assert HEADPITCH_ORIGIN == pytest.approx(joints['headpitch'][0], abs=EXACT_TOL)
     assert MUZZLELINK_ORIGIN == pytest.approx(joints['muzzlelink'][0], abs=EXACT_TOL)
-    for name in ('fastened_2', 'headlink', 'headpitch', 'muzzlelink'):
+    for name in ('headlink', 'headpitch', 'muzzlelink'):
         assert joints[name][1] == (0.0, 0.0, 0.0), f'{name} grew a rotation'
 
 
@@ -162,8 +163,9 @@ def test_sim_model_matches_urdf():
     # the camera from its own model. If any two drift, the bench scores a
     # robot the stack isn't driving, and nothing looks wrong on its own.
     ref = _joint_origins(URDF)
-    sim = {**_joint_origins(SIM_URDF, CHAIN_JOINTS[:-1]),
+    sim = {**_joint_origins(SIM_URDF, CHAIN_JOINTS[:-1] + ('fastened_2',)),
            **_joint_origins(SIM_XACRO, ('muzzlelink',))}
+    assert sim['fastened_2'][:2] == ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
     for name in CHAIN_JOINTS:
         for k in range(3):
             if ref[name][k] is None:
@@ -173,6 +175,24 @@ def test_sim_model_matches_urdf():
 
 
 ARMOR_JOINTS = tuple(f'armor_{k}link' for k in range(4))
+
+
+def _parents(xacro_path):
+    return {j.get('name'): j.find('parent').get('link')
+            for j in ET.parse(xacro_path).getroot().iter('joint')}
+
+
+def test_chassis_turns_under_heading_fixed_root():
+    # root stays heading-fixed for localization; chassis_yaw turns body and
+    # the armor, and the head reads world yaw straight off root.
+    parents = _parents(URDF)
+    joints = _joint_origins(URDF, ('chassis_yaw', 'headlink'))
+    assert parents['chassis_yaw'] == 'root'
+    assert parents['headlink'] == 'root'
+    assert joints['chassis_yaw'][:2] == ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    assert joints['chassis_yaw'][2] == joints['headlink'][2]
+    for name in ARMOR_JOINTS:
+        assert parents[name] == 'body', name
 
 
 def test_armor_frames_match_sim_model():

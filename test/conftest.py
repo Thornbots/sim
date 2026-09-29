@@ -74,6 +74,10 @@ def pytest_addoption(parser):
         '--drive-accel', type=float, default=None,
         help='m/s^2 limit on every drift-suite leg (drift_harness.DRIVE_ACCEL, '
              'default 20); 0 steps to speed within one tick')
+    group.addoption(
+        '--spawn-yaw-deg', type=float, default=0.0,
+        help='chassis heading at every drift-suite reset, deg CCW; the real '
+             'robot drifts 1-5 deg')
 
     group.addoption(
         '--ekf-slip-ratio', type=float, default=0.05,

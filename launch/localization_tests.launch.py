@@ -121,6 +121,8 @@ def _tests(context):
         cmd += ['--speed', config['speed']]
     if config['drive_accel']:
         cmd += ['--drive-accel', config['drive_accel']]
+    if config['spawn_yaw_deg']:
+        cmd += ['--spawn-yaw-deg', config['spawn_yaw_deg']]
     if _is_true(context, 'restart_sim'):
         cmd.append('--restart-sim')
     if suite == 'ekf':
@@ -185,6 +187,8 @@ def generate_launch_description():
                               description='cornering-loop m/s; empty = 4.0'),
         DeclareLaunchArgument('drive_accel', default_value='',
                               description='m/s^2 ramp on every drift leg; empty = 20, 0 = step'),
+        DeclareLaunchArgument('spawn_yaw_deg', default_value='',
+                              description='chassis heading at each drift reset, deg; empty = 0'),
         DeclareLaunchArgument('ekf_slip_ratio', default_value='',
                               description='ekf suite; empty = the pytest default'),
         DeclareLaunchArgument('ekf_drift_stddev', default_value='',

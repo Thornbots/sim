@@ -136,7 +136,8 @@ localization launch runs pytest, and pytest starts the sim once
 robot back to spawn, removes anything a scenario spawned, and resets
 `pose_emulator`'s noise state and parameters. `restart_sim:=true` brings the
 sim up fresh for every scenario instead, the old behaviour and the control when
-a verdict looks off. Both
+a verdict looks off. `spawn_yaw_deg:=5` turns the chassis that far at every
+reset; the real robot drifts 1-5 deg. Both
 shut down when the tests finish, and Ctrl-C stops everything, stacks included.
 
 The localization launch defaults to `real_time_factor:=0`, which lets gz run
@@ -706,6 +707,13 @@ about 2 registrations in a ~35s run, so the post-drive `get_correction_tf()`
 uses a 5s timeout.
 
 ### pose_emulator.py: odom noise model
+
+It sends what the MCB sends: `head_yaw` in the world (gz's joint is relative
+to the chassis), velocity in the world (gz's twist is in the chassis frame),
+and the chassis's heading as `chassis_yaw`, which the firmware doesn't send
+yet. `sentry_v2` picks up ~1 deg of chassis yaw in hard corners; before
+2026-09-29 `/pose` passed the relative joint and chassis-frame velocity
+through, so the lidar's TF heading was off by that yaw.
 
 Sim ground truth has no wheel drift, so nothing would exercise `map->odom`
 correction. These params add it, all off by default:

@@ -725,6 +725,9 @@ RESTART_SIM = False
 BRINGUP_TIMEOUT_S = 30.0
 # sim.launch.py's spawn x/y, which is also amcl.yaml's initial_pose.
 SPAWN_XY = (0.0, 0.0)
+# Chassis heading at each reset, rad CCW; --spawn-yaw-deg. The real robot
+# drifts 1-5 deg (sentry_localization/AGENTS.md).
+SPAWN_YAW = 0.0
 # pose_emulator params a scenario may set; the rest keep their launch values.
 EMULATOR_PARAMS = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stddev',
                    'odom_jerk_stddev', 'odom_jerk_bias_enabled', 'odom_jerk_bias_x',
@@ -843,7 +846,7 @@ def _reset_sim(helper, emulator_params):
     for name in _spawned_models:
         if not remove_model(name):
             raise RuntimeError(f'could not remove {name!r} from the world')
-    if not teleport(*SPAWN_XY):
+    if not teleport(*SPAWN_XY, yaw=SPAWN_YAW):
         raise RuntimeError('teleport back to spawn failed')
     helper.spin_for(0.5)
     # gz removes on its next step. A box left in the loop is an unmapped
@@ -1825,6 +1828,11 @@ def set_drive_speed(speed):
 def set_drive_accel(accel):
     global DRIVE_ACCEL
     DRIVE_ACCEL = accel
+
+
+def set_spawn_yaw_deg(deg):
+    global SPAWN_YAW
+    SPAWN_YAW = math.radians(deg)
 
 
 def set_real_time_factor(rtf):
