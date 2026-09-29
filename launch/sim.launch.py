@@ -44,7 +44,8 @@ from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     Command, LaunchConfiguration, PathJoinSubstitution)
-from launch_ros.actions import Node
+from launch_ros.actions import ComposableNodeContainer, Node
+from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 from sim.display import display_error
@@ -116,10 +117,9 @@ def generate_launch_description():
     )
     camera_arg = DeclareLaunchArgument(
         'camera', default_value='false',
-        description='Set to true to add the rgbd camera sensor to the robot and '
-                    'bridge it to /color and /depth; off by default because '
-                    'nothing in sim or its tests reads the images, and '
-                    'rendering them costs sim speed'
+        description='Set to true to add the depth camera to the robot and publish '
+                    "it as the D435's /depth and /color topics; off by default "
+                    'because rendering it costs sim speed'
     )
     camera_on = IfCondition(LaunchConfiguration('camera'))
     real_time_factor_arg = DeclareLaunchArgument(
@@ -485,8 +485,9 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
-    # --- Bridge the rgbd_camera sensor (defined in the model xacro,
-    # <topic>camera</topic>) into ROS 2, remapped to the same topic names
+    # --- Bridge the camera (the model xacro's: depth only on sentry_v2, RGB-D
+    # on the old sentry, whose colour image alone uses camera_image_bridge)
+    # into ROS 2, remapped to the same topic names
     # realsense-ros uses on real hardware (see
     # realsense-yolov8-nitros-bridge/launch/isaac_ros_yolov8_realsense.launch.py)
     # so CV nodes written against the physical camera run unmodified in sim.
@@ -500,20 +501,49 @@ def generate_launch_description():
         remappings=[('/camera/image', '/color/image_raw')],
         parameters=[{'use_sim_time': True}],
     )
-    camera_depth_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name='camera_depth_bridge',
+    # Depth rides one component container, the gz bridge beside
+    # depth_camera_emulator (32FC1 metres to the D435's 16UC1 millimetres on
+    # /depth/image_rect_raw, plus the latched identity /extrinsics/depth_to_color),
+    # the way the robot's camera shares one with roi_depth_node: a 640x480
+    # frame is past Fast DDS's 512 KB shared-memory segment, and over UDP
+    # most frames drop. A test loads roi_depth_node into camera_container.
+    camera_container = ComposableNodeContainer(
+        name='camera_container',
+        namespace='',
+        package='rclcpp_components',
+        executable='component_container',
         condition=camera_on,
         output='screen',
-        arguments=['/camera/depth_image@sensor_msgs/msg/Image[gz.msgs.Image'],
-        remappings=[('/camera/depth_image', '/depth/image_rect_raw')],
         parameters=[{'use_sim_time': True}],
+        composable_node_descriptions=[
+            ComposableNode(
+                package='ros_gz_bridge',
+                plugin='ros_gz_bridge::RosGzBridge',
+                name='camera_depth_bridge',
+                parameters=[{
+                    'use_sim_time': True,
+                    'bridge_names': ['depth'],
+                    'bridges': {'depth': {
+                        'ros_topic_name': '/sim/depth_image',
+                        'gz_topic_name': '/camera/depth_image',
+                        'ros_type_name': 'sensor_msgs/msg/Image',
+                        'gz_type_name': 'gz.msgs.Image',
+                        'direction': 'GZ_TO_ROS',
+                    }},
+                }],
+                extra_arguments=[{'use_intra_process_comms': True}],
+            ),
+            ComposableNode(
+                package='sim',
+                plugin='sim::DepthCameraEmulator',
+                name='depth_camera_emulator',
+                parameters=[{'use_sim_time': True}],
+                extra_arguments=[{'use_intra_process_comms': True}],
+            ),
+        ],
     )
-    # rgbd_camera only publishes one set of intrinsics (for the color lens);
-    # reused for both color and depth since this is a single fixed-baseline
-    # rig, same simplification real D435 firmware makes when depth is
-    # aligned to color.
+    # One set of intrinsics, reused for colour and depth: sim's camera is a
+    # single lens, so the extrinsics between them are identity too.
     camera_color_info_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -661,7 +691,7 @@ def generate_launch_description():
         set_pose_bridge,
         head_pitch_bridge,
         camera_image_bridge,
-        camera_depth_bridge,
+        camera_container,
         camera_color_info_bridge,
         camera_depth_info_bridge,
         delayed_spawn_robot,

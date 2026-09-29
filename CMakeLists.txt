@@ -20,6 +20,8 @@ find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(rclcpp_components REQUIRED)
+find_package(realsense2_camera_msgs REQUIRED)
 
 add_executable(bench_world src/bench_world.cpp)
 target_compile_features(bench_world PUBLIC cxx_std_17)
@@ -28,6 +30,18 @@ ament_target_dependencies(bench_world
   rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs
   visualization_msgs)
 install(TARGETS bench_world DESTINATION lib/${PROJECT_NAME})
+
+# A component, so it can share the camera's container with roi_depth_node.
+add_library(depth_camera_emulator SHARED src/depth_camera_emulator.cpp)
+target_compile_features(depth_camera_emulator PUBLIC cxx_std_17)
+target_include_directories(depth_camera_emulator PRIVATE include)
+ament_target_dependencies(depth_camera_emulator
+  rclcpp rclcpp_components realsense2_camera_msgs sensor_msgs)
+rclcpp_components_register_node(depth_camera_emulator
+  PLUGIN "sim::DepthCameraEmulator"
+  EXECUTABLE depth_camera_emulator_node)
+install(TARGETS depth_camera_emulator
+  ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 
 ament_python_install_package(${PROJECT_NAME})
 file(GLOB PYTHON_NODES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/*)
@@ -41,6 +55,9 @@ if(BUILD_TESTING)
   # which fails ament's `pytest --version` probe; setup.cfg disables it for
   # the run itself, and its [tool:pytest] deselects the integration suites.
   set(ENV{PYTEST_ADDOPTS} "-p no:anyio")
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_depth_mm test/cpp/test_depth_mm.cpp)
+  target_include_directories(test_depth_mm PRIVATE include)
   ament_add_pytest_test(sim_pytest test TIMEOUT 600
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENV "PYTEST_ADDOPTS=-p no:anyio")
