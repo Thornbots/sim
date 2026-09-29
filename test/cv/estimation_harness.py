@@ -231,16 +231,18 @@ class EstimationStack:
 
 
 def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
-             blackout=False, shooter_speed=0.0):
+             blackout=False, shooter_speed=0.0, target_yaw=0.0):
     """
     Restart the track on (speed, spin_hz, stagger, path), then score every state.
 
-    Detections go off for RESET_S so the tracker drops the old track, while
-    the head turns to the target, then come back; states are scored from
-    there for SETTLE_S + duration.
+    The target jumps to target_yaw (rad, 0 = a panel square to us), so a
+    still case doesn't inherit the last spin's yaw. Detections go off for
+    RESET_S so the tracker drops the old track, while the head turns to the
+    target, then come back; states are scored from there for SETTLE_S + duration.
     """
     with suite_timing.phase('reset'):
         stack.set_params(target_speed=speed, spin_hz=spin_hz, **TARGET_PATHS[path])
+        stack.set_params(target_yaw=target_yaw)
         stack.set_params(panel_stagger_m=stagger, detections_enabled=False,
                          **(BLACKOUT if blackout else {'blackout_period_s': 0.0}))
         sampler = EstimationSampler(stagger, shooter_speed)

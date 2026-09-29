@@ -16,7 +16,8 @@
 Estimation bench: target_tracker's TargetState against the truth, no gz.
 
 The same cells as the aiming bench (test_shot_hit.py): stationary, then each
-speed, flat and staggered. Each case restarts the track and scores every
+speed, flat and staggered, plus stationary45: still at 45 deg, two panels in
+view. Each case restarts the track and scores every
 state at its own stamp (estimation_harness.py). A cell asserts that states
 arrive and mostly go valid, plus its p95 limits once LIMITS has them (the
 worst of three runs plus a margin, tools/estimation_limits.py). Nothing fires.
@@ -25,6 +26,7 @@ runs it. Options: --shot-speeds, --shot-duration, --panel-layout,
 --target-path, --shooter-speed, --blackout, --camera-latency,
 --skip-stationary, --only-stationary, --headless, --log-dir, --external-stack.
 """
+import math
 import os
 
 import estimation_harness as harness
@@ -35,6 +37,8 @@ import shot_hit_harness
 pytestmark = pytest.mark.integration
 
 STATIONARY = 'stationary'
+STATIONARY_ANGLED = 'stationary45'
+ANGLED_YAW_DEG = 45.0
 LAYOUTS = {'flat': 0.0, 'staggered': shot_hit_harness.STAGGERED_PANEL_M}
 MIN_VALID_FRACTION = 0.5  # liveness, not a tuned figure
 
@@ -67,13 +71,13 @@ def pytest_generate_tests(metafunc):
     config = metafunc.config
     cases = []
     if not config.getoption('--skip-stationary'):
-        cases.append(STATIONARY)
+        cases += [STATIONARY, STATIONARY_ANGLED]
     if not config.getoption('--only-stationary'):
         cases.extend(_speeds(config))
     layout = config.getoption('--panel-layout')
     layouts = list(LAYOUTS) if layout == 'both' else [layout]
     params = [(lay, case) for lay in layouts for case in cases]
-    ids = [f'{lay}-{case if case == STATIONARY else f"speed{case}"}' for lay, case in params]
+    ids = [f'{lay}-{case if isinstance(case, str) else f"speed{case}"}' for lay, case in params]
     metafunc.parametrize('layout,case', params, ids=ids)
 
 
@@ -84,18 +88,20 @@ def test_estimation(layout, case, request, est_stack):
     path = config.getoption('--target-path')
     shooter_speed = config.getoption('--shooter-speed')
     blackout = config.getoption('--blackout')
-    if case == STATIONARY:
+    yaw_deg = ANGLED_YAW_DEG if case == STATIONARY_ANGLED else 0.0
+    if isinstance(case, str):
         speed, spin_hz = 0.0, 0.0
     else:
         speed = case
         spin_hz = shot_hit_harness.spin_hz_for_speed(speed, min(speeds), max(speeds))
     cell = cell_id(layout, speed, path, shooter_speed, blackout,
-                   config.getoption('--camera-latency'))
+                   config.getoption('--camera-latency'), yaw_deg)
     print(f'\n=== {cell}, spin={spin_hz:.2f} Hz ===')
 
     summary = harness.run_case(est_stack, cell, speed, spin_hz, duration,
                                stagger=LAYOUTS[layout], path=path, blackout=blackout,
-                               shooter_speed=shooter_speed)
+                               shooter_speed=shooter_speed,
+                               target_yaw=math.radians(yaw_deg))
     harness.print_summary(cell, summary)
 
     assert summary['states'] > 0, (
