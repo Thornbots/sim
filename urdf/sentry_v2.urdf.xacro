@@ -9,10 +9,8 @@
   <xacro:arg name="camera" default="false"/>
   <!-- The gz model name, so each copy's plugin topics are its own. -->
   <xacro:arg name="name" default="sentry"/>
-  <!-- An opponent carries no sensors, and spins its chassis on
-       chassis_spin under a heading-fixed spin_base, since VelocityControl
-       takes a body-frame twist (a spinning chassis would swirl its path
-       between commands). -->
+  <!-- An opponent carries no sensors, has no gravity or contacts, and
+       spins through VelocityControl's angular z. -->
   <xacro:arg name="opponent" default="false"/>
   <xacro:property name="name" value="$(arg name)"/>
   <xacro:include filename="$(find sim)/urdf/sentry_v2/sentry_v2.urdf"/>
@@ -188,10 +186,11 @@
       <cmd_max>50</cmd_max>
       <cmd_min>-50</cmd_min>
     </plugin>
-    <!-- Sets the chassis's full twist every step from /cmd_vel: planar
-         velocity as commanded, zero angular velocity (a hard yaw lock), and
-         zero vertical velocity, so the chassis settles onto its springs at
-         about 1 cm/s but can't bounce. -->
+    <!-- Sets the chassis's full twist every step from /cmd_vel, in the body
+         frame: planar velocity and yaw rate as commanded (our /cmd_vel has
+         zero yaw rate, a hard yaw lock; opponent_driver spins opponents),
+         and zero vertical velocity, so the chassis settles onto its springs
+         at about 1 cm/s but can't bounce. -->
     <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
       <topic>/model/${name}/cmd_vel</topic>
     </plugin>
@@ -209,7 +208,6 @@
         </collision>
       </gazebo>
     </xacro:macro>
-    <xacro:ghost link="spin_base"/>
     <xacro:ghost link="root"/>
     <xacro:ghost link="head"/>
     <xacro:ghost link="head_pitch"/>
@@ -221,20 +219,5 @@
     <xacro:ghost link="wheel_1"/>
     <xacro:ghost link="wheel_2"/>
     <xacro:ghost link="wheel_3"/>
-    <link name="spin_base">
-      <inertial><mass value="1.0"/><inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/></inertial>
-    </link>
-    <joint name="chassis_spin" type="continuous">
-      <parent link="spin_base"/>
-      <child link="root"/>
-      <axis xyz="0 0 1"/>
-    </joint>
-    <gazebo>
-      <!-- Sets chassis_spin's velocity (rad/s) straight from the topic. -->
-      <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
-        <joint_name>chassis_spin</joint_name>
-        <topic>/model/${name}/joint/chassis_spin/cmd_vel</topic>
-      </plugin>
-    </gazebo>
   </xacro:if>
 </robot>
