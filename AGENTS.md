@@ -232,8 +232,10 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   (`../E2E_PLAN.md`).
 - **`sentry_v2`'s chassis picks up ~1 deg of yaw** in the first hard
   corners at 4 m/s and keeps it: the head's reaction torque gets past the
-  yaw lock. The real robot is expected to drift 1-5 deg too. Noted, not
-  acted on; the stack assumes a fixed heading for now.
+  yaw lock. The real robot is expected to drift 1-5 deg too. Since
+  2026-09-29 `pose_emulator` sends world head yaw and velocity plus
+  `chassis_yaw`, `root` stays heading-fixed, and `spawn_yaw_deg:=5` scores
+  the drift suite with the chassis turned (same as at 0).
 - **The lidar's bottom guard sits on the chassis in `sentry_v2`.** It is the
   export's grounded part and isn't mated to the head, so the chassis hull
   reaches 0.362 m. Harmless for scans; fix it in Onshape (mate it) or in

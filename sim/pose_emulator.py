@@ -103,6 +103,7 @@ class PoseEmulator(Node):
         # without needing its own subscription.
         self._true_x = 0.0
         self._true_y = 0.0
+        self._true_yaw = 0.0  # chassis, CCW; a jerk teleport keeps it
         # Slip bookkeeping: separate from _true_x/_true_y (which trigger_jerk
         # reads and which must stay exact ground truth) and from
         # _drift_x/_drift_y (an additive offset, unaffected by slip so
@@ -196,7 +197,7 @@ class PoseEmulator(Node):
             dx = random.gauss(0.0, jerk_stddev)
             dy = random.gauss(0.0, jerk_stddev)
 
-        teleport(self._true_x + dx, self._true_y + dy)
+        teleport(self._true_x + dx, self._true_y + dy, yaw=self._true_yaw)
 
         # Cancel the same delta out of the drift accumulator so reported
         # pose = new_true_pose + drift = (true_pose + dx) + (drift - dx)
@@ -282,8 +283,16 @@ class PoseEmulator(Node):
         x += self._drift_x
         y += self._drift_y
 
-        vel_x = float(msg.twist.twist.linear.x)
-        vel_y = float(msg.twist.twist.linear.y)
+        # The MCB reports world-frame velocity and yaws; gz's twist is in
+        # the chassis frame, and its joint yaw is relative to the chassis.
+        q = msg.pose.pose.orientation
+        chassis_yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        self._true_yaw = chassis_yaw
+        c, s = math.cos(chassis_yaw), math.sin(chassis_yaw)
+        bx, by = float(msg.twist.twist.linear.x), float(msg.twist.twist.linear.y)
+        vel_x = c * bx - s * by
+        vel_y = s * bx + c * by
         if slip_ratio > 0.0:
             # Same loss as position: the EKF fuses only /odom's velocity.
             vel_x *= (1.0 - slip_ratio)
@@ -303,8 +312,11 @@ class PoseEmulator(Node):
         pose.vel_x = vel_x
         pose.vel_y = vel_y
         head_yaw, head_pitch = self._head_at(msg.header.stamp)
+        # RobotPose yaws turn about -z, like the URDF's joints.
+        pose.chassis_yaw = -chassis_yaw
+        pose.chassis_yaw_rate = -float(msg.twist.twist.angular.z)
         pose.head_pitch = float(head_pitch)
-        pose.head_yaw = float(head_yaw)
+        pose.head_yaw = float(head_yaw) + pose.chassis_yaw
         self.pose_pub.publish(pose)
 
 

@@ -24,6 +24,7 @@ WorldReset to zero joint state first. See README.md for why/how both
 are safe here.
 """
 import importlib
+import math
 import os
 import re
 
@@ -135,27 +136,27 @@ def reset_joints():
     )
 
 
-def teleport(x, y, z=Z):
+def teleport(x, y, z=Z, yaw=0.0):
     """
     Write x, y, z to gz world pose via UserCommands' set_pose service.
 
     Returns whether gz reported success; doesn't raise on a bad entity
-    name. Orientation pinned to identity each call. reset_joints() runs
+    name. Orientation pinned to `yaw` (rad) each call. reset_joints() runs
     both before AND after -- see README.md for why the after-call is
     needed (a reaction-impulse artifact from root's position discontinuity).
     """
     reset_joints()
-    ok = set_model_pose(ENTITY_NAME, x, y, z)
+    ok = set_model_pose(ENTITY_NAME, x, y, z, yaw)
     reset_joints()
     return ok
 
 
-def set_model_pose(name, x, y, z):
-    """Set_pose one model to (x, y, z), identity orientation; no joint reset."""
+def set_model_pose(name, x, y, z, yaw=0.0):
+    """Set_pose one model to (x, y, z), turned yaw rad about z; no joint reset."""
     req = (
         f"name: '{name}', "
         f'position: {{x: {x}, y: {y}, z: {z}}}, '
-        f'orientation: {{x: 0, y: 0, z: 0, w: 1}}'
+        f'orientation: {{x: 0, y: 0, z: {math.sin(yaw / 2.0)}, w: {math.cos(yaw / 2.0)}}}'
     )
     return _gz_service(
         'set_pose', 'gz.msgs.Pose', 'gz.msgs.Boolean', req,
