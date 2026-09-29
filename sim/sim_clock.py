@@ -18,8 +18,10 @@ Publish /clock without gz, for stacks that run on sim time but have no world.
 shot_hit.launch.py's point bench uses it. rate > 0 advances `rate` sim
 seconds per wall second, in steps of the measured wall time (publish_rate_hz).
 rate 0 runs as fast as the stack keeps up: sim time moves in step_s steps,
-and never more than one period (plus a step) past the newest header.stamp on
-any pace_topics entry ("topic pkg/msg/Type period_s"). A topic silent for
+and stops exactly one period past the newest header.stamp on any pace_topics
+entry ("topic pkg/msg/Type period_s") until that topic publishes again, so a
+timer at that period sees its own deadline, never a later step (a fast
+machine otherwise stamped each 40 Hz tick 26 ms apart). A topic silent for
 max_wait_s of wall time, or with no publisher left, stops holding the clock
 until it publishes again;
 with no topic holding it (at startup, say), the clock runs at 1x.
@@ -89,19 +91,23 @@ class SimClock(Node):
             gate[2] = True
             self._cond.notify()
 
-    def _blocking(self, next_ns):
-        """Return the live gates that must publish before sim time reaches next_ns."""
+    def _blocking(self):
+        """Return the live gates whose deadline (last stamp + period) sim time has reached."""
         return [t for t, (period, last, live) in self._gates.items()
-                if live and last + period + self.step_ns < next_ns]
+                if live and last + period <= self._sim_ns]
+
+    def _next_ns(self):
+        """Return the next step, cut short at the nearest live gate's deadline."""
+        return min([self._sim_ns + self.step_ns]
+                   + [last + period for period, last, live in self._gates.values() if live])
 
     def run_paced(self):
         """Step the clock forever; run on its own thread while the executor spins."""
         report_wall, report_sim = time.monotonic(), 0
         while rclpy.ok():
-            next_ns = self._sim_ns + self.step_ns
             with self._cond:
                 deadline = time.monotonic() + self.max_wait_s
-                while (waiting := self._blocking(next_ns)) and time.monotonic() < deadline:
+                while (waiting := self._blocking()) and time.monotonic() < deadline:
                     # A gate with no publisher left (the scorer between cases)
                     # never catches up.
                     for topic in waiting:
@@ -112,6 +118,7 @@ class SimClock(Node):
                     self._gates[topic][2] = False
                     self.get_logger().warn(f'sim_clock: {topic} silent, no longer pacing on it')
                 idle = not any(live for _, _, live in self._gates.values())
+                next_ns = self._next_ns()
             if idle:
                 time.sleep(self.step_ns / 1e9)
             self._sim_ns = next_ns

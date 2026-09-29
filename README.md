@@ -48,9 +48,10 @@ next. So a miss is `point_to_cv_target`'s math and nothing else. It draws the
 target's panels in rviz.
 
 `real_time_factor:=0` (the default) runs it as fast as the stack keeps up.
-`sim_clock` steps sim time 2 ms at a time and holds each step until
-`/cv/target_state`, `/pose`, `/cv/target` and the scorer's `/bench/progress`
-are stamped within one period of it, so no node falls behind; a topic with
+`sim_clock` steps sim time 2 ms at a time and stops exactly one period past
+the newest stamp on `/cv/target_state`, `/pose`, `/cv/target` and the
+scorer's `/bench/progress` until that topic publishes, so no node falls
+behind and each 40 Hz tick is stamped on its deadline; a topic with
 no publisher left (the scorer between cases) stops holding it. A fixed
 `real_time_factor` above 0 doesn't wait: 8x lost 2-5 points. On 2026-09-25
 the paced clock ran 6.6-6.8x and scored every cell within half a point of
