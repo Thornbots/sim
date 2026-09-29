@@ -95,9 +95,9 @@ build the `TargetState`, and `point_to_cv_target` aims the head; nothing
 fires. Each case sets the target's yaw (0, a panel square to us, except
 `stationary45`) and switches detections off for 1 s so the tracker starts a
 fresh track, then scores every state for 3 s + 30 s against the truth at the
-state's own stamp, so a late stamp scores as error. The ten original cells took
-~53 s with rviz up, ~6.5x real time while scoring (`real_time_factor:=1` for
-real time). Sim time waits for the nodes under test, `target_tracker`'s input
+state's own stamp, so a late stamp scores as error. The 12 cells take ~22 s
+on the Mac, ~20x real time while scoring (`real_time_factor:=1` for real
+time). Sim time waits for the nodes under test, `target_tracker`'s input
 among them (`/cv/tracker/measurement`), but only on frames that carried a
 detection, since the tracker echoes nothing for an empty one. A gate whose
 publisher has gone, like the scorer between cases, stops holding it at once:

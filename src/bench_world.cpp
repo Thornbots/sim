@@ -162,7 +162,7 @@ public:
     rate_ = declare_parameter("rate", 0.0);  // sim s per wall s; 0 = paced
     clock_step_s_ = declare_parameter("clock_step_s", 0.005);
     physics_step_s_ = declare_parameter("physics_step_s", 0.001);  // gz's
-    pace_slack_s_ = declare_parameter("pace_slack_s", 0.02);
+    pace_slack_s_ = declare_parameter("pace_slack_s", 0.005);
     max_wait_s_ = declare_parameter("max_wait_s", 0.5);  // wall; then a gate goes quiet
     // Target path and spin (target_driver.py), read live.
     for (const auto & [name, value] : std::map<std::string, double>{
