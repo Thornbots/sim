@@ -118,13 +118,20 @@ quarter turn), spin rate, radius and height per pair. `blackout:=true` drops eve
 `camera_latency_s:=0.03` stamps detections late and tells the tracker to
 undo it (`tracker_camera_latency_s:=0` to leave it undone).
 `shooter_speed:=1.0`, `target_path:=`, `speeds:=` and `panel_layout:=` work
-as on the aiming bench, and `process_noise_accel:=` sets the tracker's. A cell
+as on the aiming bench, and `process_noise_accel:=` sets the tracker's.
+`chassis_spin:=9` spins our chassis (rad/s, CCW, the firmware's rate) under
+the head, which holds world yaw as the MCB's IMU loop does;
+`yaw_bearing_damping:=` (N m s/rad, default 0, unmeasured) lets the spin drag
+the head. A cell
 passes on liveness until `LIMITS` in `test/cv/estimation_limits_data.py` has
 limits for it:
 
 ```bash
 python3 tools/estimation_limits.py run1/ run2/ run3/   # each a log_dir:=
 ```
+
+`--keep test/cv/estimation_limits_data.py` keeps every cell the new runs
+don't score, so one axis can get limits without rerunning the rest.
 
 `estimation.jsonl` has one summary line per case and
 `estimation_states.jsonl` one line per scored state.
@@ -916,7 +923,9 @@ Our chassis on the aiming bench. A second `target_driver`, named
 same braking; `point_shooter` republishes each sample at once as `odom->root`
 TF and `/pose` (`RobotPose`, root-frame velocity), stamped with its sample
 time. No noise or latency, so our motion is as perfectly known as the
-target's. The harness flies each shot from `root`'s interpolated position at
+target's. It has no chassis spin: `root` is heading-fixed and the point
+shooter's gimbal is perfect, so a spin changes nothing it scores. The
+estimation bench's `chassis_spin:=` is where spin is tested. The harness flies each shot from `root`'s interpolated position at
 exit with `root`'s velocity added, as a real projectile would carry it.
 
 ### sim_clock.py

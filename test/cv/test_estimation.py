@@ -23,7 +23,7 @@ arrive and mostly go valid, plus its p95 limits once LIMITS has them (the
 worst of three runs plus a margin, tools/estimation_limits.py). Nothing fires.
 Launches the whole stack, so marked `integration`; `ros2 launch sim estimation.launch.py`
 runs it. Options: --shot-speeds, --shot-duration, --panel-layout,
---target-path, --shooter-speed, --blackout, --camera-latency,
+--target-path, --shooter-speed, --chassis-spin, --blackout, --camera-latency,
 --skip-stationary, --only-stationary, --headless, --log-dir, --external-stack.
 """
 import math
@@ -88,6 +88,7 @@ def test_estimation(layout, case, request, est_stack):
     path = config.getoption('--target-path')
     shooter_speed = config.getoption('--shooter-speed')
     blackout = config.getoption('--blackout')
+    chassis_spin = config.getoption('--chassis-spin')
     yaw_deg = ANGLED_YAW_DEG if case == STATIONARY_ANGLED else 0.0
     if isinstance(case, str):
         speed, spin_hz = 0.0, 0.0
@@ -95,13 +96,13 @@ def test_estimation(layout, case, request, est_stack):
         speed = case
         spin_hz = shot_hit_harness.spin_hz_for_speed(speed, min(speeds), max(speeds))
     cell = cell_id(layout, speed, path, shooter_speed, blackout,
-                   config.getoption('--camera-latency'), yaw_deg)
+                   config.getoption('--camera-latency'), yaw_deg, chassis_spin)
     print(f'\n=== {cell}, spin={spin_hz:.2f} Hz ===')
 
     summary = harness.run_case(est_stack, cell, speed, spin_hz, duration,
                                stagger=LAYOUTS[layout], path=path, blackout=blackout,
                                shooter_speed=shooter_speed,
-                               target_yaw=math.radians(yaw_deg))
+                               target_yaw=math.radians(yaw_deg), chassis_spin=chassis_spin)
     harness.print_summary(cell, summary)
 
     assert summary['states'] > 0, (

@@ -98,11 +98,12 @@ struct Joint
 {
   double p, d, inertia, cmd_max, lower, upper, max_vel;
   double q = 0.0, qd = 0.0, cmd = 0.0;
+  double ext = 0.0;  // external torque, outside the motor's limit
 
   void step(double dt)
   {
     const double tau = clamp(p * (cmd - q) - d * qd, -cmd_max, cmd_max);
-    qd = clamp(qd + tau / inertia * dt, -max_vel, max_vel);
+    qd = clamp(qd + (tau + ext) / inertia * dt, -max_vel, max_vel);
     q += qd * dt;
     if (q < lower) {q = lower; qd = 0.0;}
     if (q > upper) {q = upper; qd = 0.0;}
@@ -174,7 +175,10 @@ public:
         {"noise_lateral_rad", 0.003}, {"dropout_probability", 0.03},
         {"publish_latency_s", 0.06}, {"camera_latency_s", 0.0},
         {"blackout_period_s", 0.0}, {"blackout_s", 0.0},
-        {"panel_radius_x", 0.252}, {"panel_radius_y", 0.252}, {"panel_stagger_m", 0.0}})
+        {"panel_radius_x", 0.252}, {"panel_radius_y", 0.252}, {"panel_stagger_m", 0.0},
+        // Our chassis spin (rad/s, CCW) and the yaw bearing's viscous drag
+        // on the head (N m s/rad, unmeasured), read live.
+        {"chassis_spin_rad_s", 0.0}, {"yaw_bearing_damping", 0.0}})
     {
       live_[name] = declare_parameter(name, value);
     }
@@ -396,6 +400,11 @@ private:
     ++n_;
     std::lock_guard<std::mutex> lock(mutex_);
     step_target(dt);
+    // The head holds world yaw (the MCB's IMU loop); a spinning chassis
+    // drags it through the bearing. yaw_.q turns about -z, the spin about +z.
+    const double spin = live_["chassis_spin_rad_s"];
+    chassis_yaw_ = wrap_pi(chassis_yaw_ + spin * dt);
+    yaw_.ext = -live_["yaw_bearing_damping"] * (yaw_.qd + spin);
     yaw_.step(dt);
     pitch_.step(dt);
     xy_ += cmd_vel_ * dt;
@@ -470,6 +479,8 @@ private:
     pose.vel_x = cmd_vel_.x();
     pose.vel_y = cmd_vel_.y();
     pose.head_yaw = yaw_.q;
+    pose.chassis_yaw = -chassis_yaw_;  // RobotPose yaws turn about -z
+    pose.chassis_yaw_rate = -live_["chassis_spin_rad_s"];
     pose.head_pitch = pitch_.q;
     pose_pub_->publish(pose);
 
@@ -479,16 +490,21 @@ private:
     odom.child_frame_id = "root";
     odom.pose.pose.position.x = xy_.x();
     odom.pose.pose.position.y = xy_.y();
-    odom.pose.pose.orientation.w = 1.0;
-    odom.twist.twist.linear.x = cmd_vel_.x();
-    odom.twist.twist.linear.y = cmd_vel_.y();
+    // As gz's: orientation is the chassis's, twist in the chassis frame.
+    odom.pose.pose.orientation.z = std::sin(chassis_yaw_ / 2.0);
+    odom.pose.pose.orientation.w = std::cos(chassis_yaw_ / 2.0);
+    const Eigen::Vector2d body_vel = Eigen::Rotation2Dd(-chassis_yaw_) * cmd_vel_;
+    odom.twist.twist.linear.x = body_vel.x();
+    odom.twist.twist.linear.y = body_vel.y();
+    odom.twist.twist.angular.z = live_["chassis_spin_rad_s"];
     odom_pub_->publish(odom);
 
     sensor_msgs::msg::JointState js;
     js.header.stamp = stamp;
     js.name = {"headlink", "headpitch"};
-    js.position = {yaw_.q, pitch_.q};
-    js.velocity = {yaw_.qd, pitch_.qd};
+    // As gz's: headlink relative to the chassis.
+    js.position = {wrap_pi(yaw_.q + chassis_yaw_), pitch_.q};
+    js.velocity = {yaw_.qd + live_["chassis_spin_rad_s"], pitch_.qd};
     joint_pub_->publish(js);
   }
 
@@ -730,6 +746,7 @@ private:
   int64_t n_ = 0;
   double s_ = 0.0, vs_ = 0.0, direction_ = 1.0, target_yaw_ = 0.0, omega_ = 0.0;
   Eigen::Vector2d xy_ = Eigen::Vector2d::Zero(), cmd_vel_ = Eigen::Vector2d::Zero();
+  double chassis_yaw_ = 0.0;  // CCW, world
   Joint yaw_, pitch_;
   std::optional<Vector3d> aim_;
   std::optional<Panel> detected_;

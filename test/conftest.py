@@ -110,6 +110,10 @@ def pytest_addoption(parser):
         help='our own chassis speed (m/s) the stack was launched with, for labels '
              "and shots.jsonl; shot_hit.launch.py's shooter_speed sets the motion")
     group.addoption(
+        '--chassis-spin', type=float, default=0.0,
+        help='estimation bench: our chassis spins at this rate (rad/s, CCW) '
+             'under the world-held head; the firmware spins at 9')
+    group.addoption(
         '--blackout', action='store_true',
         help='estimation bench: drop every detection for 0.3 s in each 2 s '
              '(estimation_harness.BLACKOUT)')

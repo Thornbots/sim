@@ -75,7 +75,7 @@ class EstimationSampler(SimTimeNode):
         self._last_cmd_s = None
         self._truth = []  # [(stamp_s, center, velocity, yaw unwrapped, yaw_rate)]
         self._root_xy = (0.0, 0.0)  # ours, from /sim/raw_odom
-        self._root_pose = (np.zeros(3), 0.0)  # position, yaw
+        self._root = np.zeros(3)  # our position; root is heading-fixed
         self.aim_head = False  # command the head at truth; run_case sets it for RESET_S
         self._pending = []  # [(stamp_s, arrival_s, TargetState)]
         self.records = []  # one dict per scored state
@@ -107,10 +107,9 @@ class EstimationSampler(SimTimeNode):
             self._aim_head_at(self._truth[-1][1])
 
     def _aim_head_at(self, center):
-        root, yaw = self._root_pose
-        d = center - root
-        c, s = math.cos(yaw), math.sin(yaw)
-        head_yaw, head_pitch = solve_head_angles((c * d[0] + s * d[1], -s * d[0] + c * d[1], d[2]))
+        # bench_world holds /head_pan_cmd as a world yaw, as the MCB does,
+        # whatever our chassis's spin.
+        head_yaw, head_pitch = solve_head_angles(tuple(center - self._root))
         self.pan_pub.publish(Float64(data=head_yaw))
         self.pitch_pub.publish(Float64(data=max(-HEADPITCH_LIMIT,
                                                 min(HEADPITCH_LIMIT, head_pitch))))
@@ -137,11 +136,9 @@ class EstimationSampler(SimTimeNode):
 
     def _on_root_odom(self, msg):
         """Keep our position; bounce our chassis along y at shooter_speed, x held at 0."""
-        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        p = msg.pose.pose.position
         self._root_xy = (p.x, p.y)
-        self._root_pose = (np.array([p.x, p.y, p.z]),
-                           math.atan2(2.0 * (q.w * q.z + q.x * q.y),
-                                      1.0 - 2.0 * (q.y * q.y + q.z * q.z)))
+        self._root = np.array([p.x, p.y, p.z])
         if self.shooter_speed <= 0.0:
             return
         now_s = self._stamp_s(msg.header.stamp)
@@ -231,7 +228,7 @@ class EstimationStack:
 
 
 def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
-             blackout=False, shooter_speed=0.0, target_yaw=0.0):
+             blackout=False, shooter_speed=0.0, target_yaw=0.0, chassis_spin=0.0):
     """
     Restart the track on (speed, spin_hz, stagger, path), then score every state.
 
@@ -239,10 +236,11 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
     still case doesn't inherit the last spin's yaw. Detections go off for
     RESET_S so the tracker drops the old track, while the head turns to the
     target, then come back; states are scored from there for SETTLE_S + duration.
+    Our chassis spins at chassis_spin (rad/s) under the world-held head.
     """
     with suite_timing.phase('reset'):
         stack.set_params(target_speed=speed, spin_hz=spin_hz, **TARGET_PATHS[path])
-        stack.set_params(target_yaw=target_yaw)
+        stack.set_params(target_yaw=target_yaw, chassis_spin_rad_s=chassis_spin)
         stack.set_params(panel_stagger_m=stagger, detections_enabled=False,
                          **(BLACKOUT if blackout else {'blackout_period_s': 0.0}))
         sampler = EstimationSampler(stagger, shooter_speed)
