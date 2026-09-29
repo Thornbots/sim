@@ -35,7 +35,6 @@ thornbots_pkg/README.md) to set fire=True on one.
 Shots are observed today, so "zero shots" means something in the
 launched stack is actually broken.
 """
-import ctypes
 import json
 import math
 import os
@@ -55,6 +54,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sim import suite_timing
+from sim.parent_death import die_with_parent
 from std_msgs.msg import ColorRGBA, Header
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -256,13 +256,8 @@ def spin_hz_for_speed(speed, speed_min, speed_max):
     return SPIN_HZ_AT_MIN_SPEED + frac * (SPIN_HZ_AT_MAX_SPEED - SPIN_HZ_AT_MIN_SPEED)
 
 
-PR_SET_PDEATHSIG = 1
-_prctl = ctypes.CDLL(None, use_errno=True).prctl
-
-
-def interrupt_with_parent():
-    """Popen preexec_fn: SIGINT this child when the process that started it dies."""
-    _prctl(PR_SET_PDEATHSIG, int(signal.SIGINT))
+# Popen preexec_fn: SIGINT this child when the process that started it dies.
+interrupt_with_parent = die_with_parent(signal.SIGINT)
 
 
 def signal_group(pgid, sig):
