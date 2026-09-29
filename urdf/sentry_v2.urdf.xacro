@@ -7,6 +7,14 @@
      see README.md for design rationale -->
 <robot name="sentry" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="camera" default="false"/>
+  <!-- The gz model name, so each copy's plugin topics are its own. -->
+  <xacro:arg name="name" default="sentry"/>
+  <!-- An opponent carries no sensors, and spins its chassis on
+       chassis_spin under a heading-fixed spin_base, since VelocityControl
+       takes a body-frame twist (a spinning chassis would swirl its path
+       between commands). -->
+  <xacro:arg name="opponent" default="false"/>
+  <xacro:property name="name" value="$(arg name)"/>
   <xacro:include filename="$(find sim)/urdf/sentry_v2/sentry_v2.urdf"/>
 
   <!-- Colour (gz only; the generated URDF has no materials, so rviz draws it
@@ -65,6 +73,7 @@
   <!-- Same sensor as sentry.urdf.xacro's: an RPLIDAR A2M8 in its typical
        mode, 10 Hz and 800 beams over -pi..pi (rf2o assumes a zero-centred
        scan), 0.15-12 m, 0.01 m noise. -->
+  <xacro:unless value="$(arg opponent)">
   <gazebo reference="lidar">
     <sensor name="lidar" type="gpu_lidar">
       <always_on>true</always_on>
@@ -95,6 +104,7 @@
       </lidar>
     </sensor>
   </gazebo>
+  </xacro:unless>
 
   <!-- D435-like depth camera at 60 Hz, only with camera:=true. Depth alone:
        the detector stand-in reads truth, so nothing needs colour.
@@ -136,6 +146,20 @@
       <dimensions>3</dimensions>
       <odom_publish_frequency>100</odom_publish_frequency>
     </plugin>
+    <!-- The model's world pose and every link's pose in it, one stamped
+         Pose_V on /model/<name>/pose at 250 Hz: the match test's truth for
+         the camera and the panels (fixed-joint links like armor_i and
+         camera are lumped into their parents in gz). -->
+    <plugin filename="gz-sim-pose-publisher-system" name="gz::sim::systems::PosePublisher">
+      <publish_model_pose>true</publish_model_pose>
+      <publish_link_pose>true</publish_link_pose>
+      <publish_nested_model_pose>false</publish_nested_model_pose>
+      <publish_visual_pose>false</publish_visual_pose>
+      <publish_collision_pose>false</publish_collision_pose>
+      <publish_sensor_pose>false</publish_sensor_pose>
+      <use_pose_vector_msg>true</use_pose_vector_msg>
+      <update_frequency>250</update_frequency>
+    </plugin>
     <!-- Every joint, so robot_state_publisher can place the wheels too. -->
     <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher"/>
     <!-- Head yaw and pitch track /head_pan_cmd and /head_pitch_cmd (rad).
@@ -143,7 +167,7 @@
          yaw axis and 0.009 about pitch, near critical damping at p 75. -->
     <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>headlink</joint_name>
-      <topic>/model/sentry/joint/headlink/cmd_pos</topic>
+      <topic>/model/${name}/joint/headlink/cmd_pos</topic>
       <p_gain>75</p_gain>
       <i_gain>0.0</i_gain>
       <d_gain>2.1</d_gain>
@@ -154,7 +178,7 @@
     </plugin>
     <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>headpitch</joint_name>
-      <topic>/model/sentry/joint/headpitch/cmd_pos</topic>
+      <topic>/model/${name}/joint/headpitch/cmd_pos</topic>
       <p_gain>75</p_gain>
       <i_gain>0.0</i_gain>
       <d_gain>1.2</d_gain>
@@ -168,7 +192,25 @@
          zero vertical velocity, so the chassis settles onto its springs at
          about 1 cm/s but can't bounce. -->
     <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
-      <topic>/model/sentry/cmd_vel</topic>
+      <topic>/model/${name}/cmd_vel</topic>
     </plugin>
   </gazebo>
+
+  <xacro:if value="$(arg opponent)">
+    <link name="spin_base">
+      <inertial><mass value="1.0"/><inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/></inertial>
+    </link>
+    <joint name="chassis_spin" type="continuous">
+      <parent link="spin_base"/>
+      <child link="root"/>
+      <axis xyz="0 0 1"/>
+    </joint>
+    <gazebo>
+      <!-- Sets chassis_spin's velocity (rad/s) straight from the topic. -->
+      <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
+        <joint_name>chassis_spin</joint_name>
+        <topic>/model/${name}/joint/chassis_spin/cmd_vel</topic>
+      </plugin>
+    </gazebo>
+  </xacro:if>
 </robot>

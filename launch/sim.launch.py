@@ -285,7 +285,8 @@ def generate_launch_description():
         output='screen',
         arguments=[
             '-string', Command(['xacro '] + model_xacro
-                               + [' camera:=', LaunchConfiguration('camera')]),
+                               + [' camera:=', LaunchConfiguration('camera'),
+                                  ' name:=', robot_name]),
             '-name', robot_name,
             '-x', LaunchConfiguration('x'),
             '-y', LaunchConfiguration('y'),
