@@ -36,8 +36,8 @@ def pytest_addoption(parser):
     group = parser.getgroup('sim integration')
     group.addoption(
         '--headless', action='store_true',
-        help="skip gz-sim's GUI window and rviz2 (both on by default, per "
-             'sim/AGENTS.md\'s standing "watch sim live" rule)')
+        help="skip gz-sim's GUI window and rviz2 (on by default wherever a "
+             'display opens; Foxglove serves either way)')
     group.addoption(
         '--restart-sim', action='store_true',
         help='bring the sim up fresh for every localization scenario instead '
@@ -200,15 +200,16 @@ def pytest_collection_modifyitems(config, items):
 
 
 def pytest_collection_finish(session):
-    """Stop a GUI integration run up front if no window can open."""
+    """Drop the gz and rviz2 windows where none can open; Foxglove still serves."""
     if session.config.getoption('--headless') or not any(
             item.get_closest_marker('integration') for item in session.items):
         return
     error = _display_error()
     if error:
-        pytest.exit(f'{error}, so gz sim and rviz2 would die at start. Set DISPLAY '
-                    '(ls /tmp/.X11-unix) or pass --headless / headless:=true.',
-                    returncode=pytest.ExitCode.USAGE_ERROR)
+        session.config.option.headless = True
+        session.config.get_terminal_writer().line(
+            f'{error}: no gz or rviz2 windows. Watch in Foxglove on port 8765 '
+            '(foxglove.launch.py).', yellow=True)
 
 
 def pytest_terminal_summary(terminalreporter):
