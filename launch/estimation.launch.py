@@ -162,7 +162,9 @@ def generate_launch_description():
                                           'as the stack keeps up'),
         DeclareLaunchArgument('clock_step_s', default_value='0.005',
                               description="bench_world's /clock period (s)"),
-        DeclareLaunchArgument('pace_slack_s', default_value='0.02',
+        # 0.02 failed 1-4 slow spinning cells a run once the C++ tracker let
+        # the bench reach ~27x; 0.005 passes at ~20x (2026-09-28).
+        DeclareLaunchArgument('pace_slack_s', default_value='0.005',
                               description='how far (s) sim time may run past each '
                                           "gate's period at real_time_factor:=0"),
         DeclareLaunchArgument('speeds', default_value='',
