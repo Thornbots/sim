@@ -68,7 +68,9 @@ moves the target along the camera ray instead of across it, and
 `POINT_SHOOTER`) through every case.
 
 Every scored shot goes to `shots.jsonl` in `--log-dir`, one JSON object per
-line: the case, whether it hit, the miss distance split into the panel's
+line: the case, whether it hit (the ray crosses a facing panel's canted
+0.135 x 0.125 m face), how far outside that face it crossed
+(`off_face_m`), the miss distance from the panel centre split into its
 offset right of, above and ahead of the shot (ahead is along the target's
 travel, so positive means the shot trailed), the panel and incidence angle,
 the target's velocity, the target rotation it arrived in, and the `CVTarget`
