@@ -91,8 +91,9 @@ MOVING_MIN_HIT_RATE = 0.25
 # minus FLOOR_MARGIN, printed from their scores.jsonl by tools/shot_floors.py.
 # Three chase-mode runs per path and shooter speed on sentry_v2's armor panels,
 # scored on the canted face, Jazzy on the Mac mini, 2026-09-29; the comment on
-# each is its three scores. The Mac fires 92-98% of TEST_FIRE_HZ (keep_up),
-# which costs 1-4 points against the laptop. Unlisted cells use the placeholders.
+# each is its three scores. Taken before sim_clock stopped at each deadline, when
+# the Mac fired 92-98% of TEST_FIRE_HZ (keep_up), so they sit ~3 points low.
+# Unlisted cells use the placeholders.
 FLOOR_MARGIN = 0.10
 FLOORS = {
     'flat-speed0.5-diagonal-shooter0': 0.864,  # 0.980, 0.964, 0.970
