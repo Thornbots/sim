@@ -25,11 +25,9 @@ options declared here. `on_demand` tests are skipped even then unless
 --run-on-demand. Integration runs end with a per-phase time split
 (sim.suite_timing).
 """
-import ctypes
-import os
-
 import pytest
 from sim import suite_timing
+from sim.display import display_error
 
 
 def pytest_addoption(parser):
@@ -170,25 +168,6 @@ def _timed_case(request):
         yield
 
 
-def _display_error():
-    """Return why no X window can open here, or None if one can."""
-    display = os.environ.get('DISPLAY')
-    if not display:
-        return 'DISPLAY is unset'
-    try:
-        x11 = ctypes.cdll.LoadLibrary('libX11.so.6')
-    except OSError:
-        return None  # can't check; gz and rviz2 will say
-    x11.XOpenDisplay.restype = ctypes.c_void_p
-    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
-    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
-    handle = x11.XOpenDisplay(display.encode())
-    if not handle:
-        return f'cannot open DISPLAY={display}'
-    x11.XCloseDisplay(handle)
-    return None
-
-
 def pytest_collection_modifyitems(config, items):
     """Skip on_demand tests unless --run-on-demand."""
     if config.getoption('--run-on-demand'):
@@ -204,7 +183,7 @@ def pytest_collection_finish(session):
     if session.config.getoption('--headless') or not any(
             item.get_closest_marker('integration') for item in session.items):
         return
-    error = _display_error()
+    error = display_error()
     if error:
         session.config.option.headless = True
         session.config.get_terminal_writer().line(

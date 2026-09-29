@@ -44,6 +44,7 @@ from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from sim.display import display_error
 
 # Installed as a symlink into share/sim/launch (--symlink-install), so the real
 # path leads back to src/sim; the constant covers a copying install.
@@ -75,7 +76,8 @@ def _is_true(context, name):
 def _stack(context):
     config = context.launch_configurations
     part = config['part']
-    gui = 'false' if _is_true(context, 'headless') else 'true'
+    windows = not _is_true(context, 'headless') and display_error() is None
+    gui = 'true' if windows else 'false'
     # foxglove: this launch's own bridge (_foxglove) covers the whole run.
     sim_args = {'gui': gui, 'rviz': gui, 'foxglove': 'false',
                 'real_time_factor': config['real_time_factor']}

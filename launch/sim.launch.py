@@ -47,6 +47,7 @@ from launch.substitutions import (
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
+from sim.display import display_error
 
 
 RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
@@ -95,12 +96,14 @@ def generate_launch_description():
     y_arg = DeclareLaunchArgument('y', default_value='0.0')
     z_arg = DeclareLaunchArgument('z', default_value='0.03')
     yaw_arg = DeclareLaunchArgument('yaw', default_value='0.0')
+    # Windows default off where no display opens; watch in Foxglove there.
+    windows = 'true' if display_error() is None else 'false'
     gui_arg = DeclareLaunchArgument(
-        'gui', default_value='true',
+        'gui', default_value=windows,
         description='Set to false to run gz sim headless (server only)'
     )
     rviz_arg = DeclareLaunchArgument(
-        'rviz', default_value='true',
+        'rviz', default_value=windows,
         description='Set to false to skip launching rviz2'
     )
     foxglove_arg = DeclareLaunchArgument(

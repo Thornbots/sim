@@ -45,6 +45,7 @@ from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from sim.display import display_error
 
 # Installed as a symlink into share/sim/launch (--symlink-install), so the real
 # path leads back to src/sim; the constant covers a copying install.
@@ -71,7 +72,7 @@ def cv_node(executable, package='thornbots_pkg', **params):
 
 def _stack(context):
     cfg = context.launch_configurations
-    headless = _is_true(context, 'headless')
+    headless = _is_true(context, 'headless') or display_error() is not None
     camera_latency = float(cfg['camera_latency_s'])
     # rate 0: as fast as the nodes under test keep up (bench_world's gates).
     world = {'rate': max(0.0, float(cfg['real_time_factor'])),

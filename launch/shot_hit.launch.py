@@ -45,6 +45,7 @@ from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from sim.display import display_error
 
 # Installed as a symlink into share/sim/launch (--symlink-install), so the real
 # path leads back to src/sim; the constant covers a copying install.
@@ -70,7 +71,8 @@ def _stack(context):
     sys.path.insert(0, test_dir)
     import shot_hit_harness as harness
 
-    actions = _point_stack(context, harness, _is_true(context, 'headless'))
+    headless = _is_true(context, 'headless') or display_error() is not None
+    actions = _point_stack(context, harness, headless)
     if not _is_true(context, 'run_tests'):
         return actions
     return actions + _tests(context, test_dir)
