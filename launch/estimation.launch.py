@@ -193,8 +193,8 @@ def generate_launch_description():
         DeclareLaunchArgument('log_dir', default_value='',
                               description='where estimation.jsonl and '
                                           'estimation_states.jsonl go'),
-        DeclareLaunchArgument('foxglove', default_value=LaunchConfiguration('run_tests'),
-                              description='Foxglove bridge on :8765; defaults to run_tests'),
+        DeclareLaunchArgument('foxglove', default_value='true',
+                              description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('pytest_args', default_value='',
                               description="extra pytest args, e.g. '-k flat'"),
     ]

@@ -214,8 +214,10 @@ carries `integration` too, but is skipped without `--run-on-demand`;
 
 An integration run ends with a `suite timing` table: wall seconds per case
 in sim start, bring-up, reset, settle, scored and teardown, and the RTF.
-A GUI run stops at once if no window can open (set `DISPLAY`, or
-`headless:=true`), and the CV benches fail a case whose stack lost a node.
+Every bench serves Foxglove on port 8765 (`foxglove:=false` to skip). A GUI
+run also opens the gz and rviz windows where a display opens, and runs
+without them where none does. The CV benches fail a case whose stack lost
+a node.
 Before trusting a run's numbers, check its launch log, which `ros2 launch`
 names at the top of its output:
 

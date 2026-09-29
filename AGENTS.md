@@ -84,9 +84,9 @@ bench can pass with rviz dead or a stack node crashed.
 `tools/check_bench_log.py` on the `dexec.sh -d` log, plus
 `/tmp/localization_drift_tests/*.log` for drift and EKF, prints the table
 and exits 1 on a mid-run crash, a missing display or a wait that gave up.
-`dexec.sh` doesn't forward `DISPLAY`; if the container has none, prefix the
-launch with `env DISPLAY=:2` (`ls /tmp/.X11-unix`), or pytest's preflight
-stops a GUI run at once.
+`dexec.sh` doesn't forward `DISPLAY`; to get the laptop's windows, prefix
+the launch with `env DISPLAY=:2` (`ls /tmp/.X11-unix`). Without one,
+pytest runs windowless and says so.
 
 `tools/run_suite.sh` does the live-session check, the launch and the
 `check_bench_log.py` pass in one go; the T3 `Sim:` actions in `../t3.json`
@@ -113,11 +113,12 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **Ask before starting any sim test run**, the aiming bench or the drift
   suite, even when the next run seems the obvious step. The user may have
   tuning to do first.
-- **GUI on, not headless**, for both `sim` and the drift suite; the user watches
-  the gz-sim window during testing. Pass `--headless` only when asked (e.g. a
-  quick unattended run). Launch through `dexec.sh -d`, which execs as `admin`,
-  never a bare `docker exec -d`, or the window fails to open; see the
-  `isaac-ros-docker` skill's "Launching GUI apps".
+- **GUI on, not headless, and Foxglove is the main viewer** (the user's
+  call, 2026-09-28). Every bench and `sim.launch.py` serve Foxglove on
+  :8765; the gz and rviz windows open only where a display does (the
+  laptop), and pytest drops them elsewhere (the Mac container, no VNC).
+  Pass `--headless` only when asked. Launch through `dexec.sh -d`, never a
+  bare `docker exec -d`, or a window fails to open.
 - **Always fully restart `sim` (fresh spawn) before restarting SLAM/explorer.**
   Partial restarts leave stale TF/pose state ("pos desync"). The drift
   suite's shared sim is the one exception: `drift_harness._reset_sim`

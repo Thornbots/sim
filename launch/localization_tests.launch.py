@@ -189,8 +189,8 @@ def generate_launch_description():
                               description='ekf suite; empty = the pytest default'),
         DeclareLaunchArgument('ekf_seconds', default_value='',
                               description='ekf suite; empty = the pytest default'),
-        DeclareLaunchArgument('foxglove', default_value=LaunchConfiguration('run_tests'),
-                              description='Foxglove bridge on :8765; defaults to run_tests'),
+        DeclareLaunchArgument('foxglove', default_value='true',
+                              description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('pytest_args', default_value='',
                               description="extra pytest args, e.g. '-x'"),
     ]
