@@ -95,9 +95,6 @@ def pytest_addoption(parser):
         '--shot-duration', type=float, default=None,
         help='seconds of steady-state sampling per shot-hit case (sim time)')
     group.addoption(
-        '--hit-radius', type=float, default=None,
-        help='perpendicular miss distance (m) still counted as a hit')
-    group.addoption(
         '--panel-layout', choices=['flat', 'staggered', 'both'], default='both',
         help='target panel heights: flat, staggered by 90% of a panel, or both')
     group.addoption(

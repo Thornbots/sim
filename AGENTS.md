@@ -223,10 +223,10 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   launch` died at once and left its nodes orphaned (parent 1, invisible to
   `kill_launch.sh -l`), nine stacks all publishing `/clock`. Before a run,
   check `ps -eo pid,ppid,cmd | grep install/` for such orphans too.
-- **Panels are canted 15 deg in the game (S122), and not everywhere here.**
-  The emulator, the scorer's facing test and both rviz views keep the cant;
-  a hit is still scored as distance to the panel centre, not a crossing of
-  the canted square (`../ROADMAP.md` Caveats).
+- **Panels are canted 15 deg in the game (S122).** The emulator, both rviz
+  views and the aiming bench keep the cant: a hit crosses the canted
+  0.135 x 0.125 m face (`off_face` in `shot_hit_harness.py`) inside the
+  145 deg cone.
 - **The estimation bench's target is a phantom** with exact truth. E2E adds a gz model with
   armor plates for `roi_depth_node`'s depth; no sim test runs YOLO
   (`../E2E_PLAN.md`).
@@ -268,8 +268,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **The aiming bench (`shot_hit.launch.py`) is gz-free and passes 10/10**
   on every path and at `shooter_speed:=1.0`. A point shooter with a perfect
   gimbal; README.md has the setup. `FLOORS` holds 40 cells from three runs
-  each on sentry_v2's armor panels (2026-09-27, chase, unthrottled at ~8x),
-  through `tools/shot_floors.py`. Radial or
+  each on sentry_v2's canted armor faces (2026-09-29, chase, the Mac at
+  ~13x), through `tools/shot_floors.py`. Radial or
   diagonal with a moving shooter has no floor yet.
 - **Shot-hit results are optimistic.** Detection noise (0.005 m) is far
   cleaner than a D435, and slew limits and target accelerations are

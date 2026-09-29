@@ -35,9 +35,9 @@ The Aiming bench: no gz, a point shooter with a perfect gimbal and a
 perfectly known target (see shot_hit_harness.py). Launches a ROS stack, so
 marked `integration` and skipped by a plain `colcon test`; `ros2 launch sim
 shot_hit.launch.py` runs it. Options: --shot-speeds, --shot-duration,
---hit-radius, --panel-layout, --skip-stationary, --only-stationary,
---headless, --log-dir, --external-stack, --target-path
-(lateral/radial/diagonal), --shooter-speed.
+--panel-layout, --skip-stationary, --only-stationary, --headless,
+--log-dir, --external-stack, --target-path (lateral/radial/diagonal),
+--shooter-speed.
 """
 import os
 
@@ -96,7 +96,6 @@ def test_shot_hit(layout, case, request, cv_stack):
     config = request.config
     speeds = _speeds(config)
     duration = config.getoption('--shot-duration') or harness.DEFAULT_DURATION
-    hit_radius = config.getoption('--hit-radius') or harness.DEFAULT_HIT_RADIUS
     path = config.getoption('--target-path')
     shooter_speed = config.getoption('--shooter-speed')
     motion = f', {path} path'
@@ -116,7 +115,7 @@ def test_shot_hit(layout, case, request, cv_stack):
                                     'MOVING_MIN_HIT_RATE')
     print(f'\n=== {label} ===')
 
-    sampler, dropped = harness.run_case(cv_stack, speed, spin_hz, duration, hit_radius,
+    sampler, dropped = harness.run_case(cv_stack, speed, spin_hz, duration,
                                         stagger=LAYOUTS[layout], path=path)
     total = harness.summarize(label, sampler, dropped, duration)
     cell = harness.cell_id(layout, speed, path, shooter_speed)

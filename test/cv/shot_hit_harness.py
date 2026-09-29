@@ -24,8 +24,8 @@ Each shot leaves root's true position at its exit time toward the newest aim
 before then, an odom point (a perfect gimbal), at 25 m/s (ARCC_2026_SENTRY_CONTEXT.md's cap)
 plus our chassis velocity, flies straight, and is checked against all 4 armor
 panels (layout duplicated from cv_target_emulator.py) at impact: a hit needs
-the path within hit_radius of a panel's center AND arriving inside its
-145-degree front exposure cone.
+the path to cross a panel's canted PANEL_WIDTH x PANEL_HEIGHT face AND
+arrive inside its 145-degree front exposure cone.
 
 Requires mcb_relay.py to relay /cv/target onto
 /dji_serial_bridge/cv_target (wired 2026-07-27, fire decision merged into
@@ -90,50 +90,51 @@ MOVING_MIN_HIT_RATE = 0.25
 # Per-cell floors: the lowest score over three runs
 # minus FLOOR_MARGIN, printed from their scores.jsonl by tools/shot_floors.py.
 # Three chase-mode runs per path and shooter speed on sentry_v2's armor panels,
-# Jazzy, 2026-09-27; the comment on each is its three scores. Unlisted cells use
-# the placeholders.
+# scored on the canted face, Jazzy on the Mac mini, 2026-09-29; the comment on
+# each is its three scores. The Mac fires 92-98% of TEST_FIRE_HZ (keep_up),
+# which costs 1-4 points against the laptop. Unlisted cells use the placeholders.
 FLOOR_MARGIN = 0.10
 FLOORS = {
-    'flat-speed0.5-diagonal-shooter0': 0.891,  # 0.991, 0.992, 0.991
-    'flat-speed0.5-lateral-shooter0': 0.888,  # 0.988, 0.988, 0.989
-    'flat-speed0.5-lateral-shooter1': 0.890,  # 0.991, 0.990, 0.991
-    'flat-speed0.5-radial-shooter0': 0.890,  # 0.992, 0.991, 0.990
-    'flat-speed1-diagonal-shooter0': 0.893,  # 0.993, 0.993, 0.993
-    'flat-speed1-lateral-shooter0': 0.884,  # 0.984, 0.986, 0.986
-    'flat-speed1-lateral-shooter1': 0.884,  # 0.984, 0.984, 0.988
-    'flat-speed1-radial-shooter0': 0.892,  # 0.993, 0.992, 0.992
-    'flat-speed2-diagonal-shooter0': 0.892,  # 0.992, 0.993, 0.992
-    'flat-speed2-lateral-shooter0': 0.884,  # 0.985, 0.984, 0.984
-    'flat-speed2-lateral-shooter1': 0.881,  # 0.983, 0.985, 0.981
-    'flat-speed2-radial-shooter0': 0.890,  # 0.992, 0.990, 0.990
-    'flat-speed4-diagonal-shooter0': 0.892,  # 0.993, 0.993, 0.992
-    'flat-speed4-lateral-shooter0': 0.878,  # 0.980, 0.980, 0.978
-    'flat-speed4-lateral-shooter1': 0.878,  # 0.978, 0.980, 0.978
-    'flat-speed4-radial-shooter0': 0.893,  # 0.993, 0.993, 0.993
-    'flat-stationary-diagonal-shooter0': 0.892,  # 0.993, 0.992, 0.993
-    'flat-stationary-lateral-shooter0': 0.892,  # 0.993, 0.993, 0.992
-    'flat-stationary-lateral-shooter1': 0.892,  # 0.992, 0.992, 0.992
-    'flat-stationary-radial-shooter0': 0.891,  # 0.993, 0.992, 0.991
-    'staggered-speed0.5-diagonal-shooter0': 0.892,  # 0.993, 0.993, 0.992
-    'staggered-speed0.5-lateral-shooter0': 0.889,  # 0.990, 0.989, 0.989
-    'staggered-speed0.5-lateral-shooter1': 0.888,  # 0.988, 0.990, 0.990
-    'staggered-speed0.5-radial-shooter0': 0.890,  # 0.991, 0.990, 0.991
-    'staggered-speed1-diagonal-shooter0': 0.892,  # 0.993, 0.993, 0.992
-    'staggered-speed1-lateral-shooter0': 0.883,  # 0.985, 0.983, 0.984
-    'staggered-speed1-lateral-shooter1': 0.884,  # 0.988, 0.985, 0.984
-    'staggered-speed1-radial-shooter0': 0.890,  # 0.993, 0.991, 0.990
-    'staggered-speed2-diagonal-shooter0': 0.893,  # 0.993, 0.993, 0.993
-    'staggered-speed2-lateral-shooter0': 0.883,  # 0.983, 0.983, 0.983
-    'staggered-speed2-lateral-shooter1': 0.880,  # 0.983, 0.980, 0.983
-    'staggered-speed2-radial-shooter0': 0.890,  # 0.992, 0.990, 0.990
-    'staggered-speed4-diagonal-shooter0': 0.893,  # 0.993, 0.993, 0.993
-    'staggered-speed4-lateral-shooter0': 0.880,  # 0.981, 0.980, 0.984
-    'staggered-speed4-lateral-shooter1': 0.880,  # 0.983, 0.980, 0.980
-    'staggered-speed4-radial-shooter0': 0.891,  # 0.994, 0.991, 0.993
-    'staggered-stationary-diagonal-shooter0': 0.892,  # 0.993, 0.994, 0.992
-    'staggered-stationary-lateral-shooter0': 0.890,  # 0.992, 0.992, 0.990
-    'staggered-stationary-lateral-shooter1': 0.891,  # 0.993, 0.992, 0.991
-    'staggered-stationary-radial-shooter0': 0.891,  # 0.992, 0.991, 0.991
+    'flat-speed0.5-diagonal-shooter0': 0.864,  # 0.980, 0.964, 0.970
+    'flat-speed0.5-lateral-shooter0': 0.851,  # 0.971, 0.967, 0.951
+    'flat-speed0.5-lateral-shooter1': 0.862,  # 0.980, 0.962, 0.974
+    'flat-speed0.5-radial-shooter0': 0.872,  # 0.980, 0.972, 0.976
+    'flat-speed1-diagonal-shooter0': 0.869,  # 0.978, 0.969, 0.973
+    'flat-speed1-lateral-shooter0': 0.850,  # 0.969, 0.968, 0.950
+    'flat-speed1-lateral-shooter1': 0.861,  # 0.974, 0.961, 0.967
+    'flat-speed1-radial-shooter0': 0.877,  # 0.981, 0.977, 0.981
+    'flat-speed2-diagonal-shooter0': 0.866,  # 0.980, 0.966, 0.973
+    'flat-speed2-lateral-shooter0': 0.850,  # 0.966, 0.961, 0.950
+    'flat-speed2-lateral-shooter1': 0.857,  # 0.971, 0.957, 0.963
+    'flat-speed2-radial-shooter0': 0.876,  # 0.976, 0.978, 0.980
+    'flat-speed4-diagonal-shooter0': 0.865,  # 0.976, 0.965, 0.973
+    'flat-speed4-lateral-shooter0': 0.852,  # 0.967, 0.952, 0.952
+    'flat-speed4-lateral-shooter1': 0.854,  # 0.962, 0.954, 0.970
+    'flat-speed4-radial-shooter0': 0.878,  # 0.979, 0.978, 0.979
+    'flat-stationary-diagonal-shooter0': 0.870,  # 0.981, 0.970, 0.972
+    'flat-stationary-lateral-shooter0': 0.861,  # 0.976, 0.977, 0.961
+    'flat-stationary-lateral-shooter1': 0.866,  # 0.983, 0.966, 0.976
+    'flat-stationary-radial-shooter0': 0.876,  # 0.977, 0.977, 0.976
+    'staggered-speed0.5-diagonal-shooter0': 0.866,  # 0.977, 0.966, 0.976
+    'staggered-speed0.5-lateral-shooter0': 0.854,  # 0.974, 0.972, 0.954
+    'staggered-speed0.5-lateral-shooter1': 0.864,  # 0.976, 0.964, 0.974
+    'staggered-speed0.5-radial-shooter0': 0.878,  # 0.978, 0.979, 0.979
+    'staggered-speed1-diagonal-shooter0': 0.871,  # 0.978, 0.971, 0.976
+    'staggered-speed1-lateral-shooter0': 0.844,  # 0.962, 0.965, 0.944
+    'staggered-speed1-lateral-shooter1': 0.855,  # 0.969, 0.955, 0.969
+    'staggered-speed1-radial-shooter0': 0.878,  # 0.978, 0.979, 0.979
+    'staggered-speed2-diagonal-shooter0': 0.868,  # 0.981, 0.968, 0.972
+    'staggered-speed2-lateral-shooter0': 0.843,  # 0.960, 0.959, 0.943
+    'staggered-speed2-lateral-shooter1': 0.858,  # 0.964, 0.958, 0.966
+    'staggered-speed2-radial-shooter0': 0.875,  # 0.977, 0.975, 0.980
+    'staggered-speed4-diagonal-shooter0': 0.867,  # 0.979, 0.967, 0.974
+    'staggered-speed4-lateral-shooter0': 0.839,  # 0.962, 0.967, 0.939
+    'staggered-speed4-lateral-shooter1': 0.850,  # 0.957, 0.950, 0.960
+    'staggered-speed4-radial-shooter0': 0.878,  # 0.980, 0.978, 0.981
+    'staggered-stationary-diagonal-shooter0': 0.866,  # 0.976, 0.966, 0.975
+    'staggered-stationary-lateral-shooter0': 0.856,  # 0.970, 0.974, 0.956
+    'staggered-stationary-lateral-shooter1': 0.867,  # 0.979, 0.967, 0.978
+    'staggered-stationary-radial-shooter0': 0.880,  # 0.984, 0.980, 0.982
 }
 # Spin rate swept inversely to speed, spanning ARCC's documented
 # "typically 1-2 Hz" range (ARCC_2026_SENTRY_CONTEXT.md).
@@ -179,7 +180,6 @@ PANEL_RADIUS_X = 0.252  # chassis-center-to-panel offset, front/back
 PANEL_RADIUS_Y = 0.252  # chassis-center-to-panel offset, left/right
 PANEL_WIDTH = 0.135  # the Small Armor Module (ARCC 2026's only size), from the CAD
 PANEL_HEIGHT = 0.125
-DEFAULT_HIT_RADIUS = PANEL_HEIGHT / 2.0  # the face's inscribed circle
 # The staggered layout: sentry_v2's neighbouring panels are this far apart.
 STAGGERED_PANEL_M = 0.0947
 # Hit-registration cone: a shot arriving from behind this angle couldn't
@@ -207,11 +207,12 @@ PANEL_NORMAL_ANGLE_FROM_UP = math.radians(75.0)
 
 def _panel_poses(target_pos, target_rot, stagger=0.0):
     """
-    Compute world (position, outward_normal_unit_vector) for each of the 4 armor panels.
+    Compute world (position, outward normal, right_dir, up_dir) for each of the 4 armor panels.
 
     Mirrors cv_target_emulator.py's _panel_poses exactly. Position offset
     stays in the horizontal chassis plane; the outward normal is canted
-    per S122, not flush-horizontal (z=0).
+    per S122, not flush-horizontal (z=0). right_dir (horizontal) and up_dir
+    (canted with the normal) span the face.
     """
     poses = []
     for offset, use_x in zip(_PANEL_OFFSETS_RAD, _PANEL_USES_RADIUS_X):
@@ -227,8 +228,30 @@ def _panel_poses(target_pos, target_rot, stagger=0.0):
             math.cos(PANEL_NORMAL_ANGLE_FROM_UP),
         ])
         world_normal = target_rot @ local_normal
-        poses.append((panel_pos, world_normal))
+        right_dir = np.cross(np.array([0.0, 0.0, 1.0]), world_normal)
+        right_dir /= np.linalg.norm(right_dir)
+        poses.append((panel_pos, world_normal, right_dir, np.cross(world_normal, right_dir)))
     return poses
+
+
+def off_face(origin, direction, panel):
+    """
+    Return how far (m) a ray crosses the panel's plane outside its face; 0 is a hit.
+
+    panel is one _panel_poses entry and direction a unit vector. A ray that
+    runs parallel to the plane, or crosses it behind origin or from the
+    back, is inf.
+    """
+    panel_pos, normal, right_dir, up_dir = panel
+    approach = float(np.dot(direction, normal))
+    if approach >= -1e-9:
+        return math.inf
+    along = float(np.dot(panel_pos - origin, normal)) / approach
+    if along < 0.0:
+        return math.inf
+    rel = origin + along * direction - panel_pos
+    return math.hypot(max(abs(float(np.dot(rel, right_dir))) - PANEL_WIDTH / 2.0, 0.0),
+                      max(abs(float(np.dot(rel, up_dir))) - PANEL_HEIGHT / 2.0, 0.0))
 
 
 def interpolate(history, t):
@@ -388,9 +411,8 @@ class ShotHitSampler(SimTimeNode):
     one shot, resolved once truth at/after its impact time arrives.
     """
 
-    def __init__(self, hit_radius, marker_lifetime_s=5.0, panel_stagger=0.0):
+    def __init__(self, marker_lifetime_s=5.0, panel_stagger=0.0):
         super().__init__('shot_hit_test_sampler')
-        self.hit_radius = hit_radius
         self.panel_stagger = panel_stagger  # must match target_state_truth's panel_stagger_m
         self.marker_lifetime_s = marker_lifetime_s
 
@@ -535,17 +557,19 @@ class ShotHitSampler(SimTimeNode):
             # nearest truth sample (60Hz) is up to ~9 deg of yaw off.
             pos, rot = self._truth_at(shot['fire_time'] + shot['shot_range'] / shot['shot_speed'])
             arrivals = []
-            for panel_pos, _ in _panel_poses(pos, rot, self.panel_stagger):
+            for panel_pos, *_ in _panel_poses(pos, rot, self.panel_stagger):
                 along = float(np.dot(panel_pos - shot['muzzle_pos'], shot['aim_dir']))
                 arrivals.append(shot['fire_time'] + max(along, 0.0) / shot['shot_speed'])
-            # Nearest panel among those facing the muzzle (within the front
-            # 145 degrees, PANEL_EXPOSURE_HALF_ANGLE); the far side can line
-            # up behind a hit but could never register one. Falls back to the
-            # nearest panel of any facing only if none face the shooter.
+            # A hit crosses the face of a panel facing the muzzle (within the
+            # front 145 degrees, PANEL_EXPOSURE_HALF_ANGLE); the far side can
+            # line up behind a hit but could never register one. The panel
+            # recorded is the facing one crossed nearest its face, then nearest
+            # its centre, falling back to the nearest of any facing.
             nearest_facing = nearest_any = None
             for k, t_arrive in enumerate(arrivals):
                 pos, rot = self._truth_at(t_arrive)
-                panel_pos, panel_normal = _panel_poses(pos, rot, self.panel_stagger)[k]
+                panel = _panel_poses(pos, rot, self.panel_stagger)[k]
+                panel_pos, panel_normal = panel[:2]
                 to_panel = panel_pos - shot['muzzle_pos']
                 along = float(np.dot(to_panel, shot['aim_dir']))
                 closest_on_ray = shot['muzzle_pos'] + along * shot['aim_dir']
@@ -553,16 +577,18 @@ class ShotHitSampler(SimTimeNode):
                 to_muzzle = shot['muzzle_pos'] - panel_pos
                 to_muzzle_norm = to_muzzle / (np.linalg.norm(to_muzzle) + 1e-9)
                 incidence = math.acos(np.clip(np.dot(panel_normal, to_muzzle_norm), -1.0, 1.0))
-                cand = (miss, closest_on_ray, panel_pos, k, incidence, t_arrive)
+                outside = off_face(shot['muzzle_pos'], shot['aim_dir'], panel)
+                cand = (miss, closest_on_ray, panel_pos, k, incidence, t_arrive, outside)
                 if nearest_any is None or miss < nearest_any[0]:
                     nearest_any = cand
                 if incidence <= PANEL_EXPOSURE_HALF_ANGLE and (
-                        nearest_facing is None or miss < nearest_facing[0]):
+                        nearest_facing is None
+                        or (outside, miss) < (nearest_facing[6], nearest_facing[0])):
                     nearest_facing = cand
 
             best = nearest_facing or nearest_any
             best_miss, best_ray_pt, best_panel_pt = best[:3]
-            hit = nearest_facing is not None and best_miss <= self.hit_radius
+            hit = nearest_facing is not None and best[6] == 0.0
             self.miss_distances.append(best_miss)
             if hit:
                 self.hits += 1
@@ -579,7 +605,7 @@ class ShotHitSampler(SimTimeNode):
         the shooter's right, up, and the target's direction of travel, so a
         positive panel_ahead_of_shot_m means the shot trailed a moving target.
         """
-        miss, ray_pt, panel_pt, k, incidence, t_arrive = best
+        miss, ray_pt, panel_pt, k, incidence, t_arrive, outside = best
         miss_vec = panel_pt - ray_pt
         right = np.cross(shot['aim_dir'], np.array([0.0, 0.0, 1.0]))
         right /= np.linalg.norm(right) + 1e-9
@@ -595,6 +621,7 @@ class ShotHitSampler(SimTimeNode):
             't_fire': round(shot['fire_time'], 4),
             'hit': hit,
             'miss_m': round(miss, 4),
+            'off_face_m': round(outside, 4) if math.isfinite(outside) else None,
             'panel_right_of_shot_m': round(float(np.dot(miss_vec, right)), 4),
             'panel_above_shot_m': round(float(miss_vec[2]), 4),
             'panel_ahead_of_shot_m': round(ahead, 4),
@@ -627,7 +654,7 @@ class ShotHitSampler(SimTimeNode):
         now = self._stamp_s(stamp)
         markers = []
         if self._target_pos is not None:
-            for k, (pos, normal) in enumerate(
+            for k, (pos, normal, *_) in enumerate(
                     _panel_poses(self._target_pos, self._target_rot, self.panel_stagger)):
                 m = self._marker('panels', Marker.CUBE, stamp)
                 m.id = k
@@ -749,7 +776,7 @@ class CvStack:
         with suite_timing.phase('bringup'):
             if self.launch is not None:
                 self.launch.start()
-            probe = ShotHitSampler(hit_radius=0.0)
+            probe = ShotHitSampler()
             try:
                 probe.wait_until(lambda: probe._target_pos is not None, timeout=60.0,
                                  description='/target/ground_truth_odom publishing')
@@ -787,7 +814,7 @@ class CvStack:
         self.node.destroy_node()
 
 
-def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0, path='lateral'):
+def run_case(stack, speed, spin_hz, duration, stagger=0.0, path='lateral'):
     """
     Switch the target to (speed, spin_hz, stagger, path), let it settle, then score.
 
@@ -797,8 +824,7 @@ def run_case(stack, speed, spin_hz, duration, hit_radius, stagger=0.0, path='lat
         stack.set_target(speed, spin_hz, stagger, path)
         # At TEST_FIRE_HZ a 1s lifetime keeps ~40 markers; fast targets scatter
         # shots across the view, so theirs expire sooner still.
-        sampler = ShotHitSampler(hit_radius=hit_radius,
-                                 marker_lifetime_s=1.0 / max(1.0, speed),
+        sampler = ShotHitSampler(marker_lifetime_s=1.0 / max(1.0, speed),
                                  panel_stagger=stagger)
         sampler.wait_until(lambda: sampler.now_s() > 0.0, 5.0, 'the first /clock')
     suite_timing.set_sim_clock(sampler.now_s)

@@ -143,8 +143,7 @@ def _tests(context, test_dir):
     speeds = context.launch_configurations['speeds'].replace(',', ' ').split()
     if speeds:
         cmd += ['--shot-speeds', ','.join(speeds)]
-    for arg, opt in (('duration', '--shot-duration'), ('hit_radius', '--hit-radius'),
-                     ('log_dir', '--log-dir')):
+    for arg, opt in (('duration', '--shot-duration'), ('log_dir', '--log-dir')):
         if context.launch_configurations[arg]:
             cmd += [opt, context.launch_configurations[arg]]
     for arg in ('skip_stationary', 'only_stationary', 'headless'):
@@ -184,8 +183,6 @@ def generate_launch_description():
                                           'empty = the harness default sweep'),
         DeclareLaunchArgument('duration', default_value='',
                               description='sim-time seconds scored per case'),
-        DeclareLaunchArgument('hit_radius', default_value='',
-                              description='miss distance (m) still counted as a hit'),
         DeclareLaunchArgument('target_path', default_value='lateral',
                               choices=['lateral', 'radial', 'diagonal'],
                               description='across the view, down the camera ray, or both'),
