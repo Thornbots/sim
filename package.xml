@@ -35,8 +35,11 @@
   <depend>dji_serial_bridge</depend>
   <depend>visualization_msgs</depend>
   <depend>rosgraph_msgs</depend>
+  <depend>realsense2_camera_msgs</depend>
+  <depend>rclcpp_components</depend>
   <test_depend>diagnostic_msgs</test_depend>
 
+  <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_cmake_pytest</test_depend>
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

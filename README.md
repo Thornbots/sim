@@ -290,7 +290,7 @@ ros2 launch sim sim.launch.py
 ros2 launch sim sim.launch.py gui:=false rviz:=false     # server only
 ros2 launch sim sim.launch.py x:=1.0 y:=0.5 yaw:=0.0     # spawn pose (z:= too)
 ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
-ros2 launch sim sim.launch.py camera:=true               # add the camera, bridge /color and /depth
+ros2 launch sim sim.launch.py camera:=true               # add the depth camera, as the D435's topics
 ros2 launch sim sim.launch.py model:=sentry              # the old collision-free model
 ros2 launch sim sim.launch.py foxglove:=false            # no Foxglove bridge on :8765
 ```
@@ -299,11 +299,21 @@ ros2 launch sim sim.launch.py foxglove:=false            # no Foxglove bridge on
 `sentry`, the old model.
 
 The camera is off by default, sensor and all: without `camera:=true` the
-robot spawns with no `rgbd_camera`, so gz renders nothing for it. Nothing in
-`sim` or its tests reads the images; every CV bench synthesises detections
-instead. The `camera` link and its TF stay, since the emulator and tracker
-place detections through that frame. Turn it on to run the YOLO pipeline
-against sim or to fill rviz's Image panel.
+robot spawns with no camera sensor, so gz renders nothing for it. The
+`camera` link and its TF stay, since the emulators and tracker place
+detections through that frame.
+
+`sentry_v2`'s camera is depth only, 640x480 at 60 Hz: the match test's
+detector stand-in reads truth, so nothing needs colour. It comes out as the
+robot's D435 topics: `/depth/image_rect_raw` (16UC1 millimetres, 0 for no
+data), `/depth/camera_info` and `/color/camera_info` (one lens, one set of
+intrinsics), and a latched identity `/extrinsics/depth_to_color`. The gz
+bridge and `depth_camera_emulator`, which converts gz's 32FC1 metres, run
+in `camera_container`, and `roi_depth_node` loads into it, as it shares the
+camera's container on the robot. Over DDS a 640x480 frame is past Fast
+DDS's 512 KB shared-memory segment, and most frames dropped: 14-18 of 60
+Hz arrived (2026-09-29). Depth costs sim speed: the Mac's bare
+`sim.launch.py` runs at RTF 2.66 without it and 1.1 with it (llvmpipe).
 
 These add synthetic wheel-odometry error. All are off by default; the
 `pose_emulator.py` note explains each one:

@@ -73,7 +73,7 @@
     },
     "Image!config": {
       "imageMode": {
-        "imageTopic": "/color/image_raw"
+        "imageTopic": "/depth/image_rect_raw"
       }
     }
   },

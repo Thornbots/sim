@@ -96,23 +96,25 @@
     </sensor>
   </gazebo>
 
-  <!-- D435-like RGBD camera at 60 Hz, only with camera:=true: no test reads
-       the images, and rendering them costs sim speed. sim.launch.py bridges
-       it onto realsense-ros's topic names. -->
+  <!-- D435-like depth camera at 60 Hz, only with camera:=true. Depth alone:
+       the detector stand-in reads truth, so nothing needs colour.
+       sim.launch.py bridges it and depth_camera_emulator turns it into the
+       D435's 16UC1 millimetres. -->
   <xacro:if value="$(arg camera)">
     <gazebo reference="camera">
-      <sensor name="camera" type="rgbd_camera">
+      <sensor name="camera" type="depth_camera">
         <always_on>true</always_on>
-        <visualize>true</visualize>
+        <visualize>false</visualize>
         <update_rate>60</update_rate>
-        <topic>camera</topic>
+        <topic>camera/depth_image</topic>
         <gz_frame_id>camera</gz_frame_id>
         <camera>
+          <camera_info_topic>camera/camera_info</camera_info_topic>
           <horizontal_fov>1.5184</horizontal_fov>
           <image>
             <width>640</width>
             <height>480</height>
-            <format>R8G8B8</format>
+            <format>R_FLOAT32</format>
           </image>
           <clip>
             <near>0.1</near>
