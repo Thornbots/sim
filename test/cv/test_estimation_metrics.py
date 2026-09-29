@@ -90,6 +90,8 @@ def test_cell_names_carry_every_axis():
         'flat-stationary45-lateral-shooter0'
     assert cell_id('staggered', 2.0, 'radial', 1.0, True, 0.03) == \
         'staggered-speed2-radial-shooter1-blackout-camlat0.03'
+    assert cell_id('flat', 1.0, 'lateral', 0.0, False, 0.0, chassis_spin=9.0) == \
+        'flat-speed1-lateral-shooter0-chassis9'
 
 
 def test_facing_panel_error_is_the_panel_facing_us():

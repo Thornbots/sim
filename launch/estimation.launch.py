@@ -78,7 +78,8 @@ def _stack(context):
     world = {'rate': max(0.0, float(cfg['real_time_factor'])),
              'clock_step_s': float(cfg['clock_step_s']),
              'pace_slack_s': float(cfg['pace_slack_s']),
-             'camera_latency_s': camera_latency}
+             'camera_latency_s': camera_latency,
+             'yaw_bearing_damping': float(cfg['yaw_bearing_damping'])}
 
     # TF chain only. The enable_*:=false args skip auto.launch.py's copies
     # of the CV nodes below, and localization_mode:=none skips map_server/amcl.
@@ -120,7 +121,7 @@ def _tests(context, test_dir):
     cmd = [sys.executable, '-m', 'pytest', os.path.join(test_dir, TEST_FILE),
            '-m', 'integration', '-v', '-s', '--external-stack',
            '--panel-layout', cfg['panel_layout'], '--target-path', cfg['target_path'],
-           '--shooter-speed', cfg['shooter_speed'],
+           '--shooter-speed', cfg['shooter_speed'], '--chassis-spin', cfg['chassis_spin'],
            '--camera-latency', cfg['camera_latency_s']]
     speeds = cfg['speeds'].replace(',', ' ').split()
     if speeds:
@@ -177,6 +178,12 @@ def generate_launch_description():
                               description='across the view, down the camera ray, or both'),
         DeclareLaunchArgument('shooter_speed', default_value='0.0',
                               description='our chassis speed (m/s), bouncing along y'),
+        DeclareLaunchArgument('chassis_spin', default_value='0.0',
+                              description='our chassis spin (rad/s, CCW) under the '
+                                          'world-held head; the firmware spins at 9'),
+        DeclareLaunchArgument('yaw_bearing_damping', default_value='0.0',
+                              description="the yaw bearing's drag on the head "
+                                          '(N m s/rad), unmeasured'),
         DeclareLaunchArgument('blackout', default_value='false',
                               description='drop every detection 0.3 s in each 2 s'),
         DeclareLaunchArgument('camera_latency_s', default_value='0.0',
