@@ -30,9 +30,11 @@ METRICS = ('facing_panel_m', 'panel_m', 'center_m', 'center_along_m', 'center_ac
            'velocity_m_s', 'yaw_rad', 'yaw_rate_rad_s', 'radius_m', 'z_offset_m')
 
 
-def cell_id(layout, speed, path, shooter_speed, blackout, camera_latency_s):
+def cell_id(layout, speed, path, shooter_speed, blackout, camera_latency_s, yaw_deg=0.0):
     """Name one bench cell, as LIMITS and estimation.jsonl key it."""
     case = 'stationary' if speed == 0.0 else f'speed{speed:g}'
+    if yaw_deg:
+        case += f'{yaw_deg:g}'
     cell = f'{layout}-{case}-{path}-shooter{shooter_speed:g}'
     if blackout:
         cell += '-blackout'

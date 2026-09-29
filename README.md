@@ -88,12 +88,14 @@ ros2 launch sim shot_hit.launch.py
 
 The CV estimation bench scores Part 2, not hits. `bench_world` (C++)
 is the whole world in one lockstep loop: `/clock`, the phantom target through
-the same ten cells, our chassis and head, `/pose`, the head controller and
+the aiming bench's ten cells plus a still one at 45 deg (`stationary45`, two
+panels in view), our chassis and head, `/pose`, the head controller and
 the detections off our head's camera. `target_selector` and `target_tracker`
 build the `TargetState`, and `point_to_cv_target` aims the head; nothing
-fires. Each case switches detections off for 1 s so the tracker starts a
+fires. Each case sets the target's yaw (0, a panel square to us, except
+`stationary45`) and switches detections off for 1 s so the tracker starts a
 fresh track, then scores every state for 3 s + 30 s against the truth at the
-state's own stamp, so a late stamp scores as error. The ten cells take
+state's own stamp, so a late stamp scores as error. The ten original cells took
 ~53 s with rviz up, ~6.5x real time while scoring (`real_time_factor:=1` for
 real time). Sim time waits for the nodes under test, `target_tracker`'s input
 among them (`/cv/tracker/measurement`), but only on frames that carried a

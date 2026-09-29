@@ -86,6 +86,8 @@ def test_never_converging_says_so():
 
 def test_cell_names_carry_every_axis():
     assert cell_id('flat', 0.0, 'lateral', 0.0, False, 0.0) == 'flat-stationary-lateral-shooter0'
+    assert cell_id('flat', 0.0, 'lateral', 0.0, False, 0.0, 45.0) == \
+        'flat-stationary45-lateral-shooter0'
     assert cell_id('staggered', 2.0, 'radial', 1.0, True, 0.03) == \
         'staggered-speed2-radial-shooter1-blackout-camlat0.03'
 

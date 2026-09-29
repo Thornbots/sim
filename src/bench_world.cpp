@@ -179,6 +179,8 @@ public:
       live_[name] = declare_parameter(name, value);
     }
     detections_enabled_ = declare_parameter("detections_enabled", true);
+    // Setting it jumps the target to this yaw at the commanded spin rate.
+    declare_parameter("target_yaw", 0.0);
     frame_rate_hz_ = declare_parameter("frame_rate_hz", 60.0);
     hfov_ = declare_parameter("horizontal_fov", 1.5184);
     const double aspect = declare_parameter("image_height", 480) /
@@ -212,6 +214,12 @@ public:
             live_[p.get_name()] = p.as_double();
           } else if (p.get_name() == "detections_enabled") {
             detections_enabled_ = p.as_bool();
+          }
+        }
+        for (const auto & p : params) {  // after the loop, so a new spin_hz counts
+          if (p.get_name() == "target_yaw") {
+            target_yaw_ = wrap_pi(p.as_double());
+            omega_ = 2.0 * M_PI * live_["spin_hz"];
           }
         }
         rcl_interfaces::msg::SetParametersResult result;
