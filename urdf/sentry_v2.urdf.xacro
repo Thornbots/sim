@@ -124,9 +124,11 @@
   </xacro:if>
 
   <gazebo>
-    <!-- /sim/raw_odom at 100 Hz, the Type-C board's /pose rate. -->
+    <!-- /sim/raw_odom at 100 Hz, the Type-C board's /pose rate. It is the
+         gz world pose, and the gz world is the field map's frame, so it is
+         stamped map: rviz draws it through map->odom otherwise (T16). -->
     <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
-      <odom_frame>odom</odom_frame>
+      <odom_frame>map</odom_frame>
       <robot_base_frame>root</robot_base_frame>
       <publish_odom_tf>true</publish_odom_tf>
       <dimensions>3</dimensions>
