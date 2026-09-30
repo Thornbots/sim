@@ -16,14 +16,18 @@
 Whether an X window can open here.
 
 Benches and sim.launch.py drop the gz and rviz windows where none can (the
-Mac container has no display) and are watched in Foxglove instead.
+Mac container has no display) and are watched in Foxglove instead. Native
+macOS opens them on the screen through Cocoa, with no X server.
 """
 import ctypes
 import os
+import sys
 
 
 def display_error():
     """Return why no X window can open here, or None if one can."""
+    if sys.platform == 'darwin':
+        return None
     display = os.environ.get('DISPLAY')
     if not display:
         return 'DISPLAY is unset'
