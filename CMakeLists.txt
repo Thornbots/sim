@@ -22,6 +22,16 @@ find_package(visualization_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(realsense2_camera_msgs REQUIRED)
+find_package(urdf REQUIRED)
+find_package(vision_msgs REQUIRED)
+find_package(gz_transport_vendor REQUIRED)
+find_package(gz-transport REQUIRED)
+find_package(gz_msgs_vendor REQUIRED)
+find_package(gz-msgs REQUIRED)
+find_package(gz_sim_vendor REQUIRED)
+find_package(gz-sim REQUIRED)
+find_package(gz_plugin_vendor REQUIRED)
+find_package(gz-plugin REQUIRED COMPONENTS register)
 
 add_executable(bench_world src/bench_world.cpp)
 target_compile_features(bench_world PUBLIC cxx_std_17)
@@ -43,6 +53,26 @@ rclcpp_components_register_node(depth_camera_emulator
 install(TARGETS depth_camera_emulator
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 
+# YOLO's stand-in, a component for the same reason: it reads every depth frame.
+add_library(detector_standin SHARED src/detector_standin.cpp)
+target_compile_features(detector_standin PUBLIC cxx_std_17)
+target_include_directories(detector_standin PRIVATE include)
+target_link_libraries(detector_standin Eigen3::Eigen gz-transport::core gz-msgs::core)
+ament_target_dependencies(detector_standin
+  rclcpp rclcpp_components sensor_msgs urdf vision_msgs)
+rclcpp_components_register_node(detector_standin
+  PLUGIN "sim::DetectorStandin"
+  EXECUTABLE detector_standin_node)
+install(TARGETS detector_standin
+  ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+
+# A gz system on each opponent: moves it along its path every physics step.
+add_library(opponent_mover SHARED src/opponent_mover.cpp)
+target_compile_features(opponent_mover PUBLIC cxx_std_17)
+target_link_libraries(opponent_mover
+  gz-sim::core gz-plugin::register gz-transport::core gz-msgs::core)
+install(TARGETS opponent_mover LIBRARY DESTINATION lib)
+
 ament_python_install_package(${PROJECT_NAME})
 file(GLOB PYTHON_NODES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/*)
 install(PROGRAMS ${PYTHON_NODES} DESTINATION lib/${PROJECT_NAME})
@@ -58,6 +88,9 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_depth_mm test/cpp/test_depth_mm.cpp)
   target_include_directories(test_depth_mm PRIVATE include)
+  ament_add_gtest(test_panel_view test/cpp/test_panel_view.cpp)
+  target_include_directories(test_panel_view PRIVATE include)
+  target_link_libraries(test_panel_view Eigen3::Eigen)
   ament_add_pytest_test(sim_pytest test TIMEOUT 600
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENV "PYTEST_ADDOPTS=-p no:anyio")

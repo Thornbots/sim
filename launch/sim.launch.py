@@ -27,7 +27,7 @@ import os
 import re
 import tempfile
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -251,6 +251,14 @@ def generate_launch_description():
     # --- gz-transport resolves the hostname unless GZ_IP is set, which cost
     # 20 s per process on a host with slow DNS. Everything here is local.
     gz_ip = SetEnvironmentVariable(name='GZ_IP', value=os.environ.get('GZ_IP', '127.0.0.1'))
+    # --- gz finds sim's own systems (opponent_mover) in its lib dir.
+    gz_plugin_path = SetEnvironmentVariable(
+        name='GZ_SIM_SYSTEM_PLUGIN_PATH',
+        value=os.pathsep.join([
+            os.path.join(get_package_prefix('sim'), 'lib'),
+            os.environ.get('GZ_SIM_SYSTEM_PLUGIN_PATH', ''),
+        ])
+    )
     # --- Start the gz sim server with the requested world. The GUI comes up
     # separately once the robot is in (gz_gui below): a GUI started with the
     # server takes its first state before the spawn and never shows the robot.
@@ -285,7 +293,8 @@ def generate_launch_description():
         output='screen',
         arguments=[
             '-string', Command(['xacro '] + model_xacro
-                               + [' camera:=', LaunchConfiguration('camera')]),
+                               + [' camera:=', LaunchConfiguration('camera'),
+                                  ' name:=', robot_name]),
             '-name', robot_name,
             '-x', LaunchConfiguration('x'),
             '-y', LaunchConfiguration('y'),
@@ -679,6 +688,7 @@ def generate_launch_description():
         cv_camera_latency_s_arg,
         gz_resource_path,
         gz_ip,
+        gz_plugin_path,
         OpaqueFunction(function=_world_with_rtf),
         gz_sim,
         clock_bridge,

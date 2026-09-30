@@ -13,8 +13,6 @@
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
   <exec_depend>ros_gz_interfaces</exec_depend>
-  <exec_depend>gz_msgs_vendor</exec_depend>
-  <exec_depend>gz_transport_vendor</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
@@ -37,6 +35,12 @@
   <depend>rosgraph_msgs</depend>
   <depend>realsense2_camera_msgs</depend>
   <depend>rclcpp_components</depend>
+  <depend>urdf</depend>
+  <depend>vision_msgs</depend>
+  <depend>gz_msgs_vendor</depend>
+  <depend>gz_transport_vendor</depend>
+  <depend>gz_sim_vendor</depend>
+  <depend>gz_plugin_vendor</depend>
   <test_depend>diagnostic_msgs</test_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>

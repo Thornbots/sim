@@ -339,6 +339,31 @@ cv_dropout_probability:=0.03  # per-sample detection drop, placeholder
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
 
+`e2e.launch.py` is the match test's stack, stage E1 (`../E2E_PLAN.md`):
+our robot parked with the depth camera on, one red opponent riding
+`target_driver`'s path, and the real CV chain from `roi_depth_node` to
+`cv_head_aim` with no YOLO. No scoring yet.
+
+```bash
+ros2 launch sim e2e.launch.py target_speed:=2.0 target_spin_hz:=1.5
+```
+
+- `opponent_driver` spawns `opponent_0`, a `sentry_v2` with no sensors,
+  gravity or contacts, drawn from its collision shapes (the CAD visuals
+  cost RTF 1.10 to 0.61 in the depth camera). Its root hull is drawn at
+  75% in x and y: at full size it stood 3-7 cm proud of every panel.
+- Its `OpponentMover` gz system (`src/opponent_mover.cpp`) sets its pose
+  every physics step from `target_driver`'s path, bridged to
+  `/model/opponent_0/path`. VelocityControl moved only the robot
+  `sim.launch.py` spawns, and teleporting from Python jumped 4-36 cm.
+- `detector_standin` (`src/detector_standin.cpp`, in `camera_container`)
+  publishes `/detections_output` per depth frame, stamped with it: every
+  panel that faces the camera within 72.5 deg, lands in the image and
+  whose rendered depth agrees with truth within 0.1 m, boxed in YOLO's
+  640x640 letterbox. Truth is gz's `/model/<name>/pose` at the frame's
+  stamp; panel and camera offsets come from the URDF.
+- A `ros2 topic pub` puts us on blue until E2's MCB emulator.
+
 `sim.launch.py` and every test launch start a Foxglove bridge on port 8765
 (`foxglove:=false` turns it off). To run one next to anything else:
 
