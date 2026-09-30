@@ -21,7 +21,9 @@
 // than its period plus pace_slack_s behind, and runs at 1x with no gate live
 // (at startup, say). A gate with no publisher left stops holding it at once,
 // and the tracker's waits only on frames that carried a detection, since it
-// echoes nothing for an empty one. See README.md.
+// echoes nothing for an empty one. Setting case_seed starts a case: the
+// world resets, schedules restart and the noise is keyed on (seed, case_seed,
+// frame, panel), so a case plays out the same on every run. See README.md.
 
 #include <algorithm>
 #include <atomic>
@@ -74,6 +76,7 @@ constexpr double kPitchLimit = 0.6;  // rad, URDF headpitch
 constexpr double kPanelWidth = 0.135;  // along the ground
 constexpr double kPanelHeight = 0.125;
 const double kPanelNormalFromUp = 75.0 * M_PI / 180.0;  // S122 cant
+constexpr double kShooterCmdHz = 20.0;
 
 double wrap_pi(double a) {return std::atan2(std::sin(a), std::cos(a));}
 double clamp(double v, double lo, double hi) {return std::max(lo, std::min(hi, v));}
@@ -91,6 +94,15 @@ builtin_interfaces::msg::Time to_stamp(double t)
 }
 
 double from_stamp(const builtin_interfaces::msg::Time & s) {return s.sec + s.nanosec * 1e-9;}
+
+// splitmix64's finalizer: a well-mixed key from a few integers.
+uint64_t mix(uint64_t h, uint64_t v)
+{
+  uint64_t z = h ^ (v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2));
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+  return z ^ (z >> 31);
+}
 
 // A PD position controller on a rigid arm (gz's JointPositionController),
 // integrated semi-implicitly.
@@ -176,6 +188,9 @@ public:
         {"publish_latency_s", 0.06}, {"camera_latency_s", 0.0},
         {"blackout_period_s", 0.0}, {"blackout_s", 0.0},
         {"panel_radius_x", 0.252}, {"panel_radius_y", 0.252}, {"panel_stagger_m", 0.0},
+        // Each case: detections off this long while the head aims at the
+        // truth, and our chassis bouncing along y within shooter_half_width.
+        {"case_hold_s", 0.0}, {"shooter_speed", 0.0}, {"shooter_half_width", 1.0},
         // Our chassis spin (rad/s, CCW) and the yaw bearing's viscous drag
         // on the head (N m s/rad, unmeasured), read live.
         {"chassis_spin_rad_s", 0.0}, {"yaw_bearing_damping", 0.0}})
@@ -207,8 +222,9 @@ public:
     pose_rate_hz_ = declare_parameter("pose_rate_hz", 100.0);  // the Type-C board's
     truth_rate_hz_ = declare_parameter("truth_rate_hz", 60.0);
     markers_rate_hz_ = declare_parameter("markers_rate_hz", 30.0);
-    const int64_t seed = declare_parameter("seed", 0);  // 0 = random
-    rng_.seed(seed ? static_cast<uint64_t>(seed) : std::random_device{}());
+    // Noise key; vary it to sample the noise, the same seed replays a run.
+    seed_ = static_cast<uint64_t>(declare_parameter("seed", 0));
+    declare_parameter("case_seed", 0);
 
     param_cb_ = add_on_set_parameters_callback(
       [this](const std::vector<rclcpp::Parameter> & params) {
@@ -225,6 +241,9 @@ public:
             target_yaw_ = wrap_pi(p.as_double());
             omega_ = 2.0 * M_PI * live_["spin_hz"];
           }
+        }
+        for (const auto & p : params) {  // last, so every other value counts
+          if (p.get_name() == "case_seed") {start_case(p.as_int());}
         }
         rcl_interfaces::msg::SetParametersResult result;
         result.successful = true;
@@ -396,9 +415,9 @@ private:
   void step()
   {
     const double dt = physics_step_s_;
+    std::lock_guard<std::mutex> lock(mutex_);  // start_case reads t_
     t_ += dt;
     ++n_;
-    std::lock_guard<std::mutex> lock(mutex_);
     step_target(dt);
     // The head holds world yaw (the MCB's IMU loop); a spinning chassis
     // drags it through the bearing. yaw_.q turns about -z, the spin about +z.
@@ -407,6 +426,7 @@ private:
     yaw_.ext = -live_["yaw_bearing_damping"] * (yaw_.qd + spin);
     yaw_.step(dt);
     pitch_.step(dt);
+    if (due(kShooterCmdHz, last_shooter_)) {drive_shooter();}
     xy_ += cmd_vel_ * dt;
     if (due(head_rate_hz_, last_head_)) {control_head();}
     if (due(pose_rate_hz_, last_pose_)) {publish_pose();}
@@ -417,13 +437,54 @@ private:
     }
   }
 
-  // True once per period of rate_hz, on the first step at or past it.
+  // True once per period of rate_hz since the case started, on the first
+  // step at or past it.
   bool due(double rate_hz, int64_t & last_index)
   {
-    const auto index = static_cast<int64_t>(std::floor(t_ * rate_hz + 1e-9));
+    const auto index = static_cast<int64_t>(std::floor((t_ - case_t0_) * rate_hz + 1e-9));
     if (index == last_index) {return false;}
     last_index = index;
     return true;
+  }
+
+  // A case starts at t_: the target at the start of its path, at speed and
+  // spin; our chassis at the origin, unspun, the head still and on the
+  // target; every schedule and the noise restarted. Detections stay off for
+  // case_hold_s.
+  void start_case(int64_t case_seed)
+  {
+    case_t0_ = t_;
+    noise_key_ = mix(seed_, static_cast<uint64_t>(case_seed));
+    s_ = 0.0;
+    direction_ = 1.0;
+    vs_ = std::min(live_["target_speed"],
+        std::sqrt(2.0 * live_["max_accel"] * live_["half_width"]));
+    omega_ = 2.0 * M_PI * live_["spin_hz"];
+    xy_.setZero();
+    cmd_vel_.setZero();
+    chassis_yaw_ = 0.0;
+    shooter_dir_ = 1.0;
+    const auto [yaw, pitch] = solve_head_angles(target_pos());
+    yaw_.q = yaw_.cmd = yaw;
+    pitch_.q = pitch_.cmd = clamp(pitch, -kPitchLimit, kPitchLimit);
+    yaw_.qd = pitch_.qd = 0.0;
+    aim_.reset();
+    detected_.reset();
+    pending_.clear();
+    last_head_ = last_pose_ = last_truth_ = last_frame_ = last_markers_ = last_shooter_ = -1;
+  }
+
+  bool holding() {return t_ - case_t0_ < live_["case_hold_s"];}
+
+  // --shooter-speed: bounce along y, x pulled back to 0 (estimation_harness's
+  // old /cmd_vel loop). Off at 0, leaving /cmd_vel in charge.
+  void drive_shooter()
+  {
+    const double speed = live_["shooter_speed"], half = live_["shooter_half_width"];
+    if (speed <= 0.0) {return;}
+    if (xy_.y() >= half) {shooter_dir_ = -1.0;}
+    if (xy_.y() <= -half) {shooter_dir_ = 1.0;}
+    cmd_vel_ = {clamp(-2.0 * xy_.x(), -speed, speed), shooter_dir_ * speed};
   }
 
   void step_target(double dt)
@@ -456,10 +517,13 @@ private:
 
   void control_head()
   {
-    if (!aim_) {return;}
+    // During a case's hold the head turns to the true centre, so the case
+    // starts with the target in view whatever the last case left.
+    const std::optional<Vector3d> aim = holding() ? std::optional(target_pos()) : aim_;
+    if (!aim) {return;}
     // /cv/target is an odom point; root never turns here, so root-frame is
     // a translation, taken at our current pose the way the MCB would.
-    auto [yaw, pitch] = solve_head_angles(*aim_ - Vector3d(xy_.x(), xy_.y(), 0.0));
+    auto [yaw, pitch] = solve_head_angles(*aim - Vector3d(xy_.x(), xy_.y(), 0.0));
     pitch = clamp(pitch, -kPitchLimit, kPitchLimit);
     const double yaw_step = max_yaw_rate_ / head_rate_hz_;
     const double pitch_step = max_pitch_rate_ / head_rate_hz_;
@@ -561,19 +625,19 @@ private:
 
   bool masked()
   {
-    if (!detections_enabled_) {return true;}
+    if (!detections_enabled_ || holding()) {return true;}
     const double period = live_["blackout_period_s"];
-    return period > 0.0 && std::fmod(t_, period) < live_["blackout_s"];
+    return period > 0.0 && std::fmod(t_ - case_t0_, period) < live_["blackout_s"];
   }
 
   // One camera frame at t_: every panel in range, in view and presenting,
   // each an independent noisy detection, delivered publish_latency_s later.
+  // Each panel's draws come from (case, frame, panel), not a shared stream.
   void frame()
   {
     if (masked()) {return;}
     const auto [cam, rot] = camera_pose();
-    std::normal_distribution<double> unit(0.0, 1.0);
-    std::uniform_real_distribution<double> uniform(0.0, 1.0);
+    int k = -1;
     const double camera_latency = live_["camera_latency_s"];
     PanelDetectionArray arr;
     arr.header.stamp = to_stamp(t_ + camera_latency);
@@ -581,6 +645,9 @@ private:
     detected_.reset();
     double best_view = 1e9;
     for (const Panel & p : panels()) {
+      std::mt19937_64 rng(mix(mix(noise_key_, static_cast<uint64_t>(last_frame_)), ++k));
+      std::normal_distribution<double> unit(0.0, 1.0);  // caches a draw: one per engine
+      std::uniform_real_distribution<double> uniform(0.0, 1.0);
       const Vector3d rel = rot.transpose() * (p.pos - cam);  // REP-103: fwd, left, up
       if (rel.x() < range_near_ || rel.x() > range_far_) {continue;}
       if (std::abs(std::atan2(rel.y(), rel.x())) > hfov_ / 2.0 ||
@@ -588,16 +655,16 @@ private:
       const Vector3d to_cam = -(p.pos - cam).normalized();
       const double view = std::acos(clamp(p.normal.dot(to_cam), -1.0, 1.0));
       if (view > view_half_angle_) {continue;}
-      if (uniform(rng_) < live_["dropout_probability"]) {continue;}
+      if (uniform(rng) < live_["dropout_probability"]) {continue;}
 
       const double range = rel.norm();
       const Vector3d ray = rel / range;
-      Vector3d lateral(unit(rng_), unit(rng_), unit(rng_));
+      Vector3d lateral(unit(rng), unit(rng), unit(rng));
       lateral *= live_["noise_lateral_rad"] * range;
       lateral -= lateral.dot(ray) * ray;
-      const double depth = unit(rng_) * live_["noise_depth_range_coeff"] * range * range;
+      const double depth = unit(rng) * live_["noise_depth_range_coeff"] * range * range;
       const Vector3d noise =
-        live_["noise_pos_stddev"] * Vector3d(unit(rng_), unit(rng_), unit(rng_)) +
+        live_["noise_pos_stddev"] * Vector3d(unit(rng), unit(rng), unit(rng)) +
         lateral + depth * ray;
 
       PanelDetection d;
@@ -752,8 +819,9 @@ private:
   std::optional<Panel> detected_;
   std::vector<Pending> pending_;
   int64_t last_head_ = -1, last_pose_ = -1, last_truth_ = -1, last_frame_ = -1,
-    last_markers_ = -1;
-  std::mt19937_64 rng_;
+    last_markers_ = -1, last_shooter_ = -1;
+  double case_t0_ = 0.0, shooter_dir_ = 1.0;
+  uint64_t seed_ = 0, noise_key_ = 0;
 
   // Pacing.
   std::mutex gate_mutex_;
