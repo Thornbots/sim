@@ -79,7 +79,8 @@ def _stack(context):
              'clock_step_s': float(cfg['clock_step_s']),
              'pace_slack_s': float(cfg['pace_slack_s']),
              'camera_latency_s': camera_latency,
-             'yaw_bearing_damping': float(cfg['yaw_bearing_damping'])}
+             'yaw_bearing_damping': float(cfg['yaw_bearing_damping']),
+             'seed': int(cfg['seed'])}
 
     # TF chain only. The enable_*:=false args skip auto.launch.py's copies
     # of the CV nodes below, and localization_mode:=none skips map_server/amcl.
@@ -184,6 +185,9 @@ def generate_launch_description():
         DeclareLaunchArgument('yaw_bearing_damping', default_value='0.0',
                               description="the yaw bearing's drag on the head "
                                           '(N m s/rad), unmeasured'),
+        DeclareLaunchArgument('seed', default_value='0',
+                              description="bench_world's noise key: a run replays "
+                                          'with the same seed; vary it to sample noise'),
         DeclareLaunchArgument('blackout', default_value='false',
                               description='drop every detection 0.3 s in each 2 s'),
         DeclareLaunchArgument('camera_latency_s', default_value='0.0',

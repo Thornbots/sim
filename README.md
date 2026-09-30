@@ -95,10 +95,17 @@ the aiming bench's ten cells plus a still one at 45 deg (`stationary45`, two
 panels in view), our chassis and head, `/pose`, the head controller and
 the detections off our head's camera. `target_selector` and `target_tracker`
 build the `TargetState`, and `point_to_cv_target` aims the head; nothing
-fires. Each case sets the target's yaw (0, a panel square to us, except
-`stationary45`) and switches detections off for 1 s so the tracker starts a
-fresh track, then scores every state for 3 s + 30 s against the truth at the
-state's own stamp, so a late stamp scores as error. The 12 cells take ~22 s
+fires. Each case starts with one parameter set (`case_seed`, the cell's
+CRC): the target at its path start and its yaw (0, a panel square to us,
+except `stationary45`), our chassis at the origin, every schedule and the
+blackout restarted, and detections off for 1 s (`case_hold_s`) while the
+head turns to the truth, so the tracker starts a fresh track. Then it
+scores every state for 3 s + 30 s against the truth at the state's own
+stamp, so a late stamp scores as error. Detection noise is drawn per
+(`seed`, `case_seed`, frame, panel), not from one stream, so a cell sees
+the same noise on every run whatever ran before it or where the head
+pointed; `seed:=` samples another draw. Runs still differ by the nodes'
+timing within `pace_slack_s`. The 12 cells take ~22 s
 on the Mac, ~20x real time while scoring (`real_time_factor:=1` for real
 time). Sim time waits for the nodes under test, `target_tracker`'s input
 among them (`/cv/tracker/measurement`), but only on frames that carried a

@@ -26,11 +26,11 @@ see ../../README.md for design rationale
 import json
 import math
 import os
+import zlib
 
 from dji_serial_bridge.msg import TargetState
 import estimation_limits_data
 from estimation_metrics import METRICS, state_errors, summarize_case
-from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import numpy as np
 from rcl_interfaces.srv import SetParameters
@@ -41,53 +41,50 @@ from shot_hit_harness import (
     TARGET_PATHS,
 )
 from sim import suite_timing
-from sim.cv_head_aim_core import solve_head_angles
-from std_msgs.msg import Float64, Header
+from std_msgs.msg import Header
 
 DEFAULT_DURATION = 30.0  # sim seconds scored per case, after SETTLE_S
 SETTLE_S = 3.0  # sim seconds after the track restarts before steady-state scoring
-# Detections off this long at each case start, past target_tracker's
-# track_max_gap_s (0.5), so every case starts a fresh track. The sampler
-# points the head at the true target meanwhile: the head controller holds with no
-# target, and a head left at the last case's path end can miss the next.
+# bench_world's case_hold_s: detections off this long at each case start,
+# past target_tracker's track_max_gap_s (0.5), so every case starts a fresh
+# track, while bench_world turns the head to the true target.
 RESET_S = 1.0
-HEADPITCH_LIMIT = 0.6  # rad, cv_head_aim's clamp
 TRUTH_HISTORY_S = 2.0
 DEFAULT_LOG_DIR = '/tmp/estimation_test_logs'
 # --blackout: blackout_s of no detections every period, shorter than
 # track_max_gap_s, so the tracker coasts and must pick the target up again.
 BLACKOUT = {'blackout_period_s': 2.0, 'blackout_s': 0.3}
-# --shooter-speed drives our chassis along y within this of the origin.
+# --shooter-speed: bench_world bounces our chassis along y within this of the origin.
 SHOOTER_HALF_WIDTH = 1.0
-SHOOTER_CMD_PERIOD_S = 0.05
 # Steady-state p95 limits per cell; estimation_limits_data.py says where from.
 LIMITS = estimation_limits_data.LIMITS
 
 
 class EstimationSampler(SimTimeNode):
-    """Collects TargetStates and scores each once truth covers its stamp."""
+    """
+    Collects TargetStates and scores each once truth covers its stamp.
 
-    def __init__(self, stagger, shooter_speed=0.0):
+    One per stack, so /bench/progress keeps pacing bench_world between cases.
+    """
+
+    def __init__(self):
         super().__init__('estimation_sampler')
-        self.stagger = stagger
-        self.shooter_speed = shooter_speed
-        self._shooter_dir = 1.0
-        self._last_cmd_s = None
+        self.stagger = 0.0
         self._truth = []  # [(stamp_s, center, velocity, yaw unwrapped, yaw_rate)]
         self._root_xy = (0.0, 0.0)  # ours, from /sim/raw_odom
-        self._root = np.zeros(3)  # our position; root is heading-fixed
-        self.aim_head = False  # command the head at truth; run_case sets it for RESET_S
         self._pending = []  # [(stamp_s, arrival_s, TargetState)]
         self.records = []  # one dict per scored state
         self.create_subscription(Odometry, '/target/ground_truth_odom', self._on_truth, 50)
         self.create_subscription(TargetState, '/cv/target_state', self._on_state, 50)
         self.create_subscription(Odometry, '/sim/raw_odom', self._on_root_odom, 10)
-        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        self.pan_pub = self.create_publisher(Float64, '/head_pan_cmd', 10)
-        self.pitch_pub = self.create_publisher(Float64, '/head_pitch_cmd', 10)
         # The truth stamp scored up to, so sim_clock's paced mode (rate 0)
         # doesn't run ahead of this scorer.
         self.progress_pub = self.create_publisher(Header, '/bench/progress', 10)
+
+    def start_case(self, stagger):
+        """Forget the last case: its truth jumped when bench_world reset."""
+        self.stagger = stagger
+        self._truth, self._pending, self.records = [], [], []
 
     def _on_truth(self, msg):
         p, q, v = msg.pose.pose.position, msg.pose.pose.orientation, msg.twist.twist
@@ -103,16 +100,6 @@ class EstimationSampler(SimTimeNode):
         self._truth = [h for h in self._truth if stamp - h[0] <= TRUTH_HISTORY_S]
         self._resolve(stamp)
         self.progress_pub.publish(Header(stamp=msg.header.stamp))
-        if self.aim_head:
-            self._aim_head_at(self._truth[-1][1])
-
-    def _aim_head_at(self, center):
-        # bench_world holds /head_pan_cmd as a world yaw, as the MCB does,
-        # whatever our chassis's spin.
-        head_yaw, head_pitch = solve_head_angles(tuple(center - self._root))
-        self.pan_pub.publish(Float64(data=head_yaw))
-        self.pitch_pub.publish(Float64(data=max(-HEADPITCH_LIMIT,
-                                                min(HEADPITCH_LIMIT, head_pitch))))
 
     def _on_state(self, msg):
         self._pending.append((self._stamp_s(msg.header.stamp), self.now_s(), msg))
@@ -135,29 +122,8 @@ class EstimationSampler(SimTimeNode):
         self._pending = keep
 
     def _on_root_odom(self, msg):
-        """Keep our position; bounce our chassis along y at shooter_speed, x held at 0."""
         p = msg.pose.pose.position
         self._root_xy = (p.x, p.y)
-        self._root = np.array([p.x, p.y, p.z])
-        if self.shooter_speed <= 0.0:
-            return
-        now_s = self._stamp_s(msg.header.stamp)
-        if self._last_cmd_s is not None and now_s - self._last_cmd_s < SHOOTER_CMD_PERIOD_S:
-            return
-        self._last_cmd_s = now_s
-        x, y = msg.pose.pose.position.x, msg.pose.pose.position.y
-        if y >= SHOOTER_HALF_WIDTH:
-            self._shooter_dir = -1.0
-        elif y <= -SHOOTER_HALF_WIDTH:
-            self._shooter_dir = 1.0
-        cmd = Twist()
-        cmd.linear.x = max(-self.shooter_speed, min(self.shooter_speed, -2.0 * x))
-        cmd.linear.y = self._shooter_dir * self.shooter_speed
-        self.cmd_vel_pub.publish(cmd)
-
-    def stop_shooter(self):
-        if self.shooter_speed > 0.0:
-            self.cmd_vel_pub.publish(Twist())
 
 
 class EstimationStack:
@@ -187,6 +153,7 @@ class EstimationStack:
             'estimation_stack',
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
         self._client = self.node.create_client(SetParameters, '/bench_world/set_parameters')
+        self.sampler = None
 
     def start(self):
         for path in (self.states_path, self.summary_path):
@@ -194,15 +161,12 @@ class EstimationStack:
         with suite_timing.phase('bringup'):
             if self.launch is not None:
                 self.launch.start()
-            probe = EstimationSampler(stagger=0.0)
-            try:
-                probe.wait_until(lambda: bool(probe._truth), timeout=120.0,
-                                 description='/target/ground_truth_odom publishing')
-                probe.wait_until(lambda: probe.nodes_up(*self.nodes), timeout=60.0,
-                                 description=f'{", ".join(self.nodes)} nodes up')
-                check_nodes(probe, self.nodes)
-            finally:
-                probe.destroy_node()
+            self.sampler = EstimationSampler()
+            self.sampler.wait_until(lambda: bool(self.sampler._truth), timeout=120.0,
+                                    description='/target/ground_truth_odom publishing')
+            self.sampler.wait_until(lambda: self.sampler.nodes_up(*self.nodes), timeout=60.0,
+                                    description=f'{", ".join(self.nodes)} nodes up')
+            check_nodes(self.sampler, self.nodes)
 
     def set_params(self, **params):
         """Set bench_world's target and detection parameters."""
@@ -211,9 +175,13 @@ class EstimationStack:
             raise RuntimeError('/bench_world/set_parameters not available')
         msgs = []
         for k, v in params.items():
-            kind = Parameter.Type.BOOL if isinstance(v, bool) else Parameter.Type.DOUBLE
-            msgs.append(Parameter(k, kind, v if isinstance(v, bool) else float(v))
-                        .to_parameter_msg())
+            if isinstance(v, bool):
+                param = Parameter(k, Parameter.Type.BOOL, v)
+            elif isinstance(v, int):
+                param = Parameter(k, Parameter.Type.INTEGER, v)
+            else:
+                param = Parameter(k, Parameter.Type.DOUBLE, float(v))
+            msgs.append(param.to_parameter_msg())
         future = client.call_async(SetParameters.Request(parameters=msgs))
         rclpy.spin_until_future_complete(self.node, future, timeout_sec=10.0)
         result = future.result()
@@ -224,6 +192,8 @@ class EstimationStack:
         with suite_timing.phase('teardown'):
             if self.launch is not None:
                 self.launch.stop()
+        if self.sampler is not None:
+            self.sampler.destroy_node()
         self.node.destroy_node()
 
 
@@ -232,26 +202,28 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
     """
     Restart the track on (speed, spin_hz, stagger, path), then score every state.
 
-    The target jumps to target_yaw (rad, 0 = a panel square to us), so a
-    still case doesn't inherit the last spin's yaw. Detections go off for
-    RESET_S so the tracker drops the old track, while the head turns to the
-    target, then come back; states are scored from there for SETTLE_S + duration.
-    Our chassis spins at chassis_spin (rad/s) under the world-held head.
+    One set_params starts the case in bench_world (case_seed, the cell's
+    CRC): the target at its path start and target_yaw (rad, 0 = a panel
+    square to us), our chassis at the origin spinning at chassis_spin
+    (rad/s) under the world-held head, noise keyed on the cell, and
+    detections off for RESET_S while the head turns to the target. States
+    are scored from there for SETTLE_S + duration.
     """
+    sampler = stack.sampler
     with suite_timing.phase('reset'):
-        stack.set_params(target_speed=speed, spin_hz=spin_hz, **TARGET_PATHS[path])
-        stack.set_params(target_yaw=target_yaw, chassis_spin_rad_s=chassis_spin)
-        stack.set_params(panel_stagger_m=stagger, detections_enabled=False,
-                         **(BLACKOUT if blackout else {'blackout_period_s': 0.0}))
-        sampler = EstimationSampler(stagger, shooter_speed)
+        stack.set_params(
+            target_speed=speed, spin_hz=spin_hz, **TARGET_PATHS[path],
+            target_yaw=target_yaw, chassis_spin_rad_s=chassis_spin,
+            panel_stagger_m=stagger, detections_enabled=True,
+            **(BLACKOUT if blackout else {'blackout_period_s': 0.0}),
+            shooter_speed=shooter_speed, shooter_half_width=SHOOTER_HALF_WIDTH,
+            case_hold_s=RESET_S, case_seed=zlib.crc32(cell.encode()) & 0x7fffffff)
+        sampler.start_case(stagger)
     suite_timing.set_sim_clock(sampler.now_s)
     try:
         with suite_timing.phase('reset'):
-            sampler.aim_head = True
             sampler.spin_for(RESET_S)
-            sampler.aim_head = False
-            sampler._pending, sampler.records = [], []
-            stack.set_params(detections_enabled=True)
+            sampler._pending, sampler.records = [], []  # the last case's stragglers
         start_s = sampler.now_s()
         with suite_timing.phase('settle'):
             sampler.spin_for(SETTLE_S)
@@ -260,9 +232,7 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
         check_nodes(sampler, stack.nodes)
     finally:
         suite_timing.set_sim_clock(None)
-        sampler.stop_shooter()
         records = sampler.records
-        sampler.destroy_node()
     summary = {'cell': cell, **summarize_case(records, start_s, SETTLE_S)}
     with open(stack.states_path, 'a') as f:
         for rec in records:
