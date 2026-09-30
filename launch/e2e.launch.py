@@ -15,7 +15,9 @@
 """
 The match test's stack, stage E1: detector stand-in to the gimbal, our robot parked.
 
-`ros2 launch sim e2e.launch.py [target_speed:=2.0] [target_spin_hz:=1.5]`.
+`ros2 launch sim e2e.launch.py [speeds:='0 2'] [paths:=lateral]` runs
+test/e2e/test_e1.py, which brings this stack up with run_tests:=false and
+stops it after; `run_tests:=false` alone brings up the stack. The stack:
 gz with the depth camera; one ghost opponent (opponent_driver spawns it, its
 OpponentMover system rides target_driver's path); detector_standin and the real roi_depth_node in
 camera_container; auto.launch.py's selector, tracker and point_to_cv_target;
@@ -23,17 +25,23 @@ cv_head_aim on the head; a RefSysStatus stub putting us on blue. The
 opponent is red, class 6. ../E2E_PLAN.md has the stages.
 """
 import os
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    EmitEvent,
     ExecuteProcess,
     IncludeLaunchDescription,
+    LogInfo,
     OpaqueFunction,
+    RegisterEventHandler,
     TimerAction,
 )
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import LoadComposableNodes, Node
@@ -41,6 +49,8 @@ from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.display import display_error
 
+SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/e2e'
+TEST_FILE = 'test_e1.py'
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
 OPPONENT_CLASS = 6  # red; we are blue
@@ -48,7 +58,7 @@ OPPONENT_CLASS = 6  # red; we are blue
 
 def _sim(context):
     config = context.launch_configurations
-    windows = config['headless'].lower() not in ('true', '1') and display_error() is None
+    windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -56,6 +66,39 @@ def _sim(context):
         launch_arguments={'gui': gui, 'rviz': gui, 'foxglove': config['foxglove'],
                           'camera': 'true',
                           'real_time_factor': config['real_time_factor']}.items())]
+
+
+def _test_dir():
+    here = os.path.dirname(os.path.realpath(__file__))
+    for candidate in (os.path.join(here, '..', 'test', 'e2e'), SOURCE_FALLBACK):
+        if os.path.exists(os.path.join(candidate, TEST_FILE)):
+            return os.path.normpath(candidate)
+    raise RuntimeError(f'could not find {TEST_FILE} next to {here} or in {SOURCE_FALLBACK}')
+
+
+def _is_true(context, name):
+    return context.launch_configurations[name].lower() in ('true', '1', 'yes')
+
+
+def _tests(context):
+    config = context.launch_configurations
+    cmd = [sys.executable, '-m', 'pytest', os.path.join(_test_dir(), TEST_FILE),
+           '-m', 'integration', '-v', '-s']
+    for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
+                     ('duration', '--e2e-duration'), ('log_dir', '--log-dir')):
+        if config[arg]:
+            cmd += [opt, ','.join(config[arg].replace(',', ' ').split())]
+    if _is_true(context, 'headless'):
+        cmd.append('--headless')
+    cmd += config['pytest_args'].split()
+    tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen')
+    done = RegisterEventHandler(OnProcessExit(
+        target_action=tests,
+        on_exit=lambda event, _: [
+            LogInfo(msg=f'e2e tests exited with code {event.returncode}'),
+            EmitEvent(event=Shutdown(reason='e2e tests finished')),
+        ]))
+    return [tests, done]
 
 
 def generate_launch_description():
@@ -130,7 +173,23 @@ def generate_launch_description():
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
                           'use_rf2o': 'true', 'load_map': 'true'}.items())
 
+    stack = [camera_nodes, extrinsics_relay, target_driver, path_bridge, opponent_driver,
+             cv_head_aim, team_stub, TimerAction(period=ROBOT_DELAY_S, actions=[robot])]
     return LaunchDescription([
+        DeclareLaunchArgument('run_tests', default_value='true',
+                              description='false: bring up the stack only'),
+        DeclareLaunchArgument('speeds', default_value='',
+                              description="opponent speeds, m/s, 0 = stationary, e.g. '0 2'; "
+                                          'empty = the harness default'),
+        DeclareLaunchArgument('paths', default_value='',
+                              description="target_driver paths, e.g. 'lateral radial'; "
+                                          'empty = all three'),
+        DeclareLaunchArgument('duration', default_value='',
+                              description='sim seconds scored per cell'),
+        DeclareLaunchArgument('log_dir', default_value='',
+                              description='where stack.log, shots.jsonl and scores.jsonl go'),
+        DeclareLaunchArgument('pytest_args', default_value='',
+                              description="extra pytest args, e.g. '-x'"),
         DeclareLaunchArgument('headless', default_value='false',
                               description='skip the gz GUI and rviz2'),
         DeclareLaunchArgument('foxglove', default_value='true',
@@ -141,13 +200,9 @@ def generate_launch_description():
                               description="the opponent's speed along its path, m/s"),
         DeclareLaunchArgument('target_spin_hz', default_value='1.5',
                               description="the opponent's chassis spin, Hz"),
-        OpaqueFunction(function=_sim),
-        camera_nodes,
-        extrinsics_relay,
-        target_driver,
-        path_bridge,
-        opponent_driver,
-        cv_head_aim,
-        team_stub,
-        TimerAction(period=ROBOT_DELAY_S, actions=[robot]),
+        # run_tests: pytest alone, which brings the stack up as one process
+        # group and kills the group after; a stack here outlived the tests'
+        # Shutdown (gz sim survived its ruby wrapper, 2026-09-29).
+        OpaqueFunction(function=lambda context: _tests(context) if _is_true(
+            context, 'run_tests') else _sim(context) + stack),
     ])

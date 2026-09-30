@@ -339,14 +339,24 @@ cv_dropout_probability:=0.03  # per-sample detection drop, placeholder
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
 
-`e2e.launch.py` is the match test's stack, stage E1 (`../E2E_PLAN.md`):
-our robot parked with the depth camera on, one red opponent riding
+`e2e.launch.py` is the match test, stage E1 (`../E2E_PLAN.md`): our
+robot parked with the depth camera on, one red opponent riding
 `target_driver`'s path, and the real CV chain from `roi_depth_node` to
-`cv_head_aim` with no YOLO. No scoring yet.
+`cv_head_aim` with no YOLO. `test/e2e/test_e1.py` scores one cell per
+opponent speed and path: while `/cv/target` holds confidence >= 0.75 a
+shot leaves the gz muzzle at 10 Hz (the firmware's rule) and hits if it
+crosses a panel face. Shots `CVTarget.fire` asks for are logged beside.
 
 ```bash
-ros2 launch sim e2e.launch.py target_speed:=2.0 target_spin_hz:=1.5
+ros2 launch sim e2e.launch.py                                 # all 12 cells
+ros2 launch sim e2e.launch.py speeds:='0 2' paths:=lateral duration:=15
+ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:=1.5
 ```
+
+`shots.jsonl` in `log_dir` (`/tmp/e2e_test_logs`) splits every miss into
+the barrel's angle off the aim and the aim's distance from the panel, and
+each case prints TargetState's centre, velocity and spin error against
+truth. `pytest_args:='--e2e-spin 0'` holds the spin for every cell.
 
 - `opponent_driver` spawns `opponent_0`, a `sentry_v2` with no sensors,
   gravity or contacts, drawn from its collision shapes (the CAD visuals

@@ -135,6 +135,24 @@ def pytest_addoption(parser):
         help='the stack is already up (shot_hit.launch.py started this pytest); '
              'wait for it instead of launching one')
 
+    # test/e2e
+    group.addoption(
+        '--e2e-speeds', default=None,
+        help='comma-separated opponent speeds (m/s), 0 = stationary; default '
+             'e2e_harness.DEFAULT_SPEEDS')
+    group.addoption(
+        '--e2e-paths', default=None,
+        help='comma-separated target_driver paths (lateral, radial, diagonal); '
+             'default all three')
+    group.addoption(
+        '--e2e-spin', type=float, default=None,
+        help='opponent spin (Hz) for every match-test cell, stationary too; '
+             'default swept against speed as on the aiming bench')
+    group.addoption(
+        '--e2e-duration', type=float, default=None,
+        help='sim seconds scored per match-test cell; default '
+             'e2e_harness.DEFAULT_DURATION')
+
 
 @pytest.fixture(scope='session')
 def ros_context():

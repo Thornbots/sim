@@ -234,18 +234,28 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   145 deg cone.
 - **The estimation bench's target is a phantom** with exact truth. No sim
   test runs YOLO (`../E2E_PLAN.md`).
-- **E1's stack runs end to end, unscored** (`e2e.launch.py`, 2026-09-29, Mac).
-  The head follows the opponent for the whole run, and `roi_depth_node`'s panel
-  centres sit 2.7 cm (p50) from truth once it pairs each detection with the
-  nearest-stamped depth frame (11 cm when it took the newest). Open, in
-  order: the scoring harness and `test/e2e/`; `odom->root` walks ~1 cm/s
-  with our robot parked and the opponent spinning in lidar view (0.5 m in
-  90 s, amcl doesn't pull it back), likely rf2o matching the moving robot;
-  the stand-in's depth check turned away ~40% of in-view panels before the
-  hull was shrunk, not re-measured since. The camera
-  container can lose a `load_node` reply at startup (the lifecycle race
-  below), which stalls every later load in that queue: check that
-  `detector_standin` and `depth_camera_emulator` logged "Loaded node".
+- **E1 scores, and the tracker is what misses** (`ros2 launch sim
+  e2e.launch.py`, `test/e2e/`, Mac, 2026-09-29, 15 s cells, lateral path):
+  stationary 149/149 hits; 2 m/s without spin 11/96, with 2 Hz spin 0-3%.
+  Shot records split each miss: the barrel sits ~1 deg (p50) off the aim,
+  the aim 0.4-0.7 m off the panel. At 2 m/s, no spin, TargetState's
+  velocity is 0.86 m/s off (p50), it reports 0.74 rad/s of spin that isn't
+  there, and its centre is 0.13 m off (0.07 m stationary). No FLOORS yet:
+  they wait on the tracker. `roi_depth_node`'s panel centres sit 2.7 cm
+  (p50) from truth.
+  Also open: `odom->root` walks ~1 cm/s with our robot parked and the
+  opponent spinning in lidar view (0.5 m in 90 s, amcl doesn't pull it
+  back), likely rf2o matching the moving robot; the stand-in's depth check
+  turned away ~40% of in-view panels before the hull was shrunk, not
+  re-measured. The camera container can lose a `load_node` reply at
+  startup (the lifecycle race below), which stalls every later load in
+  that queue; `E2EStack.start` fails on the missing node.
+- **A gz stack must not be the launch pytest runs in.** With
+  `e2e.launch.py` bringing up the stack beside pytest, the tests' Shutdown
+  left `gz sim` running past its ruby wrapper, and the next runs shared gz
+  topics with it (five servers, camera stamps 142 s behind `/clock`). The
+  fixture starts the stack as one process group and kills the group, as
+  the drift suite does.
 - **VelocityControl moves only the robot `sim.launch.py` spawns.** A second
   `sentry_v2` spawned later, by `ros_gz_sim create` or `spawn_model`, takes
   `cmd_vel` and doesn't move (2026-09-29); cause unknown. Opponents ride
