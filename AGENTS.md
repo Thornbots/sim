@@ -185,16 +185,13 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **The estimation bench (`estimation.launch.py`) runs on `bench_world`, not gz** (the
   user's call, 2026-09-25): it fakes detections, so it needs no physics.
   One C++ loop steps target, chassis and head every 1 ms, so its rates are
-  exact at any speed, and holds sim time for the nodes under test, up to
-  `pace_slack_s` past each period: `target_tracker`'s input
-  (`/cv/tracker/measurement`, plus the detections' delivery delay),
-  `/cv/target`, and the scorer's `/bench/progress`. `/cv/target_state`
-  can't be the gate: it is stamped at publish time, and pacing on it let
-  the tracker fall 0.12-0.21 s behind capture (2026-09-26). The tracker
-  gate waits only on frames that carried a detection, and a gate with no
-  publisher left stops holding at once. With the C++ `target_tracker` the
-  12 cells take ~22 s on the Mac, ~20x while scoring, at `pace_slack_s`
-  0.005 (2026-09-28); 0.02 failed slow spinning cells at ~27x. Root sits
+  exact at any speed, and runs in lockstep with the nodes under test
+  (README.md): detections wait for the tracker's `/cv/tracker/clock_ack`,
+  `/clock` for its `/cv/tracker/measurement` echo and each `/cv/target`
+  tick, so p95s repeat to 1.03x run to run (2026-10-01). One run is enough
+  to judge a change; a "lockstep timeouts" count above 0 in the log means
+  that run may not repeat. `/cv/target_state` can't be a gate: it is
+  stamped at publish time. The 12 cells take ~30 s on the Mac. Root sits
   at z 0, heading-fixed, and the head is gz's PD on the arm inertias,
   holding world yaw as the MCB does: `chassis_spin:=9` spins the chassis
   under it, and `/head_pan_cmd` is a world yaw there (a chassis-relative

@@ -95,7 +95,9 @@ def _stack(context):
 
     # Sim stamps /pose at the true sample time, so no pose latency to undo.
     tracker = {'camera_latency_s': float(cfg['tracker_camera_latency_s'] or camera_latency),
-               'pose_latency_s': 0.0}
+               'pose_latency_s': 0.0,
+               # bench_world waits on it so the tracker's now() repeats run to run.
+               'clock_ack_topic': '/cv/tracker/clock_ack'}
     if cfg['process_noise_accel']:
         tracker['process_noise_accel'] = float(cfg['process_noise_accel'])
     actions = [
@@ -167,8 +169,8 @@ def generate_launch_description():
         # 0.02 failed 1-4 slow spinning cells a run once the C++ tracker let
         # the bench reach ~27x; 0.005 passes at ~20x (2026-09-28).
         DeclareLaunchArgument('pace_slack_s', default_value='0.005',
-                              description='how far (s) sim time may run past each '
-                                          "gate's period at real_time_factor:=0"),
+                              description='how far (s) sim time may run past the '
+                                          "scorer at real_time_factor:=0"),
         DeclareLaunchArgument('speeds', default_value='',
                               description="target speeds (m/s), e.g. '0.5 1'; "
                                           'empty = the aiming bench sweep'),
