@@ -22,7 +22,9 @@ gz with the depth camera; one ghost opponent (opponent_driver spawns it, its
 OpponentMover system rides target_driver's path); detector_standin and the real roi_depth_node in
 camera_container; auto.launch.py's selector, tracker and point_to_cv_target;
 cv_head_aim on the head; a RefSysStatus stub putting us on blue. The
-opponent is red, class 6. ../E2E_PLAN.md has the stages.
+opponent is red, class 6. `stage:=e2` swaps pose_emulator, cv_head_aim and
+the stub for the MCB emulator on a pty with dji_serial_bridge and mcb_relay.
+../E2E_PLAN.md has the stages.
 """
 import os
 import sys
@@ -51,9 +53,11 @@ from sim.display import display_error
 
 SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/e2e'
 TEST_FILE = 'test_e1.py'
+TEST_FILES = {'e1': TEST_FILE, 'e2': 'test_e2.py'}
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
 OPPONENT_CLASS = 6  # red; we are blue
+MCB_PTY = '/tmp/mcb_emulator_pty'
 
 
 def _sim(context):
@@ -64,7 +68,7 @@ def _sim(context):
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
         launch_arguments={'gui': gui, 'rviz': gui, 'foxglove': config['foxglove'],
-                          'camera': 'true',
+                          'camera': 'true', 'pose_emulator': str(config['stage'] == 'e1').lower(),
                           'real_time_factor': config['real_time_factor']}.items())]
 
 
@@ -82,7 +86,7 @@ def _is_true(context, name):
 
 def _tests(context):
     config = context.launch_configurations
-    cmd = [sys.executable, '-m', 'pytest', os.path.join(_test_dir(), TEST_FILE),
+    cmd = [sys.executable, '-m', 'pytest', os.path.join(_test_dir(), TEST_FILES[config['stage']]),
            '-m', 'integration', '-v', '-s']
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
                      ('duration', '--e2e-duration'), ('log_dir', '--log-dir')):
@@ -166,6 +170,18 @@ def generate_launch_description():
         cmd=['ros2', 'topic', 'pub', '-r', '5', '/dji_serial_bridge/ref_sys',
              'dji_serial_bridge/msg/RefSysStatus', '{is_on_blue_team: true}'],
         name='team_stub', output='log')
+    # E2: the firmware port parked (DrivetrainStopCommand) on a pty, as
+    # auto.launch.py starts the bridge and relay with real_hardware:=true.
+    mcb_emulator = Node(
+        package='sim', executable='mcb_emulator', name='mcb_emulator', output='screen',
+        parameters=[{'use_sim_time': True, 'device_link': MCB_PTY, 'drive': 'stop'}])
+    bridge = Node(
+        package='dji_serial_bridge', executable='dji_serial_bridge_node',
+        name='dji_serial_bridge', output='screen', remappings=[('~/pose', '/pose')],
+        parameters=[{'use_sim_time': True, 'device': MCB_PTY, 'debug_log': False}])
+    mcb_relay = Node(
+        package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
+        parameters=[{'use_sim_time': True}])
 
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -173,9 +189,22 @@ def generate_launch_description():
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
                           'use_rf2o': 'true', 'load_map': 'true'}.items())
 
-    stack = [camera_nodes, extrinsics_relay, target_driver, path_bridge, opponent_driver,
-             cv_head_aim, team_stub, TimerAction(period=ROBOT_DELAY_S, actions=[robot])]
+    common = [camera_nodes, extrinsics_relay, target_driver, path_bridge, opponent_driver]
+    e1 = [cv_head_aim, team_stub]
+    # The bridge opens the pty once, so it starts after the emulator makes it.
+    e2 = [mcb_emulator, TimerAction(period=2.0, actions=[bridge, mcb_relay])]
+
+    def stack(context):
+        stage = context.launch_configurations['stage']
+        if stage not in ('e1', 'e2'):
+            raise RuntimeError(f"stage must be e1 or e2, not '{stage}'")
+        return (common + (e1 if stage == 'e1' else e2)
+                + [TimerAction(period=ROBOT_DELAY_S, actions=[robot])])
+
     return LaunchDescription([
+        DeclareLaunchArgument('stage', default_value='e1',
+                              description='e1: cv_head_aim on the gimbal; e2: the MCB emulator '
+                                          'on a pty with dji_serial_bridge'),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('speeds', default_value='',
@@ -204,5 +233,5 @@ def generate_launch_description():
         # group and kills the group after; a stack here outlived the tests'
         # Shutdown (gz sim survived its ruby wrapper, 2026-09-29).
         OpaqueFunction(function=lambda context: _tests(context) if _is_true(
-            context, 'run_tests') else _sim(context) + stack),
+            context, 'run_tests') else _sim(context) + stack(context)),
     ])
