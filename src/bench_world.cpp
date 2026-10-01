@@ -12,18 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The estimation bench's world in one lockstep loop, no gz: /clock, the phantom target
-// (target_driver.py's path), our chassis and head (gz's joint controllers on
-// the arm inertias), /pose, the head controller (cv_head_aim.py) and the
-// detections (cv_target_emulator.py). Physics steps every physics_step_s;
-// /clock goes out every clock_step_s. rate 0 runs as fast as the nodes under
-// test keep up: sim time waits while a live gate topic's newest stamp is more
-// than its period plus pace_slack_s behind, and runs at 1x with no gate live
-// (at startup, say). A gate with no publisher left stops holding it at once,
-// and the tracker's waits only on frames that carried a detection, since it
-// echoes nothing for an empty one. Setting case_seed starts a case: the
-// world resets, schedules restart and the noise is keyed on (seed, case_seed,
-// frame, panel), so a case plays out the same on every run. See README.md.
+// The estimation bench's world in one loop, no gz: /clock, the phantom target,
+// our chassis and head, /pose, the head controller (cv_head_aim.py) and the
+// detections (cv_target_emulator.py). rate 0 is lockstep: /clock holds at 0
+// until the nodes under test are up, detections go out once the tracker's
+// clock reads the last tick, the tracker echoes each before /clock moves on,
+// and point_to_cv_target answers each 30 Hz tick at its own step, so every
+// run sees the same sim times. case_seed starts a case at the next
+// case_align_s boundary, the noise keyed on (seed, case_seed, frame, panel).
+// see README.md for design rationale
 
 #include <algorithm>
 #include <atomic>
@@ -31,6 +28,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -149,14 +147,6 @@ struct Panel
   Vector3d pos, normal, right, up;
 };
 
-struct Gate
-{
-  double period;
-  std::optional<double> last;
-  bool live = false;
-  bool detection_stamped = false;  // last is a detection stamp, delivered late
-  std::deque<double> owed{};  // detection gates: published non-empty frames not yet echoed
-};
 
 struct Pending
 {
@@ -175,8 +165,16 @@ public:
     rate_ = declare_parameter("rate", 0.0);  // sim s per wall s; 0 = paced
     clock_step_s_ = declare_parameter("clock_step_s", 0.005);
     physics_step_s_ = declare_parameter("physics_step_s", 0.001);  // gz's
-    pace_slack_s_ = declare_parameter("pace_slack_s", 0.005);
-    max_wait_s_ = declare_parameter("max_wait_s", 0.5);  // wall; then a gate goes quiet
+    physics_step_ns_ = std::llround(physics_step_s_ * 1e9);
+    substeps_ = std::max(1, static_cast<int>(std::lround(clock_step_s_ / physics_step_s_)));
+    pace_slack_s_ = declare_parameter("pace_slack_s", 0.005);  // the scorer's gate only
+    max_wait_s_ = declare_parameter("max_wait_s", 0.5);  // wall, per lockstep wait
+    // point_to_cv_target's cv_target_publish_rate_hz; its timer starts at sim time 0.
+    aim_tick_ns_ = static_cast<int64_t>(1e9 / declare_parameter("aim_rate_hz", 30.0));
+    // A whole number of aim ticks (3 at 30 Hz), so each case sees the same tick phase.
+    case_align_steps_ = std::max<int64_t>(
+      1, std::llround(declare_parameter("case_align_s", 0.1) / physics_step_s_));
+    startup_wait_s_ = declare_parameter("startup_wait_s", 60.0);  // wall, for the nodes
     // Target path and spin (target_driver.py), read live.
     for (const auto & [name, value] : std::map<std::string, double>{
         {"target_speed", 0.0}, {"spin_hz", 0.0}, {"center_x", 3.0}, {"center_y", 0.0},
@@ -198,7 +196,8 @@ public:
       live_[name] = declare_parameter(name, value);
     }
     detections_enabled_ = declare_parameter("detections_enabled", true);
-    // Setting it jumps the target to this yaw at the commanded spin rate.
+    // Setting it jumps the target to this yaw at the commanded spin rate,
+    // and each case starts there.
     declare_parameter("target_yaw", 0.0);
     frame_rate_hz_ = declare_parameter("frame_rate_hz", 60.0);
     hfov_ = declare_parameter("horizontal_fov", 1.5184);
@@ -228,22 +227,20 @@ public:
 
     param_cb_ = add_on_set_parameters_callback(
       [this](const std::vector<rclcpp::Parameter> & params) {
+        // SetParameters (not atomic) calls this once per parameter, so
+        // nothing here may rely on the others in the same request.
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto & p : params) {
           if (live_.count(p.get_name())) {
             live_[p.get_name()] = p.as_double();
           } else if (p.get_name() == "detections_enabled") {
             detections_enabled_ = p.as_bool();
-          }
-        }
-        for (const auto & p : params) {  // after the loop, so a new spin_hz counts
-          if (p.get_name() == "target_yaw") {
-            target_yaw_ = wrap_pi(p.as_double());
+          } else if (p.get_name() == "target_yaw") {
+            target_yaw_ = case_yaw_ = wrap_pi(p.as_double());
             omega_ = 2.0 * M_PI * live_["spin_hz"];
+          } else if (p.get_name() == "case_seed") {
+            pending_case_ = p.as_int();  // starts in step(), on a boundary
           }
-        }
-        for (const auto & p : params) {  // last, so every other value counts
-          if (p.get_name() == "case_seed") {start_case(p.as_int());}
         }
         rcl_interfaces::msg::SetParametersResult result;
         result.successful = true;
@@ -257,6 +254,9 @@ public:
     pose_pub_ = create_publisher<RobotPose>("/pose", 10);
     det_pub_ = create_publisher<PanelDetectionArray>("cv/panel_detections", 10);
     marker_pub_ = create_publisher<MarkerArray>("target_markers", 10);
+    // Each case's start (stamp) and case_seed (frame_id), latched for the scorer.
+    case_pub_ = create_publisher<std_msgs::msg::Header>(
+      "/bench/case", rclcpp::QoS(1).reliable().transient_local());
 
     subs_.push_back(create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel", 10, [this](geometry_msgs::msg::Twist::ConstSharedPtr m) {
@@ -281,28 +281,30 @@ public:
             aim_ = m->confidence > 0.0 ?
             std::optional<Vector3d>(Vector3d(m->x, m->y, m->z)) : std::nullopt;
           }
-          on_gate("/cv/target", from_stamp(m->header.stamp));
+          on_aim(rclcpp::Time(m->header.stamp).nanoseconds());
         }));
     // The tracker stamps TargetState at publish time, so a backlog doesn't
     // show there; it echoes each detection it folds in here instead.
     subs_.push_back(create_subscription<std_msgs::msg::Header>(
         "/cv/tracker/measurement", qos, [this](std_msgs::msg::Header::ConstSharedPtr m) {
-          on_gate("/cv/tracker/measurement", from_stamp(m->stamp));
+          on_echo(from_stamp(m->stamp));
+        }));
+    // The tracker's clock: each /clock update, echoed once its now() reads it.
+    subs_.push_back(create_subscription<std_msgs::msg::Header>(
+        "/cv/tracker/clock_ack", qos, [this](std_msgs::msg::Header::ConstSharedPtr m) {
+          std::lock_guard<std::mutex> lock(gate_mutex_);
+          tracker_clock_ns_ = std::max(tracker_clock_ns_, rclcpp::Time(m->stamp).nanoseconds());
+          gate_cv_.notify_all();
         }));
     subs_.push_back(create_subscription<std_msgs::msg::Header>(
         "/bench/progress", qos, [this](std_msgs::msg::Header::ConstSharedPtr m) {
-          on_gate("/bench/progress", from_stamp(m->stamp));
+          on_progress(from_stamp(m->stamp));
         }));
-    // The nodes under test: the tracker's input per frame, the aim node's
-    // 30 Hz tick, and the scorer.
-    gates_["/cv/tracker/measurement"] = Gate{1.0 / frame_rate_hz_, std::nullopt, false, true};
-    gates_["/cv/target"] = Gate{1.0 / 30.0, std::nullopt, false};
-    gates_["/bench/progress"] = Gate{1.0 / truth_rate_hz_, std::nullopt, false};
 
     RCLCPP_INFO(
-      get_logger(), "bench_world: %s, physics %g ms, /clock every %g ms, slack %g ms",
-      rate_ > 0.0 ? (std::to_string(rate_) + "x").c_str() : "paced by the nodes under test",
-      physics_step_s_ * 1e3, clock_step_s_ * 1e3, pace_slack_s_ * 1e3);
+      get_logger(), "bench_world: %s, physics %g ms, /clock every %g ms",
+      rate_ > 0.0 ? (std::to_string(rate_) + "x").c_str() : "lockstep with the nodes under test",
+      physics_step_s_ * 1e3, clock_step_s_ * 1e3);
     loop_ = std::thread([this] {run();});
   }
 
@@ -314,65 +316,84 @@ public:
   }
 
 private:
-  void on_gate(const std::string & topic, double stamp)
+  void on_echo(double stamp)
   {
     std::lock_guard<std::mutex> lock(gate_mutex_);
-    Gate & g = gates_[topic];
-    g.last = g.last ? std::max(*g.last, stamp) : stamp;
-    g.live = true;
-    while (!g.owed.empty() && g.owed.front() <= stamp + 1e-9) {g.owed.pop_front();}
+    tracker_live_ = true;
+    while (!owed_.empty() && owed_.front() <= stamp + 1e-9) {owed_.pop_front();}
     gate_cv_.notify_all();
   }
 
-  // Hold sim time short of next_t while any live gate is too far behind.
-  // Returns false when no gate is live.
-  bool wait_gates(double next_t)
+  // A tick whose stamp isn't a step with a deadline in it means the timer
+  // didn't start at sim time 0, and runs won't repeat.
+  void on_aim(int64_t stamp_ns)
   {
-    double delivery;  // how far a detection's stamp trails its publish time
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      delivery = std::max(live_["publish_latency_s"], live_["camera_latency_s"]) -
-        live_["camera_latency_s"];
+    std::lock_guard<std::mutex> lock(gate_mutex_);
+    last_aim_ns_ = std::max(last_aim_ns_, stamp_ns);
+    if (!tick_due(stamp_ns) && !warned_phase_) {
+      warned_phase_ = true;
+      RCLCPP_WARN(get_logger(), "lockstep: /cv/target tick at %.3f s is off point_to_cv_target's "
+        "phase from sim time 0; runs won't repeat exactly", stamp_ns * 1e-9);
     }
-    std::unique_lock<std::mutex> lock(gate_mutex_);
-    if (std::none_of(gates_.begin(), gates_.end(), [](auto & g) {return g.second.live;})) {
-      return false;
-    }
-    auto blocking = [&] {
-        std::vector<std::string> out;
-        for (auto & [topic, g] : gates_) {
-          if (!g.live || (g.detection_stamped && g.owed.empty())) {continue;}
-          const double behind = g.detection_stamped ? g.owed.front() : *g.last;
-          const double allow = g.period + pace_slack_s_ + (g.detection_stamped ? delivery : 0.0);
-          if (behind + allow < next_t) {out.push_back(topic);}
-        }
-        return out;
-      };
+    gate_cv_.notify_all();
+  }
+
+  void on_progress(double stamp)
+  {
+    std::lock_guard<std::mutex> lock(gate_mutex_);
+    progress_ = progress_ ? std::max(*progress_, stamp) : stamp;
+    gate_cv_.notify_all();
+  }
+
+  // An aim tick deadline (k * aim_tick_ns_) falls in the step ending at t_ns.
+  bool tick_due(int64_t t_ns) const
+  {
+    return t_ns / aim_tick_ns_ > (t_ns - step_ns()) / aim_tick_ns_;
+  }
+
+  int64_t step_ns() const {return substeps_ * physics_step_ns_;}
+
+  // Wait (gate_mutex_ held) until done() or topic has no publisher left.
+  // false if max_wait_s ran out first.
+  bool wait_for(
+    std::unique_lock<std::mutex> & lock, const std::string & topic,
+    const std::function<bool()> & done)
+  {
     const auto deadline = std::chrono::steady_clock::now() +
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
       std::chrono::duration<double>(max_wait_s_));
-    std::vector<std::string> waiting;
-    while (!stop_ && !(waiting = blocking()).empty()) {
-      // A gate with no publisher left (the scorer between cases) never catches up.
-      for (const auto & topic : waiting) {
-        if (count_publishers(topic) == 0) {
-          gates_[topic].live = false;
-          gates_[topic].owed.clear();
-        }
-      }
+    while (!stop_ && !done()) {
+      if (count_publishers(topic) == 0) {return true;}
       const auto now = std::chrono::steady_clock::now();
       if (now >= deadline) {
-        for (const auto & topic : blocking()) {
-          gates_[topic].live = false;
-          gates_[topic].owed.clear();
-          RCLCPP_WARN(get_logger(), "bench_world: %s silent, no longer pacing on it",
-            topic.c_str());
-        }
-        return true;
+        ++timeouts_;
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+          "lockstep: %s timed out after %.2f s wall; this run may not repeat",
+          topic.c_str(), max_wait_s_);
+        return false;
       }
       gate_cv_.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(10)));
     }
     return true;
+  }
+
+  // Hold /clock at 0 until the nodes under test are up, so point_to_cv_target's
+  // timer starts at 0 (the grace covers its timers, made after its publisher).
+  void await_nodes()
+  {
+    const auto deadline = std::chrono::steady_clock::now() +
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<double>(startup_wait_s_));
+    while (!stop_ && rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
+      if (count_publishers("/cv/target") > 0 && count_publishers("/cv/tracker/measurement") > 0) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        aim_live_ = true;
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    RCLCPP_WARN(get_logger(), "lockstep: nodes under test not up after %.0f s; "
+      "starting the clock without them", startup_wait_s_);
   }
 
   void run()
@@ -380,23 +401,54 @@ private:
     auto wall_start = std::chrono::steady_clock::now();
     auto report_wall = wall_start;
     double report_t = 0.0;
-    const int substeps = std::max(1, static_cast<int>(std::lround(clock_step_s_ / physics_step_s_)));
     publish_clock();
+    if (rate_ <= 0.0) {await_nodes();}
     while (!stop_ && rclcpp::ok()) {
-      const double next_t = t_ + substeps * physics_step_s_;
+      const double next_t = (n_ + substeps_) * physics_step_s_;
       if (rate_ > 0.0) {
         std::this_thread::sleep_until(
           wall_start + std::chrono::duration<double>(next_t / rate_));
-      } else if (!wait_gates(next_t)) {
-        std::this_thread::sleep_for(std::chrono::duration<double>(next_t - t_));
+      } else {
+        std::unique_lock<std::mutex> lock(gate_mutex_);
+        // The scorer only paces: it may trail a period plus pace_slack_s.
+        if (progress_) {
+          const double allow = 1.0 / truth_rate_hz_ + pace_slack_s_;
+          if (!wait_for(lock, "/bench/progress", [&] {return *progress_ + allow >= next_t;})) {
+            progress_.reset();
+          }
+          if (count_publishers("/bench/progress") == 0) {progress_.reset();}
+        }
       }
-      for (int i = 0; i < substeps; ++i) {step();}
+      const int64_t shown_ns = n_ * physics_step_ns_;  // the /clock nodes last saw
+      for (int i = 0; i < substeps_; ++i) {step();}
+      if (rate_ <= 0.0 && detections_due()) {
+        // The tracker stamps with now(): send only once it reads shown_ns.
+        std::unique_lock<std::mutex> lock(gate_mutex_);
+        wait_for(lock, "/cv/tracker/clock_ack", [&] {return tracker_clock_ns_ >= shown_ns;});
+      }
       flush_detections();
+      const int64_t t_ns = n_ * physics_step_ns_;
+      if (rate_ <= 0.0) {
+        // The tracker folds in every published detection while /clock still
+        // reads the last step, so it stamps them all at that same time.
+        std::unique_lock<std::mutex> lock(gate_mutex_);
+        if (!wait_for(lock, "/cv/tracker/measurement", [&] {return owed_.empty();})) {
+          owed_.clear();
+        }
+      }
       publish_clock();
+      if (rate_ <= 0.0 && aim_live_ && tick_due(t_ns)) {
+        std::unique_lock<std::mutex> lock(gate_mutex_);
+        wait_for(lock, "/cv/target", [&] {return last_aim_ns_ >= t_ns;});
+      }
+      if (rate_ <= 0.0 && !aim_live_ && !tracker_live_ && !progress_) {
+        std::this_thread::sleep_for(std::chrono::duration<double>(step_ns() * 1e-9));
+      }
       const auto wall = std::chrono::steady_clock::now();
       const double elapsed = std::chrono::duration<double>(wall - report_wall).count();
       if (elapsed >= 10.0) {
-        RCLCPP_INFO(get_logger(), "bench_world: %.1fx", (t_ - report_t) / elapsed);
+        RCLCPP_INFO(get_logger(), "bench_world: %.1fx, %d lockstep timeouts",
+          (t_ - report_t) / elapsed, timeouts_.load());
         report_wall = wall;
         report_t = t_;
       }
@@ -415,9 +467,9 @@ private:
   void step()
   {
     const double dt = physics_step_s_;
-    std::lock_guard<std::mutex> lock(mutex_);  // start_case reads t_
-    t_ += dt;
+    std::lock_guard<std::mutex> lock(mutex_);
     ++n_;
+    t_ = n_ * dt;  // a step count, so float error doesn't build up
     step_target(dt);
     // The head holds world yaw (the MCB's IMU loop); a spinning chassis
     // drags it through the bearing. yaw_.q turns about -z, the spin about +z.
@@ -435,13 +487,18 @@ private:
     if (marker_pub_->get_subscription_count() > 0 && due(markers_rate_hz_, last_markers_)) {
       publish_markers();
     }
+    if (pending_case_ && n_ % case_align_steps_ == 0) {
+      start_case(*pending_case_);
+      pending_case_.reset();
+    }
   }
 
   // True once per period of rate_hz since the case started, on the first
   // step at or past it.
   bool due(double rate_hz, int64_t & last_index)
   {
-    const auto index = static_cast<int64_t>(std::floor((t_ - case_t0_) * rate_hz + 1e-9));
+    const double since = (n_ - case_n0_) * physics_step_s_;
+    const auto index = static_cast<int64_t>(std::floor(since * rate_hz + 1e-9));
     if (index == last_index) {return false;}
     last_index = index;
     return true;
@@ -454,7 +511,9 @@ private:
   void start_case(int64_t case_seed)
   {
     case_t0_ = t_;
+    case_n0_ = n_;
     noise_key_ = mix(seed_, static_cast<uint64_t>(case_seed));
+    target_yaw_ = case_yaw_;
     s_ = 0.0;
     direction_ = 1.0;
     vs_ = std::min(live_["target_speed"],
@@ -472,6 +531,10 @@ private:
     detected_.reset();
     pending_.clear();
     last_head_ = last_pose_ = last_truth_ = last_frame_ = last_markers_ = last_shooter_ = -1;
+    std_msgs::msg::Header h;
+    h.stamp = to_stamp(case_t0_);
+    h.frame_id = std::to_string(case_seed);
+    case_pub_->publish(h);
   }
 
   bool holding() {return t_ - case_t0_ < live_["case_hold_s"];}
@@ -696,15 +759,25 @@ private:
     pending_.push_back({t_ + latency, std::move(arr)});
   }
 
+  // A non-empty frame is due for publishing at t_.
+  bool detections_due()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto & p : pending_) {
+      if (p.publish_at > t_ + 1e-9) {break;}
+      if (!p.msg.detections.empty()) {return true;}
+    }
+    return false;
+  }
+
   void flush_detections()
   {
     std::lock_guard<std::mutex> lock(mutex_);
     while (!pending_.empty() && pending_.front().publish_at <= t_ + 1e-9) {
       const PanelDetectionArray & msg = pending_.front().msg;
-      if (!msg.detections.empty()) {
+      if (!msg.detections.empty()) {  // the tracker echoes nothing for an empty frame
         std::lock_guard<std::mutex> gate_lock(gate_mutex_);
-        Gate & g = gates_["/cv/tracker/measurement"];
-        if (g.live) {g.owed.push_back(from_stamp(msg.header.stamp));}
+        if (tracker_live_) {owed_.push_back(from_stamp(msg.header.stamp));}
       }
       det_pub_->publish(msg);
       pending_.erase(pending_.begin());
@@ -798,7 +871,9 @@ private:
   }
 
   // Parameters.
-  double rate_, clock_step_s_, physics_step_s_, pace_slack_s_, max_wait_s_;
+  double rate_, clock_step_s_, physics_step_s_, pace_slack_s_, max_wait_s_, startup_wait_s_;
+  int64_t aim_tick_ns_, case_align_steps_, physics_step_ns_;
+  int substeps_;
   std::map<std::string, double> live_;  // changed at runtime by the bench
   bool detections_enabled_;
   double frame_rate_hz_, hfov_, vfov_, range_near_, range_far_, view_half_angle_;
@@ -821,12 +896,22 @@ private:
   int64_t last_head_ = -1, last_pose_ = -1, last_truth_ = -1, last_frame_ = -1,
     last_markers_ = -1, last_shooter_ = -1;
   double case_t0_ = 0.0, shooter_dir_ = 1.0;
+  int64_t case_n0_ = 0;
   uint64_t seed_ = 0, noise_key_ = 0;
+  std::optional<int64_t> pending_case_;
+  double case_yaw_ = 0.0;  // target_yaw, applied again at each case start
 
-  // Pacing.
+  // Lockstep, guarded by gate_mutex_.
   std::mutex gate_mutex_;
   std::condition_variable gate_cv_;
-  std::map<std::string, Gate> gates_;
+  bool tracker_live_ = false;  // after its first echo
+  std::deque<double> owed_;  // stamps of published non-empty frames not yet echoed
+  std::atomic<bool> aim_live_{false};
+  int64_t last_aim_ns_ = -1;
+  int64_t tracker_clock_ns_ = -1;
+  bool warned_phase_ = false;
+  std::optional<double> progress_;
+  std::atomic<int> timeouts_{0};
 
   rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr truth_pub_, odom_pub_;
@@ -834,6 +919,7 @@ private:
   rclcpp::Publisher<RobotPose>::SharedPtr pose_pub_;
   rclcpp::Publisher<PanelDetectionArray>::SharedPtr det_pub_;
   rclcpp::Publisher<MarkerArray>::SharedPtr marker_pub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr case_pub_;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subs_;
 
   std::atomic<bool> stop_{false};

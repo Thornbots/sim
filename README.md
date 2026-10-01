@@ -104,13 +104,18 @@ scores every state for 3 s + 30 s against the truth at the state's own
 stamp, so a late stamp scores as error. Detection noise is drawn per
 (`seed`, `case_seed`, frame, panel), not from one stream, so a cell sees
 the same noise on every run whatever ran before it or where the head
-pointed; `seed:=` samples another draw. Runs still differ by the nodes'
-timing within `pace_slack_s`. The 12 cells take ~22 s
-on the Mac, ~20x real time while scoring (`real_time_factor:=1` for real
-time). Sim time waits for the nodes under test, `target_tracker`'s input
-among them (`/cv/tracker/measurement`), but only on frames that carried a
-detection, since the tracker echoes nothing for an empty one. A gate whose
-publisher has gone, like the scorer between cases, stops holding it at once:
+pointed; `seed:=` samples another draw. At `real_time_factor:=0` the loop
+is lockstep, so a cell's p95s repeat to within 1.03x run to run (five Mac
+runs, 2026-10-01; 2.2x when it only paced). `/clock` holds at 0 until
+`point_to_cv_target` and `target_tracker` are up, so the aim node's 30 Hz
+timer starts at 0 and each case starts on a 0.1 s boundary (`case_align_s`).
+A step's detections go out only once the tracker's `/cv/tracker/clock_ack`
+shows it reads the last `/clock`, since it stamps `TargetState` with `now()`;
+`/clock` then waits for the tracker to echo each one on
+`/cv/tracker/measurement`, and for `/cv/target` on each aim tick. The scorer
+only paces, up to `pace_slack_s` behind. A wait that passes `max_wait_s`
+(0.5 s wall) is logged as a lockstep timeout, and that run may not repeat.
+The 12 cells take ~30 s on the Mac (`real_time_factor:=1` for real time):
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash

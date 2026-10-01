@@ -36,6 +36,7 @@ import numpy as np
 from rcl_interfaces.srv import SetParameters
 import rclpy
 from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from shot_hit_harness import (
     check_nodes, interpolate, LaunchTree, PANEL_RADIUS_X, PANEL_RADIUS_Y, SimTimeNode,
     TARGET_PATHS,
@@ -51,6 +52,9 @@ SETTLE_S = 3.0  # sim seconds after the track restarts before steady-state scori
 RESET_S = 1.0
 TRUTH_HISTORY_S = 2.0
 DEFAULT_LOG_DIR = '/tmp/estimation_test_logs'
+# Sim seconds of truth past a window's end before it is closed, so every state
+# stamped inside it has arrived.
+CLOSE_S = 0.2
 # --blackout: blackout_s of no detections every period, shorter than
 # track_max_gap_s, so the tracker coasts and must pick the target up again.
 BLACKOUT = {'blackout_period_s': 2.0, 'blackout_s': 0.3}
@@ -80,11 +84,17 @@ class EstimationSampler(SimTimeNode):
         # The truth stamp scored up to, so sim_clock's paced mode (rate 0)
         # doesn't run ahead of this scorer.
         self.progress_pub = self.create_publisher(Header, '/bench/progress', 10)
+        self.case = None  # (case_seed, start_s) from bench_world's /bench/case
+        self.create_subscription(
+            Header, '/bench/case', self._on_case,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
     def start_case(self, stagger):
         """Forget the last case: its truth jumped when bench_world reset."""
         self.stagger = stagger
         self._truth, self._pending, self.records = [], [], []
+        self.case = None  # callbacks run only in spin, so the new case's message waits
 
     def _on_truth(self, msg):
         p, q, v = msg.pose.pose.position, msg.pose.pose.orientation, msg.twist.twist
@@ -100,6 +110,20 @@ class EstimationSampler(SimTimeNode):
         self._truth = [h for h in self._truth if stamp - h[0] <= TRUTH_HISTORY_S]
         self._resolve(stamp)
         self.progress_pub.publish(Header(stamp=msg.header.stamp))
+
+    def _on_case(self, msg):
+        self.case = (int(msg.frame_id), self._stamp_s(msg.stamp))
+
+    def truth_s(self):
+        """Newest truth stamp seen (s), or None."""
+        return self._truth[-1][0] if self._truth else None
+
+    def spin_until_truth(self, stamp_s):
+        """Spin until truth reaches stamp_s, capped at 60 s wall."""
+        ok = self.wait_until(lambda: (self.truth_s() or 0.0) >= stamp_s, timeout=60.0,
+                             description=f'truth at {stamp_s:.3f} s')
+        if not ok:
+            print('[spin_until_truth] wall-clock cap hit')
 
     def _on_state(self, msg):
         self._pending.append((self._stamp_s(msg.header.stamp), self.now_s(), msg))
@@ -210,6 +234,7 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
     are scored from there for SETTLE_S + duration.
     """
     sampler = stack.sampler
+    seed = zlib.crc32(cell.encode()) & 0x7fffffff
     with suite_timing.phase('reset'):
         stack.set_params(
             target_speed=speed, spin_hz=spin_hz, **TARGET_PATHS[path],
@@ -217,22 +242,27 @@ def run_case(stack, cell, speed, spin_hz, duration, stagger=0.0, path='lateral',
             panel_stagger_m=stagger, detections_enabled=True,
             **(BLACKOUT if blackout else {'blackout_period_s': 0.0}),
             shooter_speed=shooter_speed, shooter_half_width=SHOOTER_HALF_WIDTH,
-            case_hold_s=RESET_S, case_seed=zlib.crc32(cell.encode()) & 0x7fffffff)
+            case_hold_s=RESET_S, case_seed=seed)
         sampler.start_case(stagger)
     suite_timing.set_sim_clock(sampler.now_s)
     try:
+        # The window is bench_world's case start plus fixed offsets, so it
+        # covers the same sim times on every run.
         with suite_timing.phase('reset'):
-            sampler.spin_for(RESET_S)
-            sampler._pending, sampler.records = [], []  # the last case's stragglers
-        start_s = sampler.now_s()
+            if not sampler.wait_until(lambda: sampler.case and sampler.case[0] == seed,
+                                      timeout=30.0, description=f'/bench/case {seed}'):
+                raise RuntimeError(f'bench_world never started case {cell}')
+            start_s = sampler.case[1] + RESET_S
+            sampler.spin_until_truth(start_s)
         with suite_timing.phase('settle'):
-            sampler.spin_for(SETTLE_S)
+            sampler.spin_until_truth(start_s + SETTLE_S)
+        end_s = start_s + SETTLE_S + duration
         with suite_timing.phase('scored'):
-            sampler.spin_for(duration)
+            sampler.spin_until_truth(end_s + CLOSE_S)
         check_nodes(sampler, stack.nodes)
     finally:
         suite_timing.set_sim_clock(None)
-        records = sampler.records
+    records = [r for r in sampler.records if start_s <= r['t'] <= end_s]
     summary = {'cell': cell, **summarize_case(records, start_s, SETTLE_S)}
     with open(stack.states_path, 'a') as f:
         for rec in records:
