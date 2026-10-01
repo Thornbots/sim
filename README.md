@@ -360,6 +360,16 @@ ros2 launch sim e2e.launch.py speeds:='0 2' paths:=lateral duration:=15
 ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:=1.5
 ```
 
+`stage:=e2` is stage E2: `pose_emulator`, `cv_head_aim` and the team stub
+give way to `mcb_emulator` (the sentry firmware, see Notes "MCB emulator")
+on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
+`test/e2e/test_e2.py` scores the shots the firmware fires. It is marked
+xfail: the firmware refuses our 23-byte `CV_MSG`, so it only patrols.
+
+```bash
+ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
+```
+
 `shots.jsonl` in `log_dir` (`/tmp/e2e_test_logs`) splits every miss into
 the barrel's angle off the aim and the aim's distance from the panel, and
 each case prints TargetState's centre, velocity and spin error against
@@ -1034,3 +1044,73 @@ sets the sign and the test checks it analytically.
 
 When `/cv/target` confidence reaches 0.0 it stops publishing and holds
 position, without re-homing, since a lost target is usually a brief FOV gap.
+
+### MCB emulator
+
+`sim/mcb_emulator/` is the sentry's MCB firmware, `Thornbots/MCBV3` at
+`708b8d6`, ported to Python module by module: `protocol.py` (UART structs,
+taproot's DJISerial and CRCs, the one-slot mailbox), `ballistics.py`
+(taproot), `jetson.py` (JetsonSubsystem), `aim_and_fire.py`
+(AutoAimAndFireCommand), `drive.py` (SimpleAutoDriveCommand,
+MoveToPositionCommand, AutoDriveCommand, ChassisController's position
+loop), `subsystems.py` (gimbal, odometry, indexer setpoints) and
+`sentry.py` (SentryControl and the 1 kHz loop). Every function cites its
+firmware file and line. Units and names follow the firmware.
+
+It lives in `sim` because it is sim hardware: it reads gz truth and drives
+the gz head and chassis, as `pose_emulator` and `cv_head_aim` (which it
+replaces in E2) do, and it sits beside the E1 stack it extends.
+`dji_serial_bridge` has to stay a plain translator and `thornbots_pkg` is
+robot code, so neither may hold a fake MCB.
+
+Below the firmware's setpoints sits a `Hardware` object. `mcb_emulator_node`
+gives it gz: the IMU is the turret's gz world yaw, zeroed at boot; the Pico
+odometry is x right, y forward of the boot heading; gimbal setpoints go to
+the head's joint position controllers and chassis velocity to `/cmd_vel`.
+`IdealHardware` stands in for gz in the tests. Not ported: the yaw and
+pitch motor controllers (so the yaw velocity feed-forward is dropped), the
+chassis velocity loop and power limiting, indexer heat, homing and jams, the
+flywheel's spin-up, and HitRing (no referee hits yet: always 123). The
+remote is taken as connected with both switches up. The referee is node
+parameters (`game_type`, `game_stage`, `robot_id`, HP, zones), settable live.
+
+The node runs the loop in `batch_ms` batches of 1 ms cycles on sim time and
+spreads the frames read in a batch evenly over its cycles, so frames that
+would share one real millisecond still collide in the mailbox. `drive:=stop`
+parks it (DrivetrainStopCommand), `simple` runs the sentry's waypoint route,
+`auto` the unused AutoDriveCommand. Each shot is a `std_msgs/Header` on
+`/mcb_emulator/shot`, stamped with the sim time the indexer fired.
+
+Where the firmware and `UART_PROTOCOL.md` disagree is listed, with
+MCBV3 file:line, in `../ros2_dji_serial_bridge/README.md` "Where the
+firmware stands". Behaviour that isn't a wire gap but changes what E2 can
+score (paths under `MCB-project/src/`):
+
+- It starts firing only when `targetYaw - current_yaw` is under 60 deg
+  unwrapped, and `current_yaw` is `[0, 2pi)` while `targetYaw` is
+  `(-pi, pi]` (`subsystems/jetson/JetsonSubsystem.cpp:255-268`, taproot's
+  `MahonyAHRS.h:75-78`): it never starts while the turret faces the upper
+  half turn. Once started it fires until it patrols, past the 60 deg.
+- `abs()` of a float at `JetsonSubsystem.cpp:268`; ported as `std::abs`.
+  If it binds to the C `int abs`, the gate is 2 rad.
+- The 3 m cut, `MAX_SHOOT_DIST`, is commented out (`JetsonSubsystem.cpp:207`).
+- A CV frame moves the yaw setpoint by at most 1.5% of its error, less when
+  small (`JetsonSubsystemConstants.hpp:62-63`); in the tests 18 deg is half
+  closed after 2 s. Pitch barely moves on a frame (`:57`, 5e-6), but the
+  hold branch between frames sets the ballistic pitch outright
+  (`AutoAimAndFireCommand.cpp:71`).
+- `getPitchVel` is the motor shaft's rate, 3x the head's
+  (`subsystems/gimbal/GimbalSubsystem.cpp:201`), and it feeds the latency
+  compensation.
+- Within 0.01 rad of level, taproot's ballistics takes a vertical shot's
+  travel time: no lead inside ~1.2 m at 24 m/s.
+- The sentry drives `SimpleAutoDriveCommand`'s ARCC route, spinning -8 rad/s
+  moving and -12 at either end, even before the game in a 3v3. The 9 rad/s
+  `AutoDriveCommand` is never scheduled. All stage gating applies only when
+  the referee reports an RMUL 3v3 game.
+
+E2 with `stage:=e2` (2026-09-30, container, stationary lateral 15 s): POSE
+reaches `pose_translator` and the tracker runs, but 411 of 411 `CV_MSG`
+were refused on size and the emulator fired nothing. The tracker's state
+sat 2.75 m and 14.7 m/s off truth (E1: 0.07 m), consistent with the patrol
+sweeping a head whose `head_yaw` the URDF reads mirrored.

@@ -193,6 +193,10 @@ def generate_launch_description():
     # /sim/raw_odom + /sim/raw_joint_states, produced inside sim itself.
     # See README.md's ## Notes for the noise model / FK / dwell-count
     # rationale.
+    pose_emulator_arg = DeclareLaunchArgument(
+        'pose_emulator', default_value='true',
+        description='Publish /pose from gz truth; false when the MCB emulator sends POSE_MSG'
+    )
     spawn_target_arg = DeclareLaunchArgument(
         'spawn_target', default_value='false',
         description='Launch target_driver + cv_target_emulator for CV detection testing'
@@ -391,6 +395,7 @@ def generate_launch_description():
         executable='pose_emulator',
         name='pose_emulator',
         output='screen',
+        condition=IfCondition(LaunchConfiguration('pose_emulator')),
         parameters=[{
             'use_sim_time': True,
             'odom_noise_enabled': ParameterValue(
@@ -678,6 +683,7 @@ def generate_launch_description():
         odom_jerk_bias_x_arg,
         odom_jerk_bias_y_arg,
         odom_slip_ratio_arg,
+        pose_emulator_arg,
         spawn_target_arg,
         target_speed_arg,
         target_spin_hz_arg,

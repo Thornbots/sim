@@ -21,8 +21,10 @@ firmware's indexer rate while it holds a target) from the gz muzzle, along
 the barrel, FIRE_LATENCY_S after the decision, at 25 m/s. It hits if it
 crosses a canted armor face facing it within 72.5 deg, with each panel
 taken from gz's pose at the shot's arrival. Shots CVTarget.fire asks for
-are scored too, as `flag` shots, but don't set the pass. Importable only;
-test_e1.py holds the assertions. Borrows the aiming bench's process and
+are scored too, as `flag` shots, but don't set the pass. In stage E2 the
+MCB emulator fires instead: each ~/shot it reports is an `mcb` shot,
+launched FIRE_LATENCY_S after its stamp. Importable only; test_e1.py and
+test_e2.py hold the assertions. Borrows the aiming bench's process and
 node helpers and its face test from ../cv/shot_hit_harness.py.
 """
 import bisect
@@ -66,6 +68,8 @@ FLOORS = {}
 STACK_NODES = ['detector_standin', 'depth_camera_emulator', 'roi_depth_node',
                'target_selector', 'target_tracker', 'point_to_cv_target', 'cv_head_aim',
                'opponent_driver', 'target_driver']
+E2_NODES = [n for n in STACK_NODES if n != 'cv_head_aim'] + [
+    'mcb_emulator', 'dji_serial_bridge', 'mcb_relay']
 
 
 def _rpy(r, p, y):
@@ -154,8 +158,9 @@ class PoseHistory:
 class E2EScorer(bench.SimTimeNode):
     """Fires by the firmware's rule on /cv/target and scores every shot from gz truth."""
 
-    def __init__(self, armors, muzzle, log_path):
+    def __init__(self, armors, muzzle, log_path, stage='e1'):
         super().__init__('e2e_scorer')
+        self.stage = stage
         self.armors, self.muzzle = armors, muzzle
         self.log_path = log_path
         self.ours, self.theirs = PoseHistory(), PoseHistory()
@@ -178,11 +183,14 @@ class E2EScorer(bench.SimTimeNode):
         self._pending_states = []  # judged once truth 20 ms past their stamp is in
         self._pending = []
         self.scoring = False
-        self.shots = {'rate': [], 'flag': []}
+        self.shots = {'rate': [], 'flag': [], 'mcb': []}
         self.create_timer(1.0 / FIRE_HZ, self._fire_tick)
+        if stage == 'e2':
+            from std_msgs.msg import Header
+            self.create_subscription(Header, '/mcb_emulator/shot', self._on_mcb_shot, 100)
 
     def reset(self):
-        self._pending, self.shots, self.scoring = [], {'rate': [], 'flag': []}, True
+        self._pending, self.shots, self.scoring = [], {'rate': [], 'flag': [], 'mcb': []}, True
         self.states, self._pending_states = [], []
 
     def _on_target(self, msg):
@@ -195,9 +203,13 @@ class E2EScorer(bench.SimTimeNode):
         if msg.fire and self.scoring:
             self._pending.append(('flag', t + msg.delay_ms / 1000.0 + FIRE_LATENCY_S))
 
+    def _on_mcb_shot(self, msg):
+        if self.scoring:
+            self._pending.append(('mcb', self._stamp_s(msg.stamp) + FIRE_LATENCY_S))
+
     def _fire_tick(self):
         now = self.now_s()
-        if self.scoring and self._target is not None:
+        if self.scoring and self.stage == 'e1' and self._target is not None:
             t, confidence = self._target
             if confidence >= FIRE_MIN_CONFIDENCE and now - t <= TARGET_FRESH_S:
                 self._pending.append(('rate', now + FIRE_LATENCY_S))
@@ -324,13 +336,14 @@ class E2EStack:
     Between cases only target_driver's path, speed and spin change.
     """
 
-    def __init__(self, headless, log_dir, external=False):
+    def __init__(self, headless, log_dir, external=False, stage='e1'):
         self.launch = None
         self.log_dir = log_dir
+        self.nodes = E2_NODES if stage == 'e2' else STACK_NODES
         if not external:
             self.launch = bench.LaunchTree(
                 'stack', ['ros2', 'launch', 'sim', 'e2e.launch.py', 'run_tests:=false',
-                          f'headless:={str(headless).lower()}'],
+                          f'headless:={str(headless).lower()}', f'stage:={stage}'],
                 os.path.join(log_dir, 'stack.log'))
         self.shots_path = os.path.join(log_dir, 'shots.jsonl')
         self.scores_path = os.path.join(log_dir, 'scores.jsonl')
@@ -340,7 +353,7 @@ class E2EStack:
         self._set_params = self.node.create_client(
             SetParameters, '/target_driver/set_parameters')
         armors, muzzle = urdf_offsets()
-        self.scorer = E2EScorer(armors, muzzle, self.shots_path)
+        self.scorer = E2EScorer(armors, muzzle, self.shots_path, stage)
 
     def start(self):
         for path in (self.shots_path, self.scores_path):
@@ -351,9 +364,9 @@ class E2EStack:
             s = self.scorer
             s.wait_until(lambda: s.theirs.newest() is not None, timeout=120.0,
                          description=f'{OPPONENT} in gz')
-            s.wait_until(lambda: s.nodes_up(*STACK_NODES), timeout=30.0,
-                         description=f'{", ".join(STACK_NODES)} nodes up')
-            bench.check_nodes(s, STACK_NODES)
+            s.wait_until(lambda: s.nodes_up(*self.nodes), timeout=30.0,
+                         description=f'{", ".join(self.nodes)} nodes up')
+            bench.check_nodes(s, self.nodes)
             s.wait_until(lambda: s._target is not None and s._target[1] >= FIRE_MIN_CONFIDENCE,
                          timeout=60.0, description='a confident /cv/target')
 
@@ -406,7 +419,7 @@ def run_case(stack, speed, spin_hz, path, duration):
     s.reset()
     s.spin_for(duration + RESOLVE_AFTER_S)
     s.scoring = False
-    bench.check_nodes(s, STACK_NODES)
+    bench.check_nodes(s, stack.nodes)
     print(state_summary(s.states))
     return s.shots
 
@@ -422,4 +435,5 @@ def record_score(stack, cell, shots, duration):
             'cell': cell, 'duration_s': duration,
             'rate_shots': len(shots['rate']), 'rate_hit_rate': round(hit_rate(shots['rate']), 4),
             'flag_shots': len(shots['flag']), 'flag_hit_rate': round(hit_rate(shots['flag']), 4),
+            'mcb_shots': len(shots['mcb']), 'mcb_hit_rate': round(hit_rate(shots['mcb']), 4),
         }) + '\n')
