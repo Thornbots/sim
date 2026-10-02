@@ -148,11 +148,11 @@ def test_fires_only_while_turret_faces_the_lower_half_turn(turret_yaw, fires):
 
 
 def test_bridge_sized_cv_frames_never_aim():
-    """The bridge's 23-byte CVDataPayload fails getMsg's size check (JetsonSubsystem.hpp:204)."""
+    """The bridge's 19-byte CVDataPayload fails getMsg's size check (JetsonSubsystem.hpp:204)."""
     hw, s = _sentry()
-    _run(hw, s, 1000, encode_frame(CV_MSG, b'\x00' * 23))
+    _run(hw, s, 1000, encode_frame(CV_MSG, b'\x00' * 19))
     assert hw.shots == []
-    assert s.drivers.uart.size_mismatch[(CV_MSG, 23)] > 0
+    assert s.drivers.uart.size_mismatch[(CV_MSG, 19)] > 0
     assert s.gimbal.target_yaw_angle_world < 0.0  # patrolling
 
 

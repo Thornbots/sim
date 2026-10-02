@@ -15,8 +15,8 @@
 """
 Match test machinery, stage E1: scores the real CV chain's aim from gz truth.
 
-e2e.launch.py runs the stack. While /cv/target holds a target at
-confidence >= FIRE_MIN_CONFIDENCE, a shot leaves every 1/FIRE_HZ s (the
+e2e.launch.py runs the stack. While /cv/target holds a target
+(FLAG_TARGET), a shot leaves every 1/FIRE_HZ s (the
 firmware's indexer rate while it holds a target) from the gz muzzle, along
 the barrel, FIRE_LATENCY_S after the decision, at 25 m/s. It hits if it
 crosses a canted armor face facing it within 72.5 deg, with each panel
@@ -51,7 +51,6 @@ import shot_hit_harness as bench  # noqa: E402, I100
 OPPONENT = 'opponent_0'
 MUZZLE_SPEED = bench.MUZZLE_SPEED
 FIRE_HZ = 10.0  # the firmware's indexer rate while it holds a target
-FIRE_MIN_CONFIDENCE = 0.75  # the firmware drops a target under this
 FIRE_LATENCY_S = bench.FIRE_LATENCY_S
 TARGET_FRESH_S = 0.1  # a /cv/target older than this holds fire
 EXPOSURE_HALF_ANGLE = bench.PANEL_EXPOSURE_HALF_ANGLE
@@ -171,7 +170,7 @@ class E2EScorer(bench.SimTimeNode):
         self._gz.subscribe(Pose_V, '/model/sentry/pose', lambda m: self.ours.add('sentry', m))
         self._gz.subscribe(Pose_V, f'/model/{OPPONENT}/pose',
                            lambda m: self.theirs.add(OPPONENT, m))
-        self._target = None  # (stamp_s, confidence)
+        self._target = None  # (stamp_s, has FLAG_TARGET)
         self._aims = []  # (stamp_s, odom point) of each confident /cv/target
         import tf2_ros
         self._tf = tf2_ros.Buffer()
@@ -195,8 +194,8 @@ class E2EScorer(bench.SimTimeNode):
 
     def _on_target(self, msg):
         t = self._stamp_s(msg.header.stamp)
-        self._target = (t, msg.confidence)
-        if msg.confidence > 0.0:
+        self._target = (t, bool(msg.flags & CVTarget.FLAG_TARGET))
+        if self._target[1]:
             self._aims.append((t, np.array([msg.x, msg.y, msg.z])))
             while self._aims and self._aims[0][0] < t - HISTORY_S:
                 del self._aims[0]
@@ -210,8 +209,8 @@ class E2EScorer(bench.SimTimeNode):
     def _fire_tick(self):
         now = self.now_s()
         if self.scoring and self.stage == 'e1' and self._target is not None:
-            t, confidence = self._target
-            if confidence >= FIRE_MIN_CONFIDENCE and now - t <= TARGET_FRESH_S:
+            t, has_target = self._target
+            if has_target and now - t <= TARGET_FRESH_S:
                 self._pending.append(('rate', now + FIRE_LATENCY_S))
         ready = [m for m in self._pending_states if self._stamp_s(m.header.stamp) < now - 0.1]
         self._pending_states = [m for m in self._pending_states if m not in ready]
@@ -367,8 +366,8 @@ class E2EStack:
             s.wait_until(lambda: s.nodes_up(*self.nodes), timeout=30.0,
                          description=f'{", ".join(self.nodes)} nodes up')
             bench.check_nodes(s, self.nodes)
-            s.wait_until(lambda: s._target is not None and s._target[1] >= FIRE_MIN_CONFIDENCE,
-                         timeout=60.0, description='a confident /cv/target')
+            s.wait_until(lambda: s._target is not None and s._target[1],
+                         timeout=60.0, description='a /cv/target with FLAG_TARGET')
 
     def set_target(self, speed, spin_hz, path):
         if not self._set_params.wait_for_service(timeout_sec=10.0):

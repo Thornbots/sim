@@ -355,7 +355,7 @@ cv_publish_latency_s:=0.06    # placeholder, not measured
 robot parked with the depth camera on, one red opponent riding
 `target_driver`'s path, and the real CV chain from `roi_depth_node` to
 `cv_head_aim` with no YOLO. `test/e2e/test_e1.py` scores one cell per
-opponent speed and path: while `/cv/target` holds confidence >= 0.75 a
+opponent speed and path: while `/cv/target` holds `FLAG_TARGET` a
 shot leaves the gz muzzle at 10 Hz (the firmware's rule) and hits if it
 crosses a panel face. Shots `CVTarget`'s `FLAG_FIRE` asks for are logged beside.
 
@@ -369,7 +369,7 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 give way to `mcb_emulator` (the sentry firmware, see Notes "MCB emulator")
 on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
 `test/e2e/test_e2.py` scores the shots the firmware fires. It is marked
-xfail: the firmware refuses our 23-byte `CV_MSG`, so it only patrols.
+xfail: the firmware refuses our 19-byte `CV_MSG`, so it only patrols.
 
 ```bash
 ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
