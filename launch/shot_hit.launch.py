@@ -87,7 +87,7 @@ def _aim_node(context, harness):
     cfg = context.launch_configurations
     return cv_node('point_to_cv_target',
                    cv_target_publish_rate_hz=harness.TEST_FIRE_HZ,
-                   tick_topic='/cv/target/tick',
+                   tick_topic='/cv/target/tick', patrol_enabled=False,
                    fire_rate_hz=harness.TEST_FIRE_HZ + 10.0,
                    gimbal_lag_s=float(cfg['gimbal_lag_s']),
                    chase_settle_s=float(cfg['chase_settle_s']),
