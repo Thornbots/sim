@@ -186,8 +186,11 @@ def generate_launch_description():
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
+        # No patrol: the scorer fires on every /cv/target frame (the
+        # firmware's legacy rule), and a patrol frame isn't a target.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
-                          'use_rf2o': 'true', 'load_map': 'true'}.items())
+                          'use_rf2o': 'true', 'load_map': 'true',
+                          'patrol_enabled': 'false'}.items())
 
     common = [camera_nodes, extrinsics_relay, target_driver, path_bridge, opponent_driver]
     e1 = [cv_head_aim, team_stub]
