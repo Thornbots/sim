@@ -107,7 +107,7 @@ the same noise on every run whatever ran before it or where the head
 pointed; `seed:=` samples another draw. At `real_time_factor:=0` the loop
 is lockstep, so a cell's p95s repeat to within 1.03x run to run (five Mac
 runs, 2026-10-01; 2.2x when it only paced). `/clock` holds at 0 until
-`point_to_cv_target` and `target_tracker` are up, so the aim node's 30 Hz
+`point_to_cv_target` and `target_tracker` are up, so the aim node's 40 Hz
 timer starts at 0 and each case starts on a 0.1 s boundary (`case_align_s`).
 A step's detections go out only once the tracker's `/cv/tracker/clock_ack`
 shows it reads the last `/clock`, since it stamps `TargetState` with `now()`;
