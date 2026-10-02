@@ -15,12 +15,12 @@
 """
 Match test machinery, stage E1: scores the real CV chain's aim from gz truth.
 
-e2e.launch.py runs the stack. While /cv/target holds a target
-(FLAG_TARGET), a shot leaves every 1/FIRE_HZ s (the
+e2e.launch.py runs the stack. While /cv/target keeps sending aim
+points, a shot leaves every 1/FIRE_HZ s (the
 firmware's indexer rate while it holds a target) from the gz muzzle, along
 the barrel, FIRE_LATENCY_S after the decision, at 25 m/s. It hits if it
 crosses a canted armor face facing it within 72.5 deg, with each panel
-taken from gz's pose at the shot's arrival. Shots CVTarget's FLAG_FIRE asks for
+taken from gz's pose at the shot's arrival. Shots CVTarget.fire asks for
 are scored too, as `flag` shots, but don't set the pass. In stage E2 the
 MCB emulator fires instead: each ~/shot it reports is an `mcb` shot,
 launched FIRE_LATENCY_S after its stamp. Importable only; test_e1.py and
@@ -170,7 +170,7 @@ class E2EScorer(bench.SimTimeNode):
         self._gz.subscribe(Pose_V, '/model/sentry/pose', lambda m: self.ours.add('sentry', m))
         self._gz.subscribe(Pose_V, f'/model/{OPPONENT}/pose',
                            lambda m: self.theirs.add(OPPONENT, m))
-        self._target = None  # (stamp_s, has FLAG_TARGET)
+        self._target = None  # stamp_s of the newest aim point
         self._aims = []  # (stamp_s, odom point) of each confident /cv/target
         import tf2_ros
         self._tf = tf2_ros.Buffer()
@@ -194,12 +194,11 @@ class E2EScorer(bench.SimTimeNode):
 
     def _on_target(self, msg):
         t = self._stamp_s(msg.header.stamp)
-        self._target = (t, bool(msg.flags & CVTarget.FLAG_TARGET))
-        if self._target[1]:
-            self._aims.append((t, np.array([msg.x, msg.y, msg.z])))
-            while self._aims and self._aims[0][0] < t - HISTORY_S:
-                del self._aims[0]
-        if msg.flags & CVTarget.FLAG_FIRE and self.scoring:
+        self._target = t
+        self._aims.append((t, np.array([msg.x, msg.y, msg.z])))
+        while self._aims and self._aims[0][0] < t - HISTORY_S:
+            del self._aims[0]
+        if msg.fire and self.scoring:
             self._pending.append(('flag', t + msg.delay_ms / 1000.0 + FIRE_LATENCY_S))
 
     def _on_mcb_shot(self, msg):
@@ -209,8 +208,7 @@ class E2EScorer(bench.SimTimeNode):
     def _fire_tick(self):
         now = self.now_s()
         if self.scoring and self.stage == 'e1' and self._target is not None:
-            t, has_target = self._target
-            if has_target and now - t <= TARGET_FRESH_S:
+            if now - self._target <= TARGET_FRESH_S:
                 self._pending.append(('rate', now + FIRE_LATENCY_S))
         ready = [m for m in self._pending_states if self._stamp_s(m.header.stamp) < now - 0.1]
         self._pending_states = [m for m in self._pending_states if m not in ready]
@@ -366,8 +364,8 @@ class E2EStack:
             s.wait_until(lambda: s.nodes_up(*self.nodes), timeout=30.0,
                          description=f'{", ".join(self.nodes)} nodes up')
             bench.check_nodes(s, self.nodes)
-            s.wait_until(lambda: s._target is not None and s._target[1],
-                         timeout=60.0, description='a /cv/target with FLAG_TARGET')
+            s.wait_until(lambda: s._target is not None,
+                         timeout=60.0, description='a /cv/target aim point')
 
     def set_target(self, speed, spin_hz, path):
         if not self._set_params.wait_for_service(timeout_sec=10.0):

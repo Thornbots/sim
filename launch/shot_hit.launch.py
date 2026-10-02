@@ -87,6 +87,7 @@ def _aim_node(context, harness):
     cfg = context.launch_configurations
     return cv_node('point_to_cv_target',
                    cv_target_publish_rate_hz=harness.TEST_FIRE_HZ,
+                   tick_topic='/cv/target/tick',
                    fire_rate_hz=harness.TEST_FIRE_HZ + 10.0,
                    gimbal_lag_s=float(cfg['gimbal_lag_s']),
                    chase_settle_s=float(cfg['chase_settle_s']),
@@ -104,7 +105,7 @@ def _point_stack(context, harness, headless):
     aim_period = 1.0 / harness.TEST_FIRE_HZ
     pace = ['/cv/target_state dji_serial_bridge/msg/TargetState 0.0167',
             '/pose dji_serial_bridge/msg/RobotPose 0.0167',
-            f'/cv/target dji_serial_bridge/msg/CVTarget {aim_period}',
+            f'/cv/target/tick std_msgs/msg/Header {aim_period}',
             f'/bench/progress std_msgs/msg/Header {aim_period}']
     x, y, z = harness.POINT_SHOOTER
     actions = [

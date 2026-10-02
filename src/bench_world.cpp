@@ -274,14 +274,16 @@ public:
           pitch_.cmd = m->data;
         }));
     const auto qos = rclcpp::SensorDataQoS();
+    // Every CVTarget is an aim point; with no target none comes and the head
+    // holds. point_to_cv_target's tick, sent either way, paces the lockstep.
     subs_.push_back(create_subscription<CVTarget>(
         "/cv/target", qos, [this](CVTarget::ConstSharedPtr m) {
-          {
-            std::lock_guard<std::mutex> lock(mutex_);
-            aim_ = (m->flags & CVTarget::FLAG_TARGET) ?
-            std::optional<Vector3d>(Vector3d(m->x, m->y, m->z)) : std::nullopt;
-          }
-          on_aim(rclcpp::Time(m->header.stamp).nanoseconds());
+          std::lock_guard<std::mutex> lock(mutex_);
+          aim_ = Vector3d(m->x, m->y, m->z);
+        }));
+    subs_.push_back(create_subscription<std_msgs::msg::Header>(
+        "/cv/target/tick", qos, [this](std_msgs::msg::Header::ConstSharedPtr m) {
+          on_aim(rclcpp::Time(m->stamp).nanoseconds());
         }));
     // The tracker stamps TargetState at publish time, so a backlog doesn't
     // show there; it echoes each detection it folds in here instead.
@@ -332,7 +334,7 @@ private:
     last_aim_ns_ = std::max(last_aim_ns_, stamp_ns);
     if (!tick_due(stamp_ns) && !warned_phase_) {
       warned_phase_ = true;
-      RCLCPP_WARN(get_logger(), "lockstep: /cv/target tick at %.3f s is off point_to_cv_target's "
+      RCLCPP_WARN(get_logger(), "lockstep: /cv/target/tick at %.3f s is off point_to_cv_target's "
         "phase from sim time 0; runs won't repeat exactly", stamp_ns * 1e-9);
     }
     gate_cv_.notify_all();
@@ -385,7 +387,7 @@ private:
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
       std::chrono::duration<double>(startup_wait_s_));
     while (!stop_ && rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
-      if (count_publishers("/cv/target") > 0 && count_publishers("/cv/tracker/measurement") > 0) {
+      if (count_publishers("/cv/target/tick") > 0 && count_publishers("/cv/tracker/measurement") > 0) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         aim_live_ = true;
         return;
@@ -439,7 +441,7 @@ private:
       publish_clock();
       if (rate_ <= 0.0 && aim_live_ && tick_due(t_ns)) {
         std::unique_lock<std::mutex> lock(gate_mutex_);
-        wait_for(lock, "/cv/target", [&] {return last_aim_ns_ >= t_ns;});
+        wait_for(lock, "/cv/target/tick", [&] {return last_aim_ns_ >= t_ns;});
       }
       if (rate_ <= 0.0 && !aim_live_ && !tracker_live_ && !progress_) {
         std::this_thread::sleep_for(std::chrono::duration<double>(step_ns() * 1e-9));
