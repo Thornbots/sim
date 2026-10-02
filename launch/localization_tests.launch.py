@@ -90,7 +90,10 @@ def _stack(context):
     backend = config['backend']
     # No CV: nothing here scores it, and it costs CPU the stack under test needs.
     robot_args = {'real_hardware': 'false', 'localization_mode': backend,
-                  'use_rf2o': config['use_rf2o'], 'load_map': 'true',
+                  'use_rf2o': config['use_rf2o'],
+                  # mapping builds its map from a blank one at spawn, so its
+                  # map frame matches the world's (drift_harness.TRUTH_SCORED).
+                  'load_map': 'false' if backend == 'mapping' else 'true',
                   'enable_target_tracker': 'false', 'enable_target_selector': 'false',
                   'enable_cv_target_bridge': 'false'}
     if backend == 'slam':
@@ -177,7 +180,7 @@ def generate_launch_description():
         DeclareLaunchArgument('real_time_factor', default_value='0',
                               description='sim speed cap; 0 = as fast as it runs'),
         DeclareLaunchArgument('backend', default_value='amcl',
-                              choices=['slam', 'amcl', 'none'],
+                              choices=['slam', 'mapping', 'amcl', 'none'],
                               description='who owns map->odom (drift suite)'),
         DeclareLaunchArgument('use_rf2o', default_value='true',
                               description='fuse rf2o into odom->root (drift suite)'),

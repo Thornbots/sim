@@ -567,7 +567,7 @@ at the scan plane, and still needs checking against a real `/scan_raw` (see
 
 Integration suite for `sentry_localization`'s drift and jerk correction
 against `pose_emulator.py`'s noise model. It mirrors `auto.launch.py`'s two
-axes: `--backend slam/amcl/none` (who owns `map->odom`) and `--use-rf2o` /
+axes: `--backend slam/mapping/amcl/none` (who owns `map->odom`) and `--use-rf2o` /
 `--no-use-rf2o` (whether `odom->root` is EKF-fused; on by default, matching
 `auto.launch.py`). For each scenario it resets the shared sim, launches the
 robot stack, drives, samples the correction TF, asserts, and stops the robot
@@ -586,12 +586,28 @@ Each scenario watches the edge the backend owns (`BACKEND_FRAMES`):
 | Backend | Edge | Gate |
 | --- | --- | --- |
 | `slam` | `map->odom` | distance since last scan (`minimum_travel_distance`) |
+| `mapping` | `map->odom` | as `slam`, on a map it builds from blank |
 | `amcl` | `map->odom` | `update_min_d`/`update_min_a` |
 | `none` | `odom->root` | no map node; `ekf_node` unless `--no-use-rf2o`, then raw `/odom` |
 
 `--use-rf2o` swaps `odom->root`'s source to `ekf_node` and leaves `map->odom`
-alone. `mapping` isn't offered, since it builds a map rather than being scored
-against one.
+alone.
+
+`mapping` starts slam_toolbox on a blank map (`load_map:=false`) at spawn,
+the world origin, so its `map` frame is the world's. Like `none`, it scores
+`map->root` against `/sim/raw_odom` in `noise_correction` and the
+cornering-loop scenarios; the rest watch `map->odom` as under `slam`. Each
+scenario's stack builds a fresh map: nothing carries between scenarios.
+`odom_stuck` drives two mapping laps first (`ODOM_STUCK_MAPPING_LAPS`).
+
+`mapping --use-rf2o` passes 9/9 (2026-10-02, archlinux, unthrottled):
+cornering loops 0.02-0.09 m truth error, `noise_correction` 0.04 m,
+`scan_degraded` 0.43 m during and 0.07 m after. `--no-use-rf2o` fails 5/9
+(Mac): the three 4 m/s loops at 0.41-0.42 m, `scan_degraded` 0.42 m after,
+and `odom_stuck`, whose `map->odom` freezes as amcl's does without rf2o
+(below), mapping laps or not. Under rf2o, `odom_stuck` passes its liveness
+check while lost (1-5 m truth error), and mapping keeps writing to the map
+the whole time.
 
 Under `none`, `odom->root` is the robot's own position, so its change says
 nothing about error. `noise_correction` and the three cornering-loop scenarios

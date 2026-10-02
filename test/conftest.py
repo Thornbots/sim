@@ -52,7 +52,7 @@ def pytest_addoption(parser):
 
     # test/localization
     group.addoption(
-        '--backend', choices=['slam', 'amcl', 'none'], default='amcl',
+        '--backend', choices=['slam', 'mapping', 'amcl', 'none'], default='amcl',
         help="auto.launch.py's localization_mode -- who owns map->odom")
     group.addoption(
         '--use-rf2o', action='store_true', dest='use_rf2o', default=True,

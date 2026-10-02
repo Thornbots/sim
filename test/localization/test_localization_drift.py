@@ -22,7 +22,7 @@ themselves live in drift_harness.py.
 Launches gz-sim and the full sentry stack, so every test here is marked
 `integration` and skipped by a plain `colcon test`;
 `ros2 launch sim localization_tests.launch.py` runs it. Options: --backend
-{slam,amcl,none}, --use-rf2o, --scenario NAME, --headless, --speed M/S,
+{slam,mapping,amcl,none}, --use-rf2o, --scenario NAME, --headless, --speed M/S,
 --drive-accel M/S^2, --spawn-yaw-deg DEG, --real-time-factor, --restart-sim (see test/conftest.py).
 See README.md for WHY THIS EXISTS, BACKENDS and SCENARIOS.
 """

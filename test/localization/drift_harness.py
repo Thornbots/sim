@@ -22,12 +22,12 @@ run_stack/teardown_stack/drive from here. Every duration here is sim
 time, so the stack can run at any real_time_factor.
 
 Two independent axes, mirroring auto.launch.py: backend
-{slam,amcl,none} (who owns map->odom -- 'mapping' isn't offered, see
-below) and use_rf2o (whether odom->root is EKF-fused, layerable on any
-backend -- the old standalone 'ekf' backend is now backend='none' plus
-use_rf2o=True). Scenarios, in SCENARIOS order: baseline, noise_correction,
-drift_correction, drift_correction_obstacle, moving_obstacles,
-real_accel, jerk_with_motion, odom_stuck, scan_degraded. See README.md
+{slam,mapping,amcl,none} (who owns map->odom) and use_rf2o (whether
+odom->root is EKF-fused, layerable on any backend -- the old standalone
+'ekf' backend is now backend='none' plus use_rf2o=True). Scenarios, in
+SCENARIOS order: baseline, noise_correction, drift_correction,
+drift_correction_obstacle, moving_obstacles, real_accel,
+jerk_with_motion, odom_stuck, scan_degraded. See README.md
 for WHY THIS EXISTS, BACKENDS (per-backend TF edge), and SCENARIOS (pass
 conditions/rationale).
 
@@ -514,9 +514,16 @@ LOG_DIR = '/tmp/localization_drift_tests'
 # only edge there is.
 BACKEND_FRAMES = {
     'slam': ('map', 'odom'),
+    'mapping': ('map', 'odom'),
     'amcl': ('map', 'odom'),
     'none': ('odom', 'root'),
 }
+
+# Backends scored on parent->root against /sim/raw_odom instead of the
+# correction edge's change: none (odom->root is the motion itself) and
+# mapping (its map starts blank at spawn, the world origin, so map->root
+# is directly comparable to truth). See README.md's BACKENDS.
+TRUTH_SCORED = ('none', 'mapping')
 
 # No longer driven by any scenario (noise_correction/jerk_with_motion
 # switched to OBSTACLE_LOOP_LEGS's bigger square) -- kept as the
@@ -1091,9 +1098,7 @@ def scenario_noise_correction(gui, backend, use_rf2o):
         sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner "
                '(-1.5,-1.5) before tracing it')
 
-        # Under none, odom->root is the robot's own position, so its
-        # magnitude says nothing; score ground-truth error instead.
-        metric = 'truth error' if backend == 'none' else f'|{edge} xy|'
+        metric = 'truth error' if backend in TRUTH_SCORED else f'|{edge} xy|'
         samples = []
         OBSERVE_SECONDS = 30.0  # lowered from 60.0 on 2026-07-27 for faster
         # tuning iteration -- still long enough for a first/second-half
@@ -1108,7 +1113,7 @@ def scenario_noise_correction(gui, backend, use_rf2o):
             vx, vy, duration = OBSTACLE_LOOP_LEGS[i % len(OBSTACLE_LOOP_LEGS)]
             i += 1
             helper.drive(vx, vy, duration)
-            if backend == 'none':
+            if backend in TRUTH_SCORED:
                 mag = _truth_error(helper)
             else:
                 p = helper.get_correction_tf(timeout=2.0)
@@ -1403,10 +1408,8 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None,
                 return sc
             sc.log(f'actor_driver spawned {ACTOR_COUNT} moving boxes crossing the loop')
 
-        # Drive the loop, sampling each leg. Under none, odom->root is the
-        # robot's own position, so its change from the pre-loop value is
-        # just the loop; score ground-truth error instead.
-        metric = ('truth error' if backend == 'none'
+        # Drive the loop, sampling each leg (TRUTH_SCORED: why truth).
+        metric = ('truth error' if backend in TRUTH_SCORED
                   else f'|{edge} - pre-loop {edge}|')
         OBSERVE_SECONDS = 30.0
         samples = []
@@ -1427,7 +1430,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None,
             # drive() already stops the robot at the end of each leg;
             # this just extends that stop.
             helper.spin_for(OBSTACLE_LOOP_DWELL_SECONDS)
-            if backend == 'none':
+            if backend in TRUTH_SCORED:
                 delta = _truth_error(helper)
             else:
                 p = helper.get_correction_tf(timeout=2.0)
@@ -1436,7 +1439,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None,
             if delta is not None:
                 elapsed = helper.now_s() - t0
                 samples.append(delta)
-                truth = '' if backend == 'none' else _truth_error_str(helper)
+                truth = '' if backend in TRUTH_SCORED else _truth_error_str(helper)
                 sc.log(f't={elapsed:5.1f}s  {metric}={delta:.4f} m{truth}')
 
         sc.log(f'over the loop, every message: {helper.yaw_range_str()}')
@@ -1455,7 +1458,7 @@ def _run_cornering_loop_scenario(sc, gui, backend, use_rf2o, obstacles=None,
             sc.result(False, 'actor_driver exited mid-loop; see '
                       f'actor_driver_{_actor_runs}.log')
             return sc
-        # TODO: under backend slam, sample /map on the actors' paths at
+        # TODO: under backend slam/mapping, sample /map on the actors' paths at
         # the end and fail if their cells stayed occupied.
 
         max_delta = max(samples)
@@ -1568,6 +1571,10 @@ def _truth_error_str(helper):
 # against once the sensor is dead). See scenario_odom_stuck/README.md.
 ODOM_STUCK_MIN_TF_SPREAD = 0.01  # meters
 
+# Laps of OBSTACLE_LOOP_LEGS driven under backend mapping before
+# odom_stuck fires, so the encoder dies on a built map, as in a game.
+ODOM_STUCK_MAPPING_LAPS = 2
+
 
 def scenario_odom_stuck(gui, backend, use_rf2o):
     parent, child = BACKEND_FRAMES[backend]
@@ -1608,6 +1615,12 @@ def scenario_odom_stuck(gui, backend, use_rf2o):
         _reposition_to_loop_start(helper)
         sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner "
                '(-1.5,-1.5) before tracing it')
+
+        if backend == 'mapping':
+            for vx, vy, duration in OBSTACLE_LOOP_LEGS * ODOM_STUCK_MAPPING_LAPS:
+                helper.drive(vx, vy, duration)
+                helper.spin_for(OBSTACLE_LOOP_DWELL_SECONDS)
+            sc.log(f'mapping window: {ODOM_STUCK_MAPPING_LAPS} laps before the trigger')
 
         helper.call_trigger_odom_stuck()
         sc.log('triggered odom_stuck: /pose now pinned at (0, 0)')
