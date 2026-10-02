@@ -31,7 +31,7 @@ Requires mcb_relay.py to relay /cv/target onto
 /dji_serial_bridge/cv_target (wired 2026-07-27, fire decision merged into
 CVTarget 2026-09-20) and point_to_cv_target's placeholder fire trigger
 (fire_rate_hz, no lead/HP/heat/power gating -- see
-thornbots_pkg/README.md) to set fire=True on one.
+thornbots_pkg/README.md) to set FLAG_FIRE on one.
 Shots are observed today, so "zero shots" means something in the
 launched stack is actually broken.
 """
@@ -408,7 +408,7 @@ class ShotHitSampler(SimTimeNode):
     Subscribes the ground-truth and cv_target topics the scorer needs.
 
     /target/ground_truth_odom is the impact truth, and every CVTarget on
-    /dji_serial_bridge/cv_target an aim point; each with fire=True becomes
+    /dji_serial_bridge/cv_target an aim point; each with FLAG_FIRE becomes
     one shot, resolved once truth at/after its impact time arrives.
     """
 
@@ -528,7 +528,7 @@ class ShotHitSampler(SimTimeNode):
             stamp = self._stamp_s(msg.header.stamp)
             self._aims.append((stamp, np.array([msg.x, msg.y, msg.z])))
             self._aims = [a for a in self._aims if stamp - a[0] <= 1.0]
-        if not msg.fire:
+        if not msg.flags & CVTarget.FLAG_FIRE:
             return
         if self._target_pos is None:
             return  # no ground truth yet to evaluate against
@@ -539,8 +539,8 @@ class ShotHitSampler(SimTimeNode):
         self._unlaunched.append({
             'exit_time': self._stamp_s(msg.header.stamp) + msg.delay_ms / 1000.0 + FIRE_LATENCY_S,
             'delay_ms': int(msg.delay_ms),
-            'lead_applied': bool(msg.lead_applied),
-            'track_valid': bool(msg.track_valid),
+            'lead_applied': bool(msg.flags & CVTarget.FLAG_LEAD_APPLIED),
+            'track_valid': bool(msg.flags & CVTarget.FLAG_TRACK_VALID),
         })
 
     def _resolve_pending(self, now_s):
