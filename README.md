@@ -355,9 +355,9 @@ cv_publish_latency_s:=0.06    # placeholder, not measured
 robot parked with the depth camera on, one red opponent riding
 `target_driver`'s path, and the real CV chain from `roi_depth_node` to
 `cv_head_aim` with no YOLO. `test/e2e/test_e1.py` scores one cell per
-opponent speed and path: while `/cv/target` holds `FLAG_TARGET` a
+opponent speed and path: while `/cv/target` keeps sending aim points a
 shot leaves the gz muzzle at 10 Hz (the firmware's rule) and hits if it
-crosses a panel face. Shots `CVTarget`'s `FLAG_FIRE` asks for are logged beside.
+crosses a panel face. Shots `CVTarget.fire` asks for are logged beside.
 
 ```bash
 ros2 launch sim e2e.launch.py                                 # all 12 cells

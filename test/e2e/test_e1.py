@@ -79,7 +79,7 @@ def test_e1(cell, request, e2e_stack):
     if floor is None:
         floor = harness.PLACEHOLDER_FLOOR
         print(f'{name}: no measured floor yet, using PLACEHOLDER_FLOOR')
-    assert rate, (f'{name}: no shots; /cv/target never held FLAG_TARGET. '
+    assert rate, (f'{name}: no shots; /cv/target never sent an aim point. '
                   'Check stack.log in --log-dir')
     assert harness.hit_rate(rate) >= floor, (
         f'{name}: hit rate {harness.hit_rate(rate):.0%} below {floor:.0%}')
