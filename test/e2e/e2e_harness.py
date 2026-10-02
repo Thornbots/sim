@@ -20,7 +20,7 @@ confidence >= FIRE_MIN_CONFIDENCE, a shot leaves every 1/FIRE_HZ s (the
 firmware's indexer rate while it holds a target) from the gz muzzle, along
 the barrel, FIRE_LATENCY_S after the decision, at 25 m/s. It hits if it
 crosses a canted armor face facing it within 72.5 deg, with each panel
-taken from gz's pose at the shot's arrival. Shots CVTarget.fire asks for
+taken from gz's pose at the shot's arrival. Shots CVTarget's FLAG_FIRE asks for
 are scored too, as `flag` shots, but don't set the pass. In stage E2 the
 MCB emulator fires instead: each ~/shot it reports is an `mcb` shot,
 launched FIRE_LATENCY_S after its stamp. Importable only; test_e1.py and
@@ -200,7 +200,7 @@ class E2EScorer(bench.SimTimeNode):
             self._aims.append((t, np.array([msg.x, msg.y, msg.z])))
             while self._aims and self._aims[0][0] < t - HISTORY_S:
                 del self._aims[0]
-        if msg.fire and self.scoring:
+        if msg.flags & CVTarget.FLAG_FIRE and self.scoring:
             self._pending.append(('flag', t + msg.delay_ms / 1000.0 + FIRE_LATENCY_S))
 
     def _on_mcb_shot(self, msg):

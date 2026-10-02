@@ -172,7 +172,8 @@ def test_cv_target_and_relocalize_are_refused_on_size(stack):
                                    qos_profile_sensor_data)
     reloc_pub = node.create_publisher(PointStamped, '/dji_serial_bridge/relocalize', 10)
     _wait_for_pose(executor, poses)
-    target = CVTarget(x=2.0, y=0.0, z=0.3, confidence=0.95, track_valid=True, fire=True)
+    target = CVTarget(x=2.0, y=0.0, z=0.3, confidence=0.95,
+                      flags=CVTarget.FLAG_TRACK_VALID | CVTarget.FLAG_FIRE)
     for i in range(60):  # 2 s at 30 Hz
         cv_pub.publish(target)
         if i % 15 == 0:
