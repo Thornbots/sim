@@ -524,7 +524,7 @@ class ShotHitSampler(SimTimeNode):
 
     def _on_cv_target(self, msg):
         self.progress_pub.publish(Header(stamp=msg.header.stamp))
-        if msg.confidence > 0.0:
+        if msg.flags & CVTarget.FLAG_TARGET:
             stamp = self._stamp_s(msg.header.stamp)
             self._aims.append((stamp, np.array([msg.x, msg.y, msg.z])))
             self._aims = [a for a in self._aims if stamp - a[0] <= 1.0]

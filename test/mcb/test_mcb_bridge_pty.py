@@ -172,8 +172,8 @@ def test_cv_target_and_relocalize_are_refused_on_size(stack):
                                    qos_profile_sensor_data)
     reloc_pub = node.create_publisher(PointStamped, '/dji_serial_bridge/relocalize', 10)
     _wait_for_pose(executor, poses)
-    target = CVTarget(x=2.0, y=0.0, z=0.3, confidence=0.95,
-                      flags=CVTarget.FLAG_TRACK_VALID | CVTarget.FLAG_FIRE)
+    target = CVTarget(x=2.0, y=0.0, z=0.3, flags=(
+        CVTarget.FLAG_TARGET | CVTarget.FLAG_TRACK_VALID | CVTarget.FLAG_FIRE))
     for i in range(60):  # 2 s at 30 Hz
         cv_pub.publish(target)
         if i % 15 == 0:
@@ -182,13 +182,13 @@ def test_cv_target_and_relocalize_are_refused_on_size(stack):
     _spin(executor, 0.2)
     with mcb.lock:
         uart = mcb.sentry.drivers.uart
-        cv_in = uart.received[(CV_MSG, 23)]
+        cv_in = uart.received[(CV_MSG, 19)]
         reloc_in = uart.received[(RELOCALIZE, 8)]
         shots = list(mcb.hw.shots)
         localized = mcb.sentry.simple_auto_drive.set_localization
-        refused = uart.size_mismatch[(CV_MSG, 23)]
-        lost = uart.overwritten[(CV_MSG, 23)]
-    assert cv_in >= 50, f'only {cv_in} 23-byte CV_MSG frames arrived'
+        refused = uart.size_mismatch[(CV_MSG, 19)]
+        lost = uart.overwritten[(CV_MSG, 19)]
+    assert cv_in >= 50, f'only {cv_in} 19-byte CV_MSG frames arrived'
     # Every frame died in the one-slot mailbox, most after a refused read; a
     # frame sharing a 1 ms cycle with the next is overwritten unread.
     assert lost >= cv_in - 1 and refused > cv_in / 2

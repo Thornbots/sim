@@ -84,7 +84,7 @@ class CvHeadAim(Node):
         self._head_yaw = 0.0
         self._head_pitch = 0.0
         self._have_joint_states = False
-        self._latest_target = None  # most recent confidence>0 CVTarget, or None
+        self._latest_target = None  # most recent CVTarget with FLAG_TARGET, or None
 
         # Non-blocking lookups only: /tf shares this node's executor.
         self.tf_buffer = tf2_ros.Buffer()
@@ -134,7 +134,7 @@ class CvHeadAim(Node):
         self._have_joint_states = True
 
     def on_cv_target(self, msg):
-        self._latest_target = msg if msg.confidence > 0.0 else None
+        self._latest_target = msg if msg.flags & CVTarget.FLAG_TARGET else None
 
     def on_control_tick(self):
         msg = self._latest_target

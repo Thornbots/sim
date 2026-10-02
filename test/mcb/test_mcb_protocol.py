@@ -73,13 +73,13 @@ def test_parser_drops_bad_crc_and_resyncs():
 def test_mailbox_keeps_one_frame_and_checks_size():
     """getMsg: type and size must both match; the slot holds only the newest frame."""
     box = p.UARTCommunication()
-    box.message_receive_callback(p.CV_MSG, b'\x00' * 23)  # the bridge's CVDataPayload
+    box.message_receive_callback(p.CV_MSG, b'\x00' * 19)  # the bridge's CVDataPayload
     assert box.get_msg(p.CVData) is None
     assert box.get_msg(p.CVData) is None
     assert box.has_new_data
-    assert box.size_mismatch[(p.CV_MSG, 23)] == 1
+    assert box.size_mismatch[(p.CV_MSG, 19)] == 1
     box.message_receive_callback(p.RELOCALIZE, p.pack(p.Relocalize(4.0, 5.0)))
-    assert box.overwritten[(p.CV_MSG, 23)] == 1
+    assert box.overwritten[(p.CV_MSG, 19)] == 1
     assert box.get_msg(p.CVData) is None  # wrong type: left for its reader
     assert box.get_msg(p.Relocalize) == p.Relocalize(4.0, 5.0, 0.0)
     assert not box.has_new_data

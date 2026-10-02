@@ -28,7 +28,7 @@ import pytest
 import test_e1
 
 pytestmark = pytest.mark.integration
-CV_MSG_GAP = ('MCBV3 708b8d6 refuses the 23-byte CV_MSG (CVData is 40 bytes), '
+CV_MSG_GAP = ('MCBV3 708b8d6 refuses the 19-byte CV_MSG (CVData is 40 bytes), '
               'so the emulator only patrols')
 
 

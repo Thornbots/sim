@@ -278,7 +278,7 @@ public:
         "/cv/target", qos, [this](CVTarget::ConstSharedPtr m) {
           {
             std::lock_guard<std::mutex> lock(mutex_);
-            aim_ = m->confidence > 0.0 ?
+            aim_ = (m->flags & CVTarget::FLAG_TARGET) ?
             std::optional<Vector3d>(Vector3d(m->x, m->y, m->z)) : std::nullopt;
           }
           on_aim(rclcpp::Time(m->header.stamp).nanoseconds());
