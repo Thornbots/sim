@@ -61,7 +61,8 @@ discovery-server DDS profile; see the `isaac-ros-docker` skill. The
 target configs are `--backend amcl --use-rf2o` for drift and the defaults for
 shot-hit; `README.md`'s "Running the current target tests" lists the commands.
 
-`--backend` is `slam`, `amcl`, or `none` (who owns `map->odom`). `--use-rf2o` is
+`--backend` is `slam`, `mapping`, `amcl`, or `none` (who owns `map->odom`;
+`mapping` builds its map from blank at spawn and scores against truth). `--use-rf2o` is
 a separate axis and layers EKF fusion of `odom->root` on top of any of them;
 there is no `ekf` backend. It is on by default, matching `auto.launch.py`;
 `--no-use-rf2o` is the way back to raw `/odom` passthrough.
