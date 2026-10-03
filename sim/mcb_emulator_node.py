@@ -54,8 +54,8 @@ class GzHardware(Hardware):
     """
     The gz sentry as the firmware senses it: IMU yaw and odometry zeroed at boot.
 
-    gz yaws are CCW; headlink turns about -z, so the turret's world yaw is
-    chassis yaw minus the joint. The Pico frame is x right, y forward of the
+    gz yaws are CCW; headlink turns about +z, so the turret's world yaw is
+    chassis yaw plus the joint. The Pico frame is x right, y forward of the
     turret's boot heading (OdometryPointForwardsCommand holds the pods there).
     """
 
@@ -95,19 +95,19 @@ class GzHardware(Hardware):
             self.ready = True
 
     def turret_world_yaw(self):
-        return self.chassis_yaw - self.joint['headlink'][0]
+        return self.chassis_yaw + self.joint['headlink'][0]
 
     def imu_yaw(self):
         return wrap(self.turret_world_yaw() - self.boot[2])
 
     def imu_gz(self):
-        return self.chassis_rate - self.joint['headlink'][1]
+        return self.chassis_rate + self.joint['headlink'][1]
 
     def yaw_encoder(self):
-        return -self.joint['headlink'][0]
+        return self.joint['headlink'][0]
 
     def yaw_encoder_rate(self):
-        return -self.joint['headlink'][1]
+        return self.joint['headlink'][1]
 
     def pitch_encoder(self):
         return self.joint['headpitch'][0]
@@ -126,7 +126,7 @@ class GzHardware(Hardware):
             self.yaw_cmd = None
         else:
             joint_now = self.joint['headlink'][0]
-            desired = self.chassis_yaw - (world_yaw + self.boot[2])
+            desired = (world_yaw + self.boot[2]) - self.chassis_yaw
             self.yaw_cmd = joint_now + wrap(desired - joint_now)
         self.pitch_cmd = min(max(pitch, -HEADPITCH_LIMIT), HEADPITCH_LIMIT)
 

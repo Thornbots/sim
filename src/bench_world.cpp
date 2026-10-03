@@ -139,7 +139,7 @@ std::pair<double, double> solve_head_angles(const Vector3d & target)
   const double dx = target.x() - mx, dy = target.y() - my, dz = target.z() - muzzle_z;
   const double r = dx * c + dy * s;
   const double pitch = (r != 0.0 || dz != 0.0) ? std::atan2(-dz, r) : 0.0;
-  return {-phi, pitch};
+  return {phi, pitch};
 }
 
 struct Panel
@@ -474,10 +474,10 @@ private:
     t_ = n_ * dt;  // a step count, so float error doesn't build up
     step_target(dt);
     // The head holds world yaw (the MCB's IMU loop); a spinning chassis
-    // drags it through the bearing. yaw_.q turns about -z, the spin about +z.
+    // drags it through the bearing. yaw_.q is the head's world yaw, CCW; so is the spin.
     const double spin = live_["chassis_spin_rad_s"];
     chassis_yaw_ = wrap_pi(chassis_yaw_ + spin * dt);
-    yaw_.ext = -live_["yaw_bearing_damping"] * (yaw_.qd + spin);
+    yaw_.ext = -live_["yaw_bearing_damping"] * (yaw_.qd - spin);
     yaw_.step(dt);
     pitch_.step(dt);
     if (due(kShooterCmdHz, last_shooter_)) {drive_shooter();}
@@ -608,8 +608,8 @@ private:
     pose.vel_x = cmd_vel_.x();
     pose.vel_y = cmd_vel_.y();
     pose.head_yaw = yaw_.q;
-    pose.chassis_yaw = -chassis_yaw_;  // RobotPose yaws turn about -z
-    pose.chassis_yaw_rate = -live_["chassis_spin_rad_s"];
+    pose.chassis_yaw = chassis_yaw_;  // RobotPose yaws are CCW
+    pose.chassis_yaw_rate = live_["chassis_spin_rad_s"];
     pose.head_pitch = pitch_.q;
     pose_pub_->publish(pose);
 
@@ -632,8 +632,8 @@ private:
     js.header.stamp = stamp;
     js.name = {"headlink", "headpitch"};
     // As gz's: headlink relative to the chassis.
-    js.position = {wrap_pi(yaw_.q + chassis_yaw_), pitch_.q};
-    js.velocity = {yaw_.qd + live_["chassis_spin_rad_s"], pitch_.qd};
+    js.position = {wrap_pi(yaw_.q - chassis_yaw_), pitch_.q};
+    js.velocity = {yaw_.qd - live_["chassis_spin_rad_s"], pitch_.qd};
     joint_pub_->publish(js);
   }
 
@@ -659,7 +659,7 @@ private:
   std::pair<Vector3d, Matrix3d> camera_pose()
   {
     const Vector3d root(xy_.x(), xy_.y(), 0.0);
-    const Matrix3d r_head = rot_z(-yaw_.q);  // headlink turns about -z
+    const Matrix3d r_head = rot_z(yaw_.q);  // headlink turns about +z
     const Matrix3d r_cam = r_head * rot_y(pitch_.q);
     const Vector3d pos = root + kHeadlinkOrigin + r_head * kHeadpitchOrigin + r_cam * kCameraOrigin;
     return {pos, r_cam};

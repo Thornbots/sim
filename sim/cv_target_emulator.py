@@ -142,7 +142,7 @@ def _transform(rot, trans):
 _T_FASTENED_2 = _transform(_rotation_from_rpy(0, 0, 0), (0.0, 0.0, 0.0))
 _HEADLINK_ORIGIN_R = _rotation_from_rpy(0, 0, 0)
 _HEADLINK_ORIGIN_T = (-0.000171242, 9.52126e-05, 0.248293)
-_HEADLINK_AXIS = (0.0, 0.0, -1.0)
+_HEADLINK_AXIS = (0.0, 0.0, 1.0)
 _HEADPITCH_ORIGIN_R = _rotation_from_rpy(0, 0, 0)
 _HEADPITCH_ORIGIN_T = (-0.00760542, -0.100122, 0.14235)
 _HEADPITCH_AXIS = (0.0, 1.0, 0.0)
