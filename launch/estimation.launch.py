@@ -171,7 +171,7 @@ def generate_launch_description():
         # the bench reach ~27x; 0.005 passes at ~20x (2026-09-28).
         DeclareLaunchArgument('pace_slack_s', default_value='0.005',
                               description='how far (s) sim time may run past the '
-                                          "scorer at real_time_factor:=0"),
+                                          'scorer at real_time_factor:=0'),
         DeclareLaunchArgument('speeds', default_value='',
                               description="target speeds (m/s), e.g. '0.5 1'; "
                                           'empty = the aiming bench sweep'),
