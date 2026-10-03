@@ -15,9 +15,8 @@
 """
 The MCB's side of the UART: structs, DJI framing, and its one-slot mailbox.
 
-Structs are JetsonSubsystem.hpp's. CvTarget is 15 bytes there (no stamp_ms),
-so the bridge's 19-byte CV_TARGET fails getMsg's size check;
-CvTargetStamped is the 19-byte layout the bridge sends. Framing is taproot's
+Structs are JetsonSubsystem.hpp's. CvTarget is 15 bytes there, as the
+bridge sends it (no stamp_ms since 2026-10-03). Framing is taproot's
 DJISerial (dji_serial.cpp updateSerial) and UARTCommunication's sendMsg
 (seq always 0).
 """
@@ -90,20 +89,6 @@ class CvTarget:
 
     FORMAT = '<3fHB'
     TYPE = CV_TARGET
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
-    delay_ms: int = 0
-    flags: int = 0
-
-
-@dataclass
-class CvTargetStamped:
-    """CvTarget with #74's leading uint32 stamp_ms: the bridge's 19-byte CvTargetPayload."""
-
-    FORMAT = '<I3fHB'
-    TYPE = CV_TARGET
-    stamp_ms: int = 0
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0

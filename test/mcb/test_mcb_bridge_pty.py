@@ -18,7 +18,7 @@ The MCB emulator against the real dji_serial_bridge over a pty, no gz.
 The firmware runs on IdealHardware at wall-clock 1 kHz in a thread; the
 bridge is its own process on a private ROS domain. Shows what crosses the
 wire: POSE and REF_SYS arrive, NAV_GOAL drives, RELOCALIZE moves odometry,
-and CV_TARGET aims and fires, or is refused on size without firmware_fixes.
+and CV_TARGET aims and fires, with or without firmware_fixes.
 """
 import math
 import os
@@ -200,19 +200,20 @@ def test_cv_target_aims_and_fires_and_relocalize_moves_odometry(stack):
 
 
 @pytest.mark.parametrize('stack', [('stop', False)], indirect=True)
-def test_without_firmware_fixes_cv_target_is_refused_on_size(stack):
+def test_without_firmware_fixes_cv_target_fits(stack):
+    """The bridge's 15-byte CV_TARGET is position-based-cv's CvTarget as it is."""
     mcb, (node, executor) = stack
     poses = _subscribe(node, RobotPose, '/dji_serial_bridge/pose')
     _wait_for_pose(executor, poses)
     _send_cv_and_relocalize(node, executor)
     with mcb.lock:
         uart = mcb.sentry.drivers.uart
-        cv_in = uart.received[(CV_TARGET, 19)]
-        refused = uart.size_mismatch[(CV_TARGET, 19)]
+        cv_in = uart.received[(CV_TARGET, 15)]
+        refused = sum(uart.size_mismatch.values())
         shots = list(mcb.hw.shots)
-    assert cv_in >= 50, f'only {cv_in} 19-byte CV_TARGET frames arrived'
-    assert refused > 0 and uart.consumed[CV_TARGET] == 0
-    assert shots == []
+    assert cv_in >= 50, f'only {cv_in} 15-byte CV_TARGET frames arrived'
+    assert refused == 0 and uart.consumed[CV_TARGET] > 0
+    assert shots
 
 
 @pytest.mark.parametrize('stack', [(DRIVE_AUTO, True)], indirect=True)

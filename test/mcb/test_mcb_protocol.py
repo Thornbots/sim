@@ -20,8 +20,7 @@ from sim.mcb_emulator import protocol as p
 
 
 def test_struct_sizes_are_the_firmwares():
-    assert p.size_of(p.CvTarget) == 15  # position-based-cv dropped stamp_ms
-    assert p.size_of(p.CvTargetStamped) == 19  # the bridge's CvTargetPayload
+    assert p.size_of(p.CvTarget) == 15  # the bridge's CvTargetPayload
     assert p.size_of(p.Relocalize) == 8
     assert p.size_of(p.NavGoal) == 8
     assert p.size_of(p.Pose) == 25
@@ -74,15 +73,16 @@ def test_parser_drops_bad_crc_and_resyncs():
 def test_mailbox_keeps_one_frame_and_checks_size():
     """getMsg: type and size must both match; the slot holds only the newest frame."""
     box = p.UARTCommunication()
-    box.message_receive_callback(p.CV_TARGET, b'\x00' * 19)  # the bridge's CvTargetPayload
+    box.message_receive_callback(p.CV_TARGET, b'\x00' * 19)  # the old stamped layout
     assert box.get_msg(p.CvTarget) is None
     assert box.get_msg(p.CvTarget) is None
     assert box.has_new_data
     assert box.size_mismatch[(p.CV_TARGET, 19)] == 1
-    assert box.get_msg(p.CvTargetStamped) == p.CvTargetStamped()  # with stamp_ms it fits
-    box.message_receive_callback(p.CV_TARGET, b'\x00' * 19)
+    box.message_receive_callback(p.CV_TARGET, b'\x00' * 15)
+    assert box.get_msg(p.CvTarget) == p.CvTarget()
+    box.message_receive_callback(p.CV_TARGET, b'\x00' * 15)
     box.message_receive_callback(p.RELOCALIZE, p.pack(p.Relocalize(4.0, 5.0)))
-    assert box.overwritten[(p.CV_TARGET, 19)] == 1
+    assert box.overwritten[(p.CV_TARGET, 15)] == 1
     assert box.get_msg(p.CvTarget) is None  # wrong type: left for its reader
     assert box.get_msg(p.Relocalize) == p.Relocalize(4.0, 5.0)
     assert not box.has_new_data

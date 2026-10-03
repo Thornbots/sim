@@ -371,8 +371,8 @@ on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
 `test/e2e/test_e2.py` scores the shots the firmware fires. It is marked
 xfail: the frames get through, but the MCB's odometry and our `odom`
 disagree, so the gun turns away (Notes "MCB emulator").
-`firmware_fixes:=false` runs MCBV3 `position-based-cv` as it is, which
-refuses our 19-byte `CV_TARGET` on size.
+`firmware_fixes:=false` runs MCBV3 `position-based-cv` as it is, whose
+`delay_ms - 5` wraps under 5 ms so that frame never fires.
 
 ```bash
 ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
@@ -1082,11 +1082,10 @@ indexer setpoints) and `sentry.py` (SentryControl and the 1 kHz loop).
 Every function cites its firmware file and line. Units and names follow the
 firmware.
 
-`firmware_fixes` (default true) applies the two fixes asked of that branch:
-`CvTarget` keeps its leading `uint32 stamp_ms` (19 bytes, as the bridge
-sends; the branch has 15), and `delay_ms - FIRING_LATENCY_TIME` clamps at 0
-(the branch's uint32 wraps it to ~49 days under 5 ms, so that frame never
-fires).
+`firmware_fixes` (default true) applies the fix asked of that branch:
+`delay_ms - FIRING_LATENCY_TIME` clamps at 0 (the branch's uint32 wraps it
+to ~49 days under 5 ms, so that frame never fires). `CvTarget` is the
+branch's 15 bytes, as the bridge sends it since 2026-10-03.
 
 It lives in `sim` because it is sim hardware: it reads gz truth and drives
 the gz head and chassis, as `pose_emulator` and `cv_head_aim` (which it
