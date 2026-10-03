@@ -12,64 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""taproot's ballistics as the MCB emulator ports it."""
+"""Reticle::solveForPitch as the MCB emulator ports it."""
 import math
 
 import pytest
-from sim.mcb_emulator.ballistics import (ACCELERATION_GRAVITY, compute_travel_time,
-                                         find_target_projectile_intersection,
-                                         SecondOrderKinematicState)
+from sim.mcb_emulator import ballistics as b
 
-V = 24.0  # the sentry's initialShotVelocity
-
-
-def _solve(pos, vel=(0.0, 0.0, 0.0)):
-    return find_target_projectile_intersection(
-        SecondOrderKinematicState(pos, vel, (0.0, 0.0, 0.0)), V, 3)
+# The bisection's last step is pi / (4 << 9); it lands within one of them.
+STEP = math.pi / (4 << (b.MAX_NUM_ITERATIONS - 1))
 
 
-def test_level_target_matches_closed_form():
-    d = 3.0
-    ok, pitch, yaw, travel = _solve((d, 0.0, 0.0))
-    assert ok
-    assert yaw == 0.0
-    # Low-arc range equation: d = v^2 sin(2 theta) / g; pitch is negative to aim up.
-    assert pitch == pytest.approx(-0.5 * math.asin(ACCELERATION_GRAVITY * d / V ** 2), abs=1e-9)
-    assert travel == pytest.approx(d / (V * math.cos(pitch)), rel=1e-9)
+@pytest.mark.parametrize('distance,z', [(1.0, 0.0), (3.0, 0.0), (3.0, -0.2), (6.0, 0.3)])
+def test_lands_at_the_target_height(distance, z):
+    pitch = b.solve_for_pitch(distance, z)
+    slope = abs(b.landing_height(distance, pitch + STEP) - b.landing_height(distance, pitch))
+    assert b.landing_height(distance, pitch) == pytest.approx(z, abs=slope + 1e-6)
 
 
-def test_higher_target_aims_further_up():
-    _, level, _, _ = _solve((4.0, 0.0, 0.0))
-    _, up, _, _ = _solve((4.0, 0.0, 0.5))
-    assert up < level < 0.0
+def test_pitch_is_positive_down():
+    level = b.solve_for_pitch(3.0, 0.0)
+    assert b.solve_for_pitch(3.0, 0.5) < level < b.solve_for_pitch(3.0, -0.5)
+    assert level < 0.0  # gravity: a level target needs the barrel slightly up
 
 
-def test_yaw_is_bearing_ccw_from_downrange():
-    ok, _, yaw, _ = _solve((2.0, 2.0, 0.0))
-    assert ok
-    assert yaw == pytest.approx(math.pi / 4)
-    _, _, yaw_right, _ = _solve((2.0, -1.0, 0.0))
-    assert yaw_right == pytest.approx(math.atan2(-1.0, 2.0))
+def test_level_shot_matches_the_range_equation():
+    """With the barrel offset ignored, d = v^2 sin(2 theta) / g for the low arc."""
+    d = 4.0
+    expected = -0.5 * math.asin(b.ACCELERATION_GRAVITY * d / b.INITIAL_SHOT_VELOCITY ** 2)
+    assert b.solve_for_pitch(d, 0.0) == pytest.approx(expected, abs=0.01)
 
 
-def test_moving_target_is_led_by_its_travel_time():
-    pos, vel = (5.0, 0.0, 0.0), (0.0, 2.0, 0.0)
-    ok, _, yaw, travel = _solve(pos, vel)
-    assert ok
-    assert yaw == pytest.approx(math.atan2(vel[1] * travel, pos[0]), rel=1e-6)
-    assert travel == pytest.approx(math.hypot(5.0, 2.0 * travel) / V, rel=1e-2)
+def test_target_z_is_taken_from_the_pitch_pivot():
+    """Reticle compares pivot-relative landing heights to targetZ as given (Reticle.hpp:370)."""
+    pivot = b.OFFSET_Z_ROBOT_TO_PITCH_PIVOT
+    panel_off_ground = 0.18
+    pitch = b.solve_for_pitch(3.0, panel_off_ground)
+    lands_off_ground = pivot + b.landing_height(3.0, pitch)
+    assert lands_off_ground == pytest.approx(panel_off_ground + pivot, abs=0.01)
 
 
-def test_out_of_range_and_origin_fail():
-    ok, *_ = _solve((V ** 2 / ACCELERATION_GRAVITY + 1.0, 0.0, 0.0))
-    assert not ok
-    ok, *_ = _solve((0.0, 0.0, 0.0))
-    assert not ok
-
-
-def test_near_flat_shots_take_the_vertical_time():
-    """ballistics.cpp: within 0.01 rad of level, travel time is a vertical shot's to height z."""
-    ok, travel, pitch = compute_travel_time((1.0, 0.0, 0.0), V)
-    assert ok
-    assert abs(pitch) < 1e-2
-    assert travel == 0.0  # so no lead inside ~1.2 m at 24 m/s
+def test_rotate_pitch_turns_y_toward_z():
+    x, y, z = b.rotate_pitch((0.5, 1.0, 0.0), math.pi / 2)
+    assert (x, y, z) == (0.5, pytest.approx(0.0, abs=1e-12), pytest.approx(1.0))

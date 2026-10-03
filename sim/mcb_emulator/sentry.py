@@ -18,6 +18,8 @@ SentryControl (robots/sentry/SentryControl.hpp) and main.cpp's 1 kHz loop.
 The remote is taken as connected with both switches up: left runs
 AutoAimAndFireCommand, right SimpleAutoDriveCommand. Hardware is the
 boundary: everything the firmware reads from or writes to a motor or sensor.
+firmware_fixes applies the two fixes asked of MCBV3 position-based-cv:
+CvTarget keeps stamp_ms (19 bytes), and delay_ms - 5 clamps at 0.
 """
 import math
 
@@ -25,7 +27,8 @@ from sim.mcb_emulator.aim_and_fire import AutoAimAndFireCommand
 from sim.mcb_emulator.drive import (AutoDriveCommand, DrivetrainSubsystem, rotate,
                                     SimpleAutoDriveCommand)
 from sim.mcb_emulator.jetson import JetsonSubsystem
-from sim.mcb_emulator.protocol import DJISerial, MSG_NAMES, UARTCommunication
+from sim.mcb_emulator.protocol import (CvTarget, CvTargetStamped, DJISerial, MSG_NAMES,
+                                       UARTCommunication)
 from sim.mcb_emulator.subsystems import (FlywheelSubsystem, GimbalSubsystem, IndexerSubsystem,
                                          OdometrySubsystem, RefSerial)
 
@@ -145,7 +148,8 @@ class Sentry:
     Frames from the Jetson go in through receive(); frames out collect in tx.
     """
 
-    def __init__(self, hw, ref_serial=None, auto_fire=True, drive=DRIVE_SIMPLE):
+    def __init__(self, hw, ref_serial=None, auto_fire=True, drive=DRIVE_SIMPLE,
+                 firmware_fixes=True):
         self.hw = hw
         self.drivers = Drivers(hw, ref_serial or RefSerial())
         self.serial = DJISerial(crc_enabled=True)  # drivers.hpp:140
@@ -153,20 +157,22 @@ class Sentry:
         self.pending = []  # (cycle, msg_type, payload) not yet in the mailbox
         self.auto_fire_enabled, self.drive_mode = auto_fire, drive
         d = self.drivers
-        # SentryControl.hpp:177-193, constructed and registered in this order.
+        # SentryControl.hpp:177-194, constructed and registered in this order.
         self.gimbal = GimbalSubsystem(hw)
         self.flywheel = FlywheelSubsystem()
         self.indexer = IndexerSubsystem(hw, d.ref_serial, d.clock)
         self.drivetrain = DrivetrainSubsystem(hw)
         self.odo = OdometrySubsystem(hw)
-        self.jetson = JetsonSubsystem(d, self.gimbal, self.odo, self._send)
+        self.jetson = JetsonSubsystem(d, self.gimbal, self.odo, self._send,
+                                      CvTargetStamped if firmware_fixes else CvTarget)
         self.auto_drive = AutoDriveCommand(d, self.drivetrain, self.gimbal, self.jetson,
                                            self.odo)
         self.simple_auto_drive = SimpleAutoDriveCommand(d, self.drivetrain, self.gimbal,
                                                         self.odo)
-        self.jetson.relocalize_sink = self.simple_auto_drive.set_localization_point
         self.auto_fire = AutoAimAndFireCommand(d, self.gimbal, self.indexer, self.flywheel,
-                                               self.jetson, lambda: self.auto_drive.is_scheduled)
+                                               self.jetson, self.odo,
+                                               lambda: self.auto_drive.is_scheduled,
+                                               fix_delay=firmware_fixes)
         self._started = False
 
     def _send(self, msg):

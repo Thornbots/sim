@@ -17,9 +17,8 @@ Match test, stage E2: E1's cells through the wire, the MCB emulator firing.
 
 `ros2 launch sim e2e.launch.py stage:=e2` runs it. Shots are the ones the
 firmware port fires (/mcb_emulator/shot), scored as E1's are. Expected to
-fail until the firmware reads our CV_MSG: at MCBV3 708b8d6 CVData is 40
-bytes against the bridge's 23, so no target reaches the gimbal (README.md
-"MCB emulator").
+fail until our odom and the MCB's odometry agree: the frames get through
+(with firmware_fixes), but the gun turns away (README.md "MCB emulator").
 """
 import os
 
@@ -28,8 +27,8 @@ import pytest
 import test_e1
 
 pytestmark = pytest.mark.integration
-CV_MSG_GAP = ('MCBV3 708b8d6 refuses the 19-byte CV_MSG (CVData is 40 bytes), '
-              'so the emulator only patrols')
+FRAME_GAP = ('POSE is x right, y forward and pose_translator reads it as REP-105, '
+             'so the MCB aims our odom points in a turned frame')
 
 
 @pytest.fixture(scope='module')
@@ -38,7 +37,8 @@ def e2e_stack(request, ros_context):
     log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     stack = harness.E2EStack(config.getoption('--headless'), log_dir,
-                             external=config.getoption('--external-stack'), stage='e2')
+                             external=config.getoption('--external-stack'), stage='e2',
+                             firmware_fixes=not config.getoption('--no-firmware-fixes'))
     try:
         stack.start()
         yield stack
@@ -49,7 +49,7 @@ def e2e_stack(request, ros_context):
 pytest_generate_tests = test_e1.pytest_generate_tests
 
 
-@pytest.mark.xfail(strict=True, reason=CV_MSG_GAP)
+@pytest.mark.xfail(strict=True, reason=FRAME_GAP)
 def test_e2(cell, request, e2e_stack):
     speed, path, spin_hz = cell
     duration = request.config.getoption('--e2e-duration') or harness.DEFAULT_DURATION

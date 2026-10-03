@@ -17,8 +17,8 @@ The MCB emulator against the real dji_serial_bridge over a pty, no gz.
 
 The firmware runs on IdealHardware at wall-clock 1 kHz in a thread; the
 bridge is its own process on a private ROS domain. Shows what crosses the
-wire today: POSE_MSG and REF_SYS_MSG arrive, ROS_MSG drives, and CV_MSG and
-RELOCALIZE are refused on size.
+wire: POSE and REF_SYS arrive, NAV_GOAL drives, RELOCALIZE moves odometry,
+and CV_TARGET aims and fires, or is refused on size without firmware_fixes.
 """
 import math
 import os
@@ -34,7 +34,7 @@ import pytest
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.qos import qos_profile_sensor_data
-from sim.mcb_emulator.protocol import CV_MSG, RELOCALIZE, ROS_MSG
+from sim.mcb_emulator.protocol import CV_TARGET, NAV_GOAL, RELOCALIZE
 from sim.mcb_emulator.pty_link import PtyLink
 from sim.mcb_emulator.sentry import DRIVE_AUTO, IdealHardware, Sentry
 from sim.mcb_emulator.subsystems import RefSerial
@@ -46,9 +46,10 @@ pytestmark = pytest.mark.skipif(shutil.which('ros2') is None, reason='needs a RO
 class WallClockMcb:
     """Steps the firmware in real time against the pty until stopped."""
 
-    def __init__(self, link, drive):
+    def __init__(self, link, drive, firmware_fixes=True):
         self.hw = IdealHardware()
-        self.sentry = Sentry(self.hw, RefSerial(robot_id=107), drive=drive)
+        self.sentry = Sentry(self.hw, RefSerial(robot_id=107), drive=drive,
+                             firmware_fixes=firmware_fixes)
         self.pty = PtyLink(link)
         self.lock = threading.Lock()
         self._stop = threading.Event()
@@ -116,12 +117,13 @@ def _wait_for_pose(executor, poses, timeout=15.0):
     end = time.monotonic() + timeout
     while not poses and time.monotonic() < end:
         executor.spin_once(timeout_sec=0.05)
-    assert poses, 'no /dji_serial_bridge/pose: the bridge never decoded a POSE_MSG'
+    assert poses, 'no /dji_serial_bridge/pose: the bridge never decoded a POSE'
 
 
 @pytest.fixture
 def stack(request, link, ros):
-    mcb = WallClockMcb(link, getattr(request, 'param', 'stop'))
+    drive, fixes = getattr(request, 'param', ('stop', True))
+    mcb = WallClockMcb(link, drive, fixes)
     mcb.start()
     bridge = _bridge(link)
     try:
@@ -165,40 +167,57 @@ def test_pose_and_ref_sys_reach_ros(stack):
     assert r.delta_angle_got_hit_in == pytest.approx(123.0)
 
 
-def test_cv_target_and_relocalize_are_refused_on_size(stack):
-    mcb, (node, executor) = stack
-    poses = _subscribe(node, RobotPose, '/dji_serial_bridge/pose')
+def _send_cv_and_relocalize(node, executor):
+    """2 s of fire frames 2 m ahead at 30 Hz, a RELOCALIZE to (1, 2) every 0.5 s."""
     cv_pub = node.create_publisher(CVTarget, '/dji_serial_bridge/cv_target',
                                    qos_profile_sensor_data)
     reloc_pub = node.create_publisher(PointStamped, '/dji_serial_bridge/relocalize', 10)
-    _wait_for_pose(executor, poses)
-    target = CVTarget(x=2.0, y=0.0, z=0.3, fire=True)
-    for i in range(60):  # 2 s at 30 Hz
+    target = CVTarget(x=0.0, y=2.0, z=0.3, fire=True, delay_ms=10)
+    reloc = PointStamped()
+    reloc.point.x, reloc.point.y = 1.0, 2.0
+    for i in range(60):
         cv_pub.publish(target)
         if i % 15 == 0:
-            reloc_pub.publish(PointStamped())
+            reloc_pub.publish(reloc)
         _spin(executor, 1.0 / 30)
     _spin(executor, 0.2)
+
+
+def test_cv_target_aims_and_fires_and_relocalize_moves_odometry(stack):
+    mcb, (node, executor) = stack
+    poses = _subscribe(node, RobotPose, '/dji_serial_bridge/pose')
+    _wait_for_pose(executor, poses)
+    _send_cv_and_relocalize(node, executor)
     with mcb.lock:
         uart = mcb.sentry.drivers.uart
-        cv_in = uart.received[(CV_MSG, 19)]
-        reloc_in = uart.received[(RELOCALIZE, 8)]
+        cv_used, reloc_used = uart.consumed[CV_TARGET], uart.consumed[RELOCALIZE]
         shots = list(mcb.hw.shots)
-        localized = mcb.sentry.simple_auto_drive.set_localization
-        refused = uart.size_mismatch[(CV_MSG, 19)]
-        lost = uart.overwritten[(CV_MSG, 19)]
-    assert cv_in >= 50, f'only {cv_in} 19-byte CV_MSG frames arrived'
-    # Every frame died in the one-slot mailbox, most after a refused read; a
-    # frame sharing a 1 ms cycle with the next is overwritten unread.
-    assert lost >= cv_in - 1 and refused > cv_in / 2
-    assert uart.consumed[CV_MSG] == 0
-    assert reloc_in >= 3 and uart.consumed[RELOCALIZE] == 0 and not localized
+        odo = (mcb.sentry.odo.get_x(), mcb.sentry.odo.get_y())
+    assert cv_used >= 50, f'only {cv_used} CV_TARGET frames read'
+    assert reloc_used >= 3
+    assert odo == (pytest.approx(1.0), pytest.approx(2.0))
+    assert len(shots) >= 15, f'{len(shots)} shots in 2 s of 30 Hz fire frames'
+
+
+@pytest.mark.parametrize('stack', [('stop', False)], indirect=True)
+def test_without_firmware_fixes_cv_target_is_refused_on_size(stack):
+    mcb, (node, executor) = stack
+    poses = _subscribe(node, RobotPose, '/dji_serial_bridge/pose')
+    _wait_for_pose(executor, poses)
+    _send_cv_and_relocalize(node, executor)
+    with mcb.lock:
+        uart = mcb.sentry.drivers.uart
+        cv_in = uart.received[(CV_TARGET, 19)]
+        refused = uart.size_mismatch[(CV_TARGET, 19)]
+        shots = list(mcb.hw.shots)
+    assert cv_in >= 50, f'only {cv_in} 19-byte CV_TARGET frames arrived'
+    assert refused > 0 and uart.consumed[CV_TARGET] == 0
     assert shots == []
 
 
-@pytest.mark.parametrize('stack', [DRIVE_AUTO], indirect=True)
+@pytest.mark.parametrize('stack', [(DRIVE_AUTO, True)], indirect=True)
 def test_nav_goal_drives_auto_drive_command(stack):
-    """ROS_MSG is the one Jetson-to-MCB frame both sides size alike (8 bytes)."""
+    """NAV_GOAL reaches AutoDriveCommand, which the sentry never schedules."""
     mcb, (node, executor) = stack
     poses = _subscribe(node, RobotPose, '/dji_serial_bridge/pose')
     goal_pub = node.create_publisher(PointStamped, '/dji_serial_bridge/nav_goal', 10)
@@ -208,6 +227,6 @@ def test_nav_goal_drives_auto_drive_command(stack):
     goal_pub.publish(goal)
     _spin(executor, 3.0)
     with mcb.lock:
-        assert mcb.sentry.drivers.uart.consumed[ROS_MSG] == 1
+        assert mcb.sentry.drivers.uart.consumed[NAV_GOAL] == 1
         assert math.hypot(mcb.hw.x - 0.8, mcb.hw.y - 0.4) < 0.05
     assert math.hypot(poses[-1].x - 0.8, poses[-1].y - 0.4) < 0.05

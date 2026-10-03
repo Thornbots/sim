@@ -15,20 +15,21 @@
 """
 The MCB's side of the UART: structs, DJI framing, and its one-slot mailbox.
 
-Structs are JetsonSubsystem.hpp's, which differ from UART_PROTOCOL.md: CVData
-is 40 bytes and Relocalize 12, so the bridge's 23- and 8-byte frames never
-pass getMsg's size check. Framing is taproot's DJISerial (dji_serial.cpp
-updateSerial) and UARTCommunication's sendMsg (seq always 0).
+Structs are JetsonSubsystem.hpp's. CvTarget is 15 bytes there (no stamp_ms),
+so the bridge's 19-byte CV_TARGET fails getMsg's size check;
+CvTargetStamped is the 19-byte layout the bridge sends. Framing is taproot's
+DJISerial (dji_serial.cpp updateSerial) and UARTCommunication's sendMsg
+(seq always 0).
 """
 from collections import Counter
 from dataclasses import astuple, dataclass
 import struct
 
-# enum UartMessage, JetsonSubsystem.hpp:24-35
-ROS_MSG, CV_MSG, POSE_MSG, REF_SYS_MSG, RELOCALIZE = 0, 1, 2, 3, 4
-MSG_NAMES = {ROS_MSG: 'ROS_MSG', CV_MSG: 'CV_MSG', POSE_MSG: 'POSE_MSG',
-             REF_SYS_MSG: 'REF_SYS_MSG', RELOCALIZE: 'RELOCALIZE'}
-# enum OdomStatus, JetsonSubsystem.hpp:38-43
+# enum UartMessage, JetsonSubsystem.hpp:26-36
+NAV_GOAL, CV_TARGET, POSE, REF_SYS, RELOCALIZE = 0, 1, 2, 3, 4
+MSG_NAMES = {NAV_GOAL: 'NAV_GOAL', CV_TARGET: 'CV_TARGET', POSE: 'POSE',
+             REF_SYS: 'REF_SYS', RELOCALIZE: 'RELOCALIZE'}
+# enum OdomStatus, JetsonSubsystem.hpp:39-44
 ODOM_PODS = 0
 
 SERIAL_HEAD_BYTE = 0xA5  # dji_serial.hpp:132
@@ -68,65 +69,79 @@ def crc16(data, init=CRC16_INIT):
 
 
 @dataclass
-class ROSData:
-    """JetsonSubsystem.hpp:47-51."""
+class NavGoal:
+    """JetsonSubsystem.hpp:49-53, where the sentry wants to go."""
 
     FORMAT = '<2f'
-    TYPE = ROS_MSG
-    targetX: float = 0.0
-    targetY: float = 0.0
+    TYPE = NAV_GOAL
+    x: float = 0.0
+    y: float = 0.0
+
+
+# CvTarget.flags, JetsonSubsystem.hpp:65-67
+CV_TARGET_FLAG_FIRE = 0x01
+CV_TARGET_FLAG_TYPE_C_BASED_PATROL = 0x02
+CV_TARGET_FLAG_TURN_TO_HIT = 0x04
+
+
+@dataclass
+class CvTarget:
+    """JetsonSubsystem.hpp:57-64, modm_packed: an odom point, no stamp_ms (15 bytes)."""
+
+    FORMAT = '<3fHB'
+    TYPE = CV_TARGET
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    delay_ms: int = 0
+    flags: int = 0
+
+
+@dataclass
+class CvTargetStamped:
+    """CvTarget with #74's leading uint32 stamp_ms: the bridge's 19-byte CvTargetPayload."""
+
+    FORMAT = '<I3fHB'
+    TYPE = CV_TARGET
+    stamp_ms: int = 0
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    delay_ms: int = 0
+    flags: int = 0
 
 
 @dataclass
 class Relocalize:
-    """JetsonSubsystem.hpp:53-58; expectedZ is the 4 bytes the bridge doesn't send."""
+    """JetsonSubsystem.hpp:70-74, modm_packed: where the lidar thinks the robot is."""
 
-    FORMAT = '<3f'
+    FORMAT = '<2f'
     TYPE = RELOCALIZE
-    expectedX: float = 0.0
-    expectedY: float = 0.0
-    expectedZ: float = 0.0
-
-
-@dataclass
-class CVData:
-    """JetsonSubsystem.hpp:60-73: a camera-frame point; no stamp, fire or delay."""
-
-    FORMAT = '<10f'
-    TYPE = CV_MSG
     x: float = 0.0
     y: float = 0.0
-    z: float = 0.0
-    v_x: float = 0.0
-    v_y: float = 0.0
-    v_z: float = 0.0
-    a_x: float = 0.0
-    a_y: float = 0.0
-    a_z: float = 0.0
-    confidence: float = 0.0
 
 
 @dataclass
-class PoseData:
-    """JetsonSubsystem.hpp:77-86, modm_packed."""
+class Pose:
+    """JetsonSubsystem.hpp:79-88, modm_packed."""
 
     FORMAT = '<6fB'
-    TYPE = POSE_MSG
+    TYPE = POSE
     x: float = 0.0
     y: float = 0.0
     vel_x: float = 0.0
     vel_y: float = 0.0
     head_pitch: float = 0.0
     head_yaw: float = 0.0
-    error_code: int = ODOM_PODS
+    odom_status: int = ODOM_PODS
 
 
 @dataclass
-class RefSysMsg:
-    """JetsonSubsystem.hpp:89-106, modm_packed."""
+class RefSys:
+    """JetsonSubsystem.hpp:90-107, modm_packed."""
 
     FORMAT = '<BHHBfB'
-    TYPE = REF_SYS_MSG
+    TYPE = REF_SYS
     gameStage: int = 0
     stageTimeRemaining: int = 0
     robotHp: int = 0
@@ -214,7 +229,7 @@ class DJISerial:
 
 class UARTCommunication:
     """
-    The MCB's mailbox, UARTCommunication.cpp:37-79 and JetsonSubsystem.hpp:199-217.
+    The MCB's mailbox, UARTCommunication.cpp:37-79 and JetsonSubsystem.hpp:156-165.
 
     One slot: each frame overwrites the last (the TODO at
     UARTCommunication.hpp:61). get_msg consumes it only if both type and
@@ -243,7 +258,7 @@ class UARTCommunication:
         self.received[(msg_type, len(payload))] += 1
 
     def get_msg(self, cls):
-        """JetsonSubsystem::getMsg, JetsonSubsystem.hpp:199-209: a struct or None."""
+        """JetsonSubsystem::getMsg, JetsonSubsystem.hpp:156-165: a struct or None."""
         if not self.has_new_data:
             return None
         if self.message_type != cls.TYPE:

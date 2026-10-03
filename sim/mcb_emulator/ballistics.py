@@ -13,63 +13,52 @@
 # limitations under the License.
 
 """
-taproot's ballistics (taproot/src/tap/algorithms/ballistics.{hpp,cpp}), no drag.
+Reticle::solveForPitch (subsystems/ui/objects/Reticle.hpp:312-381), the sentry's constants.
 
-Frame: x downrange, y left, z up, metres, from the pitch axis. Pitch comes
-out negative to aim up, the firmware's encoder sense (positive is down).
+Robot frame: x right, y forward (downrange), z up, metres. Pitch is
+positive down, the gimbal's sense. The landing height is from the pitch
+pivot, but it's compared with targetZ as given: that's how the firmware
+does it, so a target's height off the ground aims OFFSET_Z_ROBOT_TO_PITCH_PIVOT
+too high.
 """
 import math
 
 ACCELERATION_GRAVITY = 9.80665  # math_user_utils.hpp:44
+INITIAL_SHOT_VELOCITY = 24.0  # JetsonSubsystemConstants.hpp:46, SENTRY
+OFFSET_Y_PITCH_PIVOT_TO_BARREL = 0.068  # Projections.hpp:32, SENTRY; X and Z are 0
+OFFSET_Z_ROBOT_TO_PITCH_PIVOT = 0.39  # Projections.hpp:25, SENTRY; unused by solveForPitch
+MAX_NUM_ITERATIONS = 10  # Reticle.hpp:292
 
 
-class SecondOrderKinematicState:
-    """ballistics.hpp SecondOrderKinematicState: constant-acceleration projection."""
-
-    def __init__(self, position, velocity, acceleration):
-        self.position = tuple(position)
-        self.velocity = tuple(velocity)
-        self.acceleration = tuple(acceleration)
-
-    def project_forward(self, dt):
-        return tuple(s + v * dt + 0.5 * a * dt ** 2
-                     for s, v, a in zip(self.position, self.velocity, self.acceleration))
+def rotate_pitch(v, amt):
+    """Vector3d::rotatePitch (util/Vector3d.hpp:43-46): turn (y, z) by amt about x."""
+    x, y, z = v
+    mag = math.hypot(y, z)
+    angle = 0.0 if y == 0 and z == 0 else math.atan2(z, y)
+    return x, mag * math.cos(amt + angle), mag * math.sin(amt + angle)
 
 
-def _close(a, b, eps):
-    return abs(a - b) <= eps  # compareFloatClose, math_user_utils.hpp
+def get_initials(pitch):
+    """Reticle.hpp:312-318: (position, velocity) of a shot leaving the barrel, pivot space."""
+    velo = rotate_pitch((0.0, INITIAL_SHOT_VELOCITY, 0.0), -pitch)
+    # barrelSpaceToPivotSpace of the barrel origin (Projections.hpp:82-84)
+    pos = rotate_pitch((0.0, OFFSET_Y_PITCH_PIVOT_TO_BARREL, 0.0), -pitch)
+    return pos, velo
 
 
-def compute_travel_time(target, bullet_velocity, pitch_axis_offset=0.0):
-    """computeTravelTime, ballistics.cpp: (ok, travel_time, turret_pitch)."""
-    horizontal = math.hypot(target[0], target[1]) + pitch_axis_offset
-    v2 = bullet_velocity ** 2
-    g = ACCELERATION_GRAVITY
-    sqrt_term = v2 ** 2 - g * (g * horizontal ** 2 + 2 * target[2] * v2)
-    if sqrt_term < 0:
-        return False, None, None
-    pitch = -math.atan2(v2 - math.sqrt(sqrt_term), g * horizontal)
-    if _close(pitch, 0.0, 1e-2):
-        sqrt_term = bullet_velocity ** 2 - 2 * g * target[2]
-        if sqrt_term < 0:
-            return False, None, pitch
-        # A ballistics.cpp quirk kept as is: this is the vertical-shot time.
-        return True, (bullet_velocity - math.sqrt(sqrt_term)) / g, pitch
-    travel = horizontal / (bullet_velocity * math.cos(pitch))
-    return not (math.isnan(pitch) or math.isnan(travel)), travel, pitch
+def landing_height(distance_down_range, pitch):
+    """calculateLandingSpotForHeightOffGround, Reticle.hpp:350-360: z at that range."""
+    pos, velo = get_initials(pitch)
+    t = (distance_down_range - pos[1]) / velo[1]
+    return pos[2] + velo[2] * t - ACCELERATION_GRAVITY / 2 * t * t
 
 
-def find_target_projectile_intersection(state, bullet_velocity, num_iterations,
-                                        pitch_axis_offset=0.0):
-    """findTargetProjectileIntersection, ballistics.cpp: (ok, pitch, yaw, travel_time)."""
-    projected = state.project_forward(0.0)
-    if projected == (0.0, 0.0, 0.0):
-        return False, None, None, None
-    pitch = travel = None
-    for _ in range(num_iterations):
-        ok, travel, pitch = compute_travel_time(projected, bullet_velocity, pitch_axis_offset)
-        if not ok:
-            return False, pitch, None, travel
-        projected = state.project_forward(travel)
-    yaw = math.atan2(projected[1], projected[0])
-    return not (math.isnan(pitch) or math.isnan(yaw)), pitch, yaw, travel
+def solve_for_pitch(distance_down_range, target_z):
+    """Reticle.hpp:363-381: bisect from 0 in steps of pi/4, pi/8, ..."""
+    pitch = 0.0
+    for j in range(MAX_NUM_ITERATIONS):
+        if landing_height(distance_down_range, pitch) > target_z:
+            pitch += math.pi / (4 << j)
+        else:
+            pitch -= math.pi / (4 << j)
+    return pitch

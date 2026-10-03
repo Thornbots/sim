@@ -94,6 +94,8 @@ def _tests(context):
             cmd += [opt, ','.join(config[arg].replace(',', ' ').split())]
     if _is_true(context, 'headless'):
         cmd.append('--headless')
+    if not _is_true(context, 'firmware_fixes'):
+        cmd.append('--no-firmware-fixes')
     cmd += config['pytest_args'].split()
     tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen')
     done = RegisterEventHandler(OnProcessExit(
@@ -165,7 +167,7 @@ def generate_launch_description():
     cv_head_aim = Node(
         package='sim', executable='cv_head_aim', name='cv_head_aim', output='screen',
         parameters=[{'use_sim_time': True}])
-    # The referee stand-in until E2's MCB emulator sends REF_SYS_MSG.
+    # The referee stand-in until E2's MCB emulator sends REF_SYS.
     team_stub = ExecuteProcess(
         cmd=['ros2', 'topic', 'pub', '-r', '5', '/dji_serial_bridge/ref_sys',
              'dji_serial_bridge/msg/RefSysStatus', '{is_on_blue_team: true}'],
@@ -174,7 +176,9 @@ def generate_launch_description():
     # auto.launch.py starts the bridge and relay with real_hardware:=true.
     mcb_emulator = Node(
         package='sim', executable='mcb_emulator', name='mcb_emulator', output='screen',
-        parameters=[{'use_sim_time': True, 'device_link': MCB_PTY, 'drive': 'stop'}])
+        parameters=[{'use_sim_time': True, 'device_link': MCB_PTY, 'drive': 'stop',
+                     'firmware_fixes': ParameterValue(LaunchConfiguration('firmware_fixes'),
+                                                      value_type=bool)}])
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen', remappings=[('~/pose', '/pose')],
@@ -208,6 +212,9 @@ def generate_launch_description():
         DeclareLaunchArgument('stage', default_value='e1',
                               description='e1: cv_head_aim on the gimbal; e2: the MCB emulator '
                                           'on a pty with dji_serial_bridge'),
+        DeclareLaunchArgument('firmware_fixes', default_value='true',
+                              description='E2: the stamp_ms and delay_ms fixes asked of '
+                                          'MCBV3 position-based-cv (sim.mcb_emulator.sentry)'),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('speeds', default_value='',
