@@ -16,7 +16,7 @@
 The sentry's auto drive: SimpleAutoDriveCommand (what the right switch runs), AutoDriveCommand.
 
 Odometry frame: x right, y forward of the heading at boot, CCW rotation
-(SimpleAutoDriveCommand.hpp:188-189). ChassisController's position loop is
+(SimpleAutoDriveCommand.cpp:107-108). ChassisController's position loop is
 ported; its velocity loop and power limiting are gz's VelocityControl.
 """
 import math
@@ -30,16 +30,10 @@ KI = 0.01
 DT = 0.001
 SPIN_VELOCITY = -12.0  # DrivetrainSubsystemConstants.hpp:32
 MOVE_TO_POS_SPIN_VELO = -8.0  # MoveToPositionCommand.hpp:48
-AUTO_DRIVE_SPIN = 9.0  # AutoDriveCommand.cpp:20
-TOWARDS_ZONE_OFFSET = 0.5  # SimpleAutoDriveCommand.hpp:279
-STUCK_TIMER_AMOUNT = 15 * 1000  # ms, :285
-MAX_RELOCALIZE_TRIES = 3  # :305
-RELOCALIZE_X_OFFSET = 0.688  # :93, blue adds it, red subtracts
-RELOCALIZE_Y_OFFSET = -0.05
+AUTO_DRIVE_SPIN = 9.0  # AutoDriveCommand.cpp:22
+TOWARDS_ZONE_OFFSET = 0.5  # SimpleAutoDriveCommand.hpp:71
+STUCK_TIMER_AMOUNT = 15 * 1000  # ms, SimpleAutoDriveCommand.hpp:74
 ARCC_ROUGH_PATH = 'arcc_rough_path'
-
-# RfidRelocalizeState, SimpleAutoDriveCommand.hpp:295-299
-WAITING_FOR_CENTER, WAITING_FOR_RESUPPLY, STUCK_WAITING_FOR_RESUPPLY = range(3)
 
 
 def rotate(x, y, amt):
@@ -107,11 +101,11 @@ class MoveToPositionCommand:
 
 class SimpleAutoDriveCommand:
     """
-    SimpleAutoDriveCommand.hpp: waypoints out to the centre, back to resupply on low HP.
+    SimpleAutoDriveCommand.cpp: waypoints out to the centre, back to resupply on low HP.
 
-    Relocalize statics (:176-178) are instance fields here; JetsonSubsystem
-    writes them through set_localization. The sentry runs ARCC_ROUGH_PATH
-    (SentryControl.hpp:192).
+    RELOCALIZE moves odometry directly (JetsonSubsystem), so nothing here
+    relocalizes. Stuck for STUCK_TIMER_AMOUNT, it stops driving and spins in
+    place. The sentry runs ARCC_ROUGH_PATH (SentryControl.hpp:61, :191).
     """
 
     def __init__(self, drivers, drivetrain, gimbal, odo, mode=ARCC_ROUGH_PATH):
@@ -120,27 +114,18 @@ class SimpleAutoDriveCommand:
         self.drivetrain = drivetrain
         self.targets = [((0.0, 0.0), (0.0, 0.0))]
         self.stuck_timer = Timeout(drivers.clock)
-        self.x_for_localization = self.y_for_localization = 0.0
-        self.set_localization = False
         self.target_index = 0
         self.direction = 1
         self.is_scheduled = False
         self.need_to_apply_initial_point_change = True
         self.changed_initial_point = (0.0, 0.0)
-        self.relocalize_state = WAITING_FOR_CENTER
-        self.times_retried_relocalize = 0
-
-    def set_localization_point(self, x, y):
-        """JetsonSubsystem.cpp:120-122."""
-        self.x_for_localization, self.y_for_localization = x, y
-        self.set_localization = True
 
     def initialize(self):
         self.setup_map()
         self.is_scheduled = True
 
     def setup_map(self):
-        """SimpleAutoDriveCommand.hpp:182-247, the ARCC_ROUGH_PATH case only."""
+        """SimpleAutoDriveCommand.cpp:102-166, the ARCC_ROUGH_PATH case only."""
         if self.mode != ARCC_ROUGH_PATH:
             raise ValueError(f'only {ARCC_ROUGH_PATH} is ported, not {self.mode}')
         ref = self.drivers.ref_serial
@@ -151,9 +136,7 @@ class SimpleAutoDriveCommand:
         self.targets.append(((m * -TOWARDS_ZONE_OFFSET, 4.125 + TOWARDS_ZONE_OFFSET), (0.0, 0.0)))
 
     def set_direction(self):
-        """SimpleAutoDriveCommand.hpp:249-270, the default (non-TEST) branch."""
-        if self.relocalize_state == STUCK_WAITING_FOR_RESUPPLY:
-            return
+        """SimpleAutoDriveCommand.cpp:168-187, the default (non-TEST) branch."""
         ref = self.drivers.ref_serial
         if ref.receiving:
             ratio = ref.current_hp / ref.max_hp
@@ -163,45 +146,24 @@ class SimpleAutoDriveCommand:
                 self.direction = -1
 
     def execute(self):
-        """SimpleAutoDriveCommand.hpp:64-167."""
+        """SimpleAutoDriveCommand.cpp:23-94."""
         if not self.is_scheduled:
             self.drivetrain.set_target_translation((0.0, 0.0, SPIN_VELOCITY))
             return
         self.set_direction()
         faster_spinning = False
-        ref = self.drivers.ref_serial
-        is_blue = ref.is_blue_team(ref.robot_id)
-        heal_zone = ref.restoration_zone or ref.exchange_zone
-        if self.relocalize_state in (STUCK_WAITING_FOR_RESUPPLY, WAITING_FOR_RESUPPLY):
-            if heal_zone:
-                self.relocalize_state = WAITING_FOR_CENTER
-                self.odo.relocalize_to(0.0, self.odo.get_y())
-                if self.times_retried_relocalize >= MAX_RELOCALIZE_TRIES:
-                    self.is_scheduled = False
-        if (not self.need_to_apply_initial_point_change and ref.current_hp == ref.max_hp
-                and self.set_localization and heal_zone):
-            dx = RELOCALIZE_X_OFFSET if is_blue else -RELOCALIZE_X_OFFSET
-            self.odo.relocalize_to(self.x_for_localization + dx,
-                                   self.y_for_localization + RELOCALIZE_Y_OFFSET)
-        if self.relocalize_state == WAITING_FOR_CENTER and ref.central_buff_zone:
-            self.relocalize_state = WAITING_FOR_RESUPPLY
-            self.times_retried_relocalize = 0
-
         if self.position_command.is_finished():
-            faster_spinning = self._advance(ref)
-
+            faster_spinning = self._advance(self.drivers.ref_serial)
         spin = SPIN_VELOCITY if faster_spinning else MOVE_TO_POS_SPIN_VELO
         (px, py), (vx, vy) = self.targets[self.target_index]
         self.position_command.target_position = (px, py, 0.0)
         self.position_command.input_velocity = (self.direction * vx, self.direction * vy, spin)
         self.position_command.execute()
         if self.stuck_timer.execute():
-            self.times_retried_relocalize += 1
-            self.direction = -1
-            self.relocalize_state = STUCK_WAITING_FOR_RESUPPLY
+            self.is_scheduled = False
 
     def _advance(self, ref):
-        """SimpleAutoDriveCommand.hpp:106-146: next waypoint; True at either end."""
+        """SimpleAutoDriveCommand.cpp:34-74: next waypoint; True at either end."""
         allow_advancing = not ref.in_3v3() or ref.game_stage == IN_GAME
         if not allow_advancing:
             self.stuck_timer.restart(STUCK_TIMER_AMOUNT)
@@ -224,10 +186,9 @@ class SimpleAutoDriveCommand:
 
 class AutoDriveCommand:
     """
-    AutoDriveCommand.{hpp,cpp}: holds a ROS_MSG goal and spins at 9 rad/s.
+    AutoDriveCommand.{hpp,cpp}: holds a NAV_GOAL and spins at 9 rad/s.
 
-    Built but never scheduled on the sentry (SentryControl.hpp:61, :191).
-    Its RELOCALIZE read never sees a frame: JetsonSubsystem::refresh takes it first.
+    Built but never scheduled on the sentry (SentryControl.hpp:61).
     """
 
     def __init__(self, drivers, drivetrain, gimbal, jetson, odo):
@@ -238,7 +199,7 @@ class AutoDriveCommand:
         self.is_scheduled = False
 
     def initialize(self):
-        """AutoDriveCommand.cpp:11-17: the goal starts where the robot is."""
+        """AutoDriveCommand.cpp:13-19: the goal starts where the robot is."""
         self.is_scheduled = True
         self.target_position = (self.odo.get_x(), self.odo.get_y())
 
@@ -246,7 +207,7 @@ class AutoDriveCommand:
         self.is_scheduled = False
 
     def execute(self):
-        """AutoDriveCommand.cpp:19-93; the relocalize branch there is all comments."""
+        """AutoDriveCommand.cpp:21-95; the relocalize branch there is all comments."""
         self.target_velocity = (0.0, 0.0, AUTO_DRIVE_SPIN)
         allow_spinning = allow_moving = True
         ref = self.drivers.ref_serial
@@ -256,7 +217,7 @@ class AutoDriveCommand:
                 allow_spinning = True
         reference_angle = (self.gimbal.get_yaw_encoder_value()
                            - self.gimbal.get_yaw_angle_relative_world())
-        goal, _ = self.jetson.update_ros()
+        goal = self.jetson.update_ros()
         if goal is not None:  # Pose2d(Vector2d) zeroes rotation: no spin this cycle
             self.target_position, self.target_velocity = goal, (0.0, 0.0, 0.0)
         current = (self.odo.get_x(), self.odo.get_y(), reference_angle)

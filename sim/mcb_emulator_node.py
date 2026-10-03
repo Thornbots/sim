@@ -31,6 +31,7 @@ from rcl_interfaces.msg import SetParametersResult
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+from sim.mcb_emulator import FIRMWARE_COMMIT
 from sim.mcb_emulator.drive import rotate
 from sim.mcb_emulator.pty_link import PtyLink
 from sim.mcb_emulator.sentry import DRIVE_STOP, Hardware, Sentry
@@ -143,6 +144,7 @@ class McbEmulator(Node):
         self.declare_parameter('device_link', '/tmp/mcb_emulator_pty')
         self.declare_parameter('drive', DRIVE_STOP)  # stop, simple or auto: SentryControl's
         self.declare_parameter('auto_fire', True)
+        self.declare_parameter('firmware_fixes', True)  # see sim.mcb_emulator.sentry
         self.declare_parameter('batch_ms', 5)
         self.declare_parameter('stats_period_s', 5.0)
         for name, default in REFEREE_PARAMS.items():
@@ -153,7 +155,8 @@ class McbEmulator(Node):
 
         self.hw = GzHardware()
         self.sentry = Sentry(self.hw, self.ref, self.get_parameter('auto_fire').value,
-                             self.get_parameter('drive').value)
+                             self.get_parameter('drive').value,
+                             self.get_parameter('firmware_fixes').value)
         self.pty = PtyLink(self.get_parameter('device_link').value)
 
         self.pan_pub = self.create_publisher(Float64, '/head_pan_cmd', 10)
@@ -166,7 +169,9 @@ class McbEmulator(Node):
         self.create_timer(self.get_parameter('batch_ms').value / 1000.0, self._tick)
         self.create_timer(self.get_parameter('stats_period_s').value, self._log_stats)
         self.get_logger().info(
-            f'MCB emulator (MCBV3 708b8d6) on {self.pty.link} -> {os.ttyname(self.pty.slave)}, '
+            f'MCB emulator (MCBV3 {FIRMWARE_COMMIT[:7]}) on {self.pty.link} -> '
+            f'{os.ttyname(self.pty.slave)}, '
+            f"firmware_fixes={self.get_parameter('firmware_fixes').value}, "
             f"drive={self.get_parameter('drive').value}, "
             f"auto_fire={self.get_parameter('auto_fire').value}")
 

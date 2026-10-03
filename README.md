@@ -369,7 +369,10 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 give way to `mcb_emulator` (the sentry firmware, see Notes "MCB emulator")
 on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
 `test/e2e/test_e2.py` scores the shots the firmware fires. It is marked
-xfail: the firmware refuses our 19-byte `CV_MSG`, so it only patrols.
+xfail: the frames get through, but the MCB's odometry and our `odom`
+disagree, so the gun turns away (Notes "MCB emulator").
+`firmware_fixes:=false` runs MCBV3 `position-based-cv` as it is, which
+refuses our 19-byte `CV_TARGET` on size.
 
 ```bash
 ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
@@ -1068,15 +1071,22 @@ position, without re-homing, since a lost target is usually a brief FOV gap.
 
 ### MCB emulator
 
-`sim/mcb_emulator/` is the sentry's MCB firmware, `Thornbots/MCBV3` at
-`708b8d6`, ported to Python module by module: `protocol.py` (UART structs,
-taproot's DJISerial and CRCs, the one-slot mailbox), `ballistics.py`
-(taproot), `jetson.py` (JetsonSubsystem), `aim_and_fire.py`
-(AutoAimAndFireCommand), `drive.py` (SimpleAutoDriveCommand,
-MoveToPositionCommand, AutoDriveCommand, ChassisController's position
-loop), `subsystems.py` (gimbal, odometry, indexer setpoints) and
-`sentry.py` (SentryControl and the 1 kHz loop). Every function cites its
-firmware file and line. Units and names follow the firmware.
+`sim/mcb_emulator/` is the sentry's MCB firmware, `Thornbots/MCBV3`
+branch `position-based-cv` at `f835be1`, ported to Python module by module:
+`protocol.py` (UART structs, taproot's DJISerial and CRCs, the one-slot
+mailbox), `ballistics.py` (`Reticle::solveForPitch`), `jetson.py`
+(JetsonSubsystem), `aim_and_fire.py` (AutoAimAndFireCommand), `drive.py`
+(SimpleAutoDriveCommand, MoveToPositionCommand, AutoDriveCommand,
+ChassisController's position loop), `subsystems.py` (gimbal, odometry,
+indexer setpoints) and `sentry.py` (SentryControl and the 1 kHz loop).
+Every function cites its firmware file and line. Units and names follow the
+firmware.
+
+`firmware_fixes` (default true) applies the two fixes asked of that branch:
+`CvTarget` keeps its leading `uint32 stamp_ms` (19 bytes, as the bridge
+sends; the branch has 15), and `delay_ms - FIRING_LATENCY_TIME` clamps at 0
+(the branch's uint32 wraps it to ~49 days under 5 ms, so that frame never
+fires).
 
 It lives in `sim` because it is sim hardware: it reads gz truth and drives
 the gz head and chassis, as `pose_emulator` and `cv_head_aim` (which it
@@ -1107,31 +1117,31 @@ MCBV3 file:line, in `../ros2_dji_serial_bridge/README.md` "Where the
 firmware stands". Behaviour that isn't a wire gap but changes what E2 can
 score (paths under `MCB-project/src/`):
 
-- It starts firing only when `targetYaw - current_yaw` is under 60 deg
-  unwrapped, and `current_yaw` is `[0, 2pi)` while `targetYaw` is
-  `(-pi, pi]` (`subsystems/jetson/JetsonSubsystem.cpp:255-268`, taproot's
-  `MahonyAHRS.h:75-78`): it never starts while the turret faces the upper
-  half turn. Once started it fires until it patrols, past the 60 deg.
-- `abs()` of a float at `JetsonSubsystem.cpp:268`; ported as `std::abs`.
-  If it binds to the C `int abs`, the gate is 2 rad.
-- The 3 m cut, `MAX_SHOOT_DIST`, is commented out (`JetsonSubsystem.cpp:207`).
-- A CV frame moves the yaw setpoint by at most 1.5% of its error, less when
-  small (`JetsonSubsystemConstants.hpp:62-63`); in the tests 18 deg is half
-  closed after 2 s. Pitch barely moves on a frame (`:57`, 5e-6), but the
-  hold branch between frames sets the ballistic pitch outright
-  (`AutoAimAndFireCommand.cpp:71`).
-- `getPitchVel` is the motor shaft's rate, 3x the head's
-  (`subsystems/gimbal/GimbalSubsystem.cpp:201`), and it feeds the latency
-  compensation.
-- Within 0.01 rad of level, taproot's ballistics takes a vertical shot's
-  travel time: no lead inside ~1.2 m at 24 m/s.
+- It aims at the latest `CvTarget` for 200 ms after it arrives: yaw
+  `atan2(dy, dx) - pi/2` from its own odometry (x right, y forward), pitch
+  from `Reticle::solveForPitch`, no lead (`AutoAimAndFireCommand.cpp:41-62`).
+  Before the first frame both timeouts are stopped, a stopped timeout never
+  expires, so it aims at `CvTarget{}`, the odometry origin, and never patrols.
+- `solveForPitch` compares landing heights from the pitch pivot with `z` as
+  given (`Reticle.hpp:363-381`): a `z` off the ground aims 0.39 m high.
+- One `tryShootOnce` per fire frame, `delay_ms - 5` after it arrives. The
+  indexer's 50 ms minimum caps that at 20 Hz, so 40 Hz frames fire every
+  other one.
+- `RELOCALIZE` moves odometry at once, anywhere, any HP
+  (`JetsonSubsystem.cpp:71-76`). The RFID relocalize in
+  `SimpleAutoDriveCommand` is gone; stuck 15 s, it spins in place.
+- With no frames it patrols only if the last frame set `TYPE_C_BASED_PATROL`;
+  `TURN_TO_HIT` is read and never used.
 - The sentry drives `SimpleAutoDriveCommand`'s ARCC route, spinning -8 rad/s
   moving and -12 at either end, even before the game in a 3v3. The 9 rad/s
   `AutoDriveCommand` is never scheduled. All stage gating applies only when
   the referee reports an RMUL 3v3 game.
 
-E2 with `stage:=e2` (2026-09-30, container, stationary lateral 15 s): POSE
-reaches `pose_translator` and the tracker runs, but 411 of 411 `CV_MSG`
-were refused on size and the emulator fired nothing. The tracker's state
-sat 2.75 m and 14.7 m/s off truth (E1: 0.07 m), consistent with the patrol
-sweeping a head whose `head_yaw` the URDF reads mirrored.
+E2 on `position-based-cv` with `firmware_fixes` (2026-10-03, container,
+lateral, still and 1 m/s, 15 s each): `CV_TARGET` and `RELOCALIZE` frames
+are read, none refused, but the gun turns away. One `RELOCALIZE` moved the
+parked MCB's odometry to (0.74, 1.86), our `odom`'s numbers, and the head
+sat at `head_yaw` 4.13 rad with the opponent straight ahead. Still: no
+valid `TargetState`, no shots. 1 m/s: the tracked centre 3.17 m off, 0 of
+6 shots hit. `pose_translator` reads POSE's x right, y forward as REP-105,
+so our `odom` and the MCB's odometry differ by a turn.

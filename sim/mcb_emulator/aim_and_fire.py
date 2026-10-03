@@ -15,60 +15,61 @@
 """
 AutoAimAndFireCommand (subsystems/jetson/AutoAimAndFireCommand.{hpp,cpp}).
 
-Per 1 ms cycle: aim on a fresh CVData, hold for PERSISTANCE ms after the
-last, else patrol. Fires at indexer rate 10 from the first action-1 frame
-until the patrol branch clears it. In a 3v3 game it shoots only IN_GAME.
+Per 1 ms cycle: aim at the latest CvTarget's odom point for TARGET_VALID_TIME
+after it arrives, one tryShootOnce per fire frame after delay_ms, else
+patrol. In a 3v3 game it shoots only IN_GAME. fix_delay clamps
+delay_ms - FIRING_LATENCY_TIME at 0; the firmware's uint32 wraps it.
 """
 import math
 
-from sim.mcb_emulator.jetson import (PITCH_MULTIPLY_MAX, PITCH_MULTIPLY_MIN,
-                                     PITCH_MULTIPLY_SCALE, PLACEHOLDER_ANGLE, YAW_MULTIPLY_MAX,
-                                     YAW_MULTIPLY_MIN, YAW_MULTIPLY_SCALE)
-from sim.mcb_emulator.subsystems import COUNTDOWN, IN_GAME, PI
+from sim.mcb_emulator import ballistics
+from sim.mcb_emulator.jetson import PLACEHOLDER_ANGLE
+from sim.mcb_emulator.protocol import (CV_TARGET_FLAG_FIRE, CV_TARGET_FLAG_TYPE_C_BASED_PATROL,
+                                       CvTarget)
+from sim.mcb_emulator.subsystems import COUNTDOWN, IN_GAME, PI, Timeout
 
-# AutoAimAndFireCommand.hpp:68-71, :86
+# AutoAimAndFireCommand.hpp:71-91
 CYCLES_UNTIL_BURST = 380
-BURST_AMOUNT = 0.0  # rad/cycle
 PATROL_SPEED = -0.002  # rad/cycle: -2 rad/s at 1 kHz
-PERSISTANCE = 200  # ms
+BURST_AMOUNT = PATROL_SPEED  # rad/cycle, burst mode off
+TARGET_VALID_TIME = 200  # ms
+FIRING_LATENCY_TIME = 5  # ms
 HIT_TURN_DURATION = 500  # ms
-INDEX_RATE = 10  # shots/s, AutoAimAndFireCommand.cpp:112
+PATROL_PITCH = 0.05  # rad, down
 FLYWHEEL_MOTOR_MAX_RPM = 1.0  # FlywheelSubsystemConstants.hpp; only its fraction matters here
-
-
-def _clamp(v, lo, hi):
-    return min(max(v, lo), hi)
 
 
 class AutoAimAndFireCommand:
 
-    def __init__(self, drivers, gimbal, indexer, flywheel, cv, adc_scheduled):
+    def __init__(self, drivers, gimbal, indexer, flywheel, jetson, odo, adc_scheduled,
+                 fix_delay=False):
         """adc_scheduled(): AutoDriveCommand::getIsScheduled, for the idle flywheel."""
         self.drivers, self.gimbal, self.indexer = drivers, gimbal, indexer
-        self.flywheel, self.cv, self.adc_scheduled = flywheel, cv, adc_scheduled
-        self.is_shooting = False
-        self.shoot = 0
+        self.flywheel, self.jetson, self.odo = flywheel, jetson, odo
+        self.adc_scheduled, self.fix_delay = adc_scheduled, fix_delay
+        self.cv_target = CvTarget()
+        # Both start stopped, and a stopped timer is never expired: until the first
+        # frame, the aim branch runs on CvTarget{}, the odom origin.
+        self.cv_target_valid_timeout = Timeout(drivers.clock)
+        self.start_shot_timeout = Timeout(drivers.clock)
         self.num_cycles_for_burst = 0
-        self.pitch = 0.0
-        self.yawvel = 0.0
-        self.pitchvel = 0.0
-        self.last_seen_time = 0
+        self.target_yaw = 0.0
+        self.target_pitch = 0.0
+        self.targeting = False
         self.turning_to_hit = False
         self.hit_target_yaw = 0.0
         self.hit_turn_start_time = 0
         self.is_scheduled = False
 
     def initialize(self):
-        """AutoAimAndFireCommand.cpp:8-11."""
-        self.shoot = -1
+        """AutoAimAndFireCommand.cpp:8-10."""
         self.is_scheduled = True
 
     def end(self):
-        self.pitch = 0.0
         self.is_scheduled = False
 
     def execute(self):
-        """AutoAimAndFireCommand.cpp:12-129."""
+        """AutoAimAndFireCommand.cpp:11-115."""
         ref, now = self.drivers.ref_serial, self.drivers.clock()
         allow_shooting = allow_gimbal = True
         if ref.in_3v3():
@@ -76,40 +77,18 @@ class AutoAimAndFireCommand:
             if ref.game_stage == COUNTDOWN:
                 allow_gimbal = True
 
-        current_yaw = self.gimbal.get_yaw_angle_relative_world()
-        current_pitch = self.gimbal.get_pitch_encoder_value()
-        aim = self.cv.update(current_yaw, current_pitch, self.yawvel, self.gimbal.get_pitch_vel())
-        self.shoot = aim.action
-        dyaw = aim.yaw_out if aim.action != -1 else 0.0
-        if aim.action != -1:
-            self.pitch, self.yawvel, self.pitchvel = (aim.pitch_out, aim.yaw_vel_out,
-                                                      aim.pitch_vel_out)
-
-        in_rfid = ref.restoration_zone or ref.exchange_zone  # rfidStatus.all(), :44
-        if in_rfid and allow_gimbal:
-            self.gimbal.set_angles(0.0, 0.0)
-        elif self.shoot != -1:
-            dyaw = math.fmod(dyaw, 2 * PI)
-            dyaw = dyaw - 2 * PI if dyaw > PI else dyaw + 2 * PI if dyaw < -PI else dyaw
-            self.last_seen_time = now
-            dpitch = self.pitch - current_pitch
-            new_pitch = current_pitch + dpitch * _clamp(
-                abs(dpitch) * PITCH_MULTIPLY_SCALE, PITCH_MULTIPLY_MIN, PITCH_MULTIPLY_MAX)
-            dyaw *= _clamp(abs(dyaw) * YAW_MULTIPLY_SCALE, YAW_MULTIPLY_MIN, YAW_MULTIPLY_MAX)
-            if allow_gimbal:
-                self.gimbal.update_motors_and_velocity(dyaw, new_pitch, self.yawvel,
-                                                       self.pitchvel)
-            if self.shoot == 1:
-                self.is_shooting = True
-        elif now - self.last_seen_time < PERSISTANCE:
-            if allow_gimbal:
-                self.gimbal.update_motors(0.0, self.pitch)
+        msg = self.jetson.get_cv_target()
+        if msg is not None:
+            self.cv_target = msg
+            self.cv_target_valid_timeout.restart(TARGET_VALID_TIME)
+            delay = msg.delay_ms - FIRING_LATENCY_TIME
+            self.start_shot_timeout.restart(max(0, delay) if self.fix_delay else delay % 2 ** 32)
+        if allow_gimbal and not self.cv_target_valid_timeout.is_expired():
+            self._aim(allow_shooting)
         else:
-            self._patrol(allow_gimbal, current_yaw, now)
+            self._patrol(allow_gimbal, now)
 
-        if allow_shooting and self.is_shooting:
-            self.indexer.index_at_rate(INDEX_RATE)
-        else:
+        if not allow_shooting:
             self.indexer.stop_index()
         if allow_gimbal:
             self.flywheel.set_target_velocity(FLYWHEEL_MOTOR_MAX_RPM)
@@ -118,24 +97,43 @@ class AutoAimAndFireCommand:
             if self.adc_scheduled():
                 self.flywheel.set_target_velocity(FLYWHEEL_MOTOR_MAX_RPM / 4)
 
-    def _patrol(self, allow_gimbal, current_yaw, now):
-        """AutoAimAndFireCommand.cpp:72-106: sweep, or face a hit for HIT_TURN_DURATION."""
-        self.is_shooting = False
-        self.pitch = 0.05
+    def _aim(self, allow_shooting):
+        """AutoAimAndFireCommand.cpp:41-62: the odom point from odometry, no lead."""
+        dx, dy = self.cv_target.x - self.odo.get_x(), self.cv_target.y - self.odo.get_y()
+        angle = 0.0 if dx == 0 and dy == 0 else math.atan2(dy, dx)  # Vector2d::angle
+        self.target_yaw = angle - PI / 2  # gimbal yaw 0 is odometry's +y
+        self.target_pitch = ballistics.solve_for_pitch(math.hypot(dx, dy), self.cv_target.z)
+        self.gimbal.set_angles(self.target_yaw, self.target_pitch)
+        self.targeting = True
+        shoot = self.cv_target.flags & CV_TARGET_FLAG_FIRE
+        if allow_shooting and shoot and self.start_shot_timeout.execute():
+            self.indexer.try_shoot_once()
+
+    def _patrol(self, allow_gimbal, now):
+        """AutoAimAndFireCommand.cpp:63-103: sweep if the flag allows, or face a hit."""
+        self.targeting = False
         self.num_cycles_for_burst += 1
         if not allow_gimbal:
             return
-        angle = self.cv.get_angle_to_turn_for_sentry()
-        if angle != PLACEHOLDER_ANGLE:
-            self.hit_target_yaw = current_yaw - angle
+        angle = self.jetson.get_angle_to_turn_for_sentry()
+        # The TURN_TO_HIT flag is read there but never used.
+        if angle != PLACEHOLDER_ANGLE and angle:
+            self.target_pitch = PATROL_PITCH
+            self.hit_target_yaw = self.gimbal.get_yaw_angle_relative_world() - angle
             self.turning_to_hit = True
             self.hit_turn_start_time = now
         if self.turning_to_hit and now - self.hit_turn_start_time < HIT_TURN_DURATION:
-            self.gimbal.set_angles(self.hit_target_yaw, self.pitch)
+            self.gimbal.set_angles(self.hit_target_yaw, self.target_pitch)
             return
         self.turning_to_hit = False
+        type_c_based_patrol = self.cv_target.flags & CV_TARGET_FLAG_TYPE_C_BASED_PATROL
+        if type_c_based_patrol:
+            self.target_pitch = PATROL_PITCH
+        yaw_change = 0.0
         if self.num_cycles_for_burst == CYCLES_UNTIL_BURST:
-            self.gimbal.update_motors(BURST_AMOUNT, self.pitch)
+            if type_c_based_patrol:
+                yaw_change = BURST_AMOUNT
             self.num_cycles_for_burst = 0
-        else:
-            self.gimbal.update_motors(PATROL_SPEED, self.pitch)
+        elif type_c_based_patrol:
+            yaw_change = PATROL_SPEED
+        self.gimbal.update_motors(yaw_change, self.target_pitch)

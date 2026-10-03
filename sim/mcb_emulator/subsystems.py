@@ -147,7 +147,7 @@ class GimbalSubsystem:
                            self.prev_target_pitch)
 
     def update_motors(self, change_in_target_yaw, target_pitch):
-        """GimbalSubsystem.cpp:53-74 (the sentry has no chicken-mode pitch)."""
+        """GimbalSubsystem.cpp:53-70 (the sentry has no chicken-mode pitch)."""
         self.prev_target_pitch = min(max(target_pitch, -MAX_PITCH_DOWN), MAX_PITCH_UP)
         self.target_yaw_angle_world += change_in_target_yaw
         self.motors_on = True
@@ -157,10 +157,8 @@ class GimbalSubsystem:
         self.update_motors(change_in_target_yaw, target_pitch)
 
     def set_angles(self, yaw_angle, pitch_angle):
-        """GimbalSubsystem.cpp:135-151."""
-        self.prev_target_pitch = min(max(pitch_angle, -MAX_PITCH_DOWN), MAX_PITCH_UP)
-        self.target_yaw_angle_world = yaw_angle
-        self.motors_on = True
+        """GimbalSubsystem.cpp:131-133: updateMotors by the yaw step, not wrapped."""
+        self.update_motors(yaw_angle - self.target_yaw_angle_world, pitch_angle)
 
     def stop_motors(self):
         """GimbalSubsystem.cpp:112-122."""

@@ -333,14 +333,15 @@ class E2EStack:
     Between cases only target_driver's path, speed and spin change.
     """
 
-    def __init__(self, headless, log_dir, external=False, stage='e1'):
+    def __init__(self, headless, log_dir, external=False, stage='e1', firmware_fixes=True):
         self.launch = None
         self.log_dir = log_dir
         self.nodes = E2_NODES if stage == 'e2' else STACK_NODES
         if not external:
             self.launch = bench.LaunchTree(
                 'stack', ['ros2', 'launch', 'sim', 'e2e.launch.py', 'run_tests:=false',
-                          f'headless:={str(headless).lower()}', f'stage:={stage}'],
+                          f'headless:={str(headless).lower()}', f'stage:={stage}',
+                          f'firmware_fixes:={str(firmware_fixes).lower()}'],
                 os.path.join(log_dir, 'stack.log'))
         self.shots_path = os.path.join(log_dir, 'shots.jsonl')
         self.scores_path = os.path.join(log_dir, 'scores.jsonl')

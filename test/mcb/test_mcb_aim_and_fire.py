@@ -17,169 +17,142 @@ import math
 
 import pytest
 from sim.mcb_emulator import aim_and_fire as aaf
-from sim.mcb_emulator import jetson
-from sim.mcb_emulator.protocol import CV_MSG, CVData, encode_frame, UARTCommunication
+from sim.mcb_emulator import ballistics
+from sim.mcb_emulator import protocol as p
 from sim.mcb_emulator.sentry import DRIVE_STOP, IdealHardware, Sentry
-from sim.mcb_emulator.subsystems import (COUNTDOWN, IN_GAME, PREMATCH, RefSerial)
+from sim.mcb_emulator.subsystems import COUNTDOWN, IN_GAME, MAX_PITCH_UP, PREMATCH, RefSerial
 
-CV_PERIOD_MS = 33  # ~30 Hz, the camera's rate
+FIRE = p.CV_TARGET_FLAG_FIRE
 
 
-def _sentry(**ref):
+def _sentry(firmware_fixes=True, **ref):
     hw = IdealHardware()
-    return hw, Sentry(hw, RefSerial(**ref), drive=DRIVE_STOP)
+    return hw, Sentry(hw, RefSerial(**ref), drive=DRIVE_STOP, firmware_fixes=firmware_fixes)
 
 
-def _run(hw, sentry, ms, target=None, period=CV_PERIOD_MS):
-    """Step ms cycles; target(hw) gives a frame every period ms (bytes are sent as is)."""
+def _frame(x, y, z=0.0, delay_ms=0, flags=0, stamped=True):
+    """Frame a CV_TARGET in the MCB's odometry frame (x right, y forward)."""
+    msg = (p.CvTargetStamped(0, x, y, z, delay_ms, flags) if stamped
+           else p.CvTarget(x, y, z, delay_ms, flags))
+    return p.UARTCommunication.frame(msg)
+
+
+def _run(hw, sentry, ms, frame=b'', period=25):
+    """Step ms cycles, sending frame every period ms (40 Hz, point_to_cv_target's rate)."""
     for i in range(ms):
-        frame = b''
-        if target is not None and i % period == 0:
-            frame = target if isinstance(target, bytes) else target(hw)
-        sentry.run(1, frame)
+        sentry.run(1, frame if frame and i % period == 0 else b'')
         hw.advance(0.001)
 
 
-def _camera_point(hw, fwd, left, up):
-    """
-    Render a world point (from the pitch axis, metres) as CVData from the turret now.
-
-    Inverts JetsonSubsystem.cpp:197-220 at the turret's current yaw and pitch.
-    """
-    c3, s3 = math.cos(hw.imu_yaw()), math.sin(hw.imu_yaw())
-    c4, s4 = math.cos(-hw.pitch), math.sin(-hw.pitch)
-    px, py = -left, fwd
-    x4, f = c3 * px + s3 * py, -s3 * px + c3 * py
-    y4, z4 = c4 * f + s4 * up, -s4 * f + c4 * up
-    return x4 - jetson.CAMERA_X_OFFSET, z4 - jetson.CAMERA_Z_OFFSET, y4 - jetson.CAMERA_Y_OFFSET
-
-
-def _at(fwd, left=0.0, up=0.0, confidence=0.9):
-    """Make a target fixed in the world, rendered into the camera each frame."""
-    def frame(hw):
-        x, y, z = _camera_point(hw, fwd, left, up)
-        return UARTCommunication.frame(CVData(x=x, y=y, z=z, confidence=confidence))
-    return frame
-
-
-def _ahead(distance=2.0, confidence=0.9):
-    return _at(distance, confidence=confidence)
-
-
-def _boot(hw, s):
-    """Fill the orientation delay line before the first frame (it starts at zeros)."""
-    _run(hw, s, jetson.ORIENTATION_QUEUE_SIZE + 2)
-
-
-def test_holds_then_patrols_without_a_target():
+def test_aims_at_the_odom_origin_before_any_frame():
+    """Both timeouts start stopped and a stopped one never expires: CvTarget{} is aimed at."""
     hw, s = _sentry()
-    _run(hw, s, aaf.PERSISTANCE)
-    assert hw.yaw == 0.0  # lastSeenTime starts at 0: PERSISTANCE ms of holding first
-    _run(hw, s, 1000)
-    assert s.gimbal.prev_target_pitch == pytest.approx(0.05)
-    # PATROL_SPEED a cycle, less the BURST_AMOUNT (0) cycle every CYCLES_UNTIL_BURST.
-    assert s.gimbal.target_yaw_angle_world == pytest.approx(-0.002 * (1000 - 2), abs=1e-9)
+    _run(hw, s, 100)
+    assert s.auto_fire.targeting
+    assert hw.yaw_target == pytest.approx(-math.pi / 2)  # Vector2d(0, 0).angle() is 0
     assert hw.shots == []
 
 
-def test_fires_at_ten_hz_while_holding_then_persists():
+@pytest.mark.parametrize('x,y', [(0.0, 3.0), (-1.0, 3.0), (2.0, 2.0)])
+def test_aims_at_the_odom_point(x, y):
     hw, s = _sentry()
-    _boot(hw, s)
+    _run(hw, s, 300, _frame(x, y, 0.2))
+    assert hw.yaw_target == pytest.approx(math.atan2(-x, y))  # 0 is +y, CCW positive
+    assert hw.pitch_target == pytest.approx(
+        ballistics.solve_for_pitch(math.hypot(x, y), 0.2))
+
+
+def test_aim_follows_odometry_not_the_frame_age():
+    hw, s = _sentry()
+    hw.x = 1.0
+    _run(hw, s, 100, _frame(1.0, 3.0))
+    assert hw.yaw_target == pytest.approx(0.0)
+    hw.x = 0.0
+    _run(hw, s, 1)
+    assert hw.yaw_target == pytest.approx(math.atan2(-1.0, 3.0))
+
+
+def test_pitch_clamps_for_a_close_low_point():
+    """Down is positive; GimbalSubsystem.cpp:57 clamps to [-MAX_PITCH_DOWN, MAX_PITCH_UP]."""
+    hw, s = _sentry()
+    _run(hw, s, 100, _frame(0.0, 0.5, -1.0))
+    assert hw.pitch_target == pytest.approx(MAX_PITCH_UP)
+
+
+def test_fires_once_per_fire_frame_after_delay_minus_latency():
+    hw, s = _sentry()
     start = s.drivers.time_ms
-    _run(hw, s, 300, _ahead())
-    assert hw.shots == [start, start + 100, start + 200]
-    _run(hw, s, 400)  # no frames: PERSISTANCE ms more, then patrol stops it
-    last_frame = start + 9 * CV_PERIOD_MS
-    assert hw.shots[-1] <= last_frame + aaf.PERSISTANCE
-    assert not s.auto_fire.is_shooting
+    _run(hw, s, 300, _frame(0.0, 3.0, delay_ms=20, flags=FIRE), period=100)
+    assert hw.shots == [start + 15, start + 115, start + 215]
 
 
-def test_confidence_cutoff_is_inclusive():
+def test_forty_hz_fire_frames_shoot_at_twenty():
+    """The indexer's MIN_SHOT_FREQ (50 ms) drops every other frame's shot."""
     hw, s = _sentry()
-    _boot(hw, s)
-    _run(hw, s, 300, _ahead(confidence=0.75))
+    _run(hw, s, 1000, _frame(0.0, 3.0, delay_ms=10, flags=FIRE))
+    assert len(hw.shots) == 20
+
+
+def test_no_fire_bit_no_shots():
+    hw, s = _sentry()
+    _run(hw, s, 500, _frame(0.0, 3.0, delay_ms=10))
     assert hw.shots == []
-    hw, s = _sentry()
-    _boot(hw, s)
-    _run(hw, s, 300, _ahead(confidence=0.76))
-    assert hw.shots
 
 
-def test_far_panels_still_fire():
-    """MAX_SHOOT_DIST (3 m) is defined but its check is commented out, JetsonSubsystem.cpp:207."""
-    hw, s = _sentry()
-    _boot(hw, s)
-    _run(hw, s, 300, _ahead(distance=6.0))
-    assert hw.shots
-
-
-def test_steps_toward_a_target_off_centre_and_pitches_between_frames():
-    hw, s = _sentry()
-    _boot(hw, s)
-    _run(hw, s, 2000, _at(3.0, left=-1.0, up=0.3))
-    bearing = math.atan2(-1.0, 3.0)
-    # A frame moves the setpoint dyaw * min(0.05 |dyaw|, 0.015): 18 deg is half
-    # closed after 2 s of 30 Hz frames.
-    assert bearing < hw.yaw < 0.4 * bearing
-    # Frames barely move pitch (PITCH_MULTIPLY_MAX 5e-6); the hold branch between
-    # them sets the ballistic pitch outright (AutoAimAndFireCommand.cpp:71).
-    assert hw.pitch < -0.05
-    assert hw.shots
-
-
-def test_target_past_sixty_degrees_aims_without_firing():
-    hw, s = _sentry()
-    _boot(hw, s)
-    _run(hw, s, 300, _at(1.0, left=-3.0))
-    assert s.auto_fire.shoot in (0, -1)
-    assert hw.shots == []
-    assert s.gimbal.target_yaw_angle_world < 0.0
-
-
-@pytest.mark.parametrize('turret_yaw,fires', [(1.0, True), (-1.0, False)])
-def test_fires_only_while_turret_faces_the_lower_half_turn(turret_yaw, fires):
-    """Gimbal yaw is [0, 2pi), targetYaw (-pi, pi]: their raw difference fails."""
-    hw, s = _sentry()
-    hw.yaw = turret_yaw
-    s.gimbal.target_yaw_angle_world = turret_yaw
-    _boot(hw, s)
-    _run(hw, s, 300, _at(2.0 * math.cos(turret_yaw), left=2.0 * math.sin(turret_yaw)))
+@pytest.mark.parametrize('fixes,fires', [(True, True), (False, False)])
+def test_delay_under_the_latency_wraps_without_the_fix(fixes, fires):
+    """delay_ms - FIRING_LATENCY_TIME < 0 becomes a ~49-day uint32 timeout in the firmware."""
+    hw, s = _sentry(firmware_fixes=fixes)
+    _run(hw, s, 500, _frame(0.0, 3.0, delay_ms=3, flags=FIRE, stamped=fixes))
     assert bool(hw.shots) == fires
 
 
-def test_bridge_sized_cv_frames_never_aim():
-    """The bridge's 19-byte CvTargetPayload fails getMsg's size check (JetsonSubsystem.hpp:204)."""
-    hw, s = _sentry()
-    _run(hw, s, 1000, encode_frame(CV_MSG, b'\x00' * 19))
+def test_bridge_frames_are_refused_without_stamp_ms():
+    """position-based-cv's CvTarget is 15 bytes; the bridge sends 19 (with stamp_ms)."""
+    hw, s = _sentry(firmware_fixes=False)
+    _run(hw, s, 500, _frame(0.0, 3.0, delay_ms=10, flags=FIRE))
+    assert s.drivers.uart.size_mismatch[(p.CV_TARGET, 19)] > 0
+    assert s.drivers.uart.consumed[p.CV_TARGET] == 0
     assert hw.shots == []
-    assert s.drivers.uart.size_mismatch[(CV_MSG, 19)] > 0
-    assert s.gimbal.target_yaw_angle_world < 0.0  # patrolling
+    assert hw.yaw_target == pytest.approx(-math.pi / 2)  # still on the origin
+
+
+@pytest.mark.parametrize('flags,sweeps',
+                         [(0, False), (p.CV_TARGET_FLAG_TYPE_C_BASED_PATROL, True)])
+def test_patrols_after_target_valid_time_only_if_flagged(flags, sweeps):
+    hw, s = _sentry()
+    _run(hw, s, 1, _frame(0.0, 3.0, flags=flags))
+    _run(hw, s, aaf.TARGET_VALID_TIME + 1)
+    assert not s.auto_fire.targeting
+    before = s.gimbal.target_yaw_angle_world
+    _run(hw, s, 100)
+    moved = s.gimbal.target_yaw_angle_world - before
+    assert moved == (pytest.approx(100 * aaf.PATROL_SPEED) if sweeps else 0.0)
+
+
+def test_faces_a_hit_while_patrolling():
+    hw, s = _sentry()
+    _run(hw, s, 1, _frame(0.0, 3.0))
+    _run(hw, s, aaf.TARGET_VALID_TIME + 1)
+    s.jetson.angle_to_turn_for_sentry = 0.5
+    yaw = s.gimbal.get_yaw_angle_relative_world()
+    _run(hw, s, 1)
+    assert s.auto_fire.turning_to_hit
+    assert s.gimbal.target_yaw_angle_world == pytest.approx(yaw - 0.5)
+    _run(hw, s, aaf.HIT_TURN_DURATION + 1)
+    assert not s.auto_fire.turning_to_hit
 
 
 @pytest.mark.parametrize('stage,gimbal,fires', [
     (PREMATCH, False, False), (COUNTDOWN, True, False), (IN_GAME, True, True)])
 def test_3v3_stage_gates_gimbal_and_shooting(stage, gimbal, fires):
     hw, s = _sentry(game_stage=stage)
-    _boot(hw, s)
-    _run(hw, s, 300, _ahead())
+    _run(hw, s, 300, _frame(0.0, 3.0, delay_ms=10, flags=FIRE))
     assert bool(hw.shots) == fires
     assert (hw.yaw_target is not None) == gimbal
 
 
 def test_no_gating_outside_a_3v3_game():
     hw, s = _sentry(game_stage=PREMATCH, game_type=1)
-    _boot(hw, s)
-    _run(hw, s, 300, _ahead())
+    _run(hw, s, 300, _frame(0.0, 3.0, delay_ms=10, flags=FIRE))
     assert hw.shots
-    hw, s = _sentry(game_stage=PREMATCH, receiving=False)
-    _boot(hw, s)
-    _run(hw, s, 300, _ahead())
-    assert hw.shots
-
-
-def test_resupply_zone_centres_the_gimbal():
-    hw, s = _sentry(restoration_zone=True)
-    hw.yaw = 0.5
-    _run(hw, s, 300, _ahead())
-    assert s.gimbal.target_yaw_angle_world == 0.0
-    assert s.gimbal.prev_target_pitch == 0.0

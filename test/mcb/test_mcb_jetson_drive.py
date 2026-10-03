@@ -40,12 +40,12 @@ def test_nine_poses_then_one_ref_every_ten_ms():
     _run(hw, s, 1000)
     frames = _frames(s.drain_tx())
     types = [t for t, _ in frames]
-    assert types.count(p.POSE_MSG) == 90  # not UART_PROTOCOL.md's 100 Hz
-    assert types.count(p.REF_SYS_MSG) == 9  # 10 Hz; the 200 ms timer is unused
-    assert types[:10] == [p.POSE_MSG] * 9 + [p.REF_SYS_MSG]
-    pose = p.unpack(p.PoseData, frames[0][1])
-    assert (pose.x, pose.y, pose.error_code) == (1.5, -0.5, p.ODOM_PODS)
-    ref = p.unpack(p.RefSysMsg, frames[9][1])
+    assert types.count(p.POSE) == 90  # not UART_PROTOCOL.md's 100 Hz
+    assert types.count(p.REF_SYS) == 9  # 10 Hz; the 200 ms timer is unused
+    assert types[:10] == [p.POSE] * 9 + [p.REF_SYS]
+    pose = p.unpack(p.Pose, frames[0][1])
+    assert (pose.x, pose.y, pose.odom_status) == (1.5, -0.5, p.ODOM_PODS)
+    ref = p.unpack(p.RefSys, frames[9][1])
     assert (ref.robotID, ref.robotHp) == (7, 350)
     assert ref.booleans == 0b10100011  # blue, reload zone, chassis and gimbal power
     assert ref.deltaAngleGotHitIn == 123.0  # HitRing's "not hit" placeholder
@@ -56,20 +56,19 @@ def test_pose_head_yaw_is_zero_to_two_pi():
     s = Sentry(hw, auto_fire=False, drive=DRIVE_STOP)
     hw.yaw = -0.5
     _run(hw, s, 20)
-    pose = p.unpack(p.PoseData, _frames(s.drain_tx())[-1][1])
+    pose = p.unpack(p.Pose, _frames(s.drain_tx())[-1][1])
     assert pose.head_yaw == pytest.approx(2 * math.pi - 0.5, abs=1e-6)
 
 
-def test_relocalize_needs_twelve_bytes_and_only_reaches_simple_auto_drive():
+def test_relocalize_moves_odometry_at_once():
+    """JetsonSubsystem.cpp:71-76: any zone, any HP, every frame."""
     hw = IdealHardware()
     s = Sentry(hw, auto_fire=False, drive=DRIVE_STOP)
-    _run(hw, s, 5, p.encode_frame(p.RELOCALIZE, p.pack(p.ROSData(3.0, 4.0))))  # 8 bytes
-    assert not s.simple_auto_drive.set_localization
-    _run(hw, s, 5, p.UARTCommunication.frame(p.Relocalize(3.0, 4.0)))
-    assert s.simple_auto_drive.set_localization
-    assert (s.simple_auto_drive.x_for_localization, s.simple_auto_drive.y_for_localization) \
-        == (3.0, 4.0)
-    assert s.odo.get_x() == 0.0  # odometry untouched
+    hw.x, hw.y = 0.5, 0.25
+    _run(hw, s, 20, p.UARTCommunication.frame(p.Relocalize(3.0, 4.0)))
+    assert (s.odo.get_x(), s.odo.get_y()) == (pytest.approx(3.0), pytest.approx(4.0))
+    pose = p.unpack(p.Pose, _frames(s.drain_tx())[-1][1])
+    assert (pose.x, pose.y) == (pytest.approx(3.0), pytest.approx(4.0))
 
 
 def _drive_route(hw, s, ms):
@@ -119,17 +118,14 @@ def test_simple_auto_drive_heads_home_at_low_hp():
     assert math.hypot(hw.x - -0.5, hw.y - -0.5) < 0.5  # changedInitialPoint, red
 
 
-def test_simple_auto_drive_applies_relocalize_only_full_hp_in_resupply():
+def test_simple_auto_drive_stuck_between_points_spins_in_place():
+    """SimpleAutoDriveCommand.cpp:86-92: STUCK_TIMER_AMOUNT with no waypoint, then spin."""
     hw = IdealHardware()
-    ref = RefSerial(robot_id=107)
-    s = Sentry(hw, ref, auto_fire=False, drive=DRIVE_SIMPLE)
-    _run(hw, s, 200, p.UARTCommunication.frame(p.Relocalize(1.0, 2.0)))
-    assert s.odo.offset_x == 0.0  # not in a resupply zone
-    ref.restoration_zone = True
-    _run(hw, s, 1)
-    # Read after one more cycle of driving, hence the tolerance.
-    assert s.odo.get_x() == pytest.approx(1.0 + drive.RELOCALIZE_X_OFFSET, abs=0.01)
-    assert s.odo.get_y() == pytest.approx(2.0 + drive.RELOCALIZE_Y_OFFSET, abs=0.01)
+    s = Sentry(hw, RefSerial(robot_id=7), auto_fire=False, drive=DRIVE_SIMPLE)
+    for _ in range(drive.STUCK_TIMER_AMOUNT + 2):
+        s.run(1)  # hw never advances: the chassis is pinned at the start
+    assert not s.simple_auto_drive.is_scheduled
+    assert hw.drive == (0.0, 0.0, drive.SPIN_VELOCITY)
 
 
 def test_auto_drive_spins_at_nine_and_takes_ros_goals():
@@ -137,5 +133,5 @@ def test_auto_drive_spins_at_nine_and_takes_ros_goals():
     s = Sentry(hw, auto_fire=False, drive=DRIVE_AUTO)
     _run(hw, s, 100)
     assert hw.drive[2] == drive.AUTO_DRIVE_SPIN
-    _run(hw, s, 3000, p.UARTCommunication.frame(p.ROSData(1.0, 0.5)))
+    _run(hw, s, 3000, p.UARTCommunication.frame(p.NavGoal(1.0, 0.5)))
     assert math.hypot(hw.x - 1.0, hw.y - 0.5) < 0.05

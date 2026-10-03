@@ -152,6 +152,10 @@ def pytest_addoption(parser):
         '--e2e-duration', type=float, default=None,
         help='sim seconds scored per match-test cell; default '
              'e2e_harness.DEFAULT_DURATION')
+    group.addoption(
+        '--no-firmware-fixes', action='store_true',
+        help="E2: run the MCB emulator's firmware as MCBV3 position-based-cv has it, "
+             'without the stamp_ms and delay_ms fixes (sim.mcb_emulator.sentry)')
 
 
 @pytest.fixture(scope='session')

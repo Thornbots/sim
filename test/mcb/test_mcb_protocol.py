@@ -20,11 +20,12 @@ from sim.mcb_emulator import protocol as p
 
 
 def test_struct_sizes_are_the_firmwares():
-    assert p.size_of(p.CVData) == 40
-    assert p.size_of(p.Relocalize) == 12
-    assert p.size_of(p.ROSData) == 8
-    assert p.size_of(p.PoseData) == 25
-    assert p.size_of(p.RefSysMsg) == 11
+    assert p.size_of(p.CvTarget) == 15  # position-based-cv dropped stamp_ms
+    assert p.size_of(p.CvTargetStamped) == 19  # the bridge's CvTargetPayload
+    assert p.size_of(p.Relocalize) == 8
+    assert p.size_of(p.NavGoal) == 8
+    assert p.size_of(p.Pose) == 25
+    assert p.size_of(p.RefSys) == 11
 
 
 def test_crc_tables_match_taproot():
@@ -34,31 +35,31 @@ def test_crc_tables_match_taproot():
 
 
 def test_frame_layout():
-    pose = p.PoseData(1.0, 2.0, 0.5, -0.5, 0.05, 3.0, p.ODOM_PODS)
+    pose = p.Pose(1.0, 2.0, 0.5, -0.5, 0.05, 3.0, p.ODOM_PODS)
     frame = p.UARTCommunication.frame(pose)
     assert len(frame) == 25 + 9
     head, length, seq, crc8, msg_type = struct.unpack_from('<BHBBH', frame)
-    assert (head, length, seq, msg_type) == (0xA5, 25, 0, p.POSE_MSG)
+    assert (head, length, seq, msg_type) == (0xA5, 25, 0, p.POSE)
     assert crc8 == p.crc8(frame[:4])
     assert struct.unpack_from('<H', frame, 32)[0] == p.crc16(frame[:32])
-    assert p.unpack(p.PoseData, frame[7:32]) == p.PoseData(*struct.unpack(
+    assert p.unpack(p.Pose, frame[7:32]) == p.Pose(*struct.unpack(
         '<6fB', struct.pack('<6fB', 1.0, 2.0, 0.5, -0.5, 0.05, 3.0, 0)))
 
 
 def test_parser_finds_frames_in_noise_and_split_reads():
-    a = p.encode_frame(p.CV_MSG, p.pack(p.CVData(z=2.0, confidence=0.9)))
+    a = p.encode_frame(p.CV_TARGET, p.pack(p.CvTarget(z=2.0, flags=p.CV_TARGET_FLAG_FIRE)))
     b = p.encode_frame(p.RELOCALIZE, p.pack(p.Relocalize(1.0, 2.0)))
     stream = b'\x00\x13' + a + b'\xff' + b
     parser = p.DJISerial()
     frames = []
     for i in range(0, len(stream), 5):
         frames += parser.feed(stream[i:i + 5])
-    assert [f[0] for f in frames] == [p.CV_MSG, p.RELOCALIZE]
-    assert p.unpack(p.CVData, frames[0][1]).z == 2.0
+    assert [f[0] for f in frames] == [p.CV_TARGET, p.RELOCALIZE]
+    assert p.unpack(p.CvTarget, frames[0][1]).z == 2.0
 
 
 def test_parser_drops_bad_crc_and_resyncs():
-    good = p.encode_frame(p.ROS_MSG, p.pack(p.ROSData(1.0, 2.0)))
+    good = p.encode_frame(p.NAV_GOAL, p.pack(p.NavGoal(1.0, 2.0)))
     bad16 = bytearray(good)
     bad16[-1] ^= 0xFF
     bad8 = bytearray(good)
@@ -73,13 +74,15 @@ def test_parser_drops_bad_crc_and_resyncs():
 def test_mailbox_keeps_one_frame_and_checks_size():
     """getMsg: type and size must both match; the slot holds only the newest frame."""
     box = p.UARTCommunication()
-    box.message_receive_callback(p.CV_MSG, b'\x00' * 19)  # the bridge's CvTargetPayload
-    assert box.get_msg(p.CVData) is None
-    assert box.get_msg(p.CVData) is None
+    box.message_receive_callback(p.CV_TARGET, b'\x00' * 19)  # the bridge's CvTargetPayload
+    assert box.get_msg(p.CvTarget) is None
+    assert box.get_msg(p.CvTarget) is None
     assert box.has_new_data
-    assert box.size_mismatch[(p.CV_MSG, 19)] == 1
+    assert box.size_mismatch[(p.CV_TARGET, 19)] == 1
+    assert box.get_msg(p.CvTargetStamped) == p.CvTargetStamped()  # with stamp_ms it fits
+    box.message_receive_callback(p.CV_TARGET, b'\x00' * 19)
     box.message_receive_callback(p.RELOCALIZE, p.pack(p.Relocalize(4.0, 5.0)))
-    assert box.overwritten[(p.CV_MSG, 19)] == 1
-    assert box.get_msg(p.CVData) is None  # wrong type: left for its reader
-    assert box.get_msg(p.Relocalize) == p.Relocalize(4.0, 5.0, 0.0)
+    assert box.overwritten[(p.CV_TARGET, 19)] == 1
+    assert box.get_msg(p.CvTarget) is None  # wrong type: left for its reader
+    assert box.get_msg(p.Relocalize) == p.Relocalize(4.0, 5.0)
     assert not box.has_new_data
