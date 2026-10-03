@@ -30,11 +30,9 @@ def _sentry(firmware_fixes=True, **ref):
     return hw, Sentry(hw, RefSerial(**ref), drive=DRIVE_STOP, firmware_fixes=firmware_fixes)
 
 
-def _frame(x, y, z=0.0, delay_ms=0, flags=0, stamped=True):
+def _frame(x, y, z=0.0, delay_ms=0, flags=0):
     """Frame a CV_TARGET in the MCB's odometry frame (x right, y forward)."""
-    msg = (p.CvTargetStamped(0, x, y, z, delay_ms, flags) if stamped
-           else p.CvTarget(x, y, z, delay_ms, flags))
-    return p.UARTCommunication.frame(msg)
+    return p.UARTCommunication.frame(p.CvTarget(x, y, z, delay_ms, flags))
 
 
 def _run(hw, sentry, ms, frame=b'', period=25):
@@ -103,18 +101,17 @@ def test_no_fire_bit_no_shots():
 def test_delay_under_the_latency_wraps_without_the_fix(fixes, fires):
     """delay_ms - FIRING_LATENCY_TIME < 0 becomes a ~49-day uint32 timeout in the firmware."""
     hw, s = _sentry(firmware_fixes=fixes)
-    _run(hw, s, 500, _frame(0.0, 3.0, delay_ms=3, flags=FIRE, stamped=fixes))
+    _run(hw, s, 500, _frame(0.0, 3.0, delay_ms=3, flags=FIRE))
     assert bool(hw.shots) == fires
 
 
-def test_bridge_frames_are_refused_without_stamp_ms():
-    """position-based-cv's CvTarget is 15 bytes; the bridge sends 19 (with stamp_ms)."""
+def test_bridge_frames_fit_without_the_fixes():
+    """position-based-cv's CvTarget is 15 bytes, as the bridge sends it."""
     hw, s = _sentry(firmware_fixes=False)
     _run(hw, s, 500, _frame(0.0, 3.0, delay_ms=10, flags=FIRE))
-    assert s.drivers.uart.size_mismatch[(p.CV_TARGET, 19)] > 0
-    assert s.drivers.uart.consumed[p.CV_TARGET] == 0
-    assert hw.shots == []
-    assert hw.yaw_target == pytest.approx(-math.pi / 2)  # still on the origin
+    assert not s.drivers.uart.size_mismatch
+    assert s.drivers.uart.consumed[p.CV_TARGET] > 0
+    assert hw.shots
 
 
 @pytest.mark.parametrize('flags,sweeps',

@@ -155,7 +155,7 @@ def pytest_addoption(parser):
     group.addoption(
         '--no-firmware-fixes', action='store_true',
         help="E2: run the MCB emulator's firmware as MCBV3 position-based-cv has it, "
-             'without the stamp_ms and delay_ms fixes (sim.mcb_emulator.sentry)')
+             'without the delay_ms fix (sim.mcb_emulator.sentry)')
 
 
 @pytest.fixture(scope='session')

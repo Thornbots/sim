@@ -18,8 +18,8 @@ SentryControl (robots/sentry/SentryControl.hpp) and main.cpp's 1 kHz loop.
 The remote is taken as connected with both switches up: left runs
 AutoAimAndFireCommand, right SimpleAutoDriveCommand. Hardware is the
 boundary: everything the firmware reads from or writes to a motor or sensor.
-firmware_fixes applies the two fixes asked of MCBV3 position-based-cv:
-CvTarget keeps stamp_ms (19 bytes), and delay_ms - 5 clamps at 0.
+firmware_fixes applies the fix asked of MCBV3 position-based-cv:
+delay_ms - 5 clamps at 0.
 """
 import math
 
@@ -27,8 +27,7 @@ from sim.mcb_emulator.aim_and_fire import AutoAimAndFireCommand
 from sim.mcb_emulator.drive import (AutoDriveCommand, DrivetrainSubsystem, rotate,
                                     SimpleAutoDriveCommand)
 from sim.mcb_emulator.jetson import JetsonSubsystem
-from sim.mcb_emulator.protocol import (CvTarget, CvTargetStamped, DJISerial, MSG_NAMES,
-                                       UARTCommunication)
+from sim.mcb_emulator.protocol import CvTarget, DJISerial, MSG_NAMES, UARTCommunication
 from sim.mcb_emulator.subsystems import (FlywheelSubsystem, GimbalSubsystem, IndexerSubsystem,
                                          OdometrySubsystem, RefSerial)
 
@@ -163,8 +162,7 @@ class Sentry:
         self.indexer = IndexerSubsystem(hw, d.ref_serial, d.clock)
         self.drivetrain = DrivetrainSubsystem(hw)
         self.odo = OdometrySubsystem(hw)
-        self.jetson = JetsonSubsystem(d, self.gimbal, self.odo, self._send,
-                                      CvTargetStamped if firmware_fixes else CvTarget)
+        self.jetson = JetsonSubsystem(d, self.gimbal, self.odo, self._send, CvTarget)
         self.auto_drive = AutoDriveCommand(d, self.drivetrain, self.gimbal, self.jetson,
                                            self.odo)
         self.simple_auto_drive = SimpleAutoDriveCommand(d, self.drivetrain, self.gimbal,
