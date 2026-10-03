@@ -312,9 +312,9 @@ class PoseEmulator(Node):
         pose.vel_x = vel_x
         pose.vel_y = vel_y
         head_yaw, head_pitch = self._head_at(msg.header.stamp)
-        # RobotPose yaws turn about -z, like the URDF's joints.
-        pose.chassis_yaw = -chassis_yaw
-        pose.chassis_yaw_rate = -float(msg.twist.twist.angular.z)
+        # RobotPose yaws are CCW from above, like the MCB's and the URDF's joints.
+        pose.chassis_yaw = chassis_yaw
+        pose.chassis_yaw_rate = float(msg.twist.twist.angular.z)
         pose.head_pitch = float(head_pitch)
         pose.head_yaw = float(head_yaw) + pose.chassis_yaw
         self.pose_pub.publish(pose)

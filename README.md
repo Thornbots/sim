@@ -476,8 +476,9 @@ Visuals are one convex hull per part, capped at 120 faces, with parts under
 decimation cannot reduce. That keeps the model at 6.4 MB.
 
 The joint and link names match the old model's (`root`, `body`, `head`,
-`head_pitch`, `lidar`, `camera`, `headlink`, `headpitch`) and `headlink` keeps
-its -z axis, because the CV stack and `test_urdf_constants.py` assume them.
+`head_pitch`, `lidar`, `camera`, `headlink`, `headpitch`) and `headlink` turns about
++z, CCW like the MCB's `head_yaw` (it was -z until 2026-10-03, which mirrored
+the camera on the sentry), and `test_urdf_constants.py` pins it.
 The output frame puts the gun on +x (the export's +y) with the origin on the
 ground under the chassis centre.
 
@@ -1052,7 +1053,8 @@ line passes `MUZZLE_Y` to the left of the yaw axis. So azimuth is
 `bearing - asin(MUZZLE_Y / horizontal_range)`, with bearing and range taken
 from the yaw axis, and pitch follows from the elevation seen from the muzzle
 at that azimuth. The muzzle is on the pitch axis, so pitching never moves it.
-Head yaw is minus the azimuth, because `headlink` turns about -z.
+Head yaw is the azimuth, because `headlink` turns about +z, CCW like the MCB's
+`head_yaw`.
 
 Type-C probably has the same bug. It receives a world-frame position and runs its
 own gimbal solve, and only the firmware knows where the real barrel sits, so

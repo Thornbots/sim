@@ -13,7 +13,7 @@
     <visual><geometry><mesh filename="package://sim/urdf/sentry_v2/meshes/head.stl"/></geometry></visual>
     <collision><geometry><mesh filename="package://sim/urdf/sentry_v2/meshes/collision/head.stl"/></geometry></collision>
   </link>
-  <joint name="headlink" type="continuous"><parent link="body"/><child link="head"/><origin xyz="-0.000171242 9.52126e-05 0.248293"/><axis xyz="-0 -0 -1"/></joint>
+  <joint name="headlink" type="continuous"><parent link="body"/><child link="head"/><origin xyz="-0.000171242 9.52126e-05 0.248293"/><axis xyz="0 0 1"/></joint>
   <link name="head_pitch">
     <inertial><origin xyz="0.010768 0.0962738 0.0354966"/><mass value="1.50713"/><inertia ixx="0.0122617" ixy="-0.000502495" ixz="-0.00026901" iyy="0.00704508" iyz="-0.000299065" izz="0.0138715"/></inertial>
     <visual><geometry><mesh filename="package://sim/urdf/sentry_v2/meshes/head_pitch.stl"/></geometry></visual>

@@ -17,7 +17,7 @@ subtree_bodies:
   - {name: head_pitch, joint: cylindrical_1_4}  # horizontal shooter axis
 yaw_joint: revolute_1_2
 pitch_joint: cylindrical_1_5
-yaw_sign: -1                 # old model's headlink axis is -z; the CV stack assumes it
+yaw_sign: 1                  # headlink turns about +z, CCW like the MCB's head_yaw
 pitch_limits: [-0.6, 0.6]    # PLACEHOLDER: old model's value, not from the CAD
 
 # Omni wheels: axial centre and outward axis, measured from the wheel meshes.

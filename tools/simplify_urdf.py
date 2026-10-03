@@ -296,7 +296,7 @@ def write_urdf(cfg, links, origins, sensors, armor, yaw_ax, pitch_ax):
     out.append('  <link name="body"/>')
     joint('fastened_2', 'fixed', 'root', 'body', [0, 0, 0])
     link('head', hull.format('head'))
-    # Keep the old model's sign conventions (the CV stack depends on them): see README.md.
+    # headlink about +z (yaw_sign), CCW like the MCB's head_yaw: see README.md.
     joint('headlink', 'continuous', 'body', 'head', origins['head'],
           np.sign(yaw_ax[2]) * cfg['yaw_sign'] * np.array([0, 0, 1.0]))
     link('head_pitch', hull.format('head_pitch'))

@@ -167,7 +167,7 @@
   </joint>
   <joint name="headlink" type="continuous">
     <origin xyz="-2.54975e-18 5.65558e-17 0.252215" rpy="0 -0 3.14159"/>
-    <axis xyz="0 0 -1"/>
+    <axis xyz="0 0 1"/>
     <parent link="body"/>
     <child link="head"/>
   </joint>

@@ -174,6 +174,15 @@ def test_sim_model_matches_urdf():
                 assert sim[name][k] == pytest.approx(ref[name][k], abs=EXACT_TOL), name
 
 
+def test_yaw_joints_turn_counter_clockwise():
+    # RobotPose.head_yaw is CCW from above (confirmed on the robot,
+    # 2026-10-03) and goes straight into headlink, so the axis must be +z:
+    # about -z the camera sat at the mirrored bearing off gimbal zero.
+    joints = _joint_origins(URDF, ('chassis_yaw', 'headlink'))
+    assert joints['headlink'][2] == (0.0, 0.0, 1.0)
+    assert joints['chassis_yaw'][2] == (0.0, 0.0, 1.0)
+
+
 ARMOR_JOINTS = tuple(f'armor_{k}link' for k in range(4))
 
 

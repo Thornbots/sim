@@ -22,7 +22,7 @@ import math
 
 # sentry_v2's head chain in root, pinned to thornbots_pkg's URDF by
 # test/cv/test_urdf_constants.py. root -> headlink origin (no rotation,
-# yaw about -z, so azimuth = -theta_y) -> headpitch origin (pitch about +y)
+# yaw about +z, so azimuth = theta_y) -> headpitch origin (pitch about +y)
 # -> muzzlelink. The muzzle sits on the pitch axis, so pitching never moves
 # it; its only offset off the shot line is MUZZLE_Y, sideways.
 HEADLINK_ORIGIN_X = -0.000171242
@@ -68,4 +68,4 @@ def solve_head_angles(target_root):
     dx, dy, dz = target_root[0] - mx, target_root[1] - my, target_root[2] - mz
     r = dx * math.cos(phi) + dy * math.sin(phi)
     theta_p = math.atan2(-dz, r) if (r != 0.0 or dz != 0.0) else 0.0
-    return -phi, theta_p
+    return phi, theta_p

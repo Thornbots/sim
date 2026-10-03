@@ -50,12 +50,12 @@ def _muzzle_pose(theta_y, theta_p):
     Return the root-frame muzzle position and shot direction, from-scratch FK.
 
     fastened_2 is identity. headlink: origin (-0.000171242, 9.52126e-05,
-    0.248293), axis -z, so Rz(-theta_y). headpitch: origin (-0.00760542,
+    0.248293), axis +z, so Rz(theta_y). headpitch: origin (-0.00760542,
     -0.100122, 0.14235), axis +y, so Ry(theta_p). muzzlelink: (0, 0.1128, 0).
     The shot leaves along head_pitch +x.
     """
     p_head = np.array([-0.000171242, 9.52126e-05, 0.248293])
-    r_head = _rz(-theta_y)
+    r_head = _rz(theta_y)
     p_pitch = p_head + r_head @ np.array([-0.00760542, -0.100122, 0.14235])
     r_pitch = r_head @ _ry(theta_p)
     p_muzzle = p_pitch + r_pitch @ np.array([0.0, 0.1128, 0.0])
@@ -107,8 +107,8 @@ def test_target_level_with_root_is_aimed_downward():
 
 def test_lateral_muzzle_offset_shifts_the_azimuth():
     # Straight up root +x, the muzzle's MUZZLE_Y (0.013 m) sideways offset
-    # moves the azimuth phi = -theta_y off zero by about asin(MUZZLE_Y / range).
+    # moves the azimuth phi = theta_y off zero by about asin(MUZZLE_Y / range).
     theta_y, _ = solve_head_angles((5.0, 0.0, 0.0))
-    phi = -theta_y
+    phi = theta_y
     assert not math.isclose(phi, 0.0, abs_tol=1e-3)
     assert math.isclose(phi, -math.asin(MUZZLE_Y / 5.0), abs_tol=1e-4)
