@@ -17,9 +17,9 @@ The package is C++ and Python in one: `ament_cmake` builds `src/`'s
 Build first on a fresh container (see Build). Each test starts its own sim and
 `thornbots_pkg` stacks, so stop anything you already have running.
 
-The localization suite runs `amcl` with the EKF, the configuration the robot
-is targeting. The six scenarios before `moving_obstacles` took about three
-minutes; it adds one more 30s loop:
+The localization suite runs `amcl` with the EKF by default (`backend:=` picks
+another; `auto.launch.py`'s own default is now `mapping`). Its nine scenarios
+are listed under Notes:
 
 ```bash
 source /workspaces/isaac_ros-dev/install/setup.bash
@@ -1061,15 +1061,17 @@ own gimbal solve, and only the firmware knows where the real barrel sits, so
 raise it with the firmware team (see `ros2_dji_serial_bridge/README.md`).
 
 Every `control_rate_hz` (30) tick it commands `current + gain *
-wrapped_error`. A timer, not `/cv/target` arrival (up to 60Hz), drives it;
+wrapped_error`. A timer, not `/cv/target` arrival (40Hz), drives it;
 per-message updates let the setpoint race ahead of the joint in early tuning.
 `gain` is 1.0, the IK angle itself, leaving tracking to gz's joint PID. At the
 old 0.3 and 15Hz the head trailed a 0.5 m/s target by 9.4cm against a 5cm hit
 radius (2026-09-17), a lag no 1kHz gimbal loop would have. The old `sign_yaw`/`sign_pitch` params are gone, because the IK geometry
 sets the sign and the test checks it analytically.
 
-When `/cv/target` confidence reaches 0.0 it stops publishing and holds
-position, without re-homing, since a lost target is usually a brief FOV gap.
+With no `/cv/target` it stops publishing and holds position, without
+re-homing, since a lost target is usually a brief FOV gap. `CVTarget` has no
+confidence; every message is an aim point, patrol points included, and the
+head follows each.
 
 ### MCB emulator
 
