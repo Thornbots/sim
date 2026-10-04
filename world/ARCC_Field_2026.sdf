@@ -36,6 +36,9 @@
       </spot>
     </light>
     <model name="ARCC_Field_2026">
+      <!-- Turned so the world is the field frame: REP-105, (0, 0) at the centre,
+           x along the field's 12 m toward blue's base (the mesh's +y). -->
+      <pose>0 0 0 0 0 -1.5707963267948966</pose>
       <static>true</static>
       <link name="composite_part_1">
         <collision name="composite_part_1_collision">
@@ -117,7 +120,7 @@
     </state>
     <gui fullscreen="0">
       <camera name="user_camera">
-        <pose>3.17226 -5.10401 6.58845 0 0.739643 2.19219</pose>
+        <pose>-5.10401 -3.17226 6.58845 0 0.739643 0.62139</pose>
         <view_controller>orbit</view_controller>
         <projection_type>perspective</projection_type>
       </camera>

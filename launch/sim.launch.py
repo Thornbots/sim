@@ -48,6 +48,7 @@ from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
+from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
 
 
@@ -96,7 +97,9 @@ def generate_launch_description():
     x_arg = DeclareLaunchArgument('x', default_value='0.0')
     y_arg = DeclareLaunchArgument('y', default_value='0.0')
     z_arg = DeclareLaunchArgument('z', default_value='0.03')
-    yaw_arg = DeclareLaunchArgument('yaw', default_value='0.0')
+    yaw_arg = DeclareLaunchArgument(
+        'yaw', default_value=str(SPAWN_YAW),
+        description='Spawn heading, rad CCW; the default faces across the field (-y)')
     # Windows default off where no display opens; watch in Foxglove there.
     windows = 'true' if display_error() is None else 'false'
     gui_arg = DeclareLaunchArgument(
@@ -599,6 +602,8 @@ def generate_launch_description():
             'spin_hz': ParameterValue(
                 LaunchConfiguration('target_spin_hz'), value_type=float
             ),
+            # The path stays in front of the robot whichever way it spawned.
+            'origin_yaw': ParameterValue(LaunchConfiguration('yaw'), value_type=float),
         }],
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )

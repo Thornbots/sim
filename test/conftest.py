@@ -76,8 +76,8 @@ def pytest_addoption(parser):
              'default 20); 0 steps to speed within one tick')
     group.addoption(
         '--spawn-yaw-deg', type=float, default=0.0,
-        help='chassis heading at every drift-suite reset, deg CCW; the real '
-             'robot drifts 1-5 deg')
+        help='chassis heading at every drift-suite reset, deg CCW off the spawn '
+             'heading; the real robot drifts 1-5 deg')
 
     group.addoption(
         '--ekf-slip-ratio', type=float, default=0.05,

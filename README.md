@@ -155,7 +155,7 @@ localization launch runs pytest, and pytest starts the sim once
 robot back to spawn, removes anything a scenario spawned, and resets
 `pose_emulator`'s noise state and parameters. `restart_sim:=true` brings the
 sim up fresh for every scenario instead, the old behaviour and the control when
-a verdict looks off. `spawn_yaw_deg:=5` turns the chassis that far at every
+a verdict looks off. `spawn_yaw_deg:=5` turns the chassis that far off the spawn heading at every
 reset; the real robot drifts 1-5 deg. Both
 shut down when the tests finish, and Ctrl-C stops everything, stacks included.
 
@@ -433,6 +433,17 @@ doesn't have; only sim and its tests should read them.
 These notes explain why the code looks the way it does, so the in-code
 comments can stay short. Each heading names a file.
 
+### The world frame
+
+The gz world is the field frame (REP-105, (0, 0) at the field centre, x
+along the 12 m toward blue's base), as are `odom`, `map` and the saved maps.
+The field mesh is turned -90 deg in `ARCC_Field_2026.sdf` to get there
+(2026-10-04); before, the world's x ran across the field. Everything placed
+in world coordinates turned with it, so each suite drives the same physical
+paths: the robot spawns facing -y (`auto_explore.SPAWN_YAW`), the drift
+loop, actors and map-sweep grid are turned, and `target_driver`'s
+`origin_yaw` keeps the target path in front of the robot.
+
 ### SAPIEN: tried, not adopted
 
 A SAPIEN engine (`sim_engine:=sapien`) was built as a faster stand-in for gz
@@ -645,7 +656,8 @@ The suite runs them in this order.
 
 1. `baseline` (noise off) asserts the correction TF settles and stays stable,
    with no ERROR in any log. A steady ~0.1-0.15m offset is normal, because the
-   saved ARCC26 map origin (`[-4.3, -6.23, 0]`) doesn't match sim's spawn. A
+   saved maps sit that far off the gz world (measured before both were turned
+   into the field frame, the same turn for each). A
    growing offset would be a real problem.
 2. `noise_correction` drives the 3m square under drift and jitter (no slip or
    jerks) for a fixed 30s (60s before 2026-07-27). The second half's samples
@@ -660,7 +672,7 @@ The suite runs them in this order.
    threshold with `drift_correction`, so comparing the two isolates the
    obstacle. A pass here means nothing if `drift_correction` failed.
 5. `moving_obstacles` drives the same square while `actor_driver` walks three
-   unmapped boxes across its south, west and north edges at 1.0, 2.0 and 0.5
+   unmapped boxes across its -x, +y and +x edges at 1.0, 2.0 and 0.5
    m/s. It scores like `drift_correction`, on `MAX_DELTA_THRESHOLD`, and logs
    each sample's `map->root` error against `/sim/raw_odom`. It also fails if
    `actor_driver` dies mid-loop. Under `slam`, ROADMAP.md T3 also wants the
@@ -722,9 +734,9 @@ spawn, so loop centre and box coincide by construction.
 
 `OBSTACLE_LOOP_LEGS` is a 3m square there, corners at (+-1.5, +-1.5), widened
 from 2m on 2026-07-26 (`4f182e7`). Legs are `(vx, vy, duration)`, 0.75s at
-4.0 m/s. Wall clearances are known on y only: north clears `upper_mid`
-(y=2.49) by 0.99m, south clears `lower_mid` (y=-2.11) by 0.61m and
-`bottom_wall`'s ramp edge (y=-3.35) by 1.85m. `lower_mid` is the tightest, so
+4.0 m/s. Wall clearances are known on x only: +x clears `upper_mid`
+(x=2.49) by 0.99m, -x clears `lower_mid` (x=-2.11) by 0.61m and
+`bottom_wall`'s ramp edge (x=-3.35) by 1.85m. `lower_mid` is the tightest, so
 start from it if you widen the loop.
 
 `OBSTACLE_LOOP_DWELL_SECONDS = 1.0` lets scan and TF settle after each
@@ -891,7 +903,7 @@ nearest clear spot on its path, forward or back.
 The first version only swept the velocity 0.5 s ahead and hopped blocked
 boxes forward, so on 2026-09-24 they landed on the robot's next leg and it
 drove into them. The default paths now run from the loop's middle, 1.1 m
-from every edge and always clear, across the south, west and north edges.
+from every edge and always clear, across the -x, +y and +x edges.
 `closest box` in the log is the nearest a box centre got to the robot's.
 
 Moves go through `sim.launch.py`'s `set_pose_bridge`, gz's `set_pose` as a

@@ -49,6 +49,7 @@ from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import LoadComposableNodes, Node
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
+from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
 
 SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/e2e'
@@ -153,6 +154,7 @@ def generate_launch_description():
             'use_sim_time': True,
             'target_speed': ParameterValue(LaunchConfiguration('target_speed'), value_type=float),
             'spin_hz': ParameterValue(LaunchConfiguration('target_spin_hz'), value_type=float),
+            'origin_yaw': SPAWN_YAW,  # sim.launch.py's spawn heading: the path stays in front
         }])
     # The path the opponent's OpponentMover system rides, into gz.
     path_bridge = Node(

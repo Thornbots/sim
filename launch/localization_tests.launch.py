@@ -97,10 +97,9 @@ def _stack(context):
                   'enable_target_tracker': 'false', 'enable_target_selector': 'false',
                   'enable_cv_target_bridge': 'false'}
     if backend == 'slam':
-        # slam_toolbox's localization mode needs a .posegraph, which the default
-        # map (clean_map) lacks; ARCC26 is the one map that has one.
-        robot_args['map_file'] = os.path.join(
-            get_package_share_directory('sentry_localization'), 'map', 'ARCC26')
+        # slam_toolbox's localization mode needs a .posegraph, and none ships.
+        raise RuntimeError('backend:=slam needs a saved pose graph; none ships '
+                           '(sentry_localization README.md map_file)')
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
@@ -191,7 +190,7 @@ def generate_launch_description():
         DeclareLaunchArgument('drive_accel', default_value='',
                               description='m/s^2 ramp on every drift leg; empty = 20, 0 = step'),
         DeclareLaunchArgument('spawn_yaw_deg', default_value='',
-                              description='chassis heading at each drift reset, deg; empty = 0'),
+                              description='drift reset heading off spawn, deg; empty = 0'),
         DeclareLaunchArgument('ekf_slip_ratio', default_value='',
                               description='ekf suite; empty = the pytest default'),
         DeclareLaunchArgument('ekf_drift_stddev', default_value='',

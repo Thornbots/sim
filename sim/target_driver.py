@@ -51,6 +51,9 @@ class TargetDriver(Node):
         # Path direction: 0 runs along +y, across the view of a robot at the
         # origin facing +x; 90 runs along +x, straight down its camera ray.
         self.declare_parameter('path_angle_deg', 0.0)
+        # The whole path turned by this about the origin (rad): the same path
+        # for a robot at the origin facing origin_yaw instead of +x.
+        self.declare_parameter('origin_yaw', 0.0)
         self.declare_parameter('target_z', 0.3)
         self.declare_parameter('frame_id', 'odom')
         # Acceleration limits, so the target brakes into each end of its path
@@ -123,16 +126,22 @@ class TargetDriver(Node):
     def _publish(self, vs, omega):
         angle = math.radians(self.get_parameter('path_angle_deg').value)
         dx, dy = math.sin(angle), math.cos(angle)
+        origin_yaw = self.get_parameter('origin_yaw').value
+        c, s = math.cos(origin_yaw), math.sin(origin_yaw)
+        x = self.get_parameter('center_x').value + self.s * dx
+        y = self.get_parameter('center_y').value + self.s * dy
+        dx, dy = c * dx - s * dy, s * dx + c * dy
+        yaw = self.yaw + origin_yaw
         msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.frame_id
         msg.child_frame_id = 'target'
-        msg.pose.pose.position.x = float(self.get_parameter('center_x').value + self.s * dx)
-        msg.pose.pose.position.y = float(self.get_parameter('center_y').value + self.s * dy)
+        msg.pose.pose.position.x = float(c * x - s * y)
+        msg.pose.pose.position.y = float(s * x + c * y)
         msg.pose.pose.position.z = float(self.target_z)
         # Yaw-only orientation (chassis spin, flat ground) as a quaternion.
-        msg.pose.pose.orientation.z = math.sin(self.yaw / 2.0)
-        msg.pose.pose.orientation.w = math.cos(self.yaw / 2.0)
+        msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
+        msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
         # World-frame velocity, despite child_frame_id; consumers rely on it.
         msg.twist.twist.linear.x = float(vs * dx)
         msg.twist.twist.linear.y = float(vs * dy)

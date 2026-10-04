@@ -35,13 +35,17 @@ from rclpy.node import Node
 WORLD_NAME = 'ARCC_Field_2026'
 ENTITY_NAME = 'sentry'  # robot_name arg default in sim/launch/sim.launch.py
 Z = 0.03                # fixed spawn height, carried through every teleport
+# Spawn heading, rad CCW: the world turned to the field frame (x along the
+# field's 12 m), the robot kept facing the way it did, across the field.
+SPAWN_YAW = -math.pi / 2
 
-# Grid bounds, in world-frame meters. X tightened 0.5m on each side from
-# the prior [-4, 4] to pull waypoints back off the walls in that axis.
-GRID_X_MIN = -3.5
-GRID_X_MAX = 3.5
-GRID_Y_MIN = -5.0
-GRID_Y_MAX = 5.0
+# Grid bounds, in world-frame meters (x along the field's 12 m). Y tightened
+# 0.5m on each side from the prior [-4, 4] to pull waypoints back off the
+# walls in that axis.
+GRID_X_MIN = -5.0
+GRID_X_MAX = 5.0
+GRID_Y_MIN = -3.5
+GRID_Y_MAX = 3.5
 GRID_SPACING = 0.5      # m between adjacent grid points
 
 DWELL_SECONDS = 1.0      # s between teleports, so SLAM gets a settled scan

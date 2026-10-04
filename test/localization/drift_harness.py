@@ -53,7 +53,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter, parameter_value_to_python
 from sensor_msgs.msg import JointState, LaserScan
 from sim import suite_timing
-from sim.auto_explore import model_names, remove_model, spawn_model, teleport
+from sim.auto_explore import model_names, remove_model, spawn_model, SPAWN_YAW, teleport
 from sim.parent_death import die_with_parent
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, ExtrapolationException, LookupException, TransformListener
@@ -533,10 +533,10 @@ TRUTH_SCORED = ('none', 'mapping')
 # wall. Legs are (vx, vy, duration). See README.md for the abandoned
 # full-field-tour version and why it caused a wall collision.
 PATROL_LEGS = [
-    (4.0, 0.0, 0.25),    # east   0,0   -> 1,0
-    (0.0, 4.0, 0.25),    # north  1,0   -> 1,1
-    (-4.0, 0.0, 0.25),   # west   1,1   -> 0,1
-    (0.0, -4.0, 0.25),   # south  0,1   -> 0,0
+    (0.0, -4.0, 0.25),   # -y   0,0   -> 0,-1
+    (4.0, 0.0, 0.25),    # +x   0,-1  -> 1,-1
+    (0.0, 4.0, 0.25),    # +y   1,-1  -> 1,0
+    (-4.0, 0.0, 0.25),   # -x   1,0   -> 0,0
 ]
 
 # scenario_drift_correction_obstacle drives its OWN loop
@@ -576,7 +576,7 @@ def _make_loop_legs(speed):
     """
     Build the 3m x 3m square loop legs centered on OBSTACLE_XY.
 
-    Corners at (-1.5,-1.5), (1.5,-1.5), (1.5,1.5), (-1.5,1.5) -- 1.5m
+    Corners at (-1.5,1.5), (-1.5,-1.5), (1.5,-1.5), (1.5,1.5) -- 1.5m
     out from OBSTACLE_XY, so 1.35m clear of each box face (half-width
     0.15m). Verified clear of every documented wall (see README.md for
     the corner-by-corner clearance derivation). Legs are (vx, vy,
@@ -584,10 +584,10 @@ def _make_loop_legs(speed):
     """
     d = 3.0 / speed
     return [
-        (speed, 0.0, d),    # east   (-1.5,-1.5) -> (1.5,-1.5)
-        (0.0, speed, d),    # north  (1.5,-1.5)  -> (1.5,1.5)
-        (-speed, 0.0, d),   # west   (1.5,1.5)   -> (-1.5,1.5)
-        (0.0, -speed, d),   # south  (-1.5,1.5)  -> (-1.5,-1.5)
+        (0.0, -speed, d),   # -y   (-1.5,1.5)  -> (-1.5,-1.5)
+        (speed, 0.0, d),    # +x   (-1.5,-1.5) -> (1.5,-1.5)
+        (0.0, speed, d),    # +y   (1.5,-1.5)  -> (1.5,1.5)
+        (-speed, 0.0, d),   # -x   (1.5,1.5)   -> (-1.5,1.5)
     ]
 
 
@@ -598,12 +598,12 @@ def _reposition_to_loop_start(helper):
     """
     Move from spawn out to OBSTACLE_LOOP_LEGS's own start corner.
 
-    Spawn is (0,0), inside the loop; the start corner is (-1.5,-1.5).
+    Spawn is (0,0), inside the loop; the start corner is (-1.5,1.5).
     Driven at DRIVE_SPEED before the loop itself is traced.
     """
     d = 1.5 / DRIVE_SPEED
-    helper.drive(-DRIVE_SPEED, 0.0, d)   # -1.5m west, to x=-1.5
-    helper.drive(0.0, -DRIVE_SPEED, d)   # -1.5m south, to y=-1.5
+    helper.drive(0.0, DRIVE_SPEED, d)    # +1.5m, to y=1.5
+    helper.drive(-DRIVE_SPEED, 0.0, d)   # -1.5m, to x=-1.5
 
 
 # Stationary dwell after each cornering loop leg, giving lidar
@@ -671,7 +671,7 @@ def start_actor_driver(helper, timeout=60.0):
         '-p', f'name_prefix:={ACTOR_PREFIX}',
         # The loop's corners in drive order, so boxes clear the next leg
         # even while the robot dwells at a corner.
-        '-p', 'route:=[-1.5, -1.5, 1.5, -1.5, 1.5, 1.5, -1.5, 1.5]',
+        '-p', 'route:=[-1.5, 1.5, -1.5, -1.5, 1.5, -1.5, 1.5, 1.5]',
         '-p', f'route_speed:={float(DRIVE_SPEED)}',
     ], os.path.join(LOG_DIR, f'actor_driver_{_actor_runs}.log'))
     _actor_driver.start()
@@ -732,9 +732,9 @@ RESTART_SIM = False
 BRINGUP_TIMEOUT_S = 30.0
 # sim.launch.py's spawn x/y, which is also amcl.yaml's initial_pose.
 SPAWN_XY = (0.0, 0.0)
-# Chassis heading at each reset, rad CCW; --spawn-yaw-deg. The real robot
-# drifts 1-5 deg (sentry_localization/AGENTS.md).
-SPAWN_YAW = 0.0
+# Chassis heading at each reset, rad CCW: sim.launch.py's, plus --spawn-yaw-deg.
+# The real robot drifts 1-5 deg (sentry_localization/AGENTS.md).
+SPAWN_YAW_RAD = SPAWN_YAW
 # pose_emulator params a scenario may set; the rest keep their launch values.
 EMULATOR_PARAMS = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stddev',
                    'odom_jerk_stddev', 'odom_jerk_bias_enabled', 'odom_jerk_bias_x',
@@ -853,7 +853,7 @@ def _reset_sim(helper, emulator_params):
     for name in _spawned_models:
         if not remove_model(name):
             raise RuntimeError(f'could not remove {name!r} from the world')
-    if not teleport(*SPAWN_XY, yaw=SPAWN_YAW):
+    if not teleport(*SPAWN_XY, yaw=SPAWN_YAW_RAD):
         raise RuntimeError('teleport back to spawn failed')
     helper.spin_for(0.5)
     # gz removes on its next step. A box left in the loop is an unmapped
@@ -1844,8 +1844,9 @@ def set_drive_accel(accel):
 
 
 def set_spawn_yaw_deg(deg):
-    global SPAWN_YAW
-    SPAWN_YAW = math.radians(deg)
+    """Turn every reset's heading deg off sim.launch.py's spawn heading."""
+    global SPAWN_YAW_RAD
+    SPAWN_YAW_RAD = SPAWN_YAW + math.radians(deg)
 
 
 def set_real_time_factor(rtf):

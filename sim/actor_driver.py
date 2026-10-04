@@ -38,11 +38,11 @@ from sim.auto_explore import spawn_model, WORLD_NAME
 # Default layout: three segments crossing the drift suite's 3m loop
 # (corners +-1.5), clear of the ARCC26 map's walls by >= 0.4m. Each inner
 # end is 1.1m from the whole loop, so a box always has a clear spot.
-DEFAULT_PATHS = [0.4, -0.2, 0.4, -2.1,    # south edge
-                 -0.2, -0.4, -2.3, -0.4,  # west edge
-                 -0.4, 0.2, -0.4, 2.1]    # north edge
+DEFAULT_PATHS = [-0.2, -0.4, -2.1, -0.4,  # -x edge
+                 -0.4, 0.2, -0.4, 2.3,    # +y edge
+                 0.2, 0.4, 2.1, 0.4]      # +x edge
 DEFAULT_SPEEDS = [1.0, 2.0, 0.5]
-DEFAULT_ROUTE = [-1.5, -1.5, 1.5, -1.5, 1.5, 1.5, -1.5, 1.5]
+DEFAULT_ROUTE = [-1.5, 1.5, -1.5, -1.5, 1.5, -1.5, 1.5, 1.5]
 ON_ROUTE_M = 0.5  # further than this from the route, predict by velocity only
 STEP = 0.05  # m, search step for a clear spot
 
