@@ -50,6 +50,7 @@ class WallClockMcb:
         self.hw = IdealHardware()
         self.sentry = Sentry(self.hw, RefSerial(robot_id=107), drive=drive,
                              firmware_fixes=firmware_fixes)
+        self.sentry.odo.start = (0.0, 0.0, 0.0)  # as mcb_emulator_node: where it booted
         self.pty = PtyLink(link)
         self.lock = threading.Lock()
         self._stop = threading.Event()
@@ -158,7 +159,7 @@ def test_pose_and_ref_sys_reach_ros(stack):
     assert 150 <= len(poses) <= 200, f'{len(poses)} poses in 2 s; the firmware sends 90 Hz'
     assert 16 <= len(refs) <= 22, f'{len(refs)} ref_sys in 2 s; the firmware sends 10 Hz'
     p = poses[-1]
-    # Odometry's x right, y forward on the wire as REP-105 (firmware_fixes).
+    # The pods' x right, y forward on the wire in the field frame, started at the origin.
     assert (p.x, p.y) == (pytest.approx(-0.75), pytest.approx(-1.25))
     assert p.head_yaw == pytest.approx(0.3, abs=0.01)
     assert p.odom_status == RobotPose.ODOM_PODS
@@ -196,13 +197,13 @@ def test_cv_target_aims_and_fires_and_relocalize_moves_odometry(stack):
         odo = (mcb.sentry.odo.get_x(), mcb.sentry.odo.get_y())
     assert cv_used >= 50, f'only {cv_used} CV_TARGET frames read'
     assert reloc_used >= 3
-    assert odo == (pytest.approx(-2.0), pytest.approx(1.0))  # (1, 2) in odometry's axes
+    assert odo == (pytest.approx(1.0), pytest.approx(2.0))  # the field frame, as sent
     assert len(shots) >= 15, f'{len(shots)} shots in 2 s of 30 Hz fire frames'
 
 
 @pytest.mark.parametrize('stack', [('stop', False)], indirect=True)
 def test_without_firmware_fixes_cv_target_fits(stack):
-    """The bridge's 15-byte CV_TARGET is position-based-cv's CvTarget as it is."""
+    """The bridge's 15-byte CV_TARGET is rep-105's CvTarget as it is."""
     mcb, (node, executor) = stack
     poses = _subscribe(node, RobotPose, '/dji_serial_bridge/pose')
     _wait_for_pose(executor, poses)

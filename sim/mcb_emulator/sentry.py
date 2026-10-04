@@ -18,9 +18,9 @@ SentryControl (robots/sentry/SentryControl.hpp) and main.cpp's 1 kHz loop.
 The remote is taken as connected with both switches up: left runs
 AutoAimAndFireCommand, right SimpleAutoDriveCommand. Hardware is the
 boundary: everything the firmware reads from or writes to a motor or sensor.
-firmware_fixes applies the fixes asked of MCBV3 position-based-cv:
-delay_ms - 5 clamps at 0, the wire is REP-105, pitch solves for z above
-the pitch pivot.
+firmware_fixes applies the fix still asked of MCBV3 rep-105: pitch solves
+for z above the pitch pivot. Odometry starts at the team's start
+(OdometrySubsystem); set odo.start to put it where the robot really is.
 """
 import math
 
@@ -162,9 +162,8 @@ class Sentry:
         self.flywheel = FlywheelSubsystem()
         self.indexer = IndexerSubsystem(hw, d.ref_serial, d.clock)
         self.drivetrain = DrivetrainSubsystem(hw)
-        self.odo = OdometrySubsystem(hw)
-        self.jetson = JetsonSubsystem(d, self.gimbal, self.odo, self._send, CvTarget,
-                                      rep105=firmware_fixes)
+        self.odo = OdometrySubsystem(hw, d.ref_serial)
+        self.jetson = JetsonSubsystem(d, self.gimbal, self.odo, self._send, CvTarget)
         self.auto_drive = AutoDriveCommand(d, self.drivetrain, self.gimbal, self.jetson,
                                            self.odo)
         self.simple_auto_drive = SimpleAutoDriveCommand(d, self.drivetrain, self.gimbal,
@@ -172,7 +171,6 @@ class Sentry:
         self.auto_fire = AutoAimAndFireCommand(d, self.gimbal, self.indexer, self.flywheel,
                                                self.jetson, self.odo,
                                                lambda: self.auto_drive.is_scheduled,
-                                               fix_delay=firmware_fixes,
                                                fix_pivot_z=firmware_fixes)
         self._started = False
 
@@ -187,6 +185,7 @@ class Sentry:
 
     def _start(self):
         """Schedule what the switch triggers' onTrue would, SentryControl.hpp:58-63."""
+        self.odo.refresh()  # the switch flips after boot: odometry knows its team by then
         if self.auto_fire_enabled:
             self.auto_fire.initialize()
         if self.drive_mode == DRIVE_SIMPLE:
@@ -216,6 +215,7 @@ class Sentry:
             self.auto_drive.execute()
         else:
             self.drivetrain.stop_motors()  # DrivetrainStopCommand
+        self.odo.refresh()
         self.jetson.refresh()
         self.gimbal.refresh()
         self.indexer.refresh()

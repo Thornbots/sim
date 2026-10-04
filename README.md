@@ -371,8 +371,8 @@ on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
 `test/e2e/test_e2.py` scores the shots the firmware fires, each falling
 under gravity since the firmware pitches up for it. It is marked xfail,
 not strict: it hits when E1's tracking is clean and misses when it isn't
-(ROADMAP T17). `firmware_fixes:=false` runs MCBV3 `position-based-cv` as
-it was at `f835be1`, whose gun turns away (Notes "MCB emulator").
+(ROADMAP T17). `firmware_fixes:=false` runs MCBV3 `rep-105` as it is at
+`cf42375`, whose pitch aims 0.39 m high (Notes "MCB emulator").
 
 ```bash
 ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
@@ -1076,7 +1076,7 @@ head follows each.
 ### MCB emulator
 
 `sim/mcb_emulator/` is the sentry's MCB firmware, `Thornbots/MCBV3`
-branch `position-based-cv` at `f835be1`, ported to Python module by module:
+branch `rep-105` at `cf42375`, ported to Python module by module:
 `protocol.py` (UART structs, taproot's DJISerial and CRCs, the one-slot
 mailbox), `ballistics.py` (`Reticle::solveForPitch`), `jetson.py`
 (JetsonSubsystem), `aim_and_fire.py` (AutoAimAndFireCommand), `drive.py`
@@ -1086,15 +1086,13 @@ indexer setpoints) and `sentry.py` (SentryControl and the 1 kHz loop).
 Every function cites its firmware file and line. Units and names follow the
 firmware.
 
-`firmware_fixes` (default true) applies the fixes asked of `f835be1` on
-2026-10-03: the wire in REP-105 at `JetsonSubsystem`, `delay_ms -
-FIRING_LATENCY_TIME` clamped at 0, and pitch solved for `z` above the
-pitch pivot. The sentry runs `0885a69`, which this port doesn't match yet:
-its aim yaw lost the `-PI/2`, `FIRING_LATENCY_TIME` is 80 ms, not 5, and the
-unclamped wrap fires at once (`MilliTimeout` sums in `uint32`), where the
-port never fires it. The asks were redone for it on 2026-10-04
-(`../ros2_dji_serial_bridge/README.md` "Asked of the firmware"). `CvTarget`
-is the branch's 15 bytes, as the bridge sends it since 2026-10-03.
+Every x/y and yaw it keeps or sends is the field frame (REP-105, (0, 0) at
+the field centre, x toward blue's base). The firmware starts its odometry
+at its team's start, a constant (red (-4.625, 0) facing +x); the node sets
+`odo.start` to where gz spawned the robot instead, so the MCB and gz agree.
+`firmware_fixes` (default true) applies the one fix still asked of it:
+pitch solved for `z` above the pitch pivot. `CvTarget` is 15 bytes, as the
+bridge sends it.
 
 It lives in `sim` because it is sim hardware: it reads gz truth and drives
 the gz head and chassis, as `pose_emulator` and `cv_head_aim` (which it
@@ -1104,7 +1102,7 @@ robot code, so neither may hold a fake MCB.
 
 Below the firmware's setpoints sits a `Hardware` object. `mcb_emulator_node`
 gives it gz: the IMU is the turret's gz world yaw, zeroed at boot; the Pico
-odometry is x right, y forward of the boot heading; gimbal setpoints go to
+odometry is x right, y forward of the boot pose; gimbal setpoints go to
 the head's joint position controllers and chassis velocity to `/cmd_vel`.
 `IdealHardware` stands in for gz in the tests. Not ported: the yaw and
 pitch motor controllers (so the yaw velocity feed-forward is dropped), the
@@ -1125,21 +1123,21 @@ MCBV3 file:line, in `../ros2_dji_serial_bridge/README.md` "Where the
 firmware stands". Behaviour that isn't a wire gap but changes what E2 can
 score (paths under `MCB-project/src/`):
 
-- It aims at the latest `CvTarget` for 200 ms after it arrives: yaw
-  `atan2(dy, dx) - pi/2` from its own odometry (x right, y forward), pitch
-  from `Reticle::solveForPitch`, no lead (`AutoAimAndFireCommand.cpp:41-62`).
-  Before the first frame both timeouts are stopped, a stopped timeout never
-  expires, so it aims at `CvTarget{}`, the odometry origin, and never patrols.
+- It aims at the latest `CvTarget` for 200 ms after it arrives: the field
+  bearing from its odometry less the start's yaw (the IMU's zero), pitch
+  from `Reticle::solveForPitch`, no lead (`AutoAimAndFireCommand.cpp:66-90`).
+  Before the first frame it doesn't aim; `CvTarget{}`'s default flags patrol.
 - `solveForPitch` compares landing heights from the pitch pivot with `z` as
   given (`Reticle.hpp:363-381`): a `z` off the ground aims 0.39 m high.
-- One `tryShootOnce` per fire frame, `delay_ms - 5` after it arrives. The
+- One `tryShootOnce` per fire frame, `delay_ms - 80` after it arrives; under
+  80 the `uint32` timeout lands in the past and it fires at once. The
   indexer's 50 ms minimum caps that at 20 Hz, so 40 Hz frames fire every
   other one.
 - `RELOCALIZE` moves odometry at once, anywhere, any HP
-  (`JetsonSubsystem.cpp:71-76`). The RFID relocalize in
+  (`JetsonSubsystem.cpp:76-81`). The RFID relocalize in
   `SimpleAutoDriveCommand` is gone; stuck 15 s, it spins in place.
-- With no frames it patrols only if the last frame set `TYPE_C_BASED_PATROL`;
-  `TURN_TO_HIT` is read and never used.
+- With no frames it patrols at -0.2 rad/s only if the last frame set
+  `TYPE_C_BASED_PATROL`, and turns to a hit only if it set `TURN_TO_HIT`.
 - The sentry drives `SimpleAutoDriveCommand`'s ARCC route, spinning -8 rad/s
   moving and -12 at either end, even before the game in a 3v3. The 9 rad/s
   `AutoDriveCommand` is never scheduled. All stage gating applies only when

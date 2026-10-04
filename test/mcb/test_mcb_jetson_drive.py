@@ -35,7 +35,7 @@ def _frames(data):
 def test_nine_poses_then_one_ref_every_ten_ms():
     hw = IdealHardware()
     s = Sentry(hw, RefSerial(robot_id=107, current_hp=350, restoration_zone=True),
-               auto_fire=False, drive=DRIVE_STOP, firmware_fixes=False)
+               auto_fire=False, drive=DRIVE_STOP)
     hw.x, hw.y = 1.5, -0.5
     _run(hw, s, 1000)
     frames = _frames(s.drain_tx())
@@ -44,7 +44,10 @@ def test_nine_poses_then_one_ref_every_ten_ms():
     assert types.count(p.REF_SYS) == 9  # 10 Hz; the 200 ms timer is unused
     assert types[:10] == [p.POSE] * 9 + [p.REF_SYS]
     pose = p.unpack(p.Pose, frames[0][1])
-    assert (pose.x, pose.y, pose.odom_status) == (1.5, -0.5, p.ODOM_PODS)
+    # Blue boots at (4.625, 0) facing -x: the pods' 1.5 right, 0.5 back is (5.125, 1.5).
+    assert (pose.x, pose.y) == (pytest.approx(5.125), pytest.approx(1.5))
+    assert pose.head_yaw == pytest.approx(math.pi)  # the IMU's zero faces -x
+    assert pose.odom_status == p.ODOM_PODS
     ref = p.unpack(p.RefSys, frames[9][1])
     assert (ref.robotID, ref.robotHp) == (7, 350)
     assert ref.booleans == 0b10100011  # blue, reload zone, chassis and gimbal power
@@ -53,7 +56,7 @@ def test_nine_poses_then_one_ref_every_ten_ms():
 
 def test_pose_head_yaw_is_zero_to_two_pi():
     hw = IdealHardware()
-    s = Sentry(hw, auto_fire=False, drive=DRIVE_STOP, firmware_fixes=False)
+    s = Sentry(hw, RefSerial(robot_id=7), auto_fire=False, drive=DRIVE_STOP)
     hw.yaw = -0.5
     _run(hw, s, 20)
     pose = p.unpack(p.Pose, _frames(s.drain_tx())[-1][1])
@@ -63,7 +66,7 @@ def test_pose_head_yaw_is_zero_to_two_pi():
 def test_relocalize_moves_odometry_at_once():
     """JetsonSubsystem.cpp:71-76: any zone, any HP, every frame."""
     hw = IdealHardware()
-    s = Sentry(hw, auto_fire=False, drive=DRIVE_STOP, firmware_fixes=False)
+    s = Sentry(hw, auto_fire=False, drive=DRIVE_STOP)
     hw.x, hw.y = 0.5, 0.25
     _run(hw, s, 20, p.UARTCommunication.frame(p.Relocalize(3.0, 4.0)))
     assert (s.odo.get_x(), s.odo.get_y()) == (pytest.approx(3.0), pytest.approx(4.0))
@@ -83,34 +86,34 @@ def _drive_route(hw, s, ms):
 
 def test_simple_auto_drive_runs_arcc_rough_path_spinning():
     hw = IdealHardware()
-    s = Sentry(hw, RefSerial(robot_id=7), auto_fire=False, drive=DRIVE_SIMPLE,
-               firmware_fixes=False)
+    s = Sentry(hw, RefSerial(robot_id=7), auto_fire=False, drive=DRIVE_SIMPLE)
     _drive_route(hw, s, 15000)
     # Red: right 2.236, past the wall, then left-forward to the centre zone.
     assert s.simple_auto_drive.target_index == 3
-    assert math.hypot(hw.x - -0.5, hw.y - 4.625) < 0.5
+    assert math.hypot(hw.x - -0.5, hw.y - 4.625) < 0.5  # the pods: same path as before
+    assert math.hypot(s.odo.get_x(), s.odo.get_y() - 0.5) < 0.5  # the field: the centre
     assert hw.drive[2] == drive.SPIN_VELOCITY  # -12 rad/s at the end point
-    assert s.simple_auto_drive.targets[0][0] == (-0.5, -0.5)  # changedInitialPoint
+    assert s.simple_auto_drive.targets[0][0] == pytest.approx((-5.125, 0.5))  # changedInitialPoint
 
 
 def test_simple_auto_drive_mirrors_x_for_blue_and_waits_for_the_game():
     hw = IdealHardware()
     s = Sentry(hw, RefSerial(robot_id=107, game_stage=PREMATCH), auto_fire=False,
-               drive=DRIVE_SIMPLE, firmware_fixes=False)
+               drive=DRIVE_SIMPLE)
     _drive_route(hw, s, 3000)
     assert s.simple_auto_drive.target_index == 0
     assert math.hypot(hw.x, hw.y) < 0.05
     assert hw.drive[2] == drive.MOVE_TO_POS_SPIN_VELO  # spins in place even before the game
     s.drivers.ref_serial.game_stage = 4
     path = _drive_route(hw, s, 3000)
-    assert s.simple_auto_drive.targets[1][0] == (-2.236, 0.5)
+    assert s.simple_auto_drive.targets[1][0] == pytest.approx((4.125, -2.236))  # red's mirrored
     assert min(x for x, _, _ in path) < -1.5  # within MoveToPosition's 0.5 m, then on
 
 
 def test_simple_auto_drive_heads_home_at_low_hp():
     hw = IdealHardware()
     ref = RefSerial(robot_id=7)
-    s = Sentry(hw, ref, auto_fire=False, drive=DRIVE_SIMPLE, firmware_fixes=False)
+    s = Sentry(hw, ref, auto_fire=False, drive=DRIVE_SIMPLE)
     _drive_route(hw, s, 15000)
     ref.current_hp = 200
     _drive_route(hw, s, 15000)
@@ -122,8 +125,7 @@ def test_simple_auto_drive_heads_home_at_low_hp():
 def test_simple_auto_drive_stuck_between_points_spins_in_place():
     """SimpleAutoDriveCommand.cpp:86-92: STUCK_TIMER_AMOUNT with no waypoint, then spin."""
     hw = IdealHardware()
-    s = Sentry(hw, RefSerial(robot_id=7), auto_fire=False, drive=DRIVE_SIMPLE,
-               firmware_fixes=False)
+    s = Sentry(hw, RefSerial(robot_id=7), auto_fire=False, drive=DRIVE_SIMPLE)
     for _ in range(drive.STUCK_TIMER_AMOUNT + 2):
         s.run(1)  # hw never advances: the chassis is pinned at the start
     assert not s.simple_auto_drive.is_scheduled
@@ -132,8 +134,9 @@ def test_simple_auto_drive_stuck_between_points_spins_in_place():
 
 def test_auto_drive_spins_at_nine_and_takes_ros_goals():
     hw = IdealHardware()
-    s = Sentry(hw, auto_fire=False, drive=DRIVE_AUTO, firmware_fixes=False)
+    s = Sentry(hw, RefSerial(robot_id=7), auto_fire=False, drive=DRIVE_AUTO)
     _run(hw, s, 100)
     assert hw.drive[2] == drive.AUTO_DRIVE_SPIN
-    _run(hw, s, 3000, p.UARTCommunication.frame(p.NavGoal(1.0, 0.5)))
+    # A field goal 0.5 m ahead of red's start and 1 m right: the pods' (1.0, 0.5).
+    _run(hw, s, 3000, p.UARTCommunication.frame(p.NavGoal(-4.125, -1.0)))
     assert math.hypot(hw.x - 1.0, hw.y - 0.5) < 0.05

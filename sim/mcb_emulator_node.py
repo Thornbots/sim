@@ -188,6 +188,10 @@ class McbEmulator(Node):
         if not self.hw.ready:
             self.last_ms = now_ms
             return
+        if self.sentry.odo.start is None:
+            # The firmware's start is a constant; gz spawned the robot wherever.
+            x, y, yaw = self.hw.boot
+            self.sentry.odo.start = (x, y, yaw % (2 * math.pi))
         cycles = min(now_ms - self.last_ms, MAX_CATCH_UP_MS) if self.last_ms else 1
         self.last_ms = now_ms
         if cycles <= 0:

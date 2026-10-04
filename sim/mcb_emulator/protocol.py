@@ -24,10 +24,10 @@ from collections import Counter
 from dataclasses import astuple, dataclass
 import struct
 
-# enum UartMessage, JetsonSubsystem.hpp:26-36
-NAV_GOAL, CV_TARGET, POSE, REF_SYS, RELOCALIZE = 0, 1, 2, 3, 4
+# enum UartMessage, JetsonSubsystem.hpp:26-39
+NAV_GOAL, CV_TARGET, POSE, REF_SYS, RELOCALIZE, PING = 0, 1, 2, 3, 4, 5
 MSG_NAMES = {NAV_GOAL: 'NAV_GOAL', CV_TARGET: 'CV_TARGET', POSE: 'POSE',
-             REF_SYS: 'REF_SYS', RELOCALIZE: 'RELOCALIZE'}
+             REF_SYS: 'REF_SYS', RELOCALIZE: 'RELOCALIZE', PING: 'PING'}
 # enum OdomStatus, JetsonSubsystem.hpp:39-44
 ODOM_PODS = 0
 
@@ -77,15 +77,16 @@ class NavGoal:
     y: float = 0.0
 
 
-# CvTarget.flags, JetsonSubsystem.hpp:65-67
+# CvTarget.flags, JetsonSubsystem.hpp:62-67
 CV_TARGET_FLAG_FIRE = 0x01
 CV_TARGET_FLAG_TYPE_C_BASED_PATROL = 0x02
 CV_TARGET_FLAG_TURN_TO_HIT = 0x04
+CV_TARGET_FLAGS_DEFAULT = CV_TARGET_FLAG_TURN_TO_HIT | CV_TARGET_FLAG_TYPE_C_BASED_PATROL
 
 
 @dataclass
 class CvTarget:
-    """JetsonSubsystem.hpp:57-64, modm_packed: an odom point, no stamp_ms (15 bytes)."""
+    """JetsonSubsystem.hpp:68-75, modm_packed: a field-frame point, no stamp_ms (15 bytes)."""
 
     FORMAT = '<3fHB'
     TYPE = CV_TARGET
@@ -93,7 +94,7 @@ class CvTarget:
     y: float = 0.0
     z: float = 0.0
     delay_ms: int = 0
-    flags: int = 0
+    flags: int = CV_TARGET_FLAGS_DEFAULT
 
 
 @dataclass
@@ -133,6 +134,15 @@ class RefSys:
     robotID: int = 0
     deltaAngleGotHitIn: float = 0.0
     booleans: int = 0
+
+
+@dataclass
+class Ping:
+    """JetsonSubsystem.hpp:117-120, modm_packed: the MCB echoes it back."""
+
+    FORMAT = '<B'
+    TYPE = PING
+    number: int = 0
 
 
 def size_of(cls):

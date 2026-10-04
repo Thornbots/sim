@@ -79,7 +79,7 @@ def test_mailbox_keeps_one_frame_and_checks_size():
     assert box.has_new_data
     assert box.size_mismatch[(p.CV_TARGET, 19)] == 1
     box.message_receive_callback(p.CV_TARGET, b'\x00' * 15)
-    assert box.get_msg(p.CvTarget) == p.CvTarget()
+    assert box.get_msg(p.CvTarget) == p.CvTarget(flags=0)  # all-zero bytes
     box.message_receive_callback(p.CV_TARGET, b'\x00' * 15)
     box.message_receive_callback(p.RELOCALIZE, p.pack(p.Relocalize(4.0, 5.0)))
     assert box.overwritten[(p.CV_TARGET, 15)] == 1

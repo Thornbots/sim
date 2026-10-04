@@ -15,9 +15,10 @@
 """
 The sentry's auto drive: SimpleAutoDriveCommand (what the right switch runs), AutoDriveCommand.
 
-Odometry frame: x right, y forward of the heading at boot, CCW rotation
-(SimpleAutoDriveCommand.cpp:107-108). ChassisController's position loop is
-ported; its velocity loop and power limiting are gz's VelocityControl.
+Positions are the field frame (OdometrySubsystem); waypoints are (forward,
+left) from the start, turned into it by at()/vel(). The chassis frame is x
+right, y forward. ChassisController's position loop is ported; its velocity
+loop and power limiting are gz's VelocityControl.
 """
 import math
 
@@ -50,7 +51,7 @@ class DrivetrainSubsystem:
         self.position_integral = (0.0, 0.0)
 
     def set_target_position(self, target, current, input_velocity):
-        """ChassisController::followPosition, ChassisController.cpp:179-191."""
+        """ChassisController::followPosition, ChassisController.cpp:179-194."""
         ex, ey = target[0] - current[0], target[1] - current[1]
         self.position_integral = (self.position_integral[0] + ex * KI * DT,
                                   self.position_integral[1] + ey * KI * DT)
@@ -58,6 +59,7 @@ class DrivetrainSubsystem:
         cy = ey * KP + self.position_integral[1]
         norm = max(math.hypot(cx, cy) / MAX_POS_VEL, 1.0)
         vx, vy = input_velocity[0] + cx / norm, input_velocity[1] + cy / norm
+        vx, vy = -vy, vx  # field (x forward, y left) -> the chassis frame's x right, y forward
         lx, ly = rotate(vx, vy, current[2])
         self.set_target_translation((lx, ly, input_velocity[2]))
 
@@ -81,20 +83,21 @@ class MoveToPositionCommand:
         self.current_position = (0.0, 0.0, 0.0)
 
     def execute(self):
-        """MoveToPositionCommand.cpp:13-41."""
+        """MoveToPositionCommand.cpp:13-42."""
         ref = self.drivers.ref_serial
         if ref.in_3v3() and ref.game_stage == COUNTDOWN:
             self.target_velocity = (0.0, 0.0, MOVE_TO_POS_SPIN_VELO)
         else:
             self.target_velocity = self.input_velocity
         reference_angle = (self.gimbal.get_yaw_encoder_value()
-                           - self.gimbal.get_yaw_angle_relative_world())
+                           - self.gimbal.get_yaw_angle_relative_world()
+                           - self.odo.get_start_yaw())  # the IMU's zero is the start's heading
         self.current_position = (self.odo.get_x(), self.odo.get_y(), reference_angle)
         self.drivetrain.set_target_position(self.target_position[:2], self.current_position,
                                             self.target_velocity)
 
     def is_finished(self):
-        """MoveToPositionCommand.cpp:43, less the remote check (Sentry's)."""
+        """MoveToPositionCommand.cpp:44, less the remote check (Sentry's)."""
         return math.hypot(self.target_position[0] - self.current_position[0],
                           self.target_position[1] - self.current_position[1]) < self.tolerance
 
@@ -125,18 +128,27 @@ class SimpleAutoDriveCommand:
         self.is_scheduled = True
 
     def setup_map(self):
-        """SimpleAutoDriveCommand.cpp:102-166, the ARCC_ROUGH_PATH case only."""
+        """SimpleAutoDriveCommand.cpp:102-174, the ARCC_ROUGH_PATH case only."""
         if self.mode != ARCC_ROUGH_PATH:
             raise ValueError(f'only {ARCC_ROUGH_PATH} is ported, not {self.mode}')
         ref = self.drivers.ref_serial
         m = -1 if ref.is_blue_team(ref.robot_id) else 1
-        self.changed_initial_point = (m * -TOWARDS_ZONE_OFFSET, -TOWARDS_ZONE_OFFSET)
-        self.targets.append(((m * 2.236, 0.5), (0.0, 0.0)))
-        self.targets.append(((m * 2.236, 1.224), (0.0, 0.0)))
-        self.targets.append(((m * -TOWARDS_ZONE_OFFSET, 4.125 + TOWARDS_ZONE_OFFSET), (0.0, 0.0)))
+
+        def at(forward, left):
+            return self.odo.from_start(forward, left)
+
+        def vel(forward, left):
+            return rotate(forward, left, self.odo.get_start_yaw())
+
+        self.targets[0] = (at(0.0, 0.0), self.targets[0][1])  # the start
+        self.changed_initial_point = at(-TOWARDS_ZONE_OFFSET, m * TOWARDS_ZONE_OFFSET)
+        self.targets.append((at(0.5, -m * 2.236), vel(0.0, 0.0)))
+        self.targets.append((at(1.224, -m * 2.236), vel(0.0, 0.0)))
+        self.targets.append((at(4.125 + TOWARDS_ZONE_OFFSET, m * TOWARDS_ZONE_OFFSET),
+                             vel(0.0, 0.0)))
 
     def set_direction(self):
-        """SimpleAutoDriveCommand.cpp:168-187, the default (non-TEST) branch."""
+        """SimpleAutoDriveCommand.cpp:176-195, the default (non-TEST) branch."""
         ref = self.drivers.ref_serial
         if ref.receiving:
             ratio = ref.current_hp / ref.max_hp
@@ -216,7 +228,8 @@ class AutoDriveCommand:
             if ref.game_stage == COUNTDOWN:
                 allow_spinning = True
         reference_angle = (self.gimbal.get_yaw_encoder_value()
-                           - self.gimbal.get_yaw_angle_relative_world())
+                           - self.gimbal.get_yaw_angle_relative_world()
+                           - self.odo.get_start_yaw())  # the IMU's zero is the start's heading
         goal = self.jetson.update_ros()
         if goal is not None:  # Pose2d(Vector2d) zeroes rotation: no spin this cycle
             self.target_position, self.target_velocity = goal, (0.0, 0.0, 0.0)

@@ -182,29 +182,75 @@ class GimbalSubsystem:
         return self.hw.yaw_encoder_rate()  # :200, divided by YAW_TOTAL_RATIO
 
 
-class OdometrySubsystem:
-    """OdometrySubsystem.cpp:64-87: the Pico's pods plus relocalizeTo's offset."""
+# OdometrySubsystemConstants.hpp: red boots at (-START_X, START_Y) facing +x, blue mirrored
+START_X = 4.625
+START_Y = 0.0
 
-    def __init__(self, hw):
-        self.hw = hw
+
+def _rotate(x, y, amt):
+    c, s = math.cos(amt), math.sin(amt)
+    return c * x - s * y, s * x + c * y
+
+
+class OdometrySubsystem:
+    """
+    OdometrySubsystem.cpp:23-104: the Pico's pods put in the field frame.
+
+    The pods are x right, y forward of the heading at power-on, the team's
+    start; the field frame is REP-105, (0, 0) at the centre, x toward blue's
+    base. start, if set, is (x, y, yaw in [0, 2pi)) in place of the team's:
+    the sim sets where gz spawned the robot.
+    """
+
+    def __init__(self, hw, ref_serial):
+        self.hw, self.ref = hw, ref_serial
         self.offset_x = 0.0
         self.offset_y = 0.0
+        self.is_blue = False
+        self.start = None
+
+    def refresh(self):
+        """OdometrySubsystem.cpp:23-30: the team picks the start; a new one drops the offset."""
+        blue = self.ref.is_blue_team(self.ref.robot_id)
+        if blue != self.is_blue:
+            self.is_blue = blue
+            self.offset_x = self.offset_y = 0.0
+
+    def get_start_yaw(self):
+        if self.start is not None:
+            return self.start[2]
+        return PI if self.is_blue else 0.0
+
+    def from_start(self, forward, left):
+        """Return the field point forward and left of the start, along its heading."""
+        if self.start is not None:
+            sx, sy = self.start[0], self.start[1]
+        else:
+            sx, sy = (START_X if self.is_blue else -START_X), START_Y
+        dx, dy = _rotate(forward, left, self.get_start_yaw())
+        return sx + dx, sy + dy
+
+    def _pods(self):
+        x, y = self.hw.odom()[:2]
+        return self.from_start(y, -x)  # forward is the pods' y, left their -x
 
     def relocalize_to(self, new_x, new_y):
-        self.offset_x = new_x - self.hw.odom()[0]
-        self.offset_y = new_y - self.hw.odom()[1]
+        px, py = self._pods()
+        self.offset_x, self.offset_y = new_x - px, new_y - py
 
     def get_x(self):
-        return self.offset_x + self.hw.odom()[0]
+        return self.offset_x + self._pods()[0]
 
     def get_y(self):
-        return self.offset_y + self.hw.odom()[1]
+        return self.offset_y + self._pods()[1]
 
     def get_x_vel(self):
-        return self.hw.odom()[2]
+        _, _, vx, vy = self.hw.odom()
+        return _rotate(vy, -vx, self.get_start_yaw())[0]
 
     def get_y_vel(self):
-        return self.hw.odom()[3]
+        _, _, vx, vy = self.hw.odom()
+        return _rotate(vy, -vx, self.get_start_yaw())[1]
 
 
 class IndexerSubsystem:
