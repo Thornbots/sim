@@ -17,7 +17,7 @@ Estimation bench: target_tracker's TargetState against the truth, no gz.
 
 `ros2 launch sim estimation.launch.py [speeds:='0.5 1'] [blackout:=true]`.
 bench_world (C++, one lockstep loop) is the clock, the phantom target, our
-chassis and head, /pose, the head controller and the detections off our
+chassis and head, /dji_serial_bridge/pose, the head controller and the detections off our
 head's camera. target_selector and target_tracker build the TargetState, and
 point_to_cv_target aims the head through bench_world's controller.
 Nothing fires. pytest (test_estimation.py) scores each state at its stamp.
@@ -93,7 +93,7 @@ def _stack(context):
             'enable_target_tracker': 'false',
         }.items())
 
-    # Sim stamps /pose at the true sample time, so no pose latency to undo.
+    # Sim stamps /dji_serial_bridge/pose at the true sample time, so no pose latency to undo.
     tracker = {'camera_latency_s': float(cfg['tracker_camera_latency_s'] or camera_latency),
                'pose_latency_s': 0.0,
                # bench_world waits on it so the tracker's now() repeats run to run.

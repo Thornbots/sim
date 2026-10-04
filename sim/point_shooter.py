@@ -13,11 +13,11 @@
 # limitations under the License.
 
 """
-The aiming bench's own chassis: odom->root TF and /pose from a truth odometry.
+The aiming bench's own chassis: odom->root TF and /dji_serial_bridge/pose from a truth odometry.
 
 Subscribes /shooter/ground_truth_odom (a second target_driver, spin 0) and
 republishes each sample at once, stamped with its sample time: odom->root on
-/tf, and RobotPose on /pose with root-frame velocity, as the MCB would send.
+/tf, and RobotPose on /dji_serial_bridge/pose with root-frame velocity, as the MCB would send.
 No noise, no latency: the aiming bench's perfect model of our own motion.
 """
 import math
@@ -39,7 +39,7 @@ class PointShooter(Node):
         self.odom_frame = self.get_parameter('odom_frame').value
         self.root_frame = self.get_parameter('root_frame').value
         self.tf_pub = TransformBroadcaster(self)
-        self.pose_pub = self.create_publisher(RobotPose, '/pose', 10)
+        self.pose_pub = self.create_publisher(RobotPose, '/dji_serial_bridge/pose', 10)
         self.create_subscription(Odometry, '/shooter/ground_truth_odom', self.on_truth, 50)
 
     def on_truth(self, msg):

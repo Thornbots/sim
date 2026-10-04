@@ -17,7 +17,7 @@ Emulates the real Type-C board's POSE_MSG interface in sim.
 
 Republishes sim's raw ground-truth /sim/raw_odom + /sim/raw_joint_states
 (bridged from gz, see sim.launch.py) as a dji_serial_bridge/msg/RobotPose
-on /pose -- the same topic/message real hardware's Type-C board sends.
+on /dji_serial_bridge/pose -- the same topic/message real hardware's Type-C board sends.
 thornbots_pkg's pose_translator is the only downstream consumer for both
 sim and real hardware, so sim's job here is purely wire-format parity.
 """
@@ -45,7 +45,7 @@ class PoseEmulator(Node):
         self.declare_parameter('pitch_joint_name', 'headpitch')
         self.pitch_joint_name = self.get_parameter('pitch_joint_name').value
         self.head_pitch = 0.0
-        # (t_ns, yaw, pitch) per joint state, so /pose carries the head
+        # (t_ns, yaw, pitch) per joint state, so /dji_serial_bridge/pose carries the head
         # angles at its own stamp rather than whichever arrived last.
         self._joint_hist = deque(maxlen=500)
 
@@ -70,7 +70,7 @@ class PoseEmulator(Node):
         # One-time "jerk" event: models a discrete EXTERNAL displacement
         # (wheel slip, collision) that moves the real robot without wheel
         # encoders registering it -- trigger_jerk() moves the sim robot and
-        # cancels that delta from the drift accumulator so /pose stays
+        # cancels that delta from the drift accumulator so /dji_serial_bridge/pose stays
         # continuous. Manual only: `ros2 service call
         # /pose_emulator/trigger_jerk std_srvs/srv/Trigger`. Stddev below.
         # See README.md for why this works "backwards".
@@ -91,7 +91,7 @@ class PoseEmulator(Node):
         # accumulation) and jerk (one-time impulse): models wheels that
         # spin but don't fully grip (e.g. the arena's "Bumpy Road" zone),
         # losing a fixed FRACTION of every meter actually driven. 0.5 means
-        # reported /pose only advances 0.5m per 1m actually moved, and
+        # reported /dji_serial_bridge/pose only advances 0.5m per 1m actually moved, and
         # reports half the true velocity, as slipping encoders would. 0.0
         # (default) disables this.
         self.declare_parameter('odom_slip_ratio', 0.0)
@@ -125,7 +125,7 @@ class PoseEmulator(Node):
         # std_srvs/srv/Trigger`. See README.md.
         self._odom_stuck = False
 
-        self.pose_pub = self.create_publisher(RobotPose, '/pose', 10)
+        self.pose_pub = self.create_publisher(RobotPose, '/dji_serial_bridge/pose', 10)
         self.create_subscription(Odometry, '/sim/raw_odom', self.odom_callback, 10)
         self.create_subscription(JointState, '/sim/raw_joint_states', self.joint_callback, 10)
         # Test-only trigger surface for the jerk event above: nothing in sim
@@ -135,7 +135,7 @@ class PoseEmulator(Node):
         #   ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger
         self.create_service(Trigger, '~/trigger_jerk', self._trigger_jerk_srv)
         self.create_service(Trigger, '~/trigger_odom_stuck', self._trigger_odom_stuck_srv)
-        # Clears drift, slip and stuck state so /pose restarts at truth; the
+        # Clears drift, slip and stuck state so /dji_serial_bridge/pose restarts at truth; the
         # drift suite calls it between scenarios instead of restarting sim.
         self.create_service(Trigger, '~/reset', self._reset_srv)
 
@@ -167,7 +167,7 @@ class PoseEmulator(Node):
 
         Draws a random (dx, dy), teleports the real sim robot via
         sim.auto_explore.teleport(), and subtracts the same delta from the
-        drift accumulator so REPORTED /pose stays continuous -- only the
+        drift accumulator so REPORTED /dji_serial_bridge/pose stays continuous -- only the
         next scan match should notice. See README.md for the full model.
         """
         jerk_stddev = self.get_parameter('odom_jerk_stddev').value
@@ -223,7 +223,7 @@ class PoseEmulator(Node):
     def _trigger_odom_stuck_srv(self, request, response):
         self._odom_stuck = True
         response.success = True
-        response.message = 'odom stuck: /pose will report (0, 0) from now on'
+        response.message = 'odom stuck: /dji_serial_bridge/pose will report (0, 0) from now on'
         return response
 
     def _reset_srv(self, request, response):
@@ -232,7 +232,8 @@ class PoseEmulator(Node):
         self._prev_true_x = self._prev_true_y = None
         self._odom_stuck = False
         response.success = True
-        response.message = 'noise state cleared: /pose reports truth plus fresh noise'
+        response.message = ('noise state cleared: /dji_serial_bridge/pose reports truth '
+                            'plus fresh noise')
         return response
 
     def odom_callback(self, msg):
@@ -276,7 +277,7 @@ class PoseEmulator(Node):
         # Applied unconditionally (not gated behind odom_noise_enabled): a
         # jerk's cancellation offset (see trigger_jerk()) must still reach
         # the published pose even when odom_noise_enabled is False, or the
-        # jerk leaks straight into reported /pose instead of staying hidden
+        # jerk leaks straight into reported /dji_serial_bridge/pose instead of staying hidden
         # until the next scan match -- defeats the whole point of a jerk.
         # _drift_x/_drift_y are 0.0 unless trigger_jerk() has set them, so
         # this is a no-op whenever no jerk has fired.

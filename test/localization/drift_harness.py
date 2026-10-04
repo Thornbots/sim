@@ -412,7 +412,7 @@ class LocalizationTestHelper(Node):
 
     def call_trigger_odom_stuck(self, timeout=10.0):
         """
-        Call /pose_emulator/trigger_odom_stuck to pin /pose's x/y at (0, 0).
+        Call /pose_emulator/trigger_odom_stuck to pin /dji_serial_bridge/pose's x/y at (0, 0).
 
         The pin is permanent from then on, vel_x/vel_y included: it
         models a dead wheel encoder, not a recoverable glitch.
@@ -1582,7 +1582,7 @@ def scenario_odom_stuck(gui, backend, use_rf2o):
     sc = Scenario(
         'odom_stuck',
         f'models a dead wheel encoder: one-shot, permanent trigger pins '
-        f"/pose's x/y at (0, 0) forever (fresh timestamps keep arriving, "
+        f"/dji_serial_bridge/pose's x/y at (0, 0) forever (fresh timestamps keep arriving, "
         f'unlike a stalled topic) while the robot keeps being driven. '
         f'Unlike every other scenario here, there is no valid odometry '
         f'left to bound drift against, so this is a LIVENESS check, not a '
@@ -1623,7 +1623,7 @@ def scenario_odom_stuck(gui, backend, use_rf2o):
             sc.log(f'mapping window: {ODOM_STUCK_MAPPING_LAPS} laps before the trigger')
 
         helper.call_trigger_odom_stuck()
-        sc.log('triggered odom_stuck: /pose now pinned at (0, 0)')
+        sc.log('triggered odom_stuck: /dji_serial_bridge/pose now pinned at (0, 0)')
         helper.reset_yaw_range()
         scans_before_drive = helper._scan_count
 

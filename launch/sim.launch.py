@@ -129,13 +129,14 @@ def generate_launch_description():
     )
 
     # --- Optional synthetic wheel-odometry drift injection (pose_emulator.py).
-    # Off by default -- sim's /pose stays exact ground truth unless explicitly
+    # Off by default -- sim's /dji_serial_bridge/pose stays exact ground truth unless explicitly
     # opted into, so this never changes existing behavior by accident. Turn
     # it on to exercise/demonstrate slam_toolbox's map->odom correction, which
     # otherwise has nothing real to correct against in sim.
     odom_noise_enabled_arg = DeclareLaunchArgument(
         'odom_noise_enabled', default_value='false',
-        description="Enable synthetic position drift/jitter on sim/pose_emulator's /pose output"
+        description="Enable synthetic position drift/jitter on sim/pose_emulator's "
+                    '/dji_serial_bridge/pose output'
     )
     odom_drift_stddev_arg = DeclareLaunchArgument(
         'odom_drift_stddev', default_value='0.0005',
@@ -195,7 +196,8 @@ def generate_launch_description():
     # rationale.
     pose_emulator_arg = DeclareLaunchArgument(
         'pose_emulator', default_value='true',
-        description='Publish /pose from gz truth; false when the MCB emulator sends POSE_MSG'
+        description='Publish /dji_serial_bridge/pose from gz truth; false when the MCB '
+                    'emulator sends POSE_MSG'
     )
     spawn_target_arg = DeclareLaunchArgument(
         'spawn_target', default_value='false',
@@ -385,7 +387,7 @@ def generate_launch_description():
 
     # --- Repackage /sim/raw_odom + /sim/raw_joint_states into the same
     # dji_serial_bridge/msg/RobotPose interface real hardware's Type-C board
-    # publishes on /pose. thornbots_pkg's pose_translator is the only thing
+    # publishes on /dji_serial_bridge/pose. thornbots_pkg's pose_translator is the only thing
     # that consumes pose data downstream of this, for both sim and real
     # hardware, so sim's job is purely to speak the same wire format here --
     # that's the "brain" package, sim is not (see

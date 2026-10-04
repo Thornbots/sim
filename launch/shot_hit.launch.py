@@ -95,7 +95,7 @@ def _aim_node(context, harness):
 
 
 def _point_stack(context, harness, headless):
-    # No world, no robot: a /clock, our chassis as odom->root and /pose,
+    # No world, no robot: a /clock, our chassis as odom->root and /dji_serial_bridge/pose,
     # the phantom target and its true state, and the aim node. A perfect
     # gimbal: it holds each 40 Hz aim until the next, with no lag after.
     rate = max(0.0, float(context.launch_configurations['real_time_factor']))
@@ -104,7 +104,7 @@ def _point_stack(context, harness, headless):
     # the aim and the scorer at TEST_FIRE_HZ).
     aim_period = 1.0 / harness.TEST_FIRE_HZ
     pace = ['/cv/target_state dji_serial_bridge/msg/TargetState 0.0167',
-            '/pose dji_serial_bridge/msg/RobotPose 0.0167',
+            '/dji_serial_bridge/pose dji_serial_bridge/msg/RobotPose 0.0167',
             f'/cv/target/tick std_msgs/msg/Header {aim_period}',
             f'/bench/progress std_msgs/msg/Header {aim_period}']
     x, y, z = harness.POINT_SHOOTER

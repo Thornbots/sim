@@ -181,7 +181,7 @@ def generate_launch_description():
                                                       value_type=bool)}])
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
-        name='dji_serial_bridge', output='screen', remappings=[('~/pose', '/pose')],
+        name='dji_serial_bridge', output='screen',
         parameters=[{'use_sim_time': True, 'device': MCB_PTY, 'debug_log': False}])
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',

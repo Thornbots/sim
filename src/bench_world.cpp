@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // The estimation bench's world in one loop, no gz: /clock, the phantom target,
-// our chassis and head, /pose, the head controller (cv_head_aim.py) and the
+// our chassis and head, /dji_serial_bridge/pose, the head controller (cv_head_aim.py) and the
 // detections (cv_target_emulator.py). rate 0 is lockstep: /clock holds at 0
 // until the nodes under test are up, detections go out once the tracker's
 // clock reads the last tick, the tracker echoes each before /clock moves on,
@@ -251,7 +251,7 @@ public:
     truth_pub_ = create_publisher<nav_msgs::msg::Odometry>("/target/ground_truth_odom", 10);
     odom_pub_ = create_publisher<nav_msgs::msg::Odometry>("/sim/raw_odom", 10);
     joint_pub_ = create_publisher<sensor_msgs::msg::JointState>("/sim/raw_joint_states", 10);
-    pose_pub_ = create_publisher<RobotPose>("/pose", 10);
+    pose_pub_ = create_publisher<RobotPose>("/dji_serial_bridge/pose", 10);
     det_pub_ = create_publisher<PanelDetectionArray>("cv/panel_detections", 10);
     marker_pub_ = create_publisher<MarkerArray>("target_markers", 10);
     // Each case's start (stamp) and case_seed (frame_id), latched for the scorer.

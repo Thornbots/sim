@@ -40,7 +40,7 @@ case on hit rate and hits per expected shot equally (`score()` in
 
 There is no gz, robot or tracker. `sim_clock` publishes `/clock`,
 `point_shooter` puts `root` in `odom` (`POINT_SHOOTER`, 0.4 m up) and
-publishes `/pose`, `target_driver` moves the phantom target and
+publishes `/dji_serial_bridge/pose`, `target_driver` moves the phantom target and
 `target_state_truth` publishes its true `TargetState`. Each shot leaves
 `root` toward the newest `/cv/target` aim (an `odom` point) before its exit time, carrying
 `root`'s velocity: a perfect gimbal that holds each 40 Hz aim until the
@@ -49,7 +49,7 @@ target's panels in rviz.
 
 `real_time_factor:=0` (the default) runs it as fast as the stack keeps up.
 `sim_clock` steps sim time 2 ms at a time and stops exactly one period past
-the newest stamp on `/cv/target_state`, `/pose`, `/cv/target` and the
+the newest stamp on `/cv/target_state`, `/dji_serial_bridge/pose`, `/cv/target` and the
 scorer's `/bench/progress` until that topic publishes, so no node falls
 behind and each 40 Hz tick is stamped on its deadline; a topic with
 no publisher left (the scorer between cases) stops holding it. A fixed
@@ -92,7 +92,7 @@ ros2 launch sim shot_hit.launch.py
 The CV estimation bench scores Part 2, not hits. `bench_world` (C++)
 is the whole world in one lockstep loop: `/clock`, the phantom target through
 the aiming bench's ten cells plus a still one at 45 deg (`stationary45`, two
-panels in view), our chassis and head, `/pose`, the head controller and
+panels in view), our chassis and head, `/dji_serial_bridge/pose`, the head controller and
 the detections off our head's camera. `target_selector` and `target_tracker`
 build the `TargetState`, and `point_to_cv_target` aims the head; nothing
 fires. Each case starts with one parameter set (`case_seed`, the cell's
@@ -336,7 +336,7 @@ odom_drift_stddev:=         # random-walk step, m/callback (0.0005)
 odom_jitter_stddev:=        # per-sample jitter, m (0.001)
 odom_jerk_stddev:=          # trigger_jerk size, m (0.2)
 odom_jerk_bias_enabled:=true odom_jerk_bias_x:= odom_jerk_bias_y:=
-odom_slip_ratio:=           # fraction of each driven metre lost from /pose (0.0)
+odom_slip_ratio:=           # fraction of each driven metre lost from /dji_serial_bridge/pose (0.0)
 ```
 
 `spawn_target` adds the moving CV target. It is off by default, but when you
@@ -423,7 +423,7 @@ python3 tools/rviz_to_foxglove.py   # --check: exit 1 if one is stale
 
 `sim.launch.py` starts gz, spawns the robot, bridges its lidar, joint, odometry,
 camera and head-command topics to ROS, and runs `pose_emulator`, which
-publishes `/pose` the way the Type-C board does. It runs no
+publishes `/dji_serial_bridge/pose` the way the Type-C board does. It runs no
 `robot_state_publisher`, so TF comes from `thornbots_pkg`'s `auto.launch.py`.
 `/sim/raw_odom` and `/sim/raw_joint_states` are ground truth that real hardware
 doesn't have; only sim and its tests should read them.
@@ -678,7 +678,7 @@ The suite runs them in this order.
    so the robot still lands on its corner. `JERK_WITH_MOTION_REPEATS` (8)
    trials share one stack (relaunching costs 15-20s each) and all must pass.
    A closing lap follows.
-8. `odom_stuck` models a dead encoder: `trigger_odom_stuck` pins `/pose` x/y
+8. `odom_stuck` models a dead encoder: `trigger_odom_stuck` pins `/dji_serial_bridge/pose` x/y
    and velocity at zero with fresh timestamps. It checks liveness only, since
    there is no valid odometry to bound drift against: scans keep processing
    and pairwise TF spread exceeds `ODOM_STUCK_MIN_TF_SPREAD` (1cm).
@@ -806,7 +806,7 @@ It sends what the MCB sends: `head_yaw` in the world (gz's joint is relative
 to the chassis), velocity in the world (gz's twist is in the chassis frame),
 and the chassis's heading as `chassis_yaw`, which the firmware doesn't send
 yet. `sentry_v2` picks up ~1 deg of chassis yaw in hard corners; before
-2026-09-29 `/pose` passed the relative joint and chassis-frame velocity
+2026-09-29 `/dji_serial_bridge/pose` passed the relative joint and chassis-frame velocity
 through, so the lidar's TF heading was off by that yaw.
 
 Sim ground truth has no wheel drift, so nothing would exercise `map->odom`
@@ -820,12 +820,12 @@ correction. These params add it, all off by default:
   shows as a jump.
 - `odom_jerk_bias_enabled`, `odom_jerk_bias_x/y`: bias the jerk direction
   toward a point, for loops with corners near walls.
-- `odom_slip_ratio`: drops a fraction of each metre driven (0.5 means `/pose`
+- `odom_slip_ratio`: drops a fraction of each metre driven (0.5 means `/dji_serial_bridge/pose`
   moves 0.5m per real metre), like wheels spinning on the "Bumpy Road" zone.
   It grows with distance, where drift grows with time.
 
 `trigger_jerk()` moves the gz robot by a random (dx, dy) and subtracts the
-same (dx, dy) from the drift accumulator, so `/pose` doesn't jump. The encoders
+same (dx, dy) from the drift accumulator, so `/dji_serial_bridge/pose` doesn't jump. The encoders
 never saw the move. The error appears when the next scan match disagrees and
 corrects `map->odom`, and that correction is what the jerk tests. Fire one by
 hand with
@@ -1008,7 +1008,7 @@ Our chassis on the aiming bench. A second `target_driver`, named
 `shooter_driver`, with no spin and its output remapped to
 `/shooter/ground_truth_odom`, bounces along y at `shooter_speed` with the
 same braking; `point_shooter` republishes each sample at once as `odom->root`
-TF and `/pose` (`RobotPose`, root-frame velocity), stamped with its sample
+TF and `/dji_serial_bridge/pose` (`RobotPose`, root-frame velocity), stamped with its sample
 time. No noise or latency, so our motion is as perfectly known as the
 target's. It has no chassis spin: `root` is heading-fixed and the point
 shooter's gimbal is perfect, so a spin changes nothing it scores. The
