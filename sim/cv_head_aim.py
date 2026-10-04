@@ -19,12 +19,17 @@ This is why the head moves during CV testing.
 
 /cv/target is dji_serial_bridge/msg/CVTarget, a world-frame (odom) aim
 POSITION, held and turned into root each tick at the newest odom->root,
-the way the MCB holds it with its odometry. Mirrors what Type-C actually
+the way the MCB holds it with its odometry. root is heading-fixed, but the
+gz head joint turns from gz's root link, so its world yaw (/sim/raw_odom)
+comes off the commanded joint angle. Mirrors what Type-C actually
 receives: a position and nothing else, no feedforward, so any
 setpoint-tracking lag against a moving target shows up here too (see
 README.md's ### cv_head_aim.py Notes).
 """
+import math
+
 from dji_serial_bridge.msg import CVTarget
+from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -58,6 +63,7 @@ class CvHeadAim(Node):
         super().__init__('cv_head_aim')
 
         self.declare_parameter('cv_target_topic', '/cv/target')
+        self.declare_parameter('raw_odom_topic', '/sim/raw_odom')  # gz root link's world pose
         self.declare_parameter('joint_states_topic', '/sim/raw_joint_states')
         self.declare_parameter('pan_cmd_topic', '/head_pan_cmd')
         self.declare_parameter('pitch_cmd_topic', '/head_pitch_cmd')
@@ -83,6 +89,7 @@ class CvHeadAim(Node):
 
         self._head_yaw = 0.0
         self._head_pitch = 0.0
+        self._root_yaw = 0.0  # gz root link's world yaw: the joint's zero
         self._have_joint_states = False
         self._latest_target = None  # most recent CVTarget (each is an aim point), or None
 
@@ -101,6 +108,8 @@ class CvHeadAim(Node):
         self.create_subscription(
             CVTarget, self.get_parameter('cv_target_topic').value,
             self.on_cv_target, qos_profile_sensor_data)
+        self.create_subscription(
+            Odometry, self.get_parameter('raw_odom_topic').value, self.on_raw_odom, 10)
 
         # Corrections are computed on this timer, not directly off each
         # /cv/target arrival (which can be much faster -- e.g.
@@ -136,6 +145,11 @@ class CvHeadAim(Node):
     def on_cv_target(self, msg):
         self._latest_target = msg
 
+    def on_raw_odom(self, msg):
+        q = msg.pose.pose.orientation
+        self._root_yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                    1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
     def on_control_tick(self):
         msg = self._latest_target
         if not self._have_joint_states or msg is None:
@@ -156,7 +170,7 @@ class CvHeadAim(Node):
         # sentry.urdf.xacro), so the error is wrapped to the shortest
         # direction but new_yaw itself is left unclamped, free to
         # accumulate past +-pi as self._head_yaw does.
-        error_yaw = wrap_to_pi(target_yaw - self._head_yaw)
+        error_yaw = wrap_to_pi(target_yaw - self._root_yaw - self._head_yaw)
         error_pitch = target_pitch - self._head_pitch
 
         step_yaw = max(-self.max_yaw_step, min(self.max_yaw_step, self.gain * error_yaw))
