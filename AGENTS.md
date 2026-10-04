@@ -172,10 +172,11 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   The drift harness waits for `parent->root` after each robot start and
   restarts the stack once if it never comes (`_wait_for_root_chain`). The
   robot can hit the same race at boot; unfixed there.
-- **The drift suite passes 7/7 on `sentry_v2` at `--backend amcl --use-rf2o`,**
-  unthrottled with the A2M8 lidar and per-scan rf2o, GUI on, 227 s
-  (2026-09-26: drift_correction 0.16 m, with obstacle 0.15 m,
-  moving_obstacles 0.17 m, against 0.40 m).
+- **The drift suite passes 8/9 on `sentry_v2` at `--backend amcl --use-rf2o`,**
+  unthrottled with the A2M8 lidar and per-scan rf2o, GUI on, 378 s
+  (2026-10-03, archlinux: with obstacle 0.16 m, moving_obstacles 0.16 m,
+  real_accel 0.12 m, against 0.40 m). drift_correction lost the bring-up
+  race below even after the restart (ROADMAP T30); last 9/9 2026-09-28.
   Anything spawned into the world must clear the robot, which now collides:
   a box spawned inside the chassis stalls gz's contact solver and `/clock`.
 - **`sentry_v2` spawns by default; `model:=sentry` is the old model.** The
