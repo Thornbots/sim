@@ -25,7 +25,8 @@ from sim.mcb_emulator.subsystems import COUNTDOWN, IN_GAME, MAX_PITCH_UP, PREMAT
 FIRE = p.CV_TARGET_FLAG_FIRE
 
 
-def _sentry(firmware_fixes=True, **ref):
+def _sentry(firmware_fixes=False, **ref):
+    """Build the port as it is, unless firmware_fixes."""
     hw = IdealHardware()
     return hw, Sentry(hw, RefSerial(**ref), drive=DRIVE_STOP, firmware_fixes=firmware_fixes)
 
@@ -103,6 +104,16 @@ def test_delay_under_the_latency_wraps_without_the_fix(fixes, fires):
     hw, s = _sentry(firmware_fixes=fixes)
     _run(hw, s, 500, _frame(0.0, 3.0, delay_ms=3, flags=FIRE))
     assert bool(hw.shots) == fires
+
+
+@pytest.mark.parametrize('x,y', [(3.0, 0.0), (3.0, 1.0), (2.0, -2.0)])
+def test_with_the_fixes_aims_at_a_rep105_point_from_the_pivot(x, y):
+    """Aim x forward, y left; pitch for z above the pitch pivot, not the ground."""
+    hw, s = _sentry(firmware_fixes=True)
+    _run(hw, s, 300, _frame(x, y, 0.2))
+    assert hw.yaw_target == pytest.approx(math.atan2(y, x))
+    assert hw.pitch_target == pytest.approx(ballistics.solve_for_pitch(
+        math.hypot(x, y), 0.2 - ballistics.OFFSET_Z_ROBOT_TO_PITCH_PIVOT))
 
 
 def test_bridge_frames_fit_without_the_fixes():

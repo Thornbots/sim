@@ -19,6 +19,7 @@ Per 1 ms cycle: aim at the latest CvTarget's odom point for TARGET_VALID_TIME
 after it arrives, one tryShootOnce per fire frame after delay_ms, else
 patrol. In a 3v3 game it shoots only IN_GAME. fix_delay clamps
 delay_ms - FIRING_LATENCY_TIME at 0; the firmware's uint32 wraps it.
+fix_pivot_z solves pitch for z above the pitch pivot, not the ground.
 """
 import math
 
@@ -42,11 +43,12 @@ FLYWHEEL_MOTOR_MAX_RPM = 1.0  # FlywheelSubsystemConstants.hpp; only its fractio
 class AutoAimAndFireCommand:
 
     def __init__(self, drivers, gimbal, indexer, flywheel, jetson, odo, adc_scheduled,
-                 fix_delay=False):
+                 fix_delay=False, fix_pivot_z=False):
         """adc_scheduled(): AutoDriveCommand::getIsScheduled, for the idle flywheel."""
         self.drivers, self.gimbal, self.indexer = drivers, gimbal, indexer
         self.flywheel, self.jetson, self.odo = flywheel, jetson, odo
         self.adc_scheduled, self.fix_delay = adc_scheduled, fix_delay
+        self.fix_pivot_z = fix_pivot_z
         self.cv_target = CvTarget()
         # Both start stopped, and a stopped timer is never expired: until the first
         # frame, the aim branch runs on CvTarget{}, the odom origin.
@@ -102,7 +104,10 @@ class AutoAimAndFireCommand:
         dx, dy = self.cv_target.x - self.odo.get_x(), self.cv_target.y - self.odo.get_y()
         angle = 0.0 if dx == 0 and dy == 0 else math.atan2(dy, dx)  # Vector2d::angle
         self.target_yaw = angle - PI / 2  # gimbal yaw 0 is odometry's +y
-        self.target_pitch = ballistics.solve_for_pitch(math.hypot(dx, dy), self.cv_target.z)
+        z = self.cv_target.z
+        if self.fix_pivot_z:
+            z -= ballistics.OFFSET_Z_ROBOT_TO_PITCH_PIVOT
+        self.target_pitch = ballistics.solve_for_pitch(math.hypot(dx, dy), z)
         self.gimbal.set_angles(self.target_yaw, self.target_pitch)
         self.targeting = True
         shoot = self.cv_target.flags & CV_TARGET_FLAG_FIRE

@@ -23,7 +23,8 @@ crosses a canted armor face facing it within 72.5 deg, with each panel
 taken from gz's pose at the shot's arrival. Shots CVTarget.fire asks for
 are scored too, as `flag` shots, but don't set the pass. In stage E2 the
 MCB emulator fires instead: each ~/shot it reports is an `mcb` shot,
-launched FIRE_LATENCY_S after its stamp. Importable only; test_e1.py and
+launched FIRE_LATENCY_S after its stamp, and every shot falls under
+gravity, since the firmware pitches up for it. Importable only; test_e1.py and
 test_e2.py hold the assertions. Borrows the aiming bench's process and
 node helpers and its face test from ../cv/shot_hit_harness.py.
 """
@@ -50,6 +51,7 @@ import shot_hit_harness as bench  # noqa: E402, I100
 
 OPPONENT = 'opponent_0'
 MUZZLE_SPEED = bench.MUZZLE_SPEED
+GRAVITY = 9.80665  # m/s^2, E2 shots only: E1's cv_head_aim aims straight
 FIRE_HZ = 10.0  # the firmware's indexer rate while it holds a target
 FIRE_LATENCY_S = bench.FIRE_LATENCY_S
 TARGET_FRESH_S = 0.1  # a /cv/target older than this holds fire
@@ -154,6 +156,14 @@ class PoseHistory:
             return self._root[i], self._head[i]
 
 
+def _dropped(barrel, along):
+    """Return the unit chord from the muzzle to where a shot has fallen at range along."""
+    t = along / MUZZLE_SPEED
+    chord = along * barrel - np.array([0.0, 0.0, GRAVITY / 2.0 * t * t])
+    norm = float(np.linalg.norm(chord))
+    return chord / norm if norm > 0.0 else barrel
+
+
 class E2EScorer(bench.SimTimeNode):
     """Fires by the firmware's rule on /cv/target and scores every shot from gz truth."""
 
@@ -232,14 +242,15 @@ class E2EScorer(bench.SimTimeNode):
         if ours is None or ours[1] is None:
             return None
         muzzle = ours[1] @ self.muzzle
-        origin, direction = muzzle[:3, 3], muzzle[:3, 0]
-        best = None  # (off_face, miss, k, incidence, range)
+        origin, barrel = muzzle[:3, 3], muzzle[:3, 0]
+        best = None  # (off_face, miss, k, incidence, range, direction)
         for k, root_T_armor in enumerate(self.armors):
             theirs = self.theirs.at(t_launch)
             if theirs is None:
                 return None
             centre = (theirs[0] @ root_T_armor)[:3, 3]
-            along = max(float(np.dot(centre - origin, direction)), 0.0)
+            along = max(float(np.dot(centre - origin, barrel)), 0.0)
+            direction = _dropped(barrel, along) if self.stage == 'e2' else barrel
             theirs = self.theirs.at(t_launch + along / MUZZLE_SPEED)
             if theirs is None:
                 return None
@@ -252,10 +263,10 @@ class E2EScorer(bench.SimTimeNode):
             miss = float(np.linalg.norm(pos - (origin + along * direction)))
             off = bench.off_face(origin, direction, (pos, normal, panel[:3, 1], panel[:3, 2]))
             facing = incidence <= EXPOSURE_HALF_ANGLE
-            cand = (off if facing else math.inf, miss, k, incidence, along)
+            cand = (off if facing else math.inf, miss, k, incidence, along, direction)
             if best is None or cand[:2] < best[:2]:
                 best = cand
-        off, miss, k, incidence, rng = best
+        off, miss, k, incidence, rng, direction = best
         return {'t': round(t_launch, 4), 'hit': off == 0.0, 'panel': k,
                 **self._aim_split(t_launch, origin, direction, k),
                 'miss_m': round(miss, 4),

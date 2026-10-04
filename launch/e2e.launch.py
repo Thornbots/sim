@@ -213,8 +213,8 @@ def generate_launch_description():
                               description='e1: cv_head_aim on the gimbal; e2: the MCB emulator '
                                           'on a pty with dji_serial_bridge'),
         DeclareLaunchArgument('firmware_fixes', default_value='true',
-                              description='E2: the delay_ms fix asked of '
-                                          'MCBV3 position-based-cv (sim.mcb_emulator.sentry)'),
+                              description='E2: the fixes asked of MCBV3 '
+                                          'position-based-cv (sim.mcb_emulator.sentry)'),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('speeds', default_value='',

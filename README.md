@@ -368,11 +368,11 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 `stage:=e2` is stage E2: `pose_emulator`, `cv_head_aim` and the team stub
 give way to `mcb_emulator` (the sentry firmware, see Notes "MCB emulator")
 on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
-`test/e2e/test_e2.py` scores the shots the firmware fires. It is marked
-xfail: the frames get through, but the MCB's odometry and our `odom`
-disagree, so the gun turns away (Notes "MCB emulator").
-`firmware_fixes:=false` runs MCBV3 `position-based-cv` as it is, whose
-`delay_ms - 5` wraps under 5 ms so that frame never fires.
+`test/e2e/test_e2.py` scores the shots the firmware fires, each falling
+under gravity since the firmware pitches up for it. It is marked xfail,
+not strict: it hits when E1's tracking is clean and misses when it isn't
+(ROADMAP T17). `firmware_fixes:=false` runs MCBV3 `position-based-cv` as
+it is, whose gun turns away (Notes "MCB emulator").
 
 ```bash
 ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
@@ -1086,10 +1086,12 @@ indexer setpoints) and `sentry.py` (SentryControl and the 1 kHz loop).
 Every function cites its firmware file and line. Units and names follow the
 firmware.
 
-`firmware_fixes` (default true) applies the fix asked of that branch:
-`delay_ms - FIRING_LATENCY_TIME` clamps at 0 (the branch's uint32 wraps it
-to ~49 days under 5 ms, so that frame never fires). `CvTarget` is the
-branch's 15 bytes, as the bridge sends it since 2026-10-03.
+`firmware_fixes` (default true) applies the fixes asked of that branch
+(`../ros2_dji_serial_bridge/README.md` "Asked of the firmware"): the wire
+in REP-105 at `JetsonSubsystem`, `delay_ms - FIRING_LATENCY_TIME` clamped
+at 0 (the branch's uint32 wraps it to ~49 days under 5 ms, so that frame
+never fires), and pitch solved for `z` above the pitch pivot. `CvTarget`
+is the branch's 15 bytes, as the bridge sends it since 2026-10-03.
 
 It lives in `sim` because it is sim hardware: it reads gz truth and drives
 the gz head and chassis, as `pose_emulator` and `cv_head_aim` (which it
@@ -1140,7 +1142,7 @@ score (paths under `MCB-project/src/`):
   `AutoDriveCommand` is never scheduled. All stage gating applies only when
   the referee reports an RMUL 3v3 game.
 
-E2 on `position-based-cv` with `firmware_fixes` (2026-10-03, container,
+E2 on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
 lateral, still and 1 m/s, 15 s each): `CV_TARGET` and `RELOCALIZE` frames
 are read, none refused, but the gun turns away. One `RELOCALIZE` moved the
 parked MCB's odometry to (0.74, 1.86), our `odom`'s numbers, and the head
@@ -1148,3 +1150,10 @@ sat at `head_yaw` 4.13 rad with the opponent straight ahead. Still: no
 valid `TargetState`, no shots. 1 m/s: the tracked centre 3.17 m off, 0 of
 6 shots hit. `pose_translator` reads POSE's x right, y forward as REP-105,
 so our `odom` and the MCB's odometry differ by a turn.
+
+With all three fixes (2026-10-03, container, still lateral cell): the
+aim lands within 3 mm of the panel and the barrel 1.55 deg above it, a
+24 m/s shot's drop over 3.2 m, so E2 now scores shots under gravity.
+Then 28 of 40 hit (70%, barrel 0.36 deg off the aim, miss 0.020 m)
+on a clean track (centre 0.097 m), 2 of 40 and 1 of 30 on runs where
+the tracker read 1.6-1.9 m/s for the still target (T17).

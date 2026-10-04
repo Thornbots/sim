@@ -158,7 +158,8 @@ def test_pose_and_ref_sys_reach_ros(stack):
     assert 150 <= len(poses) <= 200, f'{len(poses)} poses in 2 s; the firmware sends 90 Hz'
     assert 16 <= len(refs) <= 22, f'{len(refs)} ref_sys in 2 s; the firmware sends 10 Hz'
     p = poses[-1]
-    assert (p.x, p.y) == (pytest.approx(1.25), pytest.approx(-0.75))
+    # Odometry's x right, y forward on the wire as REP-105 (firmware_fixes).
+    assert (p.x, p.y) == (pytest.approx(-0.75), pytest.approx(-1.25))
     assert p.head_yaw == pytest.approx(0.3, abs=0.01)
     assert p.odom_status == RobotPose.ODOM_PODS
     r = refs[-1]
@@ -172,7 +173,7 @@ def _send_cv_and_relocalize(node, executor):
     cv_pub = node.create_publisher(CVTarget, '/dji_serial_bridge/cv_target',
                                    qos_profile_sensor_data)
     reloc_pub = node.create_publisher(PointStamped, '/dji_serial_bridge/relocalize', 10)
-    target = CVTarget(x=0.0, y=2.0, z=0.3, fire=True, delay_ms=10)
+    target = CVTarget(x=2.0, y=0.0, z=0.3, fire=True, delay_ms=10)
     reloc = PointStamped()
     reloc.point.x, reloc.point.y = 1.0, 2.0
     for i in range(60):
@@ -195,7 +196,7 @@ def test_cv_target_aims_and_fires_and_relocalize_moves_odometry(stack):
         odo = (mcb.sentry.odo.get_x(), mcb.sentry.odo.get_y())
     assert cv_used >= 50, f'only {cv_used} CV_TARGET frames read'
     assert reloc_used >= 3
-    assert odo == (pytest.approx(1.0), pytest.approx(2.0))
+    assert odo == (pytest.approx(-2.0), pytest.approx(1.0))  # (1, 2) in odometry's axes
     assert len(shots) >= 15, f'{len(shots)} shots in 2 s of 30 Hz fire frames'
 
 
@@ -229,5 +230,5 @@ def test_nav_goal_drives_auto_drive_command(stack):
     _spin(executor, 3.0)
     with mcb.lock:
         assert mcb.sentry.drivers.uart.consumed[NAV_GOAL] == 1
-        assert math.hypot(mcb.hw.x - 0.8, mcb.hw.y - 0.4) < 0.05
+        assert math.hypot(mcb.hw.x + 0.4, mcb.hw.y - 0.8) < 0.05  # x right, y forward
     assert math.hypot(poses[-1].x - 0.8, poses[-1].y - 0.4) < 0.05

@@ -18,8 +18,9 @@ SentryControl (robots/sentry/SentryControl.hpp) and main.cpp's 1 kHz loop.
 The remote is taken as connected with both switches up: left runs
 AutoAimAndFireCommand, right SimpleAutoDriveCommand. Hardware is the
 boundary: everything the firmware reads from or writes to a motor or sensor.
-firmware_fixes applies the fix asked of MCBV3 position-based-cv:
-delay_ms - 5 clamps at 0.
+firmware_fixes applies the fixes asked of MCBV3 position-based-cv:
+delay_ms - 5 clamps at 0, the wire is REP-105, pitch solves for z above
+the pitch pivot.
 """
 import math
 
@@ -162,7 +163,8 @@ class Sentry:
         self.indexer = IndexerSubsystem(hw, d.ref_serial, d.clock)
         self.drivetrain = DrivetrainSubsystem(hw)
         self.odo = OdometrySubsystem(hw)
-        self.jetson = JetsonSubsystem(d, self.gimbal, self.odo, self._send, CvTarget)
+        self.jetson = JetsonSubsystem(d, self.gimbal, self.odo, self._send, CvTarget,
+                                      rep105=firmware_fixes)
         self.auto_drive = AutoDriveCommand(d, self.drivetrain, self.gimbal, self.jetson,
                                            self.odo)
         self.simple_auto_drive = SimpleAutoDriveCommand(d, self.drivetrain, self.gimbal,
@@ -170,7 +172,8 @@ class Sentry:
         self.auto_fire = AutoAimAndFireCommand(d, self.gimbal, self.indexer, self.flywheel,
                                                self.jetson, self.odo,
                                                lambda: self.auto_drive.is_scheduled,
-                                               fix_delay=firmware_fixes)
+                                               fix_delay=firmware_fixes,
+                                               fix_pivot_z=firmware_fixes)
         self._started = False
 
     def _send(self, msg):
