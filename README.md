@@ -372,7 +372,7 @@ on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
 under gravity since the firmware pitches up for it. It is marked xfail,
 not strict: it hits when E1's tracking is clean and misses when it isn't
 (ROADMAP T17). `firmware_fixes:=false` runs MCBV3 `position-based-cv` as
-it is, whose gun turns away (Notes "MCB emulator").
+it was at `f835be1`, whose gun turns away (Notes "MCB emulator").
 
 ```bash
 ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
@@ -1086,11 +1086,14 @@ indexer setpoints) and `sentry.py` (SentryControl and the 1 kHz loop).
 Every function cites its firmware file and line. Units and names follow the
 firmware.
 
-`firmware_fixes` (default true) applies the fixes asked of that branch
-(`../ros2_dji_serial_bridge/README.md` "Asked of the firmware"): the wire
-in REP-105 at `JetsonSubsystem`, `delay_ms - FIRING_LATENCY_TIME` clamped
-at 0 (the branch's uint32 wraps it to ~49 days under 5 ms, so that frame
-never fires), and pitch solved for `z` above the pitch pivot. `CvTarget`
+`firmware_fixes` (default true) applies the fixes asked of `f835be1` on
+2026-10-03: the wire in REP-105 at `JetsonSubsystem`, `delay_ms -
+FIRING_LATENCY_TIME` clamped at 0, and pitch solved for `z` above the
+pitch pivot. The sentry runs `0885a69`, which this port doesn't match yet:
+its aim yaw lost the `-PI/2`, `FIRING_LATENCY_TIME` is 80 ms, not 5, and the
+unclamped wrap fires at once (`MilliTimeout` sums in `uint32`), where the
+port never fires it. The asks were redone for it on 2026-10-04
+(`../ros2_dji_serial_bridge/README.md` "Asked of the firmware"). `CvTarget`
 is the branch's 15 bytes, as the bridge sends it since 2026-10-03.
 
 It lives in `sim` because it is sim hardware: it reads gz truth and drives
