@@ -28,7 +28,7 @@ import e2e_harness as harness
 import pytest
 import shot_hit_harness as bench
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.skip(reason=harness.INVALID)]
 
 
 @pytest.fixture(scope='module')

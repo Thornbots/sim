@@ -358,6 +358,8 @@ robot parked with the depth camera on, one red opponent riding
 opponent speed and path: while `/cv/target` keeps sending aim points a
 shot leaves the gz muzzle at 10 Hz (the firmware's rule) and hits if it
 crosses a panel face. Shots `CVTarget.fire` asks for are logged beside.
+**Every cell is invalid for now** and pytest skips them: each path runs the
+opponent through field obstacles (the user, 2026-10-05).
 
 ```bash
 ros2 launch sim e2e.launch.py                                 # all 12 cells

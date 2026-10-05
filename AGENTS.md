@@ -233,6 +233,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   145 deg cone.
 - **The estimation bench's target is a phantom** with exact truth. No sim
   test runs YOLO (`../E2E_PLAN.md`).
+- **E1 and E2 are invalid; don't run them** (the user, 2026-10-05). Every
+  path runs the opponent through field obstacles, so `test_e1.py` and
+  `test_e2.py` skip every cell (`e2e_harness.INVALID`) until the paths move.
 - **E1 scores, and the tracker is what misses** (`ros2 launch sim
   e2e.launch.py`, `test/e2e/`, Mac, 2026-09-29, 15 s cells, lateral path):
   stationary 149/149 hits; 2 m/s without spin 11/96, with 2 Hz spin 0-3%.

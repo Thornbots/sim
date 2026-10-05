@@ -26,7 +26,7 @@ import e2e_harness as harness
 import pytest
 import test_e1
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.skip(reason=harness.INVALID)]
 TRACKING = ("E1's sim feeds the tracker badly in some runs (ROADMAP T17); "
             'a clean track hits')
 

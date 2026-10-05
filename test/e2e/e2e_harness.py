@@ -63,6 +63,9 @@ DEFAULT_DURATION = 20.0
 DEFAULT_SPEEDS = [0.0, 1.0, 2.0, 4.0]
 DEFAULT_PATHS = ['lateral', 'radial', 'diagonal']
 DEFAULT_LOG_DIR = '/tmp/e2e_test_logs'
+# Every path runs the opponent through field obstacles (the user, 2026-10-05):
+# no cell is valid until the paths move. pytest skips them all.
+INVALID = 'opponent path runs through field obstacles; paths need moving'
 PLACEHOLDER_FLOOR = 0.10  # until three runs give FLOORS
 FLOORS = {}
 # The nodes a run needs; the camera container can lose a load at startup.
