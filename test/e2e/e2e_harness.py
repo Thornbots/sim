@@ -274,7 +274,12 @@ class E2EScorer(bench.SimTimeNode):
                 'incidence_deg': round(math.degrees(incidence), 1), 'range_m': round(rng, 3)}
 
     def _world_T_odom(self, t):
-        """Our true pose times TF's root->odom at t, so localization error drops out."""
+        """
+        Our true pose times TF's root->odom at t, so localization error drops out.
+
+        TF's root is heading-fixed, gz's root link turns with the spawn yaw:
+        the true pose drops its yaw.
+        """
         from rclpy.time import Time
         ours = self.ours.at(t)
         try:
@@ -286,7 +291,12 @@ class E2EScorer(bench.SimTimeNode):
                 return None
         if ours is None:
             return None
-        return ours[0] @ np.linalg.inv(_iso_qt(tr.rotation, tr.translation))
+        world_T_root = ours[0].copy()
+        yaw = math.atan2(world_T_root[1, 0], world_T_root[0, 0])
+        c, s = math.cos(yaw), math.sin(yaw)
+        unyaw = np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
+        world_T_root[:3, :3] = unyaw @ world_T_root[:3, :3]
+        return world_T_root @ np.linalg.inv(_iso_qt(tr.rotation, tr.translation))
 
     def _on_state(self, msg):
         if self.scoring and msg.valid:
