@@ -53,13 +53,13 @@ rclcpp_components_register_node(depth_camera_emulator
 install(TARGETS depth_camera_emulator
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 
-# YOLO's stand-in, a component for the same reason: it reads every depth frame.
+# The camera chain's stand-in for the match test: panels from gz truth.
 add_library(detector_standin SHARED src/detector_standin.cpp)
 target_compile_features(detector_standin PUBLIC cxx_std_17)
 target_include_directories(detector_standin PRIVATE include)
 target_link_libraries(detector_standin Eigen3::Eigen gz-transport::core gz-msgs::core)
 ament_target_dependencies(detector_standin
-  rclcpp rclcpp_components sensor_msgs urdf vision_msgs)
+  dji_serial_bridge geometry_msgs rclcpp rclcpp_components urdf)
 rclcpp_components_register_node(detector_standin
   PLUGIN "sim::DetectorStandin"
   EXECUTABLE detector_standin_node)

@@ -352,14 +352,14 @@ cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
 
 `e2e.launch.py` is the match test, stage E1 (`../E2E_PLAN.md`): our
-robot parked with the depth camera on, one red opponent riding
-`target_driver`'s path, and the real CV chain from `roi_depth_node` to
-`cv_head_aim` with no YOLO. `test/e2e/test_e1.py` scores one cell per
+robot parked with no camera, one red opponent riding `target_driver`'s
+path, and the real CV chain from `target_selector` to `cv_head_aim`, fed
+gz truth in place of YOLO and `roi_depth_node`. **Every cell is invalid
+for now** and pytest skips them: each path runs the opponent through field
+obstacles (the user, 2026-10-05). `test/e2e/test_e1.py` scores one cell per
 opponent speed and path: while `/cv/target` keeps sending aim points a
 shot leaves the gz muzzle at 10 Hz (the firmware's rule) and hits if it
 crosses a panel face. Shots `CVTarget.fire` asks for are logged beside.
-**Every cell is invalid for now** and pytest skips them: each path runs the
-opponent through field obstacles (the user, 2026-10-05).
 
 ```bash
 ros2 launch sim e2e.launch.py                                 # all 12 cells
@@ -387,18 +387,21 @@ truth. `pytest_args:='--e2e-spin 0'` holds the spin for every cell.
 
 - `opponent_driver` spawns `opponent_0`, a `sentry_v2` with no sensors,
   gravity or contacts, drawn from its collision shapes (the CAD visuals
-  cost RTF 1.10 to 0.61 in the depth camera). Its root hull is drawn at
+  cost RTF 1.10 to 0.61 with the depth camera on). Its root hull is drawn at
   75% in x and y: at full size it stood 3-7 cm proud of every panel.
 - Its `OpponentMover` gz system (`src/opponent_mover.cpp`) sets its pose
   every physics step from `target_driver`'s path, bridged to
   `/model/opponent_0/path`. VelocityControl moved only the robot
   `sim.launch.py` spawns, and teleporting from Python jumped 4-36 cm.
-- `detector_standin` (`src/detector_standin.cpp`, in `camera_container`)
-  publishes `/detections_output` per depth frame, stamped with it: every
-  panel that faces the camera within 72.5 deg, lands in the image and
-  whose rendered depth agrees with truth within 0.1 m, boxed in YOLO's
-  640x640 letterbox. Truth is gz's `/model/<name>/pose` at the frame's
-  stamp; panel and camera offsets come from the URDF.
+- `detector_standin` (`src/detector_standin.cpp`) publishes
+  `/cv/panel_detections` at 60 Hz of sim time, stamped with the tick, as
+  `roi_depth_node` would: every panel that faces the camera within
+  72.5 deg and whose centre lands in the D435's 640x480 image (horizontal
+  FOV 1.5184, 10 m), its true centre and corners in `camera`. No
+  occlusion. `noise_depth_range_coeff` and `noise_lateral_rad` add
+  `cv_target_emulator`'s ray noise, 0 by default. Truth is gz's
+  `/model/<name>/pose` at the tick; panel and camera offsets come from
+  the URDF.
 - A `ros2 topic pub` puts us on blue until E2's MCB emulator.
 
 `sim.launch.py` and every test launch start a Foxglove bridge on port 8765

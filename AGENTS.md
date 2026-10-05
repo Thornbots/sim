@@ -236,22 +236,16 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **E1 and E2 are invalid; don't run them** (the user, 2026-10-05). Every
   path runs the opponent through field obstacles, so `test_e1.py` and
   `test_e2.py` skip every cell (`e2e_harness.INVALID`) until the paths move.
-- **E1 scores, and the tracker is what misses** (`ros2 launch sim
-  e2e.launch.py`, `test/e2e/`, Mac, 2026-09-29, 15 s cells, lateral path):
+- **E1 has no camera** (the user, 2026-10-05): `detector_standin` puts gz
+  truth on `/cv/panel_detections` in `roi_depth_node`'s place, with no
+  occlusion. Built and unit-tested; never run in a stack.
+- **E1 before both changes** (Mac, 2026-09-29, 15 s cells, lateral path):
   stationary 149/149 hits; 2 m/s without spin 11/96, with 2 Hz spin 0-3%.
-  Shot records split each miss: the barrel sits ~1 deg (p50) off the aim,
-  the aim 0.4-0.7 m off the panel. At 2 m/s, no spin, TargetState's
-  velocity is 0.86 m/s off (p50), it reports 0.74 rad/s of spin that isn't
-  there, and its centre is 0.13 m off (0.07 m stationary). No FLOORS yet:
-  they wait on the tracker. `roi_depth_node`'s panel centres sit 2.7 cm
-  (p50) from truth.
-  Also open: `odom->root` walks ~1 cm/s with our robot parked and the
-  opponent spinning in lidar view (0.5 m in 90 s, amcl doesn't pull it
-  back), likely rf2o matching the moving robot; the stand-in's depth check
-  turned away ~40% of in-view panels before the hull was shrunk, not
-  re-measured. The camera container can lose a `load_node` reply at
-  startup (the lifecycle race below), which stalls every later load in
-  that queue; `E2EStack.start` fails on the missing node.
+  The barrel sat ~1 deg (p50) off the aim, the aim 0.4-0.7 m off the
+  panel; TargetState's velocity 0.86 m/s off at 2 m/s. The tracker is what
+  misses. Also open: `odom->root` walks ~1 cm/s with our robot parked and
+  the opponent spinning in lidar view, likely rf2o matching the moving
+  robot.
 - **A gz stack must not be the launch pytest runs in.** With
   `e2e.launch.py` bringing up the stack beside pytest, the tests' Shutdown
   left `gz sim` running past its ruby wrapper, and the next runs shared gz

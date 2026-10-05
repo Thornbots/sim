@@ -12,35 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// YOLO's stand-in for the match test: /detections_output from gz truth, one
-// Detection2DArray per /depth/image_rect_raw frame, stamped with it. A panel
-// is kept if it faces the camera (exposure_half_angle_deg), lands in the
-// image, and the depth at its centre agrees with truth within
-// depth_tolerance_m (hidden by the field or a robot otherwise). Boxes are in
-// YOLO's letterboxed network space; class_ids[i] tags opponents[i]. Poses are
-// gz's /model/<name>/pose, interpolated to the frame's stamp; panel and
-// camera offsets come from robot_description. see README.md for design rationale
+// The camera chain's stand-in for the match test: /cv/panel_detections
+// (PanelDetectionArray, `camera` frame, REP-103) from gz truth at rate_hz,
+// what roi_depth_node would publish from YOLO and the depth image, with no
+// camera rendered. Each tick is stamped with its sim time; a panel is kept if
+// it faces the camera (exposure_half_angle_deg) and its centre lands in the
+// D435's image. No occlusion. noise_depth_range_coeff (std range^2) and
+// noise_lateral_rad (std range) shift each panel along and across its ray,
+// both 0 by default. class_ids[i] tags opponents[i]. see README.md for design rationale
 
+#include <chrono>
 #include <cmath>
-#include <cstring>
 #include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <dji_serial_bridge/msg/panel_detection_array.hpp>
 #include <gz/msgs/pose_v.pb.h>
 #include <gz/transport/Node.hh>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
-#include <sensor_msgs/msg/camera_info.hpp>
-#include <sensor_msgs/msg/image.hpp>
 #include <urdf/model.h>
-#include <vision_msgs/msg/detection2_d_array.hpp>
 
 #include "sim/panel_view.hpp"
 
@@ -106,10 +105,17 @@ public:
     opponents_ = declare_parameter("opponents", std::vector<std::string>{"opponent_0"});
     class_ids_ = declare_parameter("class_ids", std::vector<int64_t>{6});
     half_angle_ = declare_parameter("exposure_half_angle_deg", 72.5) * M_PI / 180.0;
-    depth_tolerance_ = declare_parameter("depth_tolerance_m", 0.1);
     score_ = declare_parameter("score", 0.9);
-    net_w_ = declare_parameter("network_width", 640);
-    net_h_ = declare_parameter("network_height", 640);
+    frame_id_ = declare_parameter("frame_id", "camera");
+    depth_coeff_ = declare_parameter("noise_depth_range_coeff", 0.0);
+    lateral_rad_ = declare_parameter("noise_lateral_rad", 0.0);
+    rng_.seed(declare_parameter("seed", 0));
+    // The URDF camera's: 640x480, horizontal_fov 1.5184, 0.1-10 m.
+    const int w = declare_parameter("image_width", 640);
+    const int h = declare_parameter("image_height", 480);
+    const double f = w / 2.0 / std::tan(declare_parameter("horizontal_fov", 1.5184) / 2.0);
+    k_ = Intrinsics{f, f, w / 2.0, h / 2.0, w, h};
+    max_range_ = declare_parameter("max_range_m", 10.0);
     if (class_ids_.size() != opponents_.size()) {
       throw std::invalid_argument("class_ids needs one entry per opponent");
     }
@@ -131,19 +137,14 @@ public:
       throw std::invalid_argument("robot_description has no armor_* links");
     }
 
-    pub_ = create_publisher<vision_msgs::msg::Detection2DArray>("/detections_output", 10);
-    info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
-      "/depth/camera_info", rclcpp::SensorDataQoS(),
-      [this](sensor_msgs::msg::CameraInfo::ConstSharedPtr m) {
+    pub_ = create_publisher<dji_serial_bridge::msg::PanelDetectionArray>(
+      "/cv/panel_detections", 10);
+    // The D435's depth rate, on the sim clock.
+    timer_ = create_timer(
+      std::chrono::duration<double>(1.0 / declare_parameter("rate_hz", 60.0)),
+      [this]() {
         std::lock_guard<std::mutex> lock(mutex_);
-        k_ = Intrinsics{m->k[0], m->k[4], m->k[2], m->k[5],
-          static_cast<int>(m->width), static_cast<int>(m->height)};
-      });
-    depth_sub_ = create_subscription<sensor_msgs::msg::Image>(
-      "/depth/image_rect_raw", rclcpp::SensorDataQoS(),
-      [this](sensor_msgs::msg::Image::ConstSharedPtr m) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        pending_.push_back(m);
+        pending_.push_back(now());
         if (pending_.size() > kMaxPending) {
           pending_.pop_front();
         }
@@ -220,12 +221,12 @@ private:
     return At::kOk;
   }
 
-  // Answers every pending frame whose stamp all the poses have reached.
+  // Answers every pending tick whose stamp all the poses have reached.
   void drain()
   {
-    while (!pending_.empty() && k_) {
-      const auto & img = *pending_.front();
-      const double t = rclcpp::Time(img.header.stamp).seconds();
+    while (!pending_.empty()) {
+      const rclcpp::Time stamp = pending_.front();
+      const double t = stamp.seconds();
       Sample ours;
       std::vector<Sample> theirs(opponents_.size());
       At at = sample_at(our_model_, t, ours);
@@ -236,74 +237,89 @@ private:
         return;
       }
       if (at == At::kOk) {
-        publish(img, ours, theirs);
+        publish(stamp, ours, theirs);
       }
       pending_.pop_front();
     }
   }
 
-  void publish(
-    const sensor_msgs::msg::Image & img, const Sample & ours, const std::vector<Sample> & theirs)
+  // Every panel the camera sees, as roi_depth_node would deproject it; empty
+  // frames too, so downstream timeouts see the rate.
+  void publish(const rclcpp::Time & stamp, const Sample & ours, const std::vector<Sample> & theirs)
   {
     const Eigen::Isometry3d camera_T_world =
       (ours.world_T_root * ours.root_T_head_pitch * head_pitch_T_camera_).inverse();
-    const Letterbox lb = letterbox(k_->width, k_->height, net_w_, net_h_);
-    vision_msgs::msg::Detection2DArray out;
-    out.header = img.header;
+    dji_serial_bridge::msg::PanelDetectionArray out;
+    out.header.stamp = stamp;
+    out.header.frame_id = frame_id_;
     for (size_t i = 0; i < theirs.size(); ++i) {
       for (const auto & root_T_panel : root_T_panels_) {
-        auto box = view_panel(
-          camera_T_world * theirs[i].world_T_root * root_T_panel, panel_w_, panel_h_, *k_,
-          half_angle_);
-        if (!box || !depth_agrees(img, *box)) {
+        const Eigen::Isometry3d camera_T_panel =
+          camera_T_world * theirs[i].world_T_root * root_T_panel;
+        const Eigen::Vector3d centre = camera_T_panel.translation();
+        if (centre.norm() > max_range_ ||
+          !view_panel(camera_T_panel, panel_w_, panel_h_, k_, half_angle_))
+        {
           continue;
         }
-        vision_msgs::msg::Detection2D d;
-        d.header = img.header;
-        d.bbox.center.position.x = lb.scale * box->u + lb.pad_x;
-        d.bbox.center.position.y = lb.scale * box->v + lb.pad_y;
-        d.bbox.size_x = lb.scale * box->w;
-        d.bbox.size_y = lb.scale * box->h;
-        vision_msgs::msg::ObjectHypothesisWithPose hyp;
-        hyp.hypothesis.class_id = std::to_string(class_ids_[i]);
-        hyp.hypothesis.score = score_;
-        d.results.push_back(hyp);
+        const Eigen::Vector3d shift = ray_noise(centre);
+        dji_serial_bridge::msg::PanelDetection d;
+        d.header = out.header;
+        const auto corners = panel_corners(camera_T_panel, panel_w_, panel_h_);
+        for (size_t c = 0; c < 4; ++c) {
+          d.corners[c] = to_point(corners[c] + shift);
+        }
+        d.center = to_point(centre + shift);
+        d.depth_m = static_cast<float>(centre.x() + shift.x());
+        d.confidence = static_cast<float>(score_);
+        d.class_id = static_cast<int32_t>(class_ids_[i]);
         out.detections.push_back(d);
       }
     }
     pub_->publish(out);
   }
 
-  // The rendered depth (16UC1 mm, 0 for none) at the panel's centre.
-  bool depth_agrees(const sensor_msgs::msg::Image & img, const PanelBox & box) const
+  // A D435-shaped error: std depth_coeff * r^2 along the ray, lateral_rad * r across it.
+  Eigen::Vector3d ray_noise(const Eigen::Vector3d & p)
   {
-    const auto u = static_cast<uint32_t>(box.cu), v = static_cast<uint32_t>(box.cv);
-    if (img.encoding != "16UC1" || u >= img.width || v >= img.height) {
-      return false;
+    const double r = p.norm();
+    if (r <= 0.0 || (depth_coeff_ <= 0.0 && lateral_rad_ <= 0.0)) {
+      return Eigen::Vector3d::Zero();
     }
-    uint16_t mm;
-    std::memcpy(&mm, img.data.data() + v * img.step + u * 2, sizeof(mm));
-    return mm != 0 && std::abs(mm * 1e-3 - box.depth) < depth_tolerance_;
+    const Eigen::Vector3d along = p / r;
+    const Eigen::Vector3d side = along.cross(Eigen::Vector3d::UnitZ()).normalized();
+    const Eigen::Vector3d up = side.cross(along);
+    std::normal_distribution<double> n(0.0, 1.0);
+    return along * (depth_coeff_ * r * r * n(rng_)) +
+           (side * n(rng_) + up * n(rng_)) * (lateral_rad_ * r);
   }
 
-  std::string our_model_;
+  static geometry_msgs::msg::Point32 to_point(const Eigen::Vector3d & p)
+  {
+    geometry_msgs::msg::Point32 out;
+    out.x = static_cast<float>(p.x());
+    out.y = static_cast<float>(p.y());
+    out.z = static_cast<float>(p.z());
+    return out;
+  }
+
+  std::string our_model_, frame_id_;
   std::vector<std::string> opponents_;
   std::vector<int64_t> class_ids_;
-  double half_angle_, depth_tolerance_, score_;
-  int net_w_, net_h_;
+  double half_angle_, score_, depth_coeff_, lateral_rad_, max_range_;
+  Intrinsics k_;
+  std::mt19937 rng_;
   Eigen::Isometry3d head_pitch_T_camera_;
   std::vector<Eigen::Isometry3d> root_T_panels_;
   double panel_w_ = 0.0, panel_h_ = 0.0;
 
   std::mutex mutex_;  // gz's callbacks run on its own threads
-  std::optional<Intrinsics> k_;
-  std::deque<sensor_msgs::msg::Image::ConstSharedPtr> pending_;
+  std::deque<rclcpp::Time> pending_;
   std::map<std::string, std::deque<Sample>> history_;
 
   gz::transport::Node gz_;
-  rclcpp::Publisher<vision_msgs::msg::Detection2DArray>::SharedPtr pub_;
-  rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr depth_sub_;
+  rclcpp::Publisher<dji_serial_bridge::msg::PanelDetectionArray>::SharedPtr pub_;
+  rclcpp::TimerBase::SharedPtr timer_;
 };
 
 }  // namespace sim

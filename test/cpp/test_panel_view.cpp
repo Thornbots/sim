@@ -65,15 +65,17 @@ TEST(PanelView, BehindOrOffImageIsHidden)
   EXPECT_FALSE(sim::view_panel(panel_ahead(1.0, 0.0, 1.2), 0.135, 0.125, kK, kHalf));
 }
 
-TEST(PanelView, LetterboxPadsTheShortSide)
+TEST(PanelView, CornersRunTopLeftClockwiseAsSeen)
 {
-  auto lb = sim::letterbox(640, 480, 640, 640);
-  EXPECT_DOUBLE_EQ(lb.scale, 1.0);
-  EXPECT_DOUBLE_EQ(lb.pad_x, 0.0);
-  EXPECT_DOUBLE_EQ(lb.pad_y, 80.0);
-  lb = sim::letterbox(1280, 720, 640, 640);
-  EXPECT_DOUBLE_EQ(lb.scale, 0.5);
-  EXPECT_DOUBLE_EQ(lb.pad_y, 140.0);
+  auto c = sim::panel_corners(panel_ahead(2.0, 0.0), 0.135, 0.125);
+  EXPECT_NEAR(c[0].y(), 0.0675, 1e-9);  // camera y is left
+  EXPECT_NEAR(c[0].z(), 0.0625, 1e-9);
+  EXPECT_NEAR(c[1].y(), -0.0675, 1e-9);
+  EXPECT_NEAR(c[2].z(), -0.0625, 1e-9);
+  EXPECT_NEAR(c[3].y(), 0.0675, 1e-9);
+  for (const auto & p : c) {
+    EXPECT_NEAR(p.x(), 2.0, 1e-9);
+  }
 }
 
 TEST(PanelView, InterpolatesHalfway)

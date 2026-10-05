@@ -82,18 +82,15 @@ inline std::optional<PanelBox> view_panel(
   return PanelBox{(u0 + u1) / 2.0, (v0 + v1) / 2.0, u1 - u0, v1 - v0, c.x(), c.y(), centre.x()};
 }
 
-// Image pixels to YOLO's network input, the letterbox roi_depth_node undoes:
-// uniform scale, centred padding.
-struct Letterbox
+// The panel's face corners in the camera frame, TL, TR, BR, BL as the
+// camera sees them (PanelDetection.msg's order). The face looks back along
+// its +x, so the camera's left is the panel's -y.
+inline std::array<Eigen::Vector3d, 4> panel_corners(
+  const Eigen::Isometry3d & camera_T_panel, double width, double height)
 {
-  double scale, pad_x, pad_y;
-};
-
-inline Letterbox letterbox(int image_w, int image_h, int net_w, int net_h)
-{
-  const double s = std::min(static_cast<double>(net_w) / image_w,
-      static_cast<double>(net_h) / image_h);
-  return {s, (net_w - s * image_w) / 2.0, (net_h - s * image_h) / 2.0};
+  const double w = width / 2.0, h = height / 2.0;
+  return {camera_T_panel * Eigen::Vector3d(0.0, -w, h), camera_T_panel * Eigen::Vector3d(0.0, w, h),
+    camera_T_panel * Eigen::Vector3d(0.0, w, -h), camera_T_panel * Eigen::Vector3d(0.0, -w, -h)};
 }
 
 // Pose at `t` from two samples around it: lerp and slerp.

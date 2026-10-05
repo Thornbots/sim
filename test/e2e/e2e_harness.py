@@ -68,10 +68,9 @@ DEFAULT_LOG_DIR = '/tmp/e2e_test_logs'
 INVALID = 'opponent path runs through field obstacles; paths need moving'
 PLACEHOLDER_FLOOR = 0.10  # until three runs give FLOORS
 FLOORS = {}
-# The nodes a run needs; the camera container can lose a load at startup.
-STACK_NODES = ['detector_standin', 'depth_camera_emulator', 'roi_depth_node',
-               'target_selector', 'target_tracker', 'point_to_cv_target', 'cv_head_aim',
-               'opponent_driver', 'target_driver']
+# The nodes a run needs.
+STACK_NODES = ['detector_standin', 'target_selector', 'target_tracker', 'point_to_cv_target',
+               'cv_head_aim', 'opponent_driver', 'target_driver']
 E2_NODES = [n for n in STACK_NODES if n != 'cv_head_aim'] + [
     'mcb_emulator', 'dji_serial_bridge', 'mcb_relay']
 
