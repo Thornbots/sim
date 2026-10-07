@@ -15,8 +15,31 @@
 """Wire helper checks: payload sizes, CRCs and diagnostic frame decoding."""
 import struct
 import zlib
+from types import SimpleNamespace
+
+import pytest
 
 from sim.mcb_emulator import protocol as p
+from sim.mcb_firmware import referee_frames
+
+
+@pytest.mark.parametrize('schema,bits', [('legacy', (13, 18, 19)), ('2025', (19, 20, 23))])
+@pytest.mark.parametrize('zone', range(3))
+def test_referee_rfid_schema_bits(schema, bits, zone):
+    ref = SimpleNamespace(game_type=4, game_stage=4, stage_time_remaining=300,
+                          robot_id=7, current_hp=400, max_hp=400, shooter_power=True,
+                          restoration_zone=zone == 0, exchange_zone=zone == 1,
+                          central_buff_zone=zone == 2)
+    frames = p.DJISerial().feed(referee_frames(ref, schema))
+    payload = next(payload for kind, payload in frames if kind == 0x0209)
+    assert struct.unpack('<I', payload)[0] == 1 << bits[zone]
+
+
+def test_referee_rfid_schema_rejects_unknown():
+    ref = SimpleNamespace(game_type=4, game_stage=4, stage_time_remaining=300,
+                          robot_id=7, current_hp=400, max_hp=400, shooter_power=True)
+    with pytest.raises(ValueError, match='unknown referee RFID schema'):
+        referee_frames(ref, 'unknown')
 
 
 def test_struct_sizes_are_the_firmwares():

@@ -36,15 +36,21 @@ def default_binary():
     return str(root / 'firmware/MCBV3/MCB-project/build/sim/scons-release/MCB-project.elf')
 
 
-def referee_frames(ref):
+def referee_frames(ref, rfid_schema=None):
     """Physical referee UART packets, decoded by the firmware's RefSerial."""
     game = struct.pack('<BHQ', ref.game_type | ref.game_stage << 4,
                        ref.stage_time_remaining, 0)
     robot = struct.pack('<BB5HB', ref.robot_id, 1, ref.current_hp, ref.max_hp,
                         100, 1000, 240, 3 | int(ref.shooter_power) << 2)
     power = struct.pack('<HHf4H', 24000, 0, 0.0, 60, 0, 0, 0)
-    zones = (int(ref.restoration_zone) << 13 | int(ref.exchange_zone) << 18
-             | int(ref.central_buff_zone) << 19)
+    schema = rfid_schema or os.environ.get('MCB_REFEREE_RFID_SCHEMA', '2025')
+    layouts = {'legacy': (13, 18, 19), '2025': (19, 20, 23)}
+    if schema not in layouts:
+        raise ValueError(f'unknown referee RFID schema: {schema}')
+    restoration_bit, exchange_bit, central_bit = layouts[schema]
+    zones = (int(ref.restoration_zone) << restoration_bit
+             | int(ref.exchange_zone) << exchange_bit
+             | int(ref.central_buff_zone) << central_bit)
     return b''.join(encode_frame(kind, payload) for kind, payload in (
         (0x0001, game), (0x0206, bytes([getattr(ref, 'hurt_armor_id', 0) & 3])),
         (0x0201, robot), (0x0202, power),

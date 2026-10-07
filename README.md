@@ -1113,6 +1113,13 @@ head follows each.
 
 ### MCB emulator
 
+The native fixture defaults to the 2025 referee RFID layout used by MCBV3
+`main`'s regenerated Taproot: resupply outside/inside exchange occupies bits
+19/20, and central buff occupies bit 23. Its restoration/exchange booleans model
+those two resupply indicators. Set `MCB_REFEREE_RFID_SCHEMA=legacy` when testing
+older firmware with bits 13/18/19. Unknown schemas fail; this selects the UART
+encoding and does not validate physical field RFID placement.
+
 The emulator compiles and runs the checked-out `firmware/MCBV3` C++ sources.
 The Python control port has been removed. `mcb_firmware.py` transports hardware
 readings to `MCB-project/src/hosted/main.cpp`, which instantiates the actual
