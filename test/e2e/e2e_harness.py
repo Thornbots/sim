@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Score E1-E4 shots and route diagnostics against stamped Gazebo truth.
+"""
+Score E1-E4 shots and route diagnostics against stamped Gazebo truth.
 
 E1 samples fresh CV aims at 10 Hz; E2 onward uses actual firmware shots.
 Flag shots are hypothetical and never damage HP. E4 scores ballistic first

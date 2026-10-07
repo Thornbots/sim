@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Launch the E1-E4 integration suites and their camera-free Gazebo stacks.
+"""
+Launch the E1-E4 integration suites and their camera-free Gazebo stacks.
 
 E1 uses truth detections, the real CV stack and cv_head_aim. E2 replaces
 pose/aim/referee stubs with the hosted MCB firmware and real UART bridge.
