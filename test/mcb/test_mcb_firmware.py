@@ -1,5 +1,17 @@
 # Copyright 2026 Thornbots
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Exercise compiled MCB control code over its real UART parser, with fake hardware."""
 import math
 import os
@@ -59,7 +71,6 @@ def test_actual_firmware_sends_pose_referee_and_echoes_ping(board):
     assert poses[-1].x == pytest.approx(-board[1].start_x)
     assert refs[-1].robotID == 7 and refs[-1].robotHp == 400
     assert any(t == wire.PING for t, _ in frames)
-
 
 
 def test_actual_firmware_consumes_fake_sensor_readings(board):

@@ -1,5 +1,17 @@
 # Copyright 2026 Thornbots
-# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Lockstep hardware transport to the compiled MCB firmware; no control logic."""
 import math
 import os
@@ -77,7 +89,7 @@ class Firmware:
         return bytes(data)
 
     def step(self, cycles, readings, ref):
-        """readings: pods x/y/vx/vy, IMU yaw/rate, joint yaw/rate/pitch/rate."""
+        """Step with pods x/y/vx/vy, IMU yaw/rate, and joint yaw/rate/pitch/rate."""
         if not 1 <= cycles <= 100:
             raise ValueError('MCB hardware ticks must contain 1..100 cycles')
         packets = referee_frames(ref) if self.time_ms == 0 or self.time_ms // 100 != (
