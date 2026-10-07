@@ -1195,3 +1195,30 @@ aim lands within 3 mm of the panel and the barrel 1.55 deg above it, a
 Then 28 of 40 hit (70%, barrel 0.36 deg off the aim, miss 0.020 m)
 on a clean track (centre 0.097 m), 2 of 40 and 1 of 30 on runs where
 the tracker read 1.6-1.9 m/s for the still target (T17).
+
+
+### Driving and combat diagnostics (E3)
+
+```bash
+ros2 launch sim e2e.launch.py stage:=e3
+```
+
+Our sentry starts at blue's provisional firmware spawn `(4.625, 0)`,
+facing red; the opponent starts at `(-4.625, 0)`. Both travel around the
+south ends of the side walls and stop in the center. Our chassis then
+parks, translates at a 1 m/s cap, makes a 90-degree corner, and spins at
+9 rad/s. The approach reaches a 2 m/s cap; acceleration is 2 m/s².
+These are scripted sim routes, pending a real navigation publisher.
+`match_driver` owns `/cmd_vel`; firmware drive output is remapped to
+`/mcb_emulator/cmd_vel`. The real firmware retains aim/fire, UART, pose and
+referee output, and the real AMCL + rf2o + EKF stack remains in the loop.
+
+`segments.json` reports hit rates and the measured failing hop per segment.
+`shots.jsonl` includes route, localization, head-TF and aim errors at fire
+time. `route.jsonl` captures those diagnostics even when no shots fire.
+A diagnostic-tier pass means nodes and clock remained live, every route
+segment completed within 0.40 m p95, stamped localization data existed,
+and a low hit rate named a measured failing hop, as allowed in E2E_PLAN.
+It does **not** mean combat accuracy passed: floors need repeated valid
+runs, and current moving runs expose localization and tracking failures.
+The spawn coordinates are firmware defaults, not surveyed starting zones.

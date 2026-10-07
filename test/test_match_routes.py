@@ -20,7 +20,9 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 from sim.auto_explore import SPAWN_YAW
-from sim.match_scenario import E1_PATHS, route_duration, ROUTES, sample_route
+from sim.match_scenario import (
+    E1_PATHS, match_duration, route_duration, ROUTES, sample_match, sample_route,
+)
 
 RADIUS = 0.40  # chassis rotation envelope plus clearance, not just the panel radius
 
@@ -80,3 +82,8 @@ def test_spawn_routes_clear_the_field(robot, obstacles):
     points = np.array([sample_route(route, t)[0]
                        for t in np.arange(0, route_duration(route) + .025, .025)])
     assert_clear(points, obstacles)
+
+
+def test_center_maneuvers_clear_the_field(obstacles):
+    positions = np.array([sample_match(t)[0] for t in np.arange(0, match_duration(), .025)])
+    assert_clear(positions, obstacles)

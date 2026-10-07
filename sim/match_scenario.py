@@ -39,21 +39,21 @@ def leg_duration(length, speed=ROUTE_SPEED, accel=ROUTE_ACCEL):
     return length / peak + peak / accel if length else 0.0
 
 
-def route_duration(points):
+def route_duration(points, speed=ROUTE_SPEED):
     """Duration with a full stop at every waypoint."""
-    return sum(leg_duration(math.dist(a, b)) for a, b in zip(points, points[1:]))
+    return sum(leg_duration(math.dist(a, b), speed) for a, b in zip(points, points[1:]))
 
 
-def sample_route(points, seconds):
+def sample_route(points, seconds, speed=ROUTE_SPEED):
     """Return ((x, y), (vx, vy), finished) with bounded speed and acceleration."""
     seconds = max(seconds, 0.0)
     for a, b in zip(points, points[1:]):
         length = math.dist(a, b)
-        duration = leg_duration(length)
+        duration = leg_duration(length, speed)
         if seconds > duration:
             seconds -= duration
             continue
-        peak = min(ROUTE_SPEED, math.sqrt(length * ROUTE_ACCEL))
+        peak = min(speed, math.sqrt(length * ROUTE_ACCEL))
         ramp = peak / ROUTE_ACCEL
         if seconds < ramp:
             distance, velocity = ROUTE_ACCEL * seconds**2 / 2, ROUTE_ACCEL * seconds
@@ -68,3 +68,35 @@ def sample_route(points, seconds):
         return (tuple(a[i] + direction[i] * distance for i in range(2)),
                 tuple(direction[i] * velocity for i in range(2)), False)
     return points[-1], (0.0, 0.0), True
+
+
+CENTER = ROUTES['sentry'][-1]
+CENTER_LEGS = [
+    ('parked', [CENTER], 1.0, 5.0),
+    ('straight_1', [CENTER, (1.55, -0.05), CENTER], 1.0, None),
+    ('turn', [CENTER, (0.65, -0.65), (0.65, -0.05), (1.55, -0.05), CENTER], 1.0, None),
+    ('spin', [CENTER], 1.0, 6.0),
+]
+
+
+def match_duration():
+    """E3 reference duration, including the spawn approach and center maneuvers."""
+    return route_duration(ROUTES['sentry']) + sum(
+        duration if duration is not None else route_duration(points, speed)
+        for _, points, speed, duration in CENTER_LEGS)
+
+
+def sample_match(seconds):
+    """Return position, velocity, chassis spin and segment for our scripted route."""
+    approach = route_duration(ROUTES['sentry'])
+    if seconds < approach:
+        p, v, _ = sample_route(ROUTES['sentry'], seconds)
+        return p, v, 0.0, 'approach_2'
+    seconds -= approach
+    for name, points, speed, duration in CENTER_LEGS:
+        duration = duration if duration is not None else route_duration(points, speed)
+        if seconds < duration:
+            p, v, _ = sample_route(points, seconds, speed)
+            return p, v, 9.0 if name == 'spin' else 0.0, name
+        seconds -= duration
+    return CENTER, (0.0, 0.0), 0.0, 'finished'

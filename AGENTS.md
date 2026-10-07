@@ -48,7 +48,8 @@ doesn't reach it; run pytest directly for the integration tier. The
 ../isaac_ros_common/scripts/dexec.sh -- bash -c 'cd src/sim && python3 -m pytest test -m integration'
 ```
 
-A new Python node needs a `scripts/<name>` wrapper (copy one) and a rebuild;
+A new Python node needs a `scripts/<name>` wrapper (copy one) and a rebuild
+with `--cmake-force-configure` to refresh the scripts glob;
 edits to existing modules are live through the symlink install.
 
 Both suites run from a launch file, so `kill_launch.sh <pid>` on the outer
@@ -352,3 +353,11 @@ This package is a submodule of `thornbots_workspace`, on branch `main`. Commit
 and push here first, then bump this gitlink in `../` — one logical change, one
 bump, never a gitlink pointing at an unpushed commit. Full rule in
 `../CLAUDE.md` § Packages.
+
+## E3
+
+`e2e.launch.py stage:=e3` runs a scripted blue-spawn-to-center route against
+one red sentry. The compiled firmware owns aim/fire, sim owns the route.
+`segments.json` separates diagnostic completion from combat accuracy;
+current localization and tracking losses remain open. Read README.md before
+interpreting a diagnostic-tier pass as a hit-rate result.

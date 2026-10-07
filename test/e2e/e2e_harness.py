@@ -46,6 +46,7 @@ from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sim import suite_timing
 from sim.match_scenario import E1_PATHS as TARGET_PATHS
+from sim.match_scenario import match_duration, sample_match
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'cv'))
 import shot_hit_harness as bench  # noqa: E402, I100
@@ -180,6 +181,14 @@ class E2EScorer(bench.SimTimeNode):
         self._gz.subscribe(Pose_V, '/model/sentry/pose', lambda m: self.ours.add('sentry', m))
         self._gz.subscribe(Pose_V, f'/model/{OPPONENT}/pose',
                            lambda m: self.theirs.add(OPPONENT, m))
+        self.match_start = None
+        self._reference = []
+        self._pending_reference = []
+        self.route_records = []
+        self.launch_probe = None
+        if stage == 'e3':
+            from nav_msgs.msg import Odometry
+            self.create_subscription(Odometry, '/sim/match/reference', self._on_reference, 10)
         self._target = None  # stamp_s of the newest aim point
         self._aims = []  # (stamp_s, odom point) of each confident /cv/target
         import tf2_ros
@@ -194,13 +203,28 @@ class E2EScorer(bench.SimTimeNode):
         self.scoring = False
         self.shots = {'rate': [], 'flag': [], 'mcb': []}
         self.create_timer(1.0 / FIRE_HZ, self._fire_tick)
-        if stage == 'e2':
+        if stage != 'e1':
             from std_msgs.msg import Header
             self.create_subscription(Header, '/mcb_emulator/shot', self._on_mcb_shot, 100)
+
+    def wait_until(self, predicate, timeout, description):
+        def ready():
+            if self.launch_probe is not None and self.launch_probe.proc.poll() is not None:
+                raise RuntimeError('E2E stack exited during bring-up; see stack.log')
+            return predicate()
+        if not super().wait_until(ready, timeout, description):
+            raise RuntimeError(f'E2E bring-up failed: {description}; see stack.log')
+
+    def spin_for(self, seconds):
+        start = self.now_s()
+        super().spin_for(seconds)
+        if self.now_s() - start < seconds - 0.01:
+            raise RuntimeError('E2E clock stalled; scoring window did not complete')
 
     def reset(self):
         self._pending, self.shots, self.scoring = [], {'rate': [], 'flag': [], 'mcb': []}, True
         self.states, self._pending_states = [], []
+        self.route_records, self._pending_reference = [], []
 
     def _on_target(self, msg):
         t = self._stamp_s(msg.header.stamp)
@@ -224,6 +248,13 @@ class E2EScorer(bench.SimTimeNode):
         self._pending_states = [m for m in self._pending_states if m not in ready]
         for m in ready:
             self._judge_state(m)
+        pending_reference = []
+        for t in self._pending_reference:
+            if t > now - 0.1:
+                pending_reference.append(t)
+            else:
+                self.route_records.append({'t': t, **self._pose_errors(t)})
+        self._pending_reference = pending_reference
         still = []
         for kind, t_launch in self._pending:
             if now < t_launch + RESOLVE_AFTER_S:
@@ -250,7 +281,7 @@ class E2EScorer(bench.SimTimeNode):
                 return None
             centre = (theirs[0] @ root_T_armor)[:3, 3]
             along = max(float(np.dot(centre - origin, barrel)), 0.0)
-            direction = _dropped(barrel, along) if self.stage == 'e2' else barrel
+            direction = _dropped(barrel, along) if self.stage != 'e1' else barrel
             theirs = self.theirs.at(t_launch + along / MUZZLE_SPEED)
             if theirs is None:
                 return None
@@ -269,9 +300,48 @@ class E2EScorer(bench.SimTimeNode):
         off, miss, k, incidence, rng, direction = best
         return {'t': round(t_launch, 4), 'hit': off == 0.0, 'panel': k,
                 **self._aim_split(t_launch, origin, direction, k),
+                **self._pose_errors(t_launch),
                 'miss_m': round(miss, 4),
                 'off_face_m': round(off, 4) if math.isfinite(off) else None,
                 'incidence_deg': round(math.degrees(incidence), 1), 'range_m': round(rng, 3)}
+
+    def _on_reference(self, msg):
+        p = msg.pose.pose.position
+        t = self._stamp_s(msg.header.stamp)
+        self._reference.append((t, np.array([p.x, p.y])))
+        if self.scoring:
+            self._pending_reference.append(t)
+        self._reference = [r for r in self._reference if r[0] >= t - HISTORY_S]
+
+    def _pose_errors(self, t):
+        """Route and map-localization error at the shot stamp, without a latest-TF fallback."""
+        from rclpy.time import Time
+        ours = self.ours.at(t)
+        if ours is None or self.match_start is None:
+            return {}
+        segment = sample_match(t - self.match_start)[3]
+        refs = [p for stamp, p in self._reference if stamp <= t]
+        out = {'segment': segment,
+               'chassis_tilt_deg': math.degrees(math.acos(float(np.clip(ours[0][2, 2], -1, 1))))}
+        world_T_odom = self._world_T_odom(t)
+        try:
+            tr = self._tf.lookup_transform('odom', 'head_pitch', Time(seconds=t)).transform
+            head = world_T_odom @ _iso_qt(tr.rotation, tr.translation)
+            diff = head[:3, :3].T @ ours[1][:3, :3]
+            out['head_tf_error_deg'] = math.degrees(math.acos(float(np.clip(
+                (np.trace(diff) - 1) / 2, -1, 1))))
+            out['head_tf_translation_m'] = float(np.linalg.norm(head[:3, 3] - ours[1][:3, 3]))
+        except Exception:  # noqa: B902; missing truth or TF remains visible in the shot record
+            out['head_tf_error_deg'] = None
+        if refs:
+            out['route_error_m'] = float(np.linalg.norm(ours[0][:2, 3] - refs[-1]))
+        try:
+            tr = self._tf.lookup_transform('map', 'root', Time(seconds=t)).transform
+            out['localization_error_m'] = float(np.hypot(
+                tr.translation.x - ours[0][0, 3], tr.translation.y - ours[0][1, 3]))
+        except Exception:  # noqa: B902; missing stamped TF is a diagnostic, never silently latest
+            out['localization_error_m'] = None
+        return out
 
     def _world_T_odom(self, t):
         """
@@ -357,7 +427,10 @@ class E2EStack:
     def __init__(self, headless, log_dir, external=False, stage='e1', firmware_fixes=True):
         self.launch = None
         self.log_dir = log_dir
-        self.nodes = E2_NODES if stage == 'e2' else STACK_NODES
+        self.stage = stage
+        self.nodes = STACK_NODES if stage == 'e1' else E2_NODES
+        if stage == 'e3':
+            self.nodes = [n for n in self.nodes if n != 'target_driver'] + ['match_driver']
         if not external:
             self.launch = bench.LaunchTree(
                 'stack', ['ros2', 'launch', 'sim', 'e2e.launch.py', 'run_tests:=false',
@@ -378,16 +451,35 @@ class E2EStack:
         for path in (self.shots_path, self.scores_path):
             open(path, 'w').close()
         with suite_timing.phase('bringup'):
+            s = self.scorer
+            suite_timing.set_sim_clock(s.now_s)
             if self.launch is not None:
                 self.launch.start()
-            s = self.scorer
+                s.launch_probe = self.launch
             s.wait_until(lambda: s.theirs.newest() is not None, timeout=120.0,
                          description=f'{OPPONENT} in gz')
             s.wait_until(lambda: s.nodes_up(*self.nodes), timeout=30.0,
                          description=f'{", ".join(self.nodes)} nodes up')
             bench.check_nodes(s, self.nodes)
+            if self.stage == 'e3':
+                from rclpy.time import Time
+                s.wait_until(lambda: s._tf.can_transform('map', 'root', Time()),
+                             timeout=30.0, description='localized map->root chain')
             s.wait_until(lambda: s._target is not None,
                          timeout=60.0, description='a /cv/target aim point')
+
+    def start_match(self):
+        client = self.node.create_client(SetParameters, '/match_driver/set_parameters')
+        if not client.wait_for_service(timeout_sec=10):
+            raise RuntimeError('match_driver parameter service missing')
+        req = SetParameters.Request(parameters=[
+            Parameter('active', value=True).to_parameter_msg()])
+        future = client.call_async(req)
+        rclpy.spin_until_future_complete(self.node, future, timeout_sec=10)
+        result = future.result()
+        if result is None or not all(r.successful for r in result.results):
+            raise RuntimeError('match_driver rejected scenario start')
+        self.scorer.match_start = self.scorer.now_s()
 
     def set_target(self, speed, spin_hz, path):
         if not self._set_params.wait_for_service(timeout_sec=10.0):
@@ -406,6 +498,7 @@ class E2EStack:
         with suite_timing.phase('teardown'):
             if self.launch is not None:
                 self.launch.stop()
+        suite_timing.set_sim_clock(None)
         self.scorer.destroy_node()
         self.node.destroy_node()
 
@@ -456,3 +549,37 @@ def record_score(stack, cell, shots, duration):
             'flag_shots': len(shots['flag']), 'flag_hit_rate': round(hit_rate(shots['flag']), 4),
             'mcb_shots': len(shots['mcb']), 'mcb_hit_rate': round(hit_rate(shots['mcb']), 4),
         }) + '\n')
+
+
+def run_match(stack):
+    """Score approach and center maneuvers in one physics session."""
+    stack.scorer.reset()
+    stack.start_match()
+    stack.scorer.spin_for(match_duration() + RESOLVE_AFTER_S)
+    stack.scorer.scoring = False
+    bench.check_nodes(stack.scorer, stack.nodes)
+    with open(os.path.join(stack.log_dir, 'route.jsonl'), 'w') as stream:
+        for record in stack.scorer.route_records:
+            stream.write(json.dumps(record) + '\n')
+    return stack.scorer.shots
+
+
+def segment_diagnostics(stack, segment, shots):
+    """Name the measured hop responsible for a low score; accuracy stays in the report."""
+    records = [r for r in stack.scorer.route_records if r.get('segment') == segment]
+    localization = [r['localization_error_m'] for r in records
+                    if r.get('localization_error_m') is not None]
+    head = [r['head_tf_error_deg'] for r in records if r.get('head_tf_error_deg') is not None]
+    if not shots:
+        return 'target_tracker/point_to_cv_target: no firmware shots during this segment'
+    if localization and np.percentile(localization, 95) > 0.40:
+        return 'localization: map->root p95 error exceeds 0.40 m'
+    if head and np.percentile(head, 95) > 1.0:
+        return 'pose/TF stamps: head_pitch p95 attitude error exceeds 1 degree'
+    aim = [s['aim_off_panel_m'] for s in shots if 'aim_off_panel_m' in s]
+    if aim and np.median(aim) > 0.10:
+        return 'target_tracker/point_to_cv_target: median aim error exceeds 0.10 m'
+    barrel = [s['barrel_off_aim_deg'] for s in shots if 'barrel_off_aim_deg' in s]
+    if barrel and np.median(barrel) > 1.0:
+        return 'MCB/gimbal: median barrel error exceeds 1 degree'
+    return None

@@ -27,6 +27,7 @@ opponent is red, class 6. `stage:=e2` swaps pose_emulator, cv_head_aim and
 the stub for the MCB emulator on a pty with dji_serial_bridge and mcb_relay.
 ../E2E_PLAN.md has the stages.
 """
+import math
 import os
 import sys
 
@@ -46,7 +47,7 @@ from launch.actions import (
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
@@ -55,7 +56,7 @@ from sim.match_scenario import E1_PATHS
 
 SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/e2e'
 TEST_FILE = 'test_e1.py'
-TEST_FILES = {'e1': TEST_FILE, 'e2': 'test_e2.py'}
+TEST_FILES = {'e1': TEST_FILE, 'e2': 'test_e2.py', 'e3': 'test_e3.py'}
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
 OPPONENT_CLASS = 6  # red; we are blue
@@ -66,12 +67,13 @@ def _sim(context):
     config = context.launch_configurations
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
+    spawn = {'x': '4.625', 'y': '0.0', 'yaw': str(math.pi)} if config['stage'] == 'e3' else {}
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
         launch_arguments={'gui': gui, 'rviz': gui, 'foxglove': config['foxglove'],
                           'camera': 'false', 'pose_emulator': str(config['stage'] == 'e1').lower(),
-                          'real_time_factor': config['real_time_factor']}.items())]
+                          'real_time_factor': config['real_time_factor'], **spawn}.items())]
 
 
 def _test_dir():
@@ -133,15 +135,19 @@ def generate_launch_description():
             **E1_PATHS['lateral'],
         }])
     # The path the opponent's OpponentMover system rides, into gz.
+    path_topic = PythonExpression([
+        "'/sim/match/opponent_0/path' if '", LaunchConfiguration('stage'),
+        "' == 'e3' else '/target/ground_truth_odom'"])
     path_bridge = Node(
         package='ros_gz_bridge', executable='parameter_bridge', name='opponent_path_bridge',
         output='screen',
         arguments=[f'/model/{OPPONENT}/path@nav_msgs/msg/Odometry]gz.msgs.Odometry'],
-        remappings=[(f'/model/{OPPONENT}/path', '/target/ground_truth_odom')],
+        remappings=[(f'/model/{OPPONENT}/path', path_topic)],
         parameters=[{'use_sim_time': True}])
     opponent_driver = Node(
         package='sim', executable='opponent_driver', name='opponent_driver', output='screen',
-        parameters=[{'use_sim_time': True, 'name': OPPONENT}])
+        parameters=[{'use_sim_time': True, 'name': OPPONENT}],
+        remappings=[('/target/ground_truth_odom', path_topic)])
     cv_head_aim = Node(
         package='sim', executable='cv_head_aim', name='cv_head_aim', output='screen',
         parameters=[{'use_sim_time': True}])
@@ -155,7 +161,10 @@ def generate_launch_description():
     mcb_emulator = Node(
         package='sim', executable='mcb_emulator', name='mcb_emulator', output='screen',
         parameters=[{'use_sim_time': True, 'device_link': MCB_PTY, 'drive': 'stop',
-                     'firmware_binary': LaunchConfiguration('firmware_binary')}])
+                     'firmware_binary': LaunchConfiguration('firmware_binary')}],
+        remappings=[('/cmd_vel', PythonExpression([
+            "'/mcb_emulator/cmd_vel' if '", LaunchConfiguration('stage'),
+            "' == 'e3' else '/cmd_vel'"]))])
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
@@ -171,18 +180,25 @@ def generate_launch_description():
         # firmware's legacy rule), and a patrol frame isn't a target.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
                           'use_rf2o': 'true', 'load_map': 'true',
-                          'patrol_enabled': 'false'}.items())
+                          'patrol_enabled': 'false',
+                          'initial_x': PythonExpression([
+                              "'4.625' if '", LaunchConfiguration('stage'),
+                              "' == 'e3' else '0.0'"])}.items())
 
-    common = [standin, target_driver, path_bridge, opponent_driver]
+    match_driver = Node(
+        package='sim', executable='match_driver', name='match_driver', output='screen',
+        parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
+    common = [standin, path_bridge, opponent_driver]
     e1 = [cv_head_aim, team_stub]
     # The bridge opens the pty once, so it starts after the emulator makes it.
     e2 = [mcb_emulator, TimerAction(period=2.0, actions=[bridge, mcb_relay])]
 
     def stack(context):
         stage = context.launch_configurations['stage']
-        if stage not in ('e1', 'e2'):
-            raise RuntimeError(f"stage must be e1 or e2, not '{stage}'")
-        return (common + (e1 if stage == 'e1' else e2)
+        if stage not in TEST_FILES:
+            raise RuntimeError(f"stage must be e1, e2 or e3, not '{stage}'")
+        return (common + ([match_driver] if stage == 'e3' else [target_driver])
+                + (e1 if stage == 'e1' else e2)
                 + [TimerAction(period=ROBOT_DELAY_S, actions=[robot])])
 
     return LaunchDescription([
