@@ -12,13 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-The sentry's MCB firmware, Thornbots/MCBV3 rep-105 at cf42375, ported to Python.
-
-One module per firmware piece, each function citing its source as
-`File.cpp:line`. No rclpy here: sentry.Sentry steps the 1 kHz control loop
-against a Hardware object, and mcb_emulator_node puts it on a pty and gz.
-The firmware's motor controllers aren't ported; gz's joint and velocity
-controllers stand in for them. see README.md for design rationale
-"""
-FIRMWARE_COMMIT = 'cf42375'
+"""Wire helpers for the compiled MCB's fake hardware; control lives in MCBV3."""

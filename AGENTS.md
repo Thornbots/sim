@@ -26,6 +26,16 @@ workaround here; it applies to every _other_ first-party package.
 
 ## Testing
 
+The MCB emulator now runs the actual `firmware/MCBV3` hosted build, with fake
+hardware interfaces; its Python control port was removed. Build with
+`dexec.sh -- src/sim/tools/build_mcb_firmware.sh` (needs `scons` and `g++-11`).
+`sim/tools/run_mcb_firmware.sh` is the host entry point, also the T3 MCB action:
+it copies this checkout's sources into an isolated container directory before
+building and launching, so T3 worktrees outside the bind mount work too.
+Pass `--build-only` to stop after building. The native tests under `test/mcb`
+need `MCB_FIRMWARE_BINARY` if the executable is outside the normal firmware
+build path. They run without gz; the Gazebo smoke run still needs approval.
+
 Everything under `test/` is pytest, collected by `colcon test`. The suites
 that launch `sim` + `thornbots_pkg` end to end carry the `integration` marker and
 are deselected by `setup.cfg`, so a plain `colcon test --packages-select sim`

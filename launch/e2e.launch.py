@@ -153,8 +153,7 @@ def generate_launch_description():
     mcb_emulator = Node(
         package='sim', executable='mcb_emulator', name='mcb_emulator', output='screen',
         parameters=[{'use_sim_time': True, 'device_link': MCB_PTY, 'drive': 'stop',
-                     'firmware_fixes': ParameterValue(LaunchConfiguration('firmware_fixes'),
-                                                      value_type=bool)}])
+                     'firmware_binary': LaunchConfiguration('firmware_binary')}])
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
@@ -189,8 +188,9 @@ def generate_launch_description():
                               description='e1: cv_head_aim on the gimbal; e2: the MCB emulator '
                                           'on a pty with dji_serial_bridge'),
         DeclareLaunchArgument('firmware_fixes', default_value='true',
-                              description='E2: the fixes asked of MCBV3 '
-                                          'position-based-cv (sim.mcb_emulator.sentry)'),
+                              description='Deprecated: the native MCB runs its checked-out code'),
+        DeclareLaunchArgument('firmware_binary', default_value='',
+                              description='Hosted MCB executable; empty uses the firmware build'),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('speeds', default_value='',

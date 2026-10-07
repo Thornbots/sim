@@ -16,7 +16,7 @@
 The MCB on the far end of a pty from dji_serial_bridge, driving the gz sentry.
 
 Opens a pty and links its slave at `device_link` for the bridge's `device`.
-Runs sim.mcb_emulator's 1 kHz loop on sim time in `batch_ms` batches. Reads
+Steps the compiled MCB firmware at 1 kHz on sim time in `batch_ms` batches. Reads
 /sim/raw_odom and /sim/raw_joint_states; writes /head_pan_cmd,
 /head_pitch_cmd and /cmd_vel. Each shot goes out on ~/shot, a
 std_msgs/Header stamped with the sim time the indexer fired. Referee state
@@ -24,6 +24,7 @@ is parameters (settable live). see README.md for design rationale
 """
 import math
 import os
+from types import SimpleNamespace
 
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
@@ -31,11 +32,8 @@ from rcl_interfaces.msg import SetParametersResult
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from sim.mcb_emulator import FIRMWARE_COMMIT
-from sim.mcb_emulator.drive import rotate
 from sim.mcb_emulator.pty_link import PtyLink
-from sim.mcb_emulator.sentry import DRIVE_STOP, Hardware, Sentry
-from sim.mcb_emulator.subsystems import RefSerial
+from sim.mcb_firmware import Firmware
 from std_msgs.msg import Float64, Header
 
 HEADPITCH_LIMIT = 0.6  # sentry_v2.urdf.xacro headpitch
@@ -50,7 +48,12 @@ def wrap(a):
     return math.atan2(math.sin(a), math.cos(a))
 
 
-class GzHardware(Hardware):
+def rotate(x, y, angle):
+    c, s = math.cos(angle), math.sin(angle)
+    return c * x - s * y, s * x + c * y
+
+
+class GzHardware:
     """
     The gz sentry as the firmware senses it: IMU yaw and odometry zeroed at boot.
 
@@ -142,22 +145,27 @@ class McbEmulator(Node):
     def __init__(self):
         super().__init__('mcb_emulator')
         self.declare_parameter('device_link', '/tmp/mcb_emulator_pty')
-        self.declare_parameter('drive', DRIVE_STOP)  # stop, simple or auto: SentryControl's
+        self.declare_parameter('drive', 'stop')
         self.declare_parameter('auto_fire', True)
-        self.declare_parameter('firmware_fixes', True)  # see sim.mcb_emulator.sentry
+        self.declare_parameter('firmware_binary', '')
         self.declare_parameter('batch_ms', 5)
         self.declare_parameter('stats_period_s', 5.0)
         for name, default in REFEREE_PARAMS.items():
             self.declare_parameter(name, default)
-        self.ref = RefSerial()
+        self.ref = SimpleNamespace()
         self._apply_referee({n: self.get_parameter(n).value for n in REFEREE_PARAMS})
         self.add_on_set_parameters_callback(self._on_params)
 
         self.hw = GzHardware()
-        self.sentry = Sentry(self.hw, self.ref, self.get_parameter('auto_fire').value,
-                             self.get_parameter('drive').value,
-                             self.get_parameter('firmware_fixes').value)
         self.pty = PtyLink(self.get_parameter('device_link').value)
+        try:
+            self.firmware = Firmware(self.pty.master,
+                                     self.get_parameter('firmware_binary').value,
+                                     self.get_parameter('drive').value,
+                                     self.get_parameter('auto_fire').value)
+        except BaseException:
+            self.pty.close()
+            raise
 
         self.pan_pub = self.create_publisher(Float64, '/head_pan_cmd', 10)
         self.pitch_pub = self.create_publisher(Float64, '/head_pitch_cmd', 10)
@@ -169,9 +177,8 @@ class McbEmulator(Node):
         self.create_timer(self.get_parameter('batch_ms').value / 1000.0, self._tick)
         self.create_timer(self.get_parameter('stats_period_s').value, self._log_stats)
         self.get_logger().info(
-            f'MCB emulator (MCBV3 {FIRMWARE_COMMIT[:7]}) on {self.pty.link} -> '
+            f'MCB firmware {self.firmware.binary} on {self.pty.link} -> '
             f'{os.ttyname(self.pty.slave)}, '
-            f"firmware_fixes={self.get_parameter('firmware_fixes').value}, "
             f"drive={self.get_parameter('drive').value}, "
             f"auto_fire={self.get_parameter('auto_fire').value}")
 
@@ -188,25 +195,20 @@ class McbEmulator(Node):
         if not self.hw.ready:
             self.last_ms = now_ms
             return
-        if self.sentry.odo.start is None:
-            # The firmware's start is a constant; gz spawned the robot wherever.
-            x, y, yaw = self.hw.boot
-            self.sentry.odo.start = (x, y, yaw % (2 * math.pi))
-        cycles = min(now_ms - self.last_ms, MAX_CATCH_UP_MS) if self.last_ms else 1
+        cycles = (min(now_ms - self.last_ms, MAX_CATCH_UP_MS)
+                  if self.last_ms is not None else 1)
         self.last_ms = now_ms
         if cycles <= 0:
             return
-        to_sim_ms = now_ms - cycles - self.sentry.drivers.time_ms  # firmware ms -> sim ms
-        self.sentry.receive(self.pty.read(), cycles)
-        for _ in range(cycles):
-            self.sentry.step()
-        for t_ms in self.hw.shots:
+        to_sim_ms = now_ms - cycles - self.firmware.time_ms
+        yaw, pitch, drive, shots = self.firmware.step(
+            cycles, self.firmware.gz_readings(self.hw, self.ref), self.ref)
+        heading = math.pi if self.ref.robot_id > 100 else 0.0
+        self.hw.set_gimbal(yaw + heading - self.hw.boot[2], pitch)
+        self.hw.set_chassis(drive)
+        for t_ms in shots:
             stamp = rclpy.time.Time(nanoseconds=(t_ms + to_sim_ms) * 1_000_000)
             self.shot_pub.publish(Header(stamp=stamp.to_msg(), frame_id='muzzle'))
-        self.hw.shots.clear()
-        out = self.sentry.drain_tx()
-        if out:
-            self.pty.write(out)
         self._publish_commands()
 
     def _publish_commands(self):
@@ -222,10 +224,10 @@ class McbEmulator(Node):
         self.cmd_vel_pub.publish(twist)
 
     def _log_stats(self):
-        self.get_logger().info(f'rx {self.sentry.stats() or "nothing"}; '
-                               f'tx dropped {self.pty.dropped} B')
+        self.get_logger().info(f'MCB firmware running: {self.firmware.time_ms} ms')
 
     def destroy_node(self):
+        self.firmware.close()
         self.pty.close()
         super().destroy_node()
 

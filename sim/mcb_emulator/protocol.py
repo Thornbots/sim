@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-The MCB's side of the UART: structs, DJI framing, and its one-slot mailbox.
+Wire structs and framing for fake peripherals and diagnostic test packets.
 
 Structs are JetsonSubsystem.hpp's. CvTarget is 15 bytes there, as the
 bridge sends it (no stamp_ms since 2026-10-03). Framing is taproot's
@@ -222,52 +222,6 @@ class DJISerial:
         return struct.unpack_from('<H', self.buf, 5)[0], bytes(self.buf[7:7 + length])
 
 
-class UARTCommunication:
-    """
-    The MCB's mailbox, UARTCommunication.cpp:37-79 and JetsonSubsystem.hpp:156-165.
-
-    One slot: each frame overwrites the last (the TODO at
-    UARTCommunication.hpp:61). get_msg consumes it only if both type and
-    size match; otherwise the slot stays new and the frame is never used.
-    Counters say which frames died that way.
-    """
-
-    def __init__(self):
-        self.has_new_data = False
-        self.message_type = 0
-        self.data = b''
-        self.received = Counter()  # (type, length) -> frames
-        self.consumed = Counter()  # type -> frames a getMsg took
-        self.size_mismatch = Counter()  # (type, length) -> frames getMsg refused on size
-        self.overwritten = Counter()  # (type, length) -> frames lost unread
-        self._refused = False
-
-    def message_receive_callback(self, msg_type, payload):
-        """UARTCommunication.cpp:37-44."""
-        if len(payload) <= 0:
-            return
-        if self.has_new_data:
-            self.overwritten[(self.message_type, len(self.data))] += 1
-        self.message_type, self.data = msg_type, payload
-        self.has_new_data, self._refused = True, False
-        self.received[(msg_type, len(payload))] += 1
-
-    def get_msg(self, cls):
-        """JetsonSubsystem::getMsg, JetsonSubsystem.hpp:156-165: a struct or None."""
-        if not self.has_new_data:
-            return None
-        if self.message_type != cls.TYPE:
-            return None
-        if len(self.data) != size_of(cls):
-            if not self._refused:
-                self.size_mismatch[(self.message_type, len(self.data))] += 1
-                self._refused = True
-            return None
-        self.has_new_data = False
-        self.consumed[cls.TYPE] += 1
-        return unpack(cls, self.data)
-
-    @staticmethod
-    def frame(msg):
-        """Frame a struct as sendMsg does, UARTCommunication.cpp:57-75."""
-        return encode_frame(msg.TYPE, pack(msg))
+def frame(msg):
+    """Serialize a hardware/test packet using the UART wire format."""
+    return encode_frame(msg.TYPE, pack(msg))

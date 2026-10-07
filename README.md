@@ -1092,48 +1092,64 @@ head follows each.
 
 ### MCB emulator
 
-`sim/mcb_emulator/` is the sentry's MCB firmware, `Thornbots/MCBV3`
-branch `rep-105` at `cf42375`, ported to Python module by module:
-`protocol.py` (UART structs, taproot's DJISerial and CRCs, the one-slot
-mailbox), `ballistics.py` (`Reticle::solveForPitch`), `jetson.py`
-(JetsonSubsystem), `aim_and_fire.py` (AutoAimAndFireCommand), `drive.py`
-(SimpleAutoDriveCommand, MoveToPositionCommand, AutoDriveCommand,
-ChassisController's position loop), `subsystems.py` (gimbal, odometry,
-indexer setpoints) and `sentry.py` (SentryControl and the 1 kHz loop).
-Every function cites its firmware file and line. Units and names follow the
-firmware.
+The emulator compiles and runs the checked-out `firmware/MCBV3` C++ sources.
+The Python control port has been removed. `mcb_firmware.py` transports hardware
+readings to `MCB-project/src/hosted/main.cpp`, which instantiates the actual
+`SentryControl` and runs its command scheduler in 1 ms steps. UART1 uses the
+PTY attached to the real `dji_serial_bridge`; MCBV3's own DJISerial parser,
+mailbox, JetsonSubsystem, ballistics, aim/fire and drive commands run unchanged.
 
-Every x/y and yaw it keeps or sends is the field frame (REP-105, (0, 0) at
-the field centre, x toward blue's base). The firmware starts its odometry
-at its team's start, a constant (red (-4.625, 0) facing +x); the node sets
-`odo.start` to where gz spawned the robot instead, so the MCB and gz agree.
-`firmware_fixes` (default true) applies the one fix still asked of it:
-pitch solved for `z` above the pitch pivot. `CvTarget` is 15 bytes, as the
-bridge sends it.
+From the workspace root, in the ROS container:
 
-It lives in `sim` because it is sim hardware: it reads gz truth and drives
-the gz head and chassis, as `pose_emulator` and `cv_head_aim` (which it
-replaces in E2) do, and it sits beside the E1 stack it extends.
-`dji_serial_bridge` has to stay a plain translator and `thornbots_pkg` is
-robot code, so neither may hold a fake MCB.
+```sh
+git -C src submodule update --init --checkout firmware/MCBV3
+git -C src/firmware/MCBV3 submodule update --init taproot-scripts
+apt-get install -y scons g++-11
+src/sim/tools/build_mcb_firmware.sh
+colcon build --packages-select sim --symlink-install
+ros2 launch sim mcb.launch.py
+```
 
-Below the firmware's setpoints sits a `Hardware` object. `mcb_emulator_node`
-gives it gz: the IMU is the turret's gz world yaw, zeroed at boot; the Pico
-odometry is x right, y forward of the boot pose; gimbal setpoints go to
-the head's joint position controllers and chassis velocity to `/cmd_vel`.
-`IdealHardware` stands in for gz in the tests. Not ported: the yaw and
-pitch motor controllers (so the yaw velocity feed-forward is dropped), the
-chassis velocity loop and power limiting, indexer heat, homing and jams, the
-flywheel's spin-up, and HitRing (no referee hits yet: always 123). The
-remote is taken as connected with both switches up. The referee is node
-parameters (`game_type`, `game_stage`, `robot_id`, HP, zones), settable live.
+Use `drive:=simple` for the firmware's waypoint route or `drive:=auto` for
+NAV_GOAL; the default `stop` parks the robot. Foxglove serves on :8765, and
+gz/rviz open where a display is available. This launch uses the actual MCB
+and bridge without E1/E2's invalid opponent paths. E2 also uses the native
+MCB, but its scoring suite stays disabled until those paths are repaired.
 
-The node runs the loop in `batch_ms` batches of 1 ms cycles on sim time and
-spreads the frames read in a batch evenly over its cycles, so frames that
-would share one real millisecond still collide in the mailbox. `drive:=stop`
-parks it (DrivetrainStopCommand), `simple` runs the sentry's waypoint route,
-`auto` the unused AutoDriveCommand. Each shot is a `std_msgs/Header` on
-`/mcb_emulator/shot`, stamped with the sim time the indexer fired.
+`firmware_binary:=/path/to/MCB-project.elf` selects another hosted build;
+`MCB_FIRMWARE_BINARY` supplies the default for both the node and tests.
+The normal default is the firmware's `build/sim/scons-release/MCB-project.elf`.
+Re-run the build after firmware edits: SCons tracks the original sources and
+headers. There is no Python `firmware_fixes` overlay; the firmware under test
+is exactly what the checked-out C++ implements. This is a host executable,
+not the STM32 ELF flashed to the board.
+
+The fake interfaces are calibrated IMU and joint-encoder readings, Pico
+odometry, centred DBUS input with both switches up, referee UART frames,
+ADC and CAN motor feedback. The DBUS and referee packets go through the
+real parsers. Referee state remains live node parameters. The firmware's
+start constants are read from the executable and used to map gz truth into
+the pods' frame, so its field-frame POSE agrees with the gz spawn.
+
+The fixture replaces boot calibration and hardware polling. CAN feedback
+currently keeps motors online with zero shaft speed/current; ADC returns 0.
+gz's joint position and chassis velocity controllers apply the firmware's
+setpoints, so motor dynamics, CAN timing, MCU interrupts, calibration and
+physical homing are not validated. A shot records a successful native
+indexer request, not measured projectile exit. `/mcb_emulator/shot` is a
+`std_msgs/Header` stamped with that request's sim time.
+
+Run the native control and real-bridge checks without gz:
+
+```sh
+cd src/sim
+python3 -m pytest test/mcb -v
+```
+
+The native tests skip if the binary is absent; build it first to test the MCB.
+The bridge test also needs ROS. Wire-format tests remain plain Python.
+
+#### Firmware behaviour and historical E2 results
 
 Where the firmware and `UART_PROTOCOL.md` disagree is listed, with
 MCBV3 file:line, in `../ros2_dji_serial_bridge/README.md` "Where the

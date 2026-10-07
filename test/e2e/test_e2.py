@@ -16,9 +16,8 @@
 Match test, stage E2: E1's cells through the wire, the MCB emulator firing.
 
 `ros2 launch sim e2e.launch.py stage:=e2` runs it. Shots are the ones the
-firmware port fires (/mcb_emulator/shot), scored as E1's are but falling
-under gravity. With firmware_fixes it hits on a clean track and misses on a
-bad one (README.md "MCB emulator").
+compiled MCB fires (/mcb_emulator/shot), scored as E1's are but falling
+under gravity. Paths remain invalid; see README.md "MCB emulator".
 """
 import os
 

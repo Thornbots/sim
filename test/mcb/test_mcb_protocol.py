@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The MCB emulator's wire layer: structs, CRCs, DJISerial parsing and the mailbox."""
+"""Wire helper checks: payload sizes, CRCs and diagnostic frame decoding."""
 import struct
 import zlib
 
@@ -35,7 +35,7 @@ def test_crc_tables_match_taproot():
 
 def test_frame_layout():
     pose = p.Pose(1.0, 2.0, 0.5, -0.5, 0.05, 3.0, p.ODOM_PODS)
-    frame = p.UARTCommunication.frame(pose)
+    frame = p.frame(pose)
     assert len(frame) == 25 + 9
     head, length, seq, crc8, msg_type = struct.unpack_from('<BHBBH', frame)
     assert (head, length, seq, msg_type) == (0xA5, 25, 0, p.POSE)
@@ -68,21 +68,3 @@ def test_parser_drops_bad_crc_and_resyncs():
     assert len(frames) == 1
     assert parser.errors['crc16'] == 1
     assert parser.errors['crc8'] == 1
-
-
-def test_mailbox_keeps_one_frame_and_checks_size():
-    """getMsg: type and size must both match; the slot holds only the newest frame."""
-    box = p.UARTCommunication()
-    box.message_receive_callback(p.CV_TARGET, b'\x00' * 19)  # the old stamped layout
-    assert box.get_msg(p.CvTarget) is None
-    assert box.get_msg(p.CvTarget) is None
-    assert box.has_new_data
-    assert box.size_mismatch[(p.CV_TARGET, 19)] == 1
-    box.message_receive_callback(p.CV_TARGET, b'\x00' * 15)
-    assert box.get_msg(p.CvTarget) == p.CvTarget(flags=0)  # all-zero bytes
-    box.message_receive_callback(p.CV_TARGET, b'\x00' * 15)
-    box.message_receive_callback(p.RELOCALIZE, p.pack(p.Relocalize(4.0, 5.0)))
-    assert box.overwritten[(p.CV_TARGET, 15)] == 1
-    assert box.get_msg(p.CvTarget) is None  # wrong type: left for its reader
-    assert box.get_msg(p.Relocalize) == p.Relocalize(4.0, 5.0)
-    assert not box.has_new_data
