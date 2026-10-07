@@ -349,7 +349,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Committing
 
-This package is a submodule of `thornbots_workspace`, on branch `main`. Commit
+This package is a submodule of `thornbots_workspace`; this work uses `nightly`. Commit
 and push here first, then bump this gitlink in `../` — one logical change, one
 bump, never a gitlink pointing at an unpushed commit. Full rule in
 `../CLAUDE.md` § Packages.
@@ -361,3 +361,12 @@ one red sentry. The compiled firmware owns aim/fire, sim owns the route.
 `segments.json` separates diagnostic completion from combat accuracy;
 current localization and tracking losses remain open. Read README.md before
 interpreting a diagnostic-tier pass as a hit-rate result.
+
+## E4
+
+`stage:=e4` adds a blue ally and a second red opponent, separate spawn
+routes, truth-fed ghost aim/fire, first-impact ballistic scoring and HP.
+Referee data goes through the compiled MCB parser and real Jetson UART.
+Keep approach fire disabled until all routes arrive. `match.json` is a
+diagnostic report; moving accuracy and repeated-run floors remain open.
+README.md lists the collision and referee model limits.

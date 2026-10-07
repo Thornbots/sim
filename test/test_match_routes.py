@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from sim.auto_explore import SPAWN_YAW
 from sim.match_scenario import (
-    E1_PATHS, match_duration, route_duration, ROUTES, sample_match, sample_route,
+    E1_PATHS, match_duration, route_duration, ROUTES, sample_match, sample_robot, sample_route,
 )
 
 RADIUS = 0.40  # chassis rotation envelope plus clearance, not just the panel radius
@@ -87,3 +87,15 @@ def test_spawn_routes_clear_the_field(robot, obstacles):
 def test_center_maneuvers_clear_the_field(obstacles):
     positions = np.array([sample_match(t)[0] for t in np.arange(0, match_duration(), .025)])
     assert_clear(positions, obstacles)
+
+
+def test_four_robot_references_do_not_cross_each_other():
+    for t in np.arange(0, match_duration('e4'), .025):
+        positions = {'sentry': np.array(sample_match(t, 'e4')[0])}
+        positions.update({name: np.array(sample_robot(name, t)[0])
+                          for name in ROUTES if name != 'sentry'})
+        names = list(positions)
+        for index, first in enumerate(names):
+            for second in names[index + 1:]:
+                assert np.linalg.norm(positions[first] - positions[second]) > 2 * RADIUS, (
+                    f'{first}/{second} overlap at {t:.3f}')

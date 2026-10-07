@@ -12,20 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-The match test's stack, stage E1: detector stand-in to the gimbal, our robot parked.
+"""Launch the E1-E4 integration suites and their camera-free Gazebo stacks.
 
-`ros2 launch sim e2e.launch.py [speeds:='0 2'] [paths:=lateral]` runs
-test/e2e/test_e1.py, which brings this stack up with run_tests:=false and
-stops it after; `run_tests:=false` alone brings up the stack. The stack:
-gz with no camera; one ghost opponent (opponent_driver spawns it, its
-OpponentMover system rides target_driver's path); detector_standin putting
-gz truth on /cv/panel_detections in roi_depth_node's place; auto.launch.py's
-selector, tracker and point_to_cv_target;
-cv_head_aim on the head; a RefSysStatus stub putting us on blue. The
-opponent is red, class 6. `stage:=e2` swaps pose_emulator, cv_head_aim and
-the stub for the MCB emulator on a pty with dji_serial_bridge and mcb_relay.
-../E2E_PLAN.md has the stages.
+E1 uses truth detections, the real CV stack and cv_head_aim. E2 replaces
+pose/aim/referee stubs with the hosted MCB firmware and real UART bridge.
+E3 drives from spawn to center with localization; E4 adds a 2v2 fight.
+Tests own their stack process group; run_tests:=false launches only the stack.
+See README.md for design rationale and ../E2E_PLAN.md for acceptance criteria.
 """
 import math
 import os
@@ -56,7 +49,7 @@ from sim.match_scenario import E1_PATHS
 
 SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/e2e'
 TEST_FILE = 'test_e1.py'
-TEST_FILES = {'e1': TEST_FILE, 'e2': 'test_e2.py', 'e3': 'test_e3.py'}
+TEST_FILES = {'e1': TEST_FILE, 'e2': 'test_e2.py', 'e3': 'test_e3.py', 'e4': 'test_e4.py'}
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
 OPPONENT_CLASS = 6  # red; we are blue
@@ -67,7 +60,8 @@ def _sim(context):
     config = context.launch_configurations
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
-    spawn = {'x': '4.625', 'y': '0.0', 'yaw': str(math.pi)} if config['stage'] == 'e3' else {}
+    spawn = ({'x': '4.625', 'y': '0.0', 'yaw': str(math.pi)}
+             if config['stage'] in ('e3', 'e4') else {})
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
@@ -115,15 +109,18 @@ def generate_launch_description():
     share = get_package_share_directory('sim')
     xacro_file = os.path.join(share, 'urdf', 'sentry_v2.urdf.xacro')
 
-    standin = Node(
-        package='sim', executable='detector_standin_node', name='detector_standin',
-        output='screen',
-        parameters=[{
-            'use_sim_time': True,
-            'robot_description': ParameterValue(Command(['xacro ', xacro_file]), value_type=str),
-            'opponents': [OPPONENT],
-            'class_ids': [OPPONENT_CLASS],
-        }])
+    def detector(opponents):
+        return Node(
+            package='sim', executable='detector_standin_node', name='detector_standin',
+            output='screen',
+            parameters=[{
+                'use_sim_time': True,
+                'robot_description': ParameterValue(
+                    Command(['xacro ', xacro_file]), value_type=str),
+                'opponents': opponents,
+                'class_ids': [2 if name.startswith('ally') else OPPONENT_CLASS
+                              for name in opponents],
+            }])
 
     target_driver = Node(
         package='sim', executable='target_driver', name='target_driver', output='screen',
@@ -137,7 +134,7 @@ def generate_launch_description():
     # The path the opponent's OpponentMover system rides, into gz.
     path_topic = PythonExpression([
         "'/sim/match/opponent_0/path' if '", LaunchConfiguration('stage'),
-        "' == 'e3' else '/target/ground_truth_odom'"])
+        "' in ('e3', 'e4') else '/target/ground_truth_odom'"])
     path_bridge = Node(
         package='ros_gz_bridge', executable='parameter_bridge', name='opponent_path_bridge',
         output='screen',
@@ -161,10 +158,13 @@ def generate_launch_description():
     mcb_emulator = Node(
         package='sim', executable='mcb_emulator', name='mcb_emulator', output='screen',
         parameters=[{'use_sim_time': True, 'device_link': MCB_PTY, 'drive': 'stop',
-                     'firmware_binary': LaunchConfiguration('firmware_binary')}],
+                     'firmware_binary': LaunchConfiguration('firmware_binary'),
+                     'game_stage': ParameterValue(PythonExpression([
+                         "3 if '", LaunchConfiguration('stage'), "' == 'e4' else 4"]),
+                         value_type=int)}],
         remappings=[('/cmd_vel', PythonExpression([
             "'/mcb_emulator/cmd_vel' if '", LaunchConfiguration('stage'),
-            "' == 'e3' else '/cmd_vel'"]))])
+            "' in ('e3', 'e4') else '/cmd_vel'"]))])
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
@@ -183,12 +183,12 @@ def generate_launch_description():
                           'patrol_enabled': 'false',
                           'initial_x': PythonExpression([
                               "'4.625' if '", LaunchConfiguration('stage'),
-                              "' == 'e3' else '0.0'"])}.items())
+                              "' in ('e3', 'e4') else '0.0'"])}.items())
 
     match_driver = Node(
         package='sim', executable='match_driver', name='match_driver', output='screen',
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
-    common = [standin, path_bridge, opponent_driver]
+    common = [path_bridge, opponent_driver]
     e1 = [cv_head_aim, team_stub]
     # The bridge opens the pty once, so it starts after the emulator makes it.
     e2 = [mcb_emulator, TimerAction(period=2.0, actions=[bridge, mcb_relay])]
@@ -196,8 +196,25 @@ def generate_launch_description():
     def stack(context):
         stage = context.launch_configurations['stage']
         if stage not in TEST_FILES:
-            raise RuntimeError(f"stage must be e1, e2 or e3, not '{stage}'")
-        return (common + ([match_driver] if stage == 'e3' else [target_driver])
+            raise RuntimeError(f"stage must be e1, e2, e3 or e4, not '{stage}'")
+        extras = []
+        opponents = [OPPONENT]
+        if stage == 'e4':
+            opponents += ['opponent_1', 'ally_0']
+            for name in opponents[1:]:
+                topic = f'/sim/match/{name}/path'
+                extras += [Node(
+                    package='sim', executable='opponent_driver',
+                    name=f'opponent_driver_{name}', output='screen',
+                    parameters=[{'use_sim_time': True, 'name': name}],
+                    remappings=[('/target/ground_truth_odom', topic)]), Node(
+                    package='ros_gz_bridge', executable='parameter_bridge',
+                    name=f'path_bridge_{name}', output='screen',
+                    arguments=[f'/model/{name}/path@nav_msgs/msg/Odometry]gz.msgs.Odometry'],
+                    remappings=[(f'/model/{name}/path', topic)],
+                    parameters=[{'use_sim_time': True}])]
+        return ([detector(opponents)] + extras + common
+                + ([match_driver] if stage in ('e3', 'e4') else [target_driver])
                 + (e1 if stage == 'e1' else e2)
                 + [TimerAction(period=ROBOT_DELAY_S, actions=[robot])])
 

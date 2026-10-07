@@ -12,21 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Match test machinery, stage E1: scores the real CV chain's aim from gz truth.
+"""Score E1-E4 shots and route diagnostics against stamped Gazebo truth.
 
-e2e.launch.py runs the stack. While /cv/target keeps sending aim
-points, a shot leaves every 1/FIRE_HZ s (the
-firmware's indexer rate while it holds a target) from the gz muzzle, along
-the barrel, FIRE_LATENCY_S after the decision, at 25 m/s. It hits if it
-crosses a canted armor face facing it within 72.5 deg, with each panel
-taken from gz's pose at the shot's arrival. Shots CVTarget.fire asks for
-are scored too, as `flag` shots, but don't set the pass. In stage E2 the
-MCB emulator fires instead: each ~/shot it reports is an `mcb` shot,
-launched FIRE_LATENCY_S after its stamp, and every shot falls under
-gravity, since the firmware pitches up for it. Importable only; test_e1.py and
-test_e2.py hold the assertions. Borrows the aiming bench's process and
-node helpers and its face test from ../cv/shot_hit_harness.py.
+E1 samples fresh CV aims at 10 Hz; E2 onward uses actual firmware shots.
+Flag shots are hypothetical and never damage HP. E4 scores ballistic first
+impacts for all four robots and returns referee state through the MCB UART.
+See README.md for design rationale; test_e1.py through test_e4.py assert results.
 """
 import bisect
 import json
@@ -46,7 +37,7 @@ from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sim import suite_timing
 from sim.match_scenario import E1_PATHS as TARGET_PATHS
-from sim.match_scenario import match_duration, sample_match
+from sim.match_scenario import ingress_duration, match_duration, sample_match, TEAMS
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'cv'))
 import shot_hit_harness as bench  # noqa: E402, I100
@@ -186,7 +177,7 @@ class E2EScorer(bench.SimTimeNode):
         self._pending_reference = []
         self.route_records = []
         self.launch_probe = None
-        if stage == 'e3':
+        if stage in ('e3', 'e4'):
             from nav_msgs.msg import Odometry
             self.create_subscription(Odometry, '/sim/match/reference', self._on_reference, 10)
         self._target = None  # stamp_s of the newest aim point
@@ -201,7 +192,11 @@ class E2EScorer(bench.SimTimeNode):
         self._pending_states = []  # judged once truth 20 ms past their stamp is in
         self._pending = []
         self.scoring = False
-        self.shots = {'rate': [], 'flag': [], 'mcb': []}
+        self.score_until = math.inf
+        self.shot_kinds = ['rate', 'flag', 'mcb']
+        if stage == 'e4':
+            self._setup_match()
+        self.shots = {kind: [] for kind in self.shot_kinds}
         self.create_timer(1.0 / FIRE_HZ, self._fire_tick)
         if stage != 'e1':
             from std_msgs.msg import Header
@@ -222,9 +217,12 @@ class E2EScorer(bench.SimTimeNode):
             raise RuntimeError('E2E clock stalled; scoring window did not complete')
 
     def reset(self):
-        self._pending, self.shots, self.scoring = [], {'rate': [], 'flag': [], 'mcb': []}, True
+        self._pending, self.shots, self.scoring = [], {k: [] for k in self.shot_kinds}, True
         self.states, self._pending_states = [], []
         self.route_records, self._pending_reference = [], []
+        self.score_until = math.inf
+        if self.stage == 'e4':
+            self._flight_steps = {}
 
     def _on_target(self, msg):
         t = self._stamp_s(msg.header.stamp)
@@ -232,11 +230,11 @@ class E2EScorer(bench.SimTimeNode):
         self._aims.append((t, np.array([msg.x, msg.y, msg.z])))
         while self._aims and self._aims[0][0] < t - HISTORY_S:
             del self._aims[0]
-        if msg.fire and self.scoring:
+        if msg.fire and self.scoring and t < self.score_until:
             self._pending.append(('flag', t + msg.delay_ms / 1000.0 + FIRE_LATENCY_S))
 
     def _on_mcb_shot(self, msg):
-        if self.scoring:
+        if self.scoring and self._stamp_s(msg.stamp) < self.score_until:
             self._pending.append(('mcb', self._stamp_s(msg.stamp) + FIRE_LATENCY_S))
 
     def _fire_tick(self):
@@ -256,7 +254,15 @@ class E2EScorer(bench.SimTimeNode):
                 self.route_records.append({'t': t, **self._pose_errors(t)})
         self._pending_reference = pending_reference
         still = []
+        completed = []
         for kind, t_launch in self._pending:
+            if self.stage == 'e4':
+                shot = self._judge_match(kind, t_launch)
+                if shot is None:
+                    still.append((kind, t_launch))
+                else:
+                    completed.append((kind, shot))
+                continue
             if now < t_launch + RESOLVE_AFTER_S:
                 still.append((kind, t_launch))
                 continue
@@ -266,7 +272,112 @@ class E2EScorer(bench.SimTimeNode):
                 self.shots[kind].append(shot)
                 with open(self.log_path, 'a') as f:
                     f.write(json.dumps(shot) + '\n')
+        for kind, shot in sorted(completed, key=lambda item: item[1]['impact_t']):
+            actual = kind != 'flag'
+            shot['hit'] = self.referee.apply(shot) if actual else bool(shot['eligible'])
+            shooter, victim = shot['shooter'], shot['victim']
+            shot['friendly_intersection'] = bool(
+                victim is not None and TEAMS[shooter] == TEAMS[victim])
+            shot['enemy_hit'] = shot['hit'] and not shot['friendly_intersection']
+            if actual and shot['hit'] and victim == 'sentry':
+                self.hurt_armor_id = shot['panel']
+            shot['hp'] = dict(self.referee.hp)
+            shot['kind'] = kind
+            self.shots[kind].append(shot)
+            with open(self.log_path, 'a') as stream:
+                stream.write(json.dumps(shot) + '\n')
         self._pending = still
+        if self.stage == 'e4':
+            self._sync_referee()
+
+    def _setup_match(self):
+        from diagnostic_msgs.msg import DiagnosticArray
+        from sim.combat import Referee, ShotResolver
+        from std_msgs.msg import Header
+        self.histories = {'sentry': self.ours, 'opponent_0': self.theirs}
+        from gz.msgs10.pose_v_pb2 import Pose_V
+        for name in ['opponent_1', 'ally_0']:
+            history = PoseHistory()
+            self.histories[name] = history
+            self._gz.subscribe(Pose_V, f'/model/{name}/pose',
+                               lambda msg, robot=name, hist=history: hist.add(robot, msg))
+        for name in ['opponent_0', 'opponent_1', 'ally_0']:
+            self.shot_kinds.append(name)
+            self.create_subscription(
+                Header, f'/sim/match/{name}/shot',
+                lambda msg, robot=name: self._on_other_shot(robot, msg), 100)
+        self.resolver = ShotResolver(get_package_share_directory('sim'), self.armors)
+        self.referee = Referee(TEAMS)
+        self._flight_steps = {}
+        self.hurt_armor_id = 0
+        from dji_serial_bridge.msg import RefSysStatus
+        self.referee_messages = []
+        self.create_subscription(RefSysStatus, '/dji_serial_bridge/ref_sys',
+                                 self.referee_messages.append, qos_profile_sensor_data)
+        self._referee_client = self.create_client(SetParameters, '/mcb_emulator/set_parameters')
+        self._referee_future = None
+        self.referee_pub = self.create_publisher(DiagnosticArray, '/sim/match/referee', 10)
+
+    def _on_other_shot(self, robot, msg):
+        if self.scoring and self._stamp_s(msg.stamp) < self.score_until:
+            self._pending.append((robot, self._stamp_s(msg.stamp) + FIRE_LATENCY_S))
+
+    def _judge_match(self, kind, launch):
+        shooter = 'sentry' if kind in ('mcb', 'flag') else kind
+        available = min(history.newest() or 0.0 for history in self.histories.values())
+        if launch > available:
+            return None
+        pose = self.histories[shooter].at(launch)
+        if pose is None or pose[1] is None:
+            raise RuntimeError(f'missing muzzle truth at {launch}: {shooter}')
+        muzzle = pose[1] @ self.muzzle
+        key = (kind, launch)
+        impact = self.resolver.resolve(shooter, muzzle[:3, 3], muzzle[:3, 0], launch,
+                                       self.histories, until=min(self.now_s() - .02, available),
+                                       start_step=self._flight_steps.get(key, 0))
+        if impact.get('pending'):
+            self._flight_steps[key] = impact['next_step']
+            return None
+        self._flight_steps.pop(key, None)
+        out = {'t': launch, 'shooter': shooter, **impact, **self._pose_errors(launch)}
+        if shooter == 'sentry':
+            victim = impact['victim']
+            history = self.histories.get(victim, self.theirs)
+            index = impact['panel'] if impact['panel'] is not None else 0
+            out.update(self._aim_split(launch, muzzle[:3, 3], muzzle[:3, 0], index,
+                                       history=history))
+        return out
+
+    def _sync_referee(self):
+        from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
+        elapsed = self.now_s() - (self.match_start or self.now_s())
+        msg = DiagnosticArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        for name, hp in self.referee.hp.items():
+            msg.status.append(DiagnosticStatus(
+                name=name, hardware_id=name,
+                level=DiagnosticStatus.OK if hp else DiagnosticStatus.ERROR,
+                message='alive' if hp else 'defeated',
+                values=[KeyValue(key='hp', value=str(hp)),
+                        KeyValue(key='team', value=TEAMS[name])]))
+        self.referee_pub.publish(msg)
+        if self._referee_future is not None and not self._referee_future.done():
+            return
+        if self._referee_future is not None:
+            result = self._referee_future.result()
+            if result is None or not all(r.successful for r in result.results):
+                raise RuntimeError('MCB rejected match referee status')
+        if not self._referee_client.service_is_ready():
+            return
+        params = {'current_hp': self.referee.hp['sentry'],
+                  'game_stage': (5 if elapsed >= match_duration('e4') else
+                                 4 if elapsed >= ingress_duration('e4') else 3),
+                  'stage_time_remaining': max(0, 300 - int(elapsed)),
+                  'hurt_armor_id': self.hurt_armor_id,
+                  'shooter_power': self.referee.hp['sentry'] > 0}
+        self._referee_future = self._referee_client.call_async(SetParameters.Request(
+            parameters=[Parameter(name, value=value).to_parameter_msg()
+                        for name, value in params.items()]))
 
     def _judge(self, t_launch):
         ours = self.ours.at(t_launch)
@@ -319,7 +430,7 @@ class E2EScorer(bench.SimTimeNode):
         ours = self.ours.at(t)
         if ours is None or self.match_start is None:
             return {}
-        segment = sample_match(t - self.match_start)[3]
+        segment = sample_match(t - self.match_start, self.stage)[3]
         refs = [p for stamp, p in self._reference if stamp <= t]
         out = {'segment': segment,
                'chassis_tilt_deg': math.degrees(math.acos(float(np.clip(ours[0][2, 2], -1, 1))))}
@@ -393,7 +504,7 @@ class E2EScorer(bench.SimTimeNode):
             'yaw_rate_err': abs(msg.yaw_rate) - abs(true_rate),
         })
 
-    def _aim_split(self, t_launch, origin, direction, k):
+    def _aim_split(self, t_launch, origin, direction, k, history=None):
         """
         Split a shot's error: the barrel off the newest aim, and the aim off panel k's centre.
 
@@ -407,7 +518,8 @@ class E2EScorer(bench.SimTimeNode):
             return {}
         aim = (world_T_odom @ np.append(aims[-1][1], 1.0))[:3]
         to_aim = (aim - origin) / np.linalg.norm(aim - origin)
-        theirs = self.theirs.at(t_launch + float(np.dot(aim - origin, direction)) / MUZZLE_SPEED)
+        theirs = (history or self.theirs).at(
+            t_launch + float(np.dot(aim - origin, direction)) / MUZZLE_SPEED)
         out = {'barrel_off_aim_deg': round(math.degrees(math.acos(
             float(np.clip(np.dot(direction, to_aim), -1.0, 1.0)))), 2)}
         if theirs is not None:
@@ -429,8 +541,10 @@ class E2EStack:
         self.log_dir = log_dir
         self.stage = stage
         self.nodes = STACK_NODES if stage == 'e1' else E2_NODES
-        if stage == 'e3':
+        if stage in ('e3', 'e4'):
             self.nodes = [n for n in self.nodes if n != 'target_driver'] + ['match_driver']
+        if stage == 'e4':
+            self.nodes += ['opponent_driver_opponent_1', 'opponent_driver_ally_0']
         if not external:
             self.launch = bench.LaunchTree(
                 'stack', ['ros2', 'launch', 'sim', 'e2e.launch.py', 'run_tests:=false',
@@ -461,7 +575,10 @@ class E2EStack:
             s.wait_until(lambda: s.nodes_up(*self.nodes), timeout=30.0,
                          description=f'{", ".join(self.nodes)} nodes up')
             bench.check_nodes(s, self.nodes)
-            if self.stage == 'e3':
+            if self.stage == 'e4':
+                s.wait_until(lambda: all(h.newest() is not None for h in s.histories.values()),
+                             timeout=120.0, description='all four robot truth streams')
+            if self.stage in ('e3', 'e4'):
                 from rclpy.time import Time
                 s.wait_until(lambda: s._tf.can_transform('map', 'root', Time()),
                              timeout=30.0, description='localized map->root chain')
@@ -555,7 +672,8 @@ def run_match(stack):
     """Score approach and center maneuvers in one physics session."""
     stack.scorer.reset()
     stack.start_match()
-    stack.scorer.spin_for(match_duration() + RESOLVE_AFTER_S)
+    stack.scorer.score_until = stack.scorer.match_start + match_duration(stack.stage)
+    stack.scorer.spin_for(match_duration(stack.stage) + RESOLVE_AFTER_S + FIRE_LATENCY_S + 0.1)
     stack.scorer.scoring = False
     bench.check_nodes(stack.scorer, stack.nodes)
     with open(os.path.join(stack.log_dir, 'route.jsonl'), 'w') as stream:

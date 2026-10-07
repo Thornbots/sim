@@ -41,7 +41,7 @@ MAX_CATCH_UP_MS = 100  # a stalled clock doesn't make one huge batch
 REFEREE_PARAMS = {
     'game_type': 4, 'game_stage': 4, 'stage_time_remaining': 300, 'robot_id': 107,
     'current_hp': 400, 'max_hp': 400, 'restoration_zone': False, 'exchange_zone': False,
-    'central_buff_zone': False, 'shooter_power': True}
+    'central_buff_zone': False, 'shooter_power': True, 'hurt_armor_id': 0}
 
 
 def wrap(a):

@@ -46,7 +46,8 @@ def referee_frames(ref):
     zones = (int(ref.restoration_zone) << 13 | int(ref.exchange_zone) << 18
              | int(ref.central_buff_zone) << 19)
     return b''.join(encode_frame(kind, payload) for kind, payload in (
-        (0x0001, game), (0x0201, robot), (0x0202, power),
+        (0x0001, game), (0x0206, bytes([getattr(ref, 'hurt_armor_id', 0) & 3])),
+        (0x0201, robot), (0x0202, power),
         (0x0209, struct.pack('<I', zones))))
 
 

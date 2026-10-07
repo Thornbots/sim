@@ -79,16 +79,16 @@ CENTER_LEGS = [
 ]
 
 
-def match_duration():
-    """E3 reference duration, including the spawn approach and center maneuvers."""
-    return route_duration(ROUTES['sentry']) + sum(
+def match_duration(stage='e3'):
+    """Return the duration of team spawn approaches and center maneuvers."""
+    return ingress_duration(stage) + sum(
         duration if duration is not None else route_duration(points, speed)
         for _, points, speed, duration in CENTER_LEGS)
 
 
-def sample_match(seconds):
+def sample_match(seconds, stage='e3'):
     """Return position, velocity, chassis spin and segment for our scripted route."""
-    approach = route_duration(ROUTES['sentry'])
+    approach = ingress_duration(stage)
     if seconds < approach:
         p, v, _ = sample_route(ROUTES['sentry'], seconds)
         return p, v, 0.0, 'approach_2'
@@ -100,3 +100,33 @@ def sample_match(seconds):
             return p, v, 9.0 if name == 'spin' else 0.0, name
         seconds -= duration
     return CENTER, (0.0, 0.0), 0.0, 'finished'
+
+
+ROUTE_DELAYS = {'sentry': 0.0, 'opponent_0': 0.0, 'ally_0': 4.0, 'opponent_1': 4.0}
+TEAMS = {'sentry': 'blue', 'ally_0': 'blue', 'opponent_0': 'red', 'opponent_1': 'red'}
+
+
+def ingress_duration(stage='e3'):
+    """Wait for both lanes to arrive before the center fight in E4."""
+    return (max(route_duration(route) + ROUTE_DELAYS[name] for name, route in ROUTES.items())
+            if stage == 'e4' else route_duration(ROUTES['sentry']))
+
+
+def sample_robot(name, seconds, stage='e4'):
+    """Return reference pose/twist for a ghost; second lanes leave four seconds later."""
+    delay = ROUTE_DELAYS[name] if stage == 'e4' else 0.0
+    p, v, finished = sample_route(ROUTES[name], max(0, seconds - delay))
+    yaw = math.pi if TEAMS[name] == 'blue' else 0.0
+    spin = 0.0
+    fight = max(0.0, seconds - ingress_duration(stage))
+    if finished and fight > 0:
+        omega, accel = 3.0 * math.pi, 20.0
+        ramp = omega / accel
+        rotation = (accel * fight**2 / 2 if fight < ramp else omega * (fight - ramp / 2))
+        yaw += rotation
+        spin = min(accel * fight, omega)
+        if TEAMS[name] == 'red':
+            amplitude, frequency = (0.3, 2.0) if name == 'opponent_0' else (0.2, 1.5)
+            p = (p[0], p[1] + amplitude * (1 - math.cos(frequency * fight)))
+            v = (0.0, amplitude * frequency * math.sin(frequency * fight))
+    return p, v, yaw, spin

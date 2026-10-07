@@ -1222,3 +1222,34 @@ and a low hit rate named a measured failing hop, as allowed in E2E_PLAN.
 It does **not** mean combat accuracy passed: floors need repeated valid
 runs, and current moving runs expose localization and tracking failures.
 The spawn coordinates are firmware defaults, not surveyed starting zones.
+
+### Four-robot center fight (E4)
+
+```bash
+ros2 launch sim e2e.launch.py stage:=e4 headless:=true
+```
+
+Two blue and two red sentries leave their respective spawns on separate
+field-safe routes. The second lane leaves four seconds later; firing stays
+disabled until every route reaches center. Our robot runs the E3 center
+maneuvers; the three ghosts spin and use a truth-fed aimer with seed 2026,
+0.015 rad Gaussian aim noise, and a 2 Hz fire rate. The selector sees both
+red opponents and the blue ally. Only our robot runs the real CV stack.
+
+The scorer advances 25 m/s ballistic shots under gravity against the field
+mesh, chassis hulls and canted armor. The first impact absorbs the shot;
+damage requires more than 12 m/s relative normal speed, the exposure cone,
+and the panel's 50 ms dead time. Each robot starts with 400 HP; hits cost
+20 HP. Defeated robots stop moving and shooting. Referee HP, team, stage,
+time and hurt panel feed the hosted firmware's physical referee parser;
+the test checks HP and team return through `REF_SYS` on the Jetson UART.
+
+`match.json` reports per-segment route and localization error, enemy hit
+rates, HP, friendly intersections, damage taken and shot counts per robot.
+`shots.jsonl` records first impacts and HP after each resolved impact.
+The approach checks routing with firing disabled; center segments use the
+same diagnostic completion criterion as E3. Accuracy floors, repeated-run
+spread and standalone-versus-sequence equivalence remain uncalibrated.
+Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn
+are not modeled. Hurt-panel feedback is supplied, but the firmware's
+`delta_angle_got_hit_in` response still needs separate verification.

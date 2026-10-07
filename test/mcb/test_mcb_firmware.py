@@ -133,6 +133,15 @@ def test_actual_firmware_reports_fake_referee_zones(board):
     assert refs[-1].booleans & 0b00110000 == 0b00110000
 
 
+def test_actual_firmware_forwards_referee_damage_hp(board):
+    run(board, 200)
+    board[2].current_hp = 380
+    board[2].hurt_armor_id = 2
+    frames, _, _ = run(board, 200)
+    refs = [wire.unpack(wire.RefSys, p) for t, p in frames if t == wire.REF_SYS]
+    assert refs and refs[-1].robotHp == 380
+
+
 def test_actual_firmware_referee_stage_blocks_fire(board):
     board[2].game_stage = 0
     frame = wire.frame(wire.CvTarget(
