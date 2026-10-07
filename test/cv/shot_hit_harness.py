@@ -54,6 +54,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sim import suite_timing
+from sim.odometry import velocity_in_parent
 from sim.parent_death import die_with_parent
 from std_msgs.msg import ColorRGBA, Header
 from visualization_msgs.msg import Marker, MarkerArray
@@ -492,11 +493,10 @@ class ShotHitSampler(SimTimeNode):
         return pos, MUZZLE_SPEED * gun / (np.linalg.norm(gun) + 1e-9) + vel
 
     def _on_shooter_odom(self, msg):
-        p, v = msg.pose.pose.position, msg.twist.twist.linear
+        p = msg.pose.pose.position
         stamp = self._stamp_s(msg.header.stamp)
-        # target_driver's twist is world-frame, despite child_frame_id.
         self._shooter_history.append(
-            (stamp, np.array([p.x, p.y, p.z]), np.array([v.x, v.y, v.z])))
+            (stamp, np.array([p.x, p.y, p.z]), np.array(velocity_in_parent(msg))))
         self._shooter_history = [
             h for h in self._shooter_history if stamp - h[0] <= TRUTH_HISTORY_S]
 

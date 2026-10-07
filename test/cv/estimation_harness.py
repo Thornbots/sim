@@ -42,6 +42,7 @@ from shot_hit_harness import (
     TARGET_PATHS,
 )
 from sim import suite_timing
+from sim.odometry import velocity_in_parent
 from std_msgs.msg import Header
 
 DEFAULT_DURATION = 30.0  # sim seconds scored per case, after SETTLE_S
@@ -103,9 +104,8 @@ class EstimationSampler(SimTimeNode):
         if self._truth:
             prev = self._truth[-1][3]
             yaw = prev + math.atan2(math.sin(yaw - prev), math.cos(yaw - prev))
-        # The truth twist is world-frame, despite child_frame_id.
         self._truth.append((stamp, np.array([p.x, p.y, p.z]),
-                            np.array([v.linear.x, v.linear.y, v.linear.z]),
+                            np.array(velocity_in_parent(msg)),
                             yaw, v.angular.z))
         self._truth = [h for h in self._truth if stamp - h[0] <= TRUTH_HISTORY_S]
         self._resolve(stamp)

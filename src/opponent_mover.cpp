@@ -80,9 +80,13 @@ public:
     const auto & q = p.orientation();
     const double yaw = std::atan2(
       2.0 * (q.w() * q.z() + q.x() * q.y()), 1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
+    const auto world_velocity = gz::math::Quaterniond(
+      q.w(), q.x(), q.y(), q.z()).RotateVector(
+      gz::math::Vector3d(v.linear().x(), v.linear().y(), v.linear().z()));
     model_.SetWorldPoseCmd(
       ecm, gz::math::Pose3d(
-        p.position().x() + v.linear().x() * dt, p.position().y() + v.linear().y() * dt, z_,
+        p.position().x() + world_velocity.X() * dt,
+        p.position().y() + world_velocity.Y() * dt, z_,
         0.0, 0.0, yaw + v.angular().z() * dt));
   }
 

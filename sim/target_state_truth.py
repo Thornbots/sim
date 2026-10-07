@@ -32,6 +32,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
 from sim.cv_target_emulator import PANEL_RADIUS_X, PANEL_RADIUS_Y
+from sim.odometry import velocity_in_parent
 
 TRACK_ID = 1  # one target, never switched
 
@@ -65,8 +66,8 @@ class TargetStateTruth(Node):
             dt = (Time.from_msg(msg.header.stamp)
                   - Time.from_msg(prev.header.stamp)).nanoseconds / 1e9
             if dt > 0.0:
-                v, v0 = msg.twist.twist.linear, prev.twist.twist.linear
-                self._accel = ((v.x - v0.x) / dt, (v.y - v0.y) / dt)
+                v, v0 = velocity_in_parent(msg), velocity_in_parent(prev)
+                self._accel = ((v[0] - v0[0]) / dt, (v[1] - v0[1]) / dt)
         self._truth = msg
         self.publish_state(msg, self._yaw)
 
@@ -79,9 +80,7 @@ class TargetStateTruth(Node):
         out.robot_track_id = TRACK_ID
         out.confidence = 1.0
         out.center.x, out.center.y, out.center.z = p.x, p.y, p.z
-        # target_driver writes world-frame velocity into its twist.
-        out.velocity.x = truth.twist.twist.linear.x
-        out.velocity.y = truth.twist.twist.linear.y
+        out.velocity.x, out.velocity.y, out.velocity.z = velocity_in_parent(truth)
         out.acceleration.x, out.acceleration.y = self._accel
         out.panel.x = p.x + radius * math.cos(yaw)
         out.panel.y = p.y + radius * math.sin(yaw)

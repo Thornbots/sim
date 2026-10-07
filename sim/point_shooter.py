@@ -20,7 +20,6 @@ republishes each sample at once, stamped with its sample time: odom->root on
 /tf, and RobotPose on /dji_serial_bridge/pose with root-frame velocity, as the MCB would send.
 No noise, no latency: the aiming bench's perfect model of our own motion.
 """
-import math
 
 from dji_serial_bridge.msg import RobotPose
 from geometry_msgs.msg import TransformStamped
@@ -53,15 +52,12 @@ class PointShooter(Node):
         tf.transform.rotation = q
         self.tf_pub.sendTransform(tf)
 
-        # target_driver's twist is world-frame; RobotPose's is the chassis's.
-        yaw = 2.0 * math.atan2(q.z, q.w)
-        vx, vy = msg.twist.twist.linear.x, msg.twist.twist.linear.y
         pose = RobotPose()
         pose.header.stamp = msg.header.stamp
         pose.header.frame_id = self.root_frame
         pose.x, pose.y = p.x, p.y
-        pose.vel_x = math.cos(yaw) * vx + math.sin(yaw) * vy
-        pose.vel_y = -math.sin(yaw) * vx + math.cos(yaw) * vy
+        pose.vel_x = msg.twist.twist.linear.x
+        pose.vel_y = msg.twist.twist.linear.y
         self.pose_pub.publish(pose)
 
 

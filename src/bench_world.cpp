@@ -649,8 +649,9 @@ private:
     m.pose.pose.position.z = p.z();
     m.pose.pose.orientation.z = std::sin(target_yaw_ / 2.0);
     m.pose.pose.orientation.w = std::cos(target_yaw_ / 2.0);
-    m.twist.twist.linear.x = v.x();  // world frame, as target_driver.py's
-    m.twist.twist.linear.y = v.y();
+    const Vector3d body_velocity = rot_z(-target_yaw_) * v;
+    m.twist.twist.linear.x = body_velocity.x();
+    m.twist.twist.linear.y = body_velocity.y();
     m.twist.twist.angular.z = omega_;
     truth_pub_->publish(m);
   }

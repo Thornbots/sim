@@ -142,9 +142,10 @@ class TargetDriver(Node):
         # Yaw-only orientation (chassis spin, flat ground) as a quaternion.
         msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
         msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
-        # World-frame velocity, despite child_frame_id; consumers rely on it.
-        msg.twist.twist.linear.x = float(vs * dx)
-        msg.twist.twist.linear.y = float(vs * dy)
+        # Odometry twists are expressed in child_frame_id, including while spinning.
+        cy, sy = math.cos(yaw), math.sin(yaw)
+        msg.twist.twist.linear.x = float(vs * (cy * dx + sy * dy))
+        msg.twist.twist.linear.y = float(vs * (-sy * dx + cy * dy))
         msg.twist.twist.angular.z = float(omega)
         self.pub.publish(msg)
 

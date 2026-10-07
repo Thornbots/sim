@@ -957,7 +957,9 @@ The default path runs laterally at `x=3.0m`, `y in [-2.4, 2.4]`, `z=0.3m`.
 `path_angle_deg` turns it about `(center_x, center_y)`: 90 runs along x, down
 the camera ray, and the bench's `TARGET_PATHS` sets a centre and half-width
 per path that keeps the near panel past ~1.2 m. Path params are read every
-tick, and the twist carries world-frame x and y velocity.
+tick. The twist is expressed in the `target` child frame, as ROS Odometry
+requires; consumers rotate it by the pose quaternion for world-frame
+velocity. `bench_world` publishes the same convention.
 Visible half-width at 3m is `3.0*tan(1.5184/2)` ~ 2.85m, so the outer panels
 (0.3m out) keep ~0.15m margin with the head straight ahead. `max_accel`
 (6 m/s^2) brakes the target to a stop at each end and ramps any change of
