@@ -14,8 +14,8 @@
 
 """Wire helper checks: payload sizes, CRCs and diagnostic frame decoding."""
 import struct
-import zlib
 from types import SimpleNamespace
+import zlib
 
 import pytest
 
