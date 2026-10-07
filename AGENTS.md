@@ -243,12 +243,11 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   145 deg cone.
 - **The estimation bench's target is a phantom** with exact truth. No sim
   test runs YOLO (`../E2E_PLAN.md`).
-- **E1 and E2 are invalid; don't run them** (the user, 2026-10-05). Every
-  path runs the opponent through field obstacles, so `test_e1.py` and
-  `test_e2.py` skip every cell (`e2e_harness.INVALID`) until the paths move.
-- **E1 has no camera** (the user, 2026-10-05): `detector_standin` puts gz
-  truth on `/cv/panel_detections` in `roi_depth_node`'s place, with no
-  occlusion. Built and unit-tested; never run in a stack.
+- **E1/E2 use field-safe paths** (`sim/match_scenario.py`), validated against
+  the field collision mesh with a 0.40 m footprint. Both suites fail normally;
+  no blanket skips or xfail. Keep them separate from the gz-free bench paths.
+- **E1 has no camera:** `detector_standin` publishes gz truth panels in
+  `roi_depth_node`'s place, without occlusion. All CV integration tests use ROS.
 - **E1 before both changes** (Mac, 2026-09-29, 15 s cells, lateral path):
   stationary 149/149 hits; 2 m/s without spin 11/96, with 2 Hz spin 0-3%.
   The barrel sat ~1 deg (p50) off the aim, the aim 0.4-0.7 m off the

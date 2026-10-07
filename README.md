@@ -354,9 +354,12 @@ cv_publish_latency_s:=0.06    # placeholder, not measured
 `e2e.launch.py` is the match test, stage E1 (`../E2E_PLAN.md`): our
 robot parked with no camera, one red opponent riding `target_driver`'s
 path, and the real CV chain from `target_selector` to `cv_head_aim`, fed
-gz truth in place of YOLO and `roi_depth_node`. **Every cell is invalid
-for now** and pytest skips them: each path runs the opponent through field
-obstacles (the user, 2026-10-05). `test/e2e/test_e1.py` scores one cell per
+gz truth in place of YOLO and `roi_depth_node`. Field-safe paths are separate
+from the gz-free aiming bench: lateral at world y=-1.3 with x ±1.9 m,
+radial y=-0.9 to -1.7 m, diagonal centered at (0, -1.3), half-length
+0.65 m. Mesh regression checks include a 0.40 m robot footprint. Short
+paths brake before reaching high requested speeds; labels are speed limits.
+`test/e2e/test_e1.py` scores one cell per
 opponent speed and path: while `/cv/target` keeps sending aim points a
 shot leaves the gz muzzle at 10 Hz (the firmware's rule) and hits if it
 crosses a panel face. Shots `CVTarget.fire` asks for are logged beside.
@@ -371,10 +374,9 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 give way to `mcb_emulator` (the sentry firmware, see Notes "MCB emulator")
 on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
 `test/e2e/test_e2.py` scores the shots the firmware fires, each falling
-under gravity since the firmware pitches up for it. It is marked xfail,
-not strict: it hits when E1's tracking is clean and misses when it isn't
-(ROADMAP T17). `firmware_fixes:=false` runs MCBV3 `rep-105` as it is at
-`cf42375`, whose pitch aims 0.39 m high (Notes "MCB emulator").
+under gravity since the firmware pitches up for it. Failures are ordinary
+pytest failures, including zero shots. `firmware_fixes` is deprecated;
+the hosted build runs this checkout's code without overlays.
 
 ```bash
 ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15

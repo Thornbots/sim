@@ -45,6 +45,7 @@ import rclpy
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sim import suite_timing
+from sim.match_scenario import E1_PATHS as TARGET_PATHS
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'cv'))
 import shot_hit_harness as bench  # noqa: E402, I100
@@ -63,9 +64,6 @@ DEFAULT_DURATION = 20.0
 DEFAULT_SPEEDS = [0.0, 1.0, 2.0, 4.0]
 DEFAULT_PATHS = ['lateral', 'radial', 'diagonal']
 DEFAULT_LOG_DIR = '/tmp/e2e_test_logs'
-# Every path runs the opponent through field obstacles (the user, 2026-10-05):
-# no cell is valid until the paths move. pytest skips them all.
-INVALID = 'opponent path runs through field obstacles; paths need moving'
 PLACEHOLDER_FLOOR = 0.10  # until three runs give FLOORS
 FLOORS = {}
 # The nodes a run needs.
@@ -394,7 +392,7 @@ class E2EStack:
     def set_target(self, speed, spin_hz, path):
         if not self._set_params.wait_for_service(timeout_sec=10.0):
             raise RuntimeError('/target_driver/set_parameters not available')
-        params = {'target_speed': speed, 'spin_hz': spin_hz, **bench.TARGET_PATHS[path]}
+        params = {'target_speed': speed, 'spin_hz': spin_hz, **TARGET_PATHS[path]}
         req = SetParameters.Request(parameters=[
             Parameter(k, Parameter.Type.DOUBLE, float(v)).to_parameter_msg()
             for k, v in params.items()])

@@ -17,7 +17,7 @@ Match test, stage E2: E1's cells through the wire, the MCB emulator firing.
 
 `ros2 launch sim e2e.launch.py stage:=e2` runs it. Shots are the ones the
 compiled MCB fires (/mcb_emulator/shot), scored as E1's are but falling
-under gravity. Paths remain invalid; see README.md "MCB emulator".
+under gravity. See README.md "MCB emulator".
 """
 import os
 
@@ -25,9 +25,7 @@ import e2e_harness as harness
 import pytest
 import test_e1
 
-pytestmark = [pytest.mark.integration, pytest.mark.skip(reason=harness.INVALID)]
-TRACKING = ("E1's sim feeds the tracker badly in some runs (ROADMAP T17); "
-            'a clean track hits')
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(scope='module')
@@ -48,7 +46,6 @@ def e2e_stack(request, ros_context):
 pytest_generate_tests = test_e1.pytest_generate_tests
 
 
-@pytest.mark.xfail(strict=False, reason=TRACKING)
 def test_e2(cell, request, e2e_stack):
     speed, path, spin_hz = cell
     duration = request.config.getoption('--e2e-duration') or harness.DEFAULT_DURATION
