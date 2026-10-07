@@ -22,7 +22,7 @@ p95 over the runs that scored the cell x (1 + margin), 2x by default: a run
 strays up to ~2x from the others (2026-09-27, leave-one-out). Never under
 --floor, so a metric that reads exactly 0 (a still target's velocity) doesn't
 fail on any noise. Cells from fewer than three runs are flagged
-(CV_SPLIT_PLAN.md 2.0). `--keep test/cv/estimation_limits_data.py` carries
+(see README.md, Run the tests). `--keep test/cv/estimation_limits_data.py` carries
 over, verbatim, every cell these runs don't score, and that file's run list.
 """
 import argparse
