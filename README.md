@@ -378,6 +378,12 @@ under gravity since the firmware pitches up for it. Failures are ordinary
 pytest failures, including zero shots. `firmware_fixes` is deprecated;
 the hosted build runs this checkout's code without overlays.
 
+Test-owned E1/E2 stacks bring up a parked, non-spinning opponent before
+requesting the first cell. Starting it at the launch's moving defaults
+left unscored motion dependent on wall-time bring-up speed. Parked bring-up
+does not resolve all acquisition failures. Each requested cell still sets its
+speed/spin and settles for three sim seconds before scoring.
+
 ```bash
 ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
 ```
@@ -386,6 +392,17 @@ ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
 the barrel's angle off the aim and the aim's distance from the panel, and
 each case prints TargetState's centre, velocity and spin error against
 truth. `pytest_args:='--e2e-spin 0'` holds the spin for every cell.
+`states.jsonl` records stamped TargetState errors by case. E1/E2 shot and
+state records also include head-TF and map-localization errors against gz
+truth. Missing stamped TF is reported as unavailable; latest TF is never
+substituted to calculate these errors.
+`poses.jsonl` samples head-TF and localization at 20 Hz even when tracking
+is lost and no shots fire. `real_time_factor` reaches the test-owned stack;
+use `real_time_factor:=1` for a paced control against the unthrottled default.
+The E2E wait checks clock progress: five wall seconds without progress fails,
+backward time fails, and a window has a budget of at least 30 wall seconds
+or 20 times its sim duration. This permits deliberately slow controls;
+it does not shorten their scoring windows.
 
 - `opponent_driver` spawns `opponent_0`, a `sentry_v2` with no sensors,
   gravity or contacts, drawn from its collision shapes (the CAD visuals

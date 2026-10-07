@@ -247,6 +247,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **E1/E2 use field-safe paths** (`sim/match_scenario.py`), validated against
   the field collision mesh with a 0.40 m footprint. Both suites fail normally;
   no blanket skips or xfail. Keep them separate from the gz-free bench paths.
+- **E1/E2 test-owned stacks start the opponent parked**, then request the
+  first cell. Unscored bring-up motion otherwise depends on wall-time timing.
+  Archlinux acquisition failures remain open; pose diagnostics run without shots.
 - **E1 has no camera:** `detector_standin` publishes gz truth panels in
   `roi_depth_node`'s place, without occlusion. All CV integration tests use ROS.
 - **E1 before both changes** (Mac, 2026-09-29, 15 s cells, lateral path):

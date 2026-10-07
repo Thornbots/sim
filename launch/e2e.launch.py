@@ -88,6 +88,7 @@ def _tests(context):
     cmd = [sys.executable, '-m', 'pytest', os.path.join(_test_dir(), TEST_FILES[config['stage']]),
            '-m', 'integration', '-v', '-s']
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
+                     ('real_time_factor', '--real-time-factor'),
                      ('duration', '--e2e-duration'), ('log_dir', '--log-dir')):
         if config[arg]:
             cmd += [opt, ','.join(config[arg].replace(',', ' ').split())]

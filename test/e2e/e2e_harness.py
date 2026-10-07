@@ -27,6 +27,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
@@ -177,6 +178,8 @@ class E2EScorer(bench.SimTimeNode):
         self._reference = []
         self._pending_reference = []
         self.route_records = []
+        if stage in ('e1', 'e2'):
+            self.create_timer(0.05, self._sample_pose)
         self.launch_probe = None
         if stage in ('e3', 'e4'):
             from nav_msgs.msg import Odometry
@@ -213,9 +216,20 @@ class E2EScorer(bench.SimTimeNode):
 
     def spin_for(self, seconds):
         start = self.now_s()
-        super().spin_for(seconds)
-        if self.now_s() - start < seconds - 0.01:
-            raise RuntimeError('E2E clock stalled; scoring window did not complete')
+        wall_start = last_progress = time.monotonic()
+        previous = start
+        while self.now_s() - start < seconds:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            now, wall = self.now_s(), time.monotonic()
+            if now < previous - 1e-6:
+                raise RuntimeError('E2E clock moved backwards during scoring')
+            if now > previous:
+                last_progress = wall
+            if wall - last_progress > 5.0:
+                raise RuntimeError('E2E clock stalled for five wall seconds')
+            if wall - wall_start > max(30.0, seconds * 20.0):
+                raise RuntimeError('E2E scoring exceeded its wall-time budget')
+            previous = now
 
     def reset(self):
         self._pending, self.shots, self.scoring = [], {k: [] for k in self.shot_kinds}, True
@@ -233,6 +247,10 @@ class E2EScorer(bench.SimTimeNode):
             del self._aims[0]
         if msg.fire and self.scoring and t < self.score_until:
             self._pending.append(('flag', t + msg.delay_ms / 1000.0 + FIRE_LATENCY_S))
+
+    def _sample_pose(self):
+        if self.scoring:
+            self._pending_reference.append(self.now_s())
 
     def _on_mcb_shot(self, msg):
         if self.scoring and self._stamp_s(msg.stamp) < self.score_until:
@@ -429,12 +447,12 @@ class E2EScorer(bench.SimTimeNode):
         """Route and map-localization error at the shot stamp, without a latest-TF fallback."""
         from rclpy.time import Time
         ours = self.ours.at(t)
-        if ours is None or self.match_start is None:
+        if ours is None:
             return {}
-        segment = sample_match(t - self.match_start, self.stage)[3]
         refs = [p for stamp, p in self._reference if stamp <= t]
-        out = {'segment': segment,
-               'chassis_tilt_deg': math.degrees(math.acos(float(np.clip(ours[0][2, 2], -1, 1))))}
+        out = {'chassis_tilt_deg': math.degrees(math.acos(float(np.clip(ours[0][2, 2], -1, 1))))}
+        if self.match_start is not None:
+            out['segment'] = sample_match(t - self.match_start, self.stage)[3]
         world_T_odom = self._world_T_odom(t)
         try:
             tr = self._tf.lookup_transform('odom', 'head_pitch', Time(seconds=t)).transform
@@ -443,6 +461,9 @@ class E2EScorer(bench.SimTimeNode):
             out['head_tf_error_deg'] = math.degrees(math.acos(float(np.clip(
                 (np.trace(diff) - 1) / 2, -1, 1))))
             out['head_tf_translation_m'] = float(np.linalg.norm(head[:3, 3] - ours[1][:3, 3]))
+            for name, matrix in [('truth', ours[1]), ('tf', head)]:
+                out[f'{name}_head_yaw_rad'] = math.atan2(matrix[1, 0], matrix[0, 0])
+                out[f'{name}_head_pitch_rad'] = math.asin(float(np.clip(-matrix[2, 0], -1, 1)))
         except Exception:  # noqa: B902; missing truth or TF remains visible in the shot record
             out['head_tf_error_deg'] = None
         if refs:
@@ -466,11 +487,8 @@ class E2EScorer(bench.SimTimeNode):
         ours = self.ours.at(t)
         try:
             tr = self._tf.lookup_transform('odom', 'root', Time(seconds=t)).transform
-        except Exception:  # noqa: B902; a stamp at `now` isn't in TF yet: take the newest
-            try:
-                tr = self._tf.lookup_transform('odom', 'root', Time()).transform
-            except Exception:  # noqa: B902
-                return None
+        except Exception:  # noqa: B902; unavailable stamped TF cannot establish a truth error
+            return None
         if ours is None:
             return None
         world_T_root = ours[0].copy()
@@ -500,6 +518,7 @@ class E2EScorer(bench.SimTimeNode):
         dyaw = yaw[1] - yaw[0]
         true_rate = math.atan2(math.sin(dyaw), math.cos(dyaw)) / 0.04
         self.states.append({
+            't': t, **self._pose_errors(t),
             'centre_xy_m': float(np.hypot(*(centre - truth[:3, 3])[:2])),
             'vel_err': (vel - true_vel).tolist(),
             'yaw_rate_err': abs(msg.yaw_rate) - abs(true_rate),
@@ -537,7 +556,8 @@ class E2EStack:
     Between cases only target_driver's path, speed and spin change.
     """
 
-    def __init__(self, headless, log_dir, external=False, stage='e1', firmware_fixes=True):
+    def __init__(self, headless, log_dir, external=False, stage='e1', firmware_fixes=True,
+                 real_time_factor='0'):
         self.launch = None
         self.log_dir = log_dir
         self.stage = stage
@@ -550,10 +570,14 @@ class E2EStack:
             self.launch = bench.LaunchTree(
                 'stack', ['ros2', 'launch', 'sim', 'e2e.launch.py', 'run_tests:=false',
                           f'headless:={str(headless).lower()}', f'stage:={stage}',
+                          'target_speed:=0.0', 'target_spin_hz:=0.0',
+                          f'real_time_factor:={real_time_factor}',
                           f'firmware_fixes:={str(firmware_fixes).lower()}'],
                 os.path.join(log_dir, 'stack.log'))
         self.shots_path = os.path.join(log_dir, 'shots.jsonl')
         self.scores_path = os.path.join(log_dir, 'scores.jsonl')
+        self.states_path = os.path.join(log_dir, 'states.jsonl')
+        self.poses_path = os.path.join(log_dir, 'poses.jsonl')
         self.node = rclpy.create_node(
             'e2e_stack',
             parameter_overrides=[Parameter('use_sim_time', Parameter.Type.BOOL, True)])
@@ -563,7 +587,7 @@ class E2EStack:
         self.scorer = E2EScorer(armors, muzzle, self.shots_path, stage)
 
     def start(self):
-        for path in (self.shots_path, self.scores_path):
+        for path in (self.shots_path, self.scores_path, self.states_path, self.poses_path):
             open(path, 'w').close()
         with suite_timing.phase('bringup'):
             s = self.scorer
@@ -583,8 +607,8 @@ class E2EStack:
                 from rclpy.time import Time
                 s.wait_until(lambda: s._tf.can_transform('map', 'root', Time()),
                              timeout=30.0, description='localized map->root chain')
-            s.wait_until(lambda: s._target is not None,
-                         timeout=60.0, description='a /cv/target aim point')
+            s.wait_until(lambda: s._target is not None and s.now_s() - s._target < TARGET_FRESH_S,
+                         timeout=60.0, description='a fresh /cv/target aim point')
 
     def start_match(self):
         client = self.node.create_client(SetParameters, '/match_driver/set_parameters')
@@ -650,6 +674,14 @@ def run_case(stack, speed, spin_hz, path, duration):
     s.spin_for(duration + RESOLVE_AFTER_S)
     s.scoring = False
     bench.check_nodes(s, stack.nodes)
+    with open(stack.states_path, 'a') as stream:
+        for state in s.states:
+            stream.write(json.dumps({'speed': speed, 'path': path, 'spin_hz': spin_hz,
+                                     **state}) + '\n')
+    with open(stack.poses_path, 'a') as stream:
+        for pose in s.route_records:
+            stream.write(json.dumps({'speed': speed, 'path': path, 'spin_hz': spin_hz,
+                                     **pose}) + '\n')
     print(state_summary(s.states))
     return s.shots
 

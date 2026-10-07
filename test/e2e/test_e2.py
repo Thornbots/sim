@@ -35,6 +35,7 @@ def e2e_stack(request, ros_context):
     os.makedirs(log_dir, exist_ok=True)
     stack = harness.E2EStack(config.getoption('--headless'), log_dir,
                              external=config.getoption('--external-stack'), stage='e2',
+                             real_time_factor=config.getoption('--real-time-factor'),
                              firmware_fixes=not config.getoption('--no-firmware-fixes'))
     try:
         stack.start()

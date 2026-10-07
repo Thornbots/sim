@@ -37,7 +37,8 @@ def e2e_stack(request, ros_context):
     log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     stack = harness.E2EStack(config.getoption('--headless'), log_dir,
-                             external=config.getoption('--external-stack'))
+                             external=config.getoption('--external-stack'),
+                             real_time_factor=config.getoption('--real-time-factor'))
     try:
         stack.start()
         yield stack
