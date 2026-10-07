@@ -170,8 +170,8 @@ public:
     pace_slack_s_ = declare_parameter("pace_slack_s", 0.005);  // the scorer's gate only
     max_wait_s_ = declare_parameter("max_wait_s", 0.5);  // wall, per lockstep wait
     // point_to_cv_target's cv_target_publish_rate_hz; its timer starts at sim time 0.
-    aim_tick_ns_ = static_cast<int64_t>(1e9 / declare_parameter("aim_rate_hz", 30.0));
-    // A whole number of aim ticks (3 at 30 Hz), so each case sees the same tick phase.
+    aim_tick_ns_ = static_cast<int64_t>(1e9 / declare_parameter("aim_rate_hz", 40.0));
+    // A whole number of aim ticks (4 at 40 Hz), so each case sees the same tick phase.
     case_align_steps_ = std::max<int64_t>(
       1, std::llround(declare_parameter("case_align_s", 0.1) / physics_step_s_));
     startup_wait_s_ = declare_parameter("startup_wait_s", 60.0);  // wall, for the nodes
