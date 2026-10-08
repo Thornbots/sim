@@ -30,16 +30,13 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    EmitEvent,
     ExecuteProcess,
     IncludeLaunchDescription,
-    LogInfo,
     OpaqueFunction,
     RegisterEventHandler,
     TimerAction,
 )
 from launch.event_handlers import OnProcessExit
-from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -47,6 +44,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
 from sim.match_scenario import PARKED_PATHS
+from sim.suite_exit import finish_suite
 
 SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/e2e'
 TEST_FILES = {'mcb_parked': 'test_mcb_parked.py', 'mcb_drive': 'test_mcb_drive.py',
@@ -102,10 +100,7 @@ def _tests(context):
     tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen')
     done = RegisterEventHandler(OnProcessExit(
         target_action=tests,
-        on_exit=lambda event, _: [
-            LogInfo(msg=f'e2e tests exited with code {event.returncode}'),
-            EmitEvent(event=Shutdown(reason='e2e tests finished')),
-        ]))
+        on_exit=lambda event, context: finish_suite(event, context, 'e2e')))
     return [tests, done]
 
 

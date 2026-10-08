@@ -31,20 +31,18 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    EmitEvent,
     ExecuteProcess,
     IncludeLaunchDescription,
-    LogInfo,
     OpaqueFunction,
     RegisterEventHandler,
     TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
-from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from sim.display import display_error
+from sim.suite_exit import finish_suite
 
 # Installed as a symlink into share/sim/launch (--symlink-install), so the real
 # path leads back to src/sim; the constant covers a copying install.
@@ -146,10 +144,7 @@ def _tests(context):
                            sigterm_timeout='30')
     done = RegisterEventHandler(OnProcessExit(
         target_action=tests,
-        on_exit=lambda event, _: [
-            LogInfo(msg=f'localization tests exited with code {event.returncode}'),
-            EmitEvent(event=Shutdown(reason='localization tests finished')),
-        ]))
+        on_exit=lambda event, context: finish_suite(event, context, 'localization')))
     return [tests, done]
 
 

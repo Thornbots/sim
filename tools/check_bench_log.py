@@ -33,10 +33,12 @@ PATTERNS = [
     ('no display', re.compile(r'Qt platform plugin|could not connect to display'), True),
     ('wait gave up', re.compile(r'wall-clock cap hit|\[wait_until\] timed out'), True),
     ('stack not ready', re.compile(r'stack NOT ready'), True),
+    ('lockstep timeout', re.compile(r'[1-9]\d* lockstep timeouts'), True),
+    ('clock failure', re.compile(r'clock stalled|clock moved backwards'), True),
     ('pacing gate dropped', re.compile(r'silent, no longer pacing'), False),
     ('ODE contact overflow', re.compile(r'hash table bucket overflow'), False),
 ]
-RESULT = re.compile(r'=+ .*\b(passed|failed|error)\b.* in [\d.]+s')
+RESULT = re.compile(r'=+ .*\b(passed|failed|errors?)\b.* in [\d.]+s')
 PREFIX = re.compile(r'^\[([\w.-]+)\] ')
 
 
@@ -53,14 +55,16 @@ def check(path):
         body = re.sub(r'^\[[\w.-]+\] ', '', text)  # launch's per-process prefix
         if 'suite timing' in body:
             in_timing = True
-        if RESULT.search(body) and (m := PREFIX.match(text)):
-            reported.add(m.group(1))
+        if RESULT.search(body):
+            if m := PREFIX.match(text):
+                reported.add(m.group(1))
+            if re.search(r'\b[1-9]\d* (failed|errors?)\b', body):
+                fatal.append(f'pytest failed: {body.strip()}')
         if in_timing:
             report.append(body)
             if RESULT.search(body):
                 in_timing = False
-            continue
-        if RESULT.search(body):
+        elif RESULT.search(body):
             report.append(body)
         if SHUTDOWN.search(text):
             shutting_down = True

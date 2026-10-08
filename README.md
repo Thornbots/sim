@@ -93,6 +93,12 @@ source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 launch sim shot_hit.launch.py
 ```
 
+The suite launch commands return a nonzero exit status when pytest fails,
+including collection errors, after shutting down their stack. Check the
+pytest summary as well as the measured hit rates: diagnostic-tier completion
+is not an accuracy guarantee. `tools/check_bench_log.py` also rejects failed
+pytest summaries and clock or lockstep stalls.
+
 The CV estimation bench scores Part 2, not hits. `bench_world` (C++)
 is the whole world in one lockstep loop: `/clock`, the phantom target through
 the aiming bench's ten cells plus a still one at 45 deg (`stationary45`, two
