@@ -394,8 +394,12 @@ each case prints TargetState's centre, velocity and spin error against
 truth. `pytest_args:='--e2e-spin 0'` holds the spin for every cell.
 `states.jsonl` records stamped TargetState errors by case. E1/E2 shot and
 state records also include head-TF and map-localization errors against gz
-truth. Missing stamped TF is reported as unavailable; latest TF is never
-substituted to calculate these errors.
+truth, and `odom_disagreement_m`: the MCB's POSE against TF `odom->root` at
+that POSE's stamp. That agreement is what a hit depends on; every aiming
+hop uses `odom`, so `map->root` error is logged but never blamed. Missing
+stamped TF is reported as unavailable; latest TF is never substituted to
+calculate these errors. `python3 tools/compare_runs.py LOG_DIR_A LOG_DIR_B`
+prints the first record where two runs' logs diverge.
 `poses.jsonl` samples head-TF and localization at 20 Hz even when tracking
 is lost and no shots fire. `real_time_factor` reaches the test-owned stack;
 use `real_time_factor:=1` for a paced control against the unthrottled default.
@@ -1230,7 +1234,9 @@ These are scripted sim routes, pending a real navigation publisher.
 `/mcb_emulator/cmd_vel`. The real firmware retains aim/fire, UART, pose and
 referee output, and the real AMCL + rf2o + EKF stack remains in the loop.
 
-`segments.json` reports hit rates and the measured failing hop per segment.
+`segments.json` reports hit rates and the measured failing hop per segment,
+checked down the hit path: no shots, aim off the panel, head-TF stamps, then
+the barrel off the aim. Localization (`map->root`) is never the diagnosis.
 `shots.jsonl` includes route, localization, head-TF and aim errors at fire
 time. `route.jsonl` captures those diagnostics even when no shots fire.
 A diagnostic-tier pass means nodes and clock remained live, every route

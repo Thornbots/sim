@@ -31,7 +31,7 @@ import time
 import xml.etree.ElementTree as ET
 
 from ament_index_python.packages import get_package_share_directory
-from dji_serial_bridge.msg import CVTarget, TargetState
+from dji_serial_bridge.msg import CVTarget, RobotPose, TargetState
 import numpy as np
 from rcl_interfaces.srv import SetParameters
 import rclpy
@@ -192,6 +192,9 @@ class E2EScorer(bench.SimTimeNode):
         self.create_subscription(CVTarget, '/cv/target', self._on_target,
                                  qos_profile_sensor_data)
         self.create_subscription(TargetState, '/cv/target_state', self._on_state, 10)
+        self._mcb_poses = []  # (stamp_s, x, y) of each POSE frame, odom frame
+        self.create_subscription(RobotPose, '/dji_serial_bridge/pose', self._on_mcb_pose,
+                                 qos_profile_sensor_data)
         self.states = []  # per TargetState while scoring: its error against gz truth
         self._pending_states = []  # judged once truth 20 ms past their stamp is in
         self._pending = []
@@ -247,6 +250,25 @@ class E2EScorer(bench.SimTimeNode):
             del self._aims[0]
         if msg.fire and self.scoring and t < self.score_until:
             self._pending.append(('flag', t + msg.delay_ms / 1000.0 + FIRE_LATENCY_S))
+
+    def _on_mcb_pose(self, msg):
+        t = self._stamp_s(msg.header.stamp)
+        self._mcb_poses.append((t, msg.x, msg.y))
+        while self._mcb_poses and self._mcb_poses[0][0] < t - HISTORY_S:
+            del self._mcb_poses[0]
+
+    def _odom_disagreement(self, t):
+        """Compare the newest POSE at or before t with TF odom->root at its stamp."""
+        from rclpy.time import Time
+        poses = [p for p in self._mcb_poses if p[0] <= t]
+        if not poses:
+            return None
+        stamp, x, y = poses[-1]
+        try:
+            tr = self._tf.lookup_transform('odom', 'root', Time(seconds=stamp)).transform
+        except Exception:  # noqa: B902; missing stamped TF stays visible as None
+            return None
+        return float(np.hypot(tr.translation.x - x, tr.translation.y - y))
 
     def _sample_pose(self):
         if self.scoring:
@@ -444,7 +466,12 @@ class E2EScorer(bench.SimTimeNode):
         self._reference = [r for r in self._reference if r[0] >= t - HISTORY_S]
 
     def _pose_errors(self, t):
-        """Route and map-localization error at the shot stamp, without a latest-TF fallback."""
+        """
+        Route, odom-agreement and map-localization error at t, without a latest-TF fallback.
+
+        odom_disagreement_m (MCB POSE against TF odom->root) is what a hit
+        depends on; localization_error_m (map->root) is logged, never blamed.
+        """
         from rclpy.time import Time
         ours = self.ours.at(t)
         if ours is None:
@@ -466,6 +493,7 @@ class E2EScorer(bench.SimTimeNode):
                 out[f'{name}_head_pitch_rad'] = math.asin(float(np.clip(-matrix[2, 0], -1, 1)))
         except Exception:  # noqa: B902; missing truth or TF remains visible in the shot record
             out['head_tf_error_deg'] = None
+        out['odom_disagreement_m'] = self._odom_disagreement(t)
         if refs:
             out['route_error_m'] = float(np.linalg.norm(ours[0][:2, 3] - refs[-1]))
         try:
@@ -716,20 +744,22 @@ def run_match(stack):
 
 
 def segment_diagnostics(stack, segment, shots):
-    """Name the measured hop responsible for a low score; accuracy stays in the report."""
+    """
+    Name the measured hop responsible for a low score; accuracy stays in the report.
+
+    Checked down the hit path: shots, aim, head TF stamps, then the barrel.
+    map->root error can't cost a hit (every aiming hop uses odom), so it's
+    logged, never a diagnosis.
+    """
     records = [r for r in stack.scorer.route_records if r.get('segment') == segment]
-    localization = [r['localization_error_m'] for r in records
-                    if r.get('localization_error_m') is not None]
     head = [r['head_tf_error_deg'] for r in records if r.get('head_tf_error_deg') is not None]
     if not shots:
         return 'target_tracker/point_to_cv_target: no firmware shots during this segment'
-    if localization and np.percentile(localization, 95) > 0.40:
-        return 'localization: map->root p95 error exceeds 0.40 m'
-    if head and np.percentile(head, 95) > 1.0:
-        return 'pose/TF stamps: head_pitch p95 attitude error exceeds 1 degree'
     aim = [s['aim_off_panel_m'] for s in shots if 'aim_off_panel_m' in s]
     if aim and np.median(aim) > 0.10:
         return 'target_tracker/point_to_cv_target: median aim error exceeds 0.10 m'
+    if head and np.percentile(head, 95) > 1.0:
+        return 'pose/TF stamps: head_pitch p95 attitude error exceeds 1 degree'
     barrel = [s['barrel_off_aim_deg'] for s in shots if 'barrel_off_aim_deg' in s]
     if barrel and np.median(barrel) > 1.0:
         return 'MCB/gimbal: median barrel error exceeds 1 degree'
