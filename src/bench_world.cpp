@@ -278,12 +278,23 @@ public:
     // holds. point_to_cv_target's tick, sent either way, paces the lockstep.
     subs_.push_back(create_subscription<CVTarget>(
         "/cv/target", qos, [this](CVTarget::ConstSharedPtr m) {
-          std::lock_guard<std::mutex> lock(mutex_);
-          aim_ = Vector3d(m->x, m->y, m->z);
+          {
+            std::lock_guard<std::mutex> lock(mutex_);
+            aim_ = Vector3d(m->x, m->y, m->z);
+          }
+          std::lock_guard<std::mutex> lock(gate_mutex_);
+          last_point_ns_ = std::max(last_point_ns_, rclcpp::Time(m->header.stamp).nanoseconds());
+          gate_cv_.notify_all();
         }));
     subs_.push_back(create_subscription<std_msgs::msg::Header>(
         "/cv/target/tick", qos, [this](std_msgs::msg::Header::ConstSharedPtr m) {
-          on_aim(rclcpp::Time(m->stamp).nanoseconds());
+          on_aim(rclcpp::Time(m->stamp).nanoseconds(), !m->frame_id.empty());
+        }));
+    subs_.push_back(create_subscription<std_msgs::msg::Header>(
+        "/cv/target/state_ack", rclcpp::QoS(100), [this](std_msgs::msg::Header::ConstSharedPtr) {
+          std::lock_guard<std::mutex> lock(gate_mutex_);
+          ++states_consumed_;
+          gate_cv_.notify_all();
         }));
     // The tracker stamps TargetState at publish time, so a backlog doesn't
     // show there; it echoes each detection it folds in here instead.
@@ -322,16 +333,18 @@ private:
   {
     std::lock_guard<std::mutex> lock(gate_mutex_);
     tracker_live_ = true;
+    ++measurements_;
     while (!owed_.empty() && owed_.front() <= stamp + 1e-9) {owed_.pop_front();}
     gate_cv_.notify_all();
   }
 
   // A tick whose stamp isn't a step with a deadline in it means the timer
   // didn't start at sim time 0, and runs won't repeat.
-  void on_aim(int64_t stamp_ns)
+  void on_aim(int64_t stamp_ns, bool has_point)
   {
     std::lock_guard<std::mutex> lock(gate_mutex_);
     last_aim_ns_ = std::max(last_aim_ns_, stamp_ns);
+    if (has_point) {expected_point_ns_ = stamp_ns;}
     if (!tick_due(stamp_ns) && !warned_phase_) {
       warned_phase_ = true;
       RCLCPP_WARN(get_logger(), "lockstep: /cv/target/tick at %.3f s is off point_to_cv_target's "
@@ -387,7 +400,9 @@ private:
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
       std::chrono::duration<double>(startup_wait_s_));
     while (!stop_ && rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
-      if (count_publishers("/cv/target/tick") > 0 && count_publishers("/cv/tracker/measurement") > 0) {
+      if (count_publishers("/cv/target/tick") > 0 &&
+        count_publishers("/cv/target/state_ack") > 0 &&
+        count_publishers("/cv/tracker/measurement") > 0) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         aim_live_ = true;
         return;
@@ -437,11 +452,15 @@ private:
         if (!wait_for(lock, "/cv/tracker/measurement", [&] {return owed_.empty();})) {
           owed_.clear();
         }
+        // Publication on separate DDS topics does not imply consumer completion.
+        wait_for(lock, "/cv/target/state_ack", [&] {return states_consumed_ >= measurements_;});
       }
       publish_clock();
       if (rate_ <= 0.0 && aim_live_ && tick_due(t_ns)) {
         std::unique_lock<std::mutex> lock(gate_mutex_);
-        wait_for(lock, "/cv/target/tick", [&] {return last_aim_ns_ >= t_ns;});
+        wait_for(lock, "/cv/target/tick", [&] {
+          return last_aim_ns_ >= t_ns && last_point_ns_ >= expected_point_ns_;
+        });
       }
       if (rate_ <= 0.0 && !aim_live_ && !tracker_live_ && !progress_) {
         std::this_thread::sleep_for(std::chrono::duration<double>(step_ns() * 1e-9));
@@ -912,7 +931,8 @@ private:
   bool tracker_live_ = false;  // after its first echo
   std::deque<double> owed_;  // stamps of published non-empty frames not yet echoed
   std::atomic<bool> aim_live_{false};
-  int64_t last_aim_ns_ = -1;
+  int64_t last_aim_ns_ = -1, last_point_ns_ = -1, expected_point_ns_ = -1;
+  uint64_t measurements_ = 0, states_consumed_ = 0;
   int64_t tracker_clock_ns_ = -1;
   bool warned_phase_ = false;
   std::optional<double> progress_;

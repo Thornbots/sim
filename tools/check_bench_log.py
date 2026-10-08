@@ -19,7 +19,7 @@ Say whether a bench run can be trusted, from its launch logs.
 `python3 tools/check_bench_log.py LOG [LOG ...]`: the suite's launch log,
 plus the drift suite's /tmp/localization_drift_tests/*.log. Prints the
 result line, the suite timing table and every problem found; exits 1 if a
-node crashed mid-run, a GUI couldn't open, or a wait gave up.
+node crashed mid-run, pytest failed, a GUI couldn't open, or a clock/gate wait failed.
 """
 import argparse
 import re
@@ -33,7 +33,8 @@ PATTERNS = [
     ('no display', re.compile(r'Qt platform plugin|could not connect to display'), True),
     ('wait gave up', re.compile(r'wall-clock cap hit|\[wait_until\] timed out'), True),
     ('stack not ready', re.compile(r'stack NOT ready'), True),
-    ('lockstep timeout', re.compile(r'[1-9]\d* lockstep timeouts'), True),
+    ('lockstep timeout', re.compile(
+        r'lockstep: .* timed out after|[1-9]\d* lockstep timeouts'), True),
     ('clock failure', re.compile(r'clock stalled|clock moved backwards'), True),
     ('pacing gate dropped', re.compile(r'silent, no longer pacing'), False),
     ('ODE contact overflow', re.compile(r'hash table bucket overflow'), False),

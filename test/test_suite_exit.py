@@ -47,6 +47,7 @@ def test_child_result_propagates_through_launch_service(code):
     ('lockstep: 0 lockstep timeouts', False),
     ('lockstep: 2 lockstep timeouts', True),
     ('E2E clock stalled during scoring', True),
+    ('lockstep: /cv/target/state_ack timed out after 0.50 s wall', True),
 ])
 def test_checker_rejects_failed_tests_and_stalls(tmp_path, text, failed):
     log = tmp_path / 'suite.log'

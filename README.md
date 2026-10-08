@@ -115,15 +115,20 @@ stamp, so a late stamp scores as error. Detection noise is drawn per
 (`seed`, `case_seed`, frame, panel), not from one stream, so a cell sees
 the same noise on every run whatever ran before it or where the head
 pointed; `seed:=` samples another draw. At `real_time_factor:=0` the loop
-is lockstep, so a cell's p95s repeat to within 1.03x run to run (five Mac
-runs, 2026-10-01; 2.2x when it only paced). `/clock` holds at 0 until
+waits on the nodes under test. Historical five-run p95 comparisons were
+within 1.03x (Mac, 2026-10-01), but moving cells can still vary with the
+same seed: zero timeouts alone does not prove repeatability. `/clock` holds at 0 until
 `point_to_cv_target` and `target_tracker` are up, so the aim node's 40 Hz
 timer starts at 0 and each case starts on a 0.1 s boundary (`case_align_s`).
 A step's detections go out only once the tracker's `/cv/tracker/clock_ack`
 shows it reads the last `/clock`, since it stamps `TargetState` with `now()`;
 `/clock` then waits for the tracker to echo each one on
 `/cv/tracker/measurement`, and for `/cv/target` on each aim tick. The scorer
-only paces, up to `pace_slack_s` behind. A wait that passes `max_wait_s`
+only paces, up to `pace_slack_s` behind. The loop also waits for
+`point_to_cv_target` to acknowledge model consumption on `/cv/target/state_ack`
+and for a publish tick's indicated aim point to arrive. Separate DDS topics
+can arrive in either order; a publication acknowledgment alone does not
+prove that the next consumer has processed its input. A wait that passes `max_wait_s`
 (0.5 s wall) is logged as a lockstep timeout, and that run may not repeat.
 The 12 cells take ~30 s on the Mac (`real_time_factor:=1` for real time):
 
