@@ -5,12 +5,16 @@ sim holds the robot's integration tests. The localization drift suite starts a
 `urdf/sentry_v2.urdf.xacro`, and runs the real `thornbots_pkg` stack against
 it. The two CV benches run no gz. The aiming bench scores `point_to_cv_target`
 against a perfectly known target; the estimation bench scores how well Part 2
-turns noisy detections into a target model (`../CV_SPLIT_PLAN.md`,
-Estimation).
+turns noisy detections into a target model. The split is documented in the
+[CV interface](../thornbots_pkg/README.md#cv-interface); historical results
+are in [CV bench observations](docs/cv-bench-results-2026-09-28.md).
 
 The package is C++ and Python in one: `ament_cmake` builds `src/`'s
 `bench_world`, and `ament_cmake_python` installs the `sim` module, with one
 `scripts/` wrapper per Python node.
+
+`/cmd_vel` remains a bare `Twist` because gz's diff-drive interface and the
+harnesses expect it; this is the workspace timestamp rule's standard-interface exception.
 
 ## Run the tests
 

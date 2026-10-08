@@ -221,7 +221,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   reach the estimation bench has to be made in `src/bench_world.cpp` too.
 - **`/cv/target` is an `odom` point since 2026-09-27.** `cv_head_aim.py`,
   `bench_world.cpp` and `shot_hit_harness.py` aim from our current pose, as
-  the MCB should; `../CV_SPLIT_PLAN.md` W.3.
+  the MCB should; see [shared aim frame](../ros2_dji_serial_bridge/README.md#shared-aim-frame).
 - **The head controller holds the head when there's no target**, so a case can
   start with the target out of view. `estimation_harness` aims the head at
   the truth during each case's reset; before that, staggered stationary
