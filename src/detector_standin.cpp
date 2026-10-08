@@ -290,8 +290,11 @@ private:
     const Eigen::Vector3d side = along.cross(Eigen::Vector3d::UnitZ()).normalized();
     const Eigen::Vector3d up = side.cross(along);
     std::normal_distribution<double> n(0.0, 1.0);
-    return along * (depth_coeff_ * r * r * n(rng_)) +
-           (side * n(rng_) + up * n(rng_)) * (lateral_rad_ * r);
+    const double depth = n(rng_);
+    const double horizontal = n(rng_);
+    const double vertical = n(rng_);
+    return along * (depth_coeff_ * r * r * depth) +
+           (side * horizontal + up * vertical) * (lateral_rad_ * r);
   }
 
   static geometry_msgs::msg::Point32 to_point(const Eigen::Vector3d & p)

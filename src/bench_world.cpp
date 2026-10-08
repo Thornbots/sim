@@ -725,13 +725,15 @@ private:
 
       const double range = rel.norm();
       const Vector3d ray = rel / range;
-      Vector3d lateral(unit(rng), unit(rng), unit(rng));
+      Vector3d lateral;
+      // Sequence seeded draws independently of constructor argument evaluation order.
+      for (int axis = 0; axis < 3; ++axis) {lateral[axis] = unit(rng);}
       lateral *= live_["noise_lateral_rad"] * range;
       lateral -= lateral.dot(ray) * ray;
       const double depth = unit(rng) * live_["noise_depth_range_coeff"] * range * range;
-      const Vector3d noise =
-        live_["noise_pos_stddev"] * Vector3d(unit(rng), unit(rng), unit(rng)) +
-        lateral + depth * ray;
+      Vector3d position_noise;
+      for (int axis = 0; axis < 3; ++axis) {position_noise[axis] = unit(rng);}
+      const Vector3d noise = live_["noise_pos_stddev"] * position_noise + lateral + depth * ray;
 
       PanelDetection d;
       d.header = arr.header;
