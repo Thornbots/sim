@@ -376,3 +376,11 @@ Referee data goes through the compiled MCB parser and real Jetson UART.
 Keep approach fire disabled until all routes arrive. `match.json` is a
 diagnostic report; moving accuracy and repeated-run floors remain open.
 README.md lists the collision and referee model limits.
+
+## CI
+
+GitHub CI runs on PRs targeting main/nightly and pushes to both branches;
+manual runs are available. Shared lint is pinned to workspace `884bfe63ea4e` (tag `ci-tooling-884bfe6`). Existing diagnostics are recorded in
+`.github/quality-baseline.json`; new diagnostics fail. Do not expand the
+baseline to hide regressions. Syntax errors always fail.
+Jazzy CI builds the portable stack and runs this package's registered tests.
