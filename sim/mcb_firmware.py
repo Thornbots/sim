@@ -43,8 +43,10 @@ def referee_frames(ref):
     robot = struct.pack('<BB5HB', ref.robot_id, 1, ref.current_hp, ref.max_hp,
                         100, 1000, 240, 3 | int(ref.shooter_power) << 2)
     power = struct.pack('<HHf4H', 24000, 0, 0.0, 60, 0, 0, 0)
-    zones = (int(ref.restoration_zone) << 13 | int(ref.exchange_zone) << 18
-             | int(ref.central_buff_zone) << 19)
+    # RFID bits as Taproot's RFIDActivationStatus numbers them: restoration is
+    # the resupply zone outside the exchange, exchange the one inside it.
+    zones = (int(ref.restoration_zone) << 19 | int(ref.exchange_zone) << 20
+             | int(ref.central_buff_zone) << 23)
     return b''.join(encode_frame(kind, payload) for kind, payload in (
         (0x0001, game), (0x0206, bytes([getattr(ref, 'hurt_armor_id', 0) & 3])),
         (0x0201, robot), (0x0202, power),
