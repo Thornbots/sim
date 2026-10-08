@@ -225,7 +225,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **The head controller holds the head when there's no target**, so a case can
   start with the target out of view. `estimation_harness` aims the head at
   the truth during each case's reset; before that, staggered stationary
-  after 4 m/s scored nothing.
+  after 4 m/s scored nothing. E2-E4 patrol instead (`e2e.launch.py`);
+  without it, 5 of 12 E2 cells fired nothing on nightly (2026-10-08).
 - **Every CV test runs with ROS** (the user's rule, 2026-09-25): tune and
   score Part 2 on the estimation bench, never on a copy of the nodes outside ROS. The
   offline estimator (`tools/estimation_offline.py`) was removed for that:

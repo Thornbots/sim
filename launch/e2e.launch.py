@@ -178,11 +178,14 @@ def generate_launch_description():
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        # No patrol: the scorer fires on every /cv/target frame (the
-        # firmware's legacy rule), and a patrol frame isn't a target.
+        # E1 has no patrol: its scorer fires on every /cv/target frame, and a
+        # patrol frame isn't a target. From E2 the firmware fires on `fire`
+        # only, so patrol runs as on the robot and reacquires a lost target.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
                           'use_rf2o': 'true', 'load_map': 'true',
-                          'patrol_enabled': 'false',
+                          'patrol_enabled': PythonExpression([
+                              "'false' if '", LaunchConfiguration('stage'),
+                              "' == 'e1' else 'true'"]),
                           'initial_x': PythonExpression([
                               "'4.625' if '", LaunchConfiguration('stage'),
                               "' in ('e3', 'e4') else '0.0'"])}.items())

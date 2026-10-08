@@ -376,7 +376,12 @@ on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
 `test/e2e/test_e2.py` scores the shots the firmware fires, each falling
 under gravity since the firmware pitches up for it. Failures are ordinary
 pytest failures, including zero shots. `firmware_fixes` is deprecated;
-the hosted build runs this checkout's code without overlays.
+the hosted build runs this checkout's code without overlays. From E2 on,
+`point_to_cv_target` patrols with no target, as on the robot, so a cell
+whose opponent starts out of view, or a track lost at 4 m/s, is found
+again. E1 keeps patrol off: its scorer fires on every `/cv/target` frame.
+E2 bring-up waits for a valid `/cv/target_state`, since patrol keeps
+`/cv/target` fresh without one.
 
 Test-owned E1/E2 stacks bring up a parked, non-spinning opponent before
 requesting the first cell. Starting it at the launch's moving defaults

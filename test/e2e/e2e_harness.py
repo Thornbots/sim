@@ -185,6 +185,7 @@ class E2EScorer(bench.SimTimeNode):
             from nav_msgs.msg import Odometry
             self.create_subscription(Odometry, '/sim/match/reference', self._on_reference, 10)
         self._target = None  # stamp_s of the newest aim point
+        self._state = None  # stamp_s of the newest valid TargetState
         self._aims = []  # (stamp_s, odom point) of each confident /cv/target
         import tf2_ros
         self._tf = tf2_ros.Buffer()
@@ -527,6 +528,8 @@ class E2EScorer(bench.SimTimeNode):
         return world_T_root @ np.linalg.inv(_iso_qt(tr.rotation, tr.translation))
 
     def _on_state(self, msg):
+        if msg.valid:
+            self._state = self._stamp_s(msg.header.stamp)
         if self.scoring and msg.valid:
             self._pending_states.append(msg)
 
@@ -637,6 +640,10 @@ class E2EStack:
                              timeout=30.0, description='localized map->root chain')
             s.wait_until(lambda: s._target is not None and s.now_s() - s._target < TARGET_FRESH_S,
                          timeout=60.0, description='a fresh /cv/target aim point')
+            if self.stage == 'e2':
+                # Patrol frames keep /cv/target fresh; the opponent must be tracked.
+                s.wait_until(lambda: s._state is not None, timeout=60.0,
+                             description='a valid /cv/target_state')
 
     def start_match(self):
         client = self.node.create_client(SetParameters, '/match_driver/set_parameters')
