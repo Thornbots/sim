@@ -1,0 +1,5 @@
+{
+  "[\"sim/match_driver.py\", \"F401\", \"`gz.msgs10.pose_pb2` imported but unused\"]": 1,
+  "[\"test/e2e/e2e_harness.py\", \"F401\", \"`gz.msgs10.pose_pb2` imported but unused\"]": 1,
+  "[\"tools/simplify_urdf.py\", \"F541\", \"f-string without any placeholders\"]": 2
+}
