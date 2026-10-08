@@ -13,14 +13,15 @@
 # limitations under the License.
 
 """
-Match test, stage E1: our robot parked, one opponent, the real CV chain.
+MCB emulator, parked: one opponent per cell, the real CV chain and firmware.
 
 One test per cell, opponent speed by target_driver path, spin swept against
-speed as on the aiming bench. Each asserts the hit rate of the firmware-rule
-shots (e2e_harness) against FLOORS, or PLACEHOLDER_FLOOR for a cell not
-measured yet. `ros2 launch sim e2e.launch.py` runs it; options:
---e2e-speeds, --e2e-paths, --e2e-spin, --e2e-duration, --headless, --log-dir,
---external-stack.
+speed as on the aiming bench. Shots are the ones the compiled MCB fires
+(/mcb_emulator/shot), falling under gravity; each cell asserts their hit
+rate against FLOORS, or PLACEHOLDER_FLOOR for a cell not measured yet.
+`ros2 launch sim e2e.launch.py` runs it; options: --e2e-speeds,
+--e2e-paths, --e2e-spin, --e2e-duration, --headless, --log-dir,
+--external-stack. See README.md "MCB emulator".
 """
 import os
 
@@ -37,8 +38,9 @@ def e2e_stack(request, ros_context):
     log_dir = config.getoption('--log-dir') or harness.DEFAULT_LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     stack = harness.E2EStack(config.getoption('--headless'), log_dir,
-                             external=config.getoption('--external-stack'),
-                             real_time_factor=config.getoption('--real-time-factor'))
+                             external=config.getoption('--external-stack'), stage='mcb_parked',
+                             real_time_factor=config.getoption('--real-time-factor'),
+                             firmware_fixes=not config.getoption('--no-firmware-fixes'))
     try:
         stack.start()
         yield stack
@@ -65,22 +67,17 @@ def pytest_generate_tests(metafunc):
     metafunc.parametrize('cell', cells, ids=[harness.cell_id(s, p, spin) for s, p, _ in cells])
 
 
-def test_e1(cell, request, e2e_stack):
+def test_mcb_parked(cell, request, e2e_stack):
     speed, path, spin_hz = cell
     duration = request.config.getoption('--e2e-duration') or harness.DEFAULT_DURATION
-    name = harness.cell_id(speed, path, request.config.getoption('--e2e-spin'))
+    name = 'mcb_parked-' + harness.cell_id(speed, path, request.config.getoption('--e2e-spin'))
     print(f'\n=== {name}, spin {spin_hz:.2f} Hz ===')
     shots = harness.run_case(e2e_stack, speed, spin_hz, path, duration)
     harness.record_score(e2e_stack, name, shots, duration)
-    rate, flag = shots['rate'], shots['flag']
-    print(f'{name}: {sum(s["hit"] for s in rate)}/{len(rate)} firmware-rule shots hit '
-          f'({harness.hit_rate(rate):.0%}), {sum(s["hit"] for s in flag)}/{len(flag)} '
-          f'fire-flag shots ({harness.hit_rate(flag):.0%})')
-    floor = harness.FLOORS.get(name)
-    if floor is None:
-        floor = harness.PLACEHOLDER_FLOOR
-        print(f'{name}: no measured floor yet, using PLACEHOLDER_FLOOR')
-    assert rate, (f'{name}: no shots; /cv/target never sent an aim point. '
-                  'Check stack.log in --log-dir')
-    assert harness.hit_rate(rate) >= floor, (
-        f'{name}: hit rate {harness.hit_rate(rate):.0%} below {floor:.0%}')
+    mcb = shots['mcb']
+    print(f'{name}: {sum(s["hit"] for s in mcb)}/{len(mcb)} MCB shots hit '
+          f'({harness.hit_rate(mcb):.0%})')
+    floor = harness.FLOORS.get(name, harness.PLACEHOLDER_FLOOR)
+    assert mcb, f'{name}: the MCB emulator fired no shots; check stack.log in --log-dir'
+    assert harness.hit_rate(mcb) >= floor, (
+        f'{name}: hit rate {harness.hit_rate(mcb):.0%} below {floor:.0%}')

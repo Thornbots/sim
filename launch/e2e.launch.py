@@ -13,11 +13,11 @@
 # limitations under the License.
 
 """
-Launch the E1-E4 integration suites and their camera-free Gazebo stacks.
+Launch the MCB emulator integration suites and their camera-free Gazebo stacks.
 
-E1 uses truth detections, the real CV stack and cv_head_aim. E2 replaces
-pose/aim/referee stubs with the hosted MCB firmware and real UART bridge.
-E3 drives from spawn to center with localization; E4 adds a 2v2 fight.
+Every stage runs truth detections, the real CV stack, the hosted MCB firmware
+and the real UART bridge. mcb_parked scores 12 opponent cells with our robot
+parked; mcb_drive drives from spawn to center; mcb_match adds a 2v2 fight.
 Tests own their stack process group; run_tests:=false launches only the stack.
 See README.md for design rationale and ../E2E_PLAN.md for acceptance criteria.
 """
@@ -46,11 +46,13 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
-from sim.match_scenario import E1_PATHS
+from sim.match_scenario import PARKED_PATHS
 
 SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/e2e'
-TEST_FILE = 'test_e1.py'
-TEST_FILES = {'e1': TEST_FILE, 'e2': 'test_e2.py', 'e3': 'test_e3.py', 'e4': 'test_e4.py'}
+TEST_FILES = {'mcb_parked': 'test_mcb_parked.py', 'mcb_drive': 'test_mcb_drive.py',
+              'mcb_match': 'test_mcb_match.py'}
+TEST_FILE = TEST_FILES['mcb_parked']
+DRIVING = ('mcb_drive', 'mcb_match')
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
 OPPONENT_CLASS = 6  # red; we are blue
@@ -62,12 +64,12 @@ def _sim(context):
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
     spawn = ({'x': '4.625', 'y': '0.0', 'yaw': str(math.pi)}
-             if config['stage'] in ('e3', 'e4') else {})
+             if config['stage'] in DRIVING else {})
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
         launch_arguments={'gui': gui, 'rviz': gui, 'foxglove': config['foxglove'],
-                          'camera': 'false', 'pose_emulator': str(config['stage'] == 'e1').lower(),
+                          'camera': 'false', 'pose_emulator': 'false',
                           'real_time_factor': config['real_time_factor'], **spawn}.items())]
 
 
@@ -131,12 +133,12 @@ def generate_launch_description():
             'target_speed': ParameterValue(LaunchConfiguration('target_speed'), value_type=float),
             'spin_hz': ParameterValue(LaunchConfiguration('target_spin_hz'), value_type=float),
             'origin_yaw': SPAWN_YAW,  # sim.launch.py's spawn heading: the path stays in front
-            **E1_PATHS['lateral'],
+            **PARKED_PATHS['lateral'],
         }])
     # The path the opponent's OpponentMover system rides, into gz.
     path_topic = PythonExpression([
         "'/sim/match/opponent_0/path' if '", LaunchConfiguration('stage'),
-        "' in ('e3', 'e4') else '/target/ground_truth_odom'"])
+        "' in ", repr(DRIVING), " else '/target/ground_truth_odom'"])
     path_bridge = Node(
         package='ros_gz_bridge', executable='parameter_bridge', name='opponent_path_bridge',
         output='screen',
@@ -147,26 +149,18 @@ def generate_launch_description():
         package='sim', executable='opponent_driver', name='opponent_driver', output='screen',
         parameters=[{'use_sim_time': True, 'name': OPPONENT}],
         remappings=[('/target/ground_truth_odom', path_topic)])
-    cv_head_aim = Node(
-        package='sim', executable='cv_head_aim', name='cv_head_aim', output='screen',
-        parameters=[{'use_sim_time': True}])
-    # The referee stand-in until E2's MCB emulator sends REF_SYS.
-    team_stub = ExecuteProcess(
-        cmd=['ros2', 'topic', 'pub', '-r', '5', '/dji_serial_bridge/ref_sys',
-             'dji_serial_bridge/msg/RefSysStatus', '{is_on_blue_team: true}'],
-        name='team_stub', output='log')
-    # E2: the firmware port parked (DrivetrainStopCommand) on a pty, as
+    # The hosted firmware parked (DrivetrainStopCommand) on a pty, as
     # auto.launch.py starts the bridge and relay with real_hardware:=true.
     mcb_emulator = Node(
         package='sim', executable='mcb_emulator', name='mcb_emulator', output='screen',
         parameters=[{'use_sim_time': True, 'device_link': MCB_PTY, 'drive': 'stop',
                      'firmware_binary': LaunchConfiguration('firmware_binary'),
                      'game_stage': ParameterValue(PythonExpression([
-                         "3 if '", LaunchConfiguration('stage'), "' == 'e4' else 4"]),
+                         "3 if '", LaunchConfiguration('stage'), "' == 'mcb_match' else 4"]),
                          value_type=int)}],
         remappings=[('/cmd_vel', PythonExpression([
             "'/mcb_emulator/cmd_vel' if '", LaunchConfiguration('stage'),
-            "' in ('e3', 'e4') else '/cmd_vel'"]))])
+            "' in ", repr(DRIVING), " else '/cmd_vel'"]))])
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
@@ -178,33 +172,28 @@ def generate_launch_description():
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        # E1 has no patrol: its scorer fires on every /cv/target frame, and a
-        # patrol frame isn't a target. From E2 the firmware fires on `fire`
-        # only, so patrol runs as on the robot and reacquires a lost target.
+        # Patrol stays on, as on the robot: patrol frames clear `fire`, and
+        # it reacquires an opponent that starts out of view or is lost.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
-                          'use_rf2o': 'true', 'load_map': 'true',
-                          'patrol_enabled': PythonExpression([
-                              "'false' if '", LaunchConfiguration('stage'),
-                              "' == 'e1' else 'true'"]),
+                          'use_rf2o': 'true', 'load_map': 'true', 'patrol_enabled': 'true',
                           'initial_x': PythonExpression([
                               "'4.625' if '", LaunchConfiguration('stage'),
-                              "' in ('e3', 'e4') else '0.0'"])}.items())
+                              "' in ", repr(DRIVING), " else '0.0'"])}.items())
 
     match_driver = Node(
         package='sim', executable='match_driver', name='match_driver', output='screen',
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
-    common = [path_bridge, opponent_driver]
-    e1 = [cv_head_aim, team_stub]
     # The bridge opens the pty once, so it starts after the emulator makes it.
-    e2 = [mcb_emulator, TimerAction(period=2.0, actions=[bridge, mcb_relay])]
+    common = [path_bridge, opponent_driver, mcb_emulator,
+              TimerAction(period=2.0, actions=[bridge, mcb_relay])]
 
     def stack(context):
         stage = context.launch_configurations['stage']
         if stage not in TEST_FILES:
-            raise RuntimeError(f"stage must be e1, e2, e3 or e4, not '{stage}'")
+            raise RuntimeError(f"stage must be one of {', '.join(TEST_FILES)}, not '{stage}'")
         extras = []
         opponents = [OPPONENT]
-        if stage == 'e4':
+        if stage == 'mcb_match':
             opponents += ['opponent_1', 'ally_0']
             for name in opponents[1:]:
                 topic = f'/sim/match/{name}/path'
@@ -219,14 +208,13 @@ def generate_launch_description():
                     remappings=[(f'/model/{name}/path', topic)],
                     parameters=[{'use_sim_time': True}])]
         return ([detector(opponents)] + extras + common
-                + ([match_driver] if stage in ('e3', 'e4') else [target_driver])
-                + (e1 if stage == 'e1' else e2)
+                + ([match_driver] if stage in DRIVING else [target_driver])
                 + [TimerAction(period=ROBOT_DELAY_S, actions=[robot])])
 
     return LaunchDescription([
-        DeclareLaunchArgument('stage', default_value='e1',
-                              description='e1: cv_head_aim on the gimbal; e2: the MCB emulator '
-                                          'on a pty with dji_serial_bridge'),
+        DeclareLaunchArgument('stage', default_value='mcb_parked',
+                              description='mcb_parked: 12 opponent cells, robot parked; '
+                                          'mcb_drive: spawn to center; mcb_match: 2v2'),
         DeclareLaunchArgument('firmware_fixes', default_value='true',
                               description='Deprecated: the native MCB runs its checked-out code'),
         DeclareLaunchArgument('firmware_binary', default_value='',

@@ -13,12 +13,12 @@
 # limitations under the License.
 
 """
-Score E1-E4 shots and route diagnostics against stamped Gazebo truth.
+Score MCB emulator shots and route diagnostics against stamped Gazebo truth.
 
-E1 samples fresh CV aims at 10 Hz; E2 onward uses actual firmware shots.
-Flag shots are hypothetical and never damage HP. E4 scores ballistic first
-impacts for all four robots and returns referee state through the MCB UART.
-See README.md for design rationale; test_e1.py through test_e4.py assert results.
+Every stage scores the shots the hosted firmware fires. Flag shots are
+hypothetical and never damage HP. mcb_match scores ballistic first impacts
+for all four robots and returns referee state through the MCB UART.
+See README.md for design rationale; test_mcb_*.py assert results.
 """
 import bisect
 import json
@@ -38,18 +38,18 @@ import rclpy
 from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sim import suite_timing
-from sim.match_scenario import E1_PATHS as TARGET_PATHS
 from sim.match_scenario import ingress_duration, match_duration, sample_match, TEAMS
+from sim.match_scenario import PARKED_PATHS as TARGET_PATHS
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'cv'))
 import shot_hit_harness as bench  # noqa: E402, I100
 
 OPPONENT = 'opponent_0'
 MUZZLE_SPEED = bench.MUZZLE_SPEED
-GRAVITY = 9.80665  # m/s^2, E2 shots only: E1's cv_head_aim aims straight
-FIRE_HZ = 10.0  # the firmware's indexer rate while it holds a target
+GRAVITY = 9.80665  # m/s^2; the firmware pitches up for the drop
+FIRE_HZ = 10.0  # scorer tick: resolves pending shots and states
 FIRE_LATENCY_S = bench.FIRE_LATENCY_S
-TARGET_FRESH_S = 0.1  # a /cv/target older than this holds fire
+TARGET_FRESH_S = 0.1  # bring-up needs a /cv/target this fresh
 EXPOSURE_HALF_ANGLE = bench.PANEL_EXPOSURE_HALF_ANGLE
 HISTORY_S = 3.0  # gz poses kept for resolving shots
 RESOLVE_AFTER_S = 0.5  # sim s after launch before a shot is judged
@@ -60,11 +60,11 @@ DEFAULT_PATHS = ['lateral', 'radial', 'diagonal']
 DEFAULT_LOG_DIR = '/tmp/e2e_test_logs'
 PLACEHOLDER_FLOOR = 0.10  # until three runs give FLOORS
 FLOORS = {}
+DRIVING = ('mcb_drive', 'mcb_match')  # stages that start at spawn and drive
 # The nodes a run needs.
 STACK_NODES = ['detector_standin', 'target_selector', 'target_tracker', 'point_to_cv_target',
-               'cv_head_aim', 'opponent_driver', 'target_driver']
-E2_NODES = [n for n in STACK_NODES if n != 'cv_head_aim'] + [
-    'mcb_emulator', 'dji_serial_bridge', 'mcb_relay']
+               'opponent_driver', 'target_driver', 'mcb_emulator', 'dji_serial_bridge',
+               'mcb_relay']
 
 
 def _rpy(r, p, y):
@@ -159,9 +159,9 @@ def _dropped(barrel, along):
 
 
 class E2EScorer(bench.SimTimeNode):
-    """Fires by the firmware's rule on /cv/target and scores every shot from gz truth."""
+    """Scores every firmware and fire-flag shot from gz truth."""
 
-    def __init__(self, armors, muzzle, log_path, stage='e1'):
+    def __init__(self, armors, muzzle, log_path, stage='mcb_parked'):
         super().__init__('e2e_scorer')
         self.stage = stage
         self.armors, self.muzzle = armors, muzzle
@@ -178,10 +178,10 @@ class E2EScorer(bench.SimTimeNode):
         self._reference = []
         self._pending_reference = []
         self.route_records = []
-        if stage in ('e1', 'e2'):
+        if stage == 'mcb_parked':
             self.create_timer(0.05, self._sample_pose)
         self.launch_probe = None
-        if stage in ('e3', 'e4'):
+        if stage in DRIVING:
             from nav_msgs.msg import Odometry
             self.create_subscription(Odometry, '/sim/match/reference', self._on_reference, 10)
         self._target = None  # stamp_s of the newest aim point
@@ -201,14 +201,13 @@ class E2EScorer(bench.SimTimeNode):
         self._pending = []
         self.scoring = False
         self.score_until = math.inf
-        self.shot_kinds = ['rate', 'flag', 'mcb']
-        if stage == 'e4':
+        self.shot_kinds = ['flag', 'mcb']
+        if stage == 'mcb_match':
             self._setup_match()
         self.shots = {kind: [] for kind in self.shot_kinds}
         self.create_timer(1.0 / FIRE_HZ, self._fire_tick)
-        if stage != 'e1':
-            from std_msgs.msg import Header
-            self.create_subscription(Header, '/mcb_emulator/shot', self._on_mcb_shot, 100)
+        from std_msgs.msg import Header
+        self.create_subscription(Header, '/mcb_emulator/shot', self._on_mcb_shot, 100)
 
     def wait_until(self, predicate, timeout, description):
         def ready():
@@ -240,7 +239,7 @@ class E2EScorer(bench.SimTimeNode):
         self.states, self._pending_states = [], []
         self.route_records, self._pending_reference = [], []
         self.score_until = math.inf
-        if self.stage == 'e4':
+        if self.stage == 'mcb_match':
             self._flight_steps = {}
 
     def _on_target(self, msg):
@@ -281,9 +280,6 @@ class E2EScorer(bench.SimTimeNode):
 
     def _fire_tick(self):
         now = self.now_s()
-        if self.scoring and self.stage == 'e1' and self._target is not None:
-            if now - self._target <= TARGET_FRESH_S:
-                self._pending.append(('rate', now + FIRE_LATENCY_S))
         ready = [m for m in self._pending_states if self._stamp_s(m.header.stamp) < now - 0.1]
         self._pending_states = [m for m in self._pending_states if m not in ready]
         for m in ready:
@@ -298,7 +294,7 @@ class E2EScorer(bench.SimTimeNode):
         still = []
         completed = []
         for kind, t_launch in self._pending:
-            if self.stage == 'e4':
+            if self.stage == 'mcb_match':
                 shot = self._judge_match(kind, t_launch)
                 if shot is None:
                     still.append((kind, t_launch))
@@ -329,7 +325,7 @@ class E2EScorer(bench.SimTimeNode):
             with open(self.log_path, 'a') as stream:
                 stream.write(json.dumps(shot) + '\n')
         self._pending = still
-        if self.stage == 'e4':
+        if self.stage == 'mcb_match':
             self._sync_referee()
 
     def _setup_match(self):
@@ -412,8 +408,8 @@ class E2EScorer(bench.SimTimeNode):
         if not self._referee_client.service_is_ready():
             return
         params = {'current_hp': self.referee.hp['sentry'],
-                  'game_stage': (5 if elapsed >= match_duration('e4') else
-                                 4 if elapsed >= ingress_duration('e4') else 3),
+                  'game_stage': (5 if elapsed >= match_duration('mcb_match') else
+                                 4 if elapsed >= ingress_duration('mcb_match') else 3),
                   'stage_time_remaining': max(0, 300 - int(elapsed)),
                   'hurt_armor_id': self.hurt_armor_id,
                   'shooter_power': self.referee.hp['sentry'] > 0}
@@ -434,7 +430,7 @@ class E2EScorer(bench.SimTimeNode):
                 return None
             centre = (theirs[0] @ root_T_armor)[:3, 3]
             along = max(float(np.dot(centre - origin, barrel)), 0.0)
-            direction = _dropped(barrel, along) if self.stage != 'e1' else barrel
+            direction = _dropped(barrel, along)
             theirs = self.theirs.at(t_launch + along / MUZZLE_SPEED)
             if theirs is None:
                 return None
@@ -587,15 +583,15 @@ class E2EStack:
     Between cases only target_driver's path, speed and spin change.
     """
 
-    def __init__(self, headless, log_dir, external=False, stage='e1', firmware_fixes=True,
-                 real_time_factor='0'):
+    def __init__(self, headless, log_dir, external=False, stage='mcb_parked',
+                 firmware_fixes=True, real_time_factor='0'):
         self.launch = None
         self.log_dir = log_dir
         self.stage = stage
-        self.nodes = STACK_NODES if stage == 'e1' else E2_NODES
-        if stage in ('e3', 'e4'):
+        self.nodes = list(STACK_NODES)
+        if stage in DRIVING:
             self.nodes = [n for n in self.nodes if n != 'target_driver'] + ['match_driver']
-        if stage == 'e4':
+        if stage == 'mcb_match':
             self.nodes += ['opponent_driver_opponent_1', 'opponent_driver_ally_0']
         if not external:
             self.launch = bench.LaunchTree(
@@ -631,16 +627,16 @@ class E2EStack:
             s.wait_until(lambda: s.nodes_up(*self.nodes), timeout=30.0,
                          description=f'{", ".join(self.nodes)} nodes up')
             bench.check_nodes(s, self.nodes)
-            if self.stage == 'e4':
+            if self.stage == 'mcb_match':
                 s.wait_until(lambda: all(h.newest() is not None for h in s.histories.values()),
                              timeout=120.0, description='all four robot truth streams')
-            if self.stage in ('e3', 'e4'):
+            if self.stage in DRIVING:
                 from rclpy.time import Time
                 s.wait_until(lambda: s._tf.can_transform('map', 'root', Time()),
                              timeout=30.0, description='localized map->root chain')
             s.wait_until(lambda: s._target is not None and s.now_s() - s._target < TARGET_FRESH_S,
                          timeout=60.0, description='a fresh /cv/target aim point')
-            if self.stage == 'e2':
+            if self.stage == 'mcb_parked':
                 # Patrol frames keep /cv/target fresh; the opponent must be tracked.
                 s.wait_until(lambda: s._state is not None, timeout=60.0,
                              description='a valid /cv/target_state')
@@ -730,7 +726,6 @@ def record_score(stack, cell, shots, duration):
     with open(stack.scores_path, 'a') as f:
         f.write(json.dumps({
             'cell': cell, 'duration_s': duration,
-            'rate_shots': len(shots['rate']), 'rate_hit_rate': round(hit_rate(shots['rate']), 4),
             'flag_shots': len(shots['flag']), 'flag_hit_rate': round(hit_rate(shots['flag']), 4),
             'mcb_shots': len(shots['mcb']), 'mcb_hit_rate': round(hit_rate(shots['mcb']), 4),
         }) + '\n')

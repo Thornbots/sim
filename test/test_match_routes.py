@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from sim.auto_explore import SPAWN_YAW
 from sim.match_scenario import (
-    E1_PATHS, match_duration, route_duration, ROUTES, sample_match, sample_robot, sample_route,
+    match_duration, PARKED_PATHS, route_duration, ROUTES, sample_match, sample_robot, sample_route,
 )
 
 RADIUS = 0.40  # chassis rotation envelope plus clearance, not just the panel radius
@@ -64,9 +64,9 @@ def assert_clear(points, triangles):
         assert distance >= RADIUS and not inside.any(), f'blocked footprint at {p}'
 
 
-@pytest.mark.parametrize('path', E1_PATHS)
+@pytest.mark.parametrize('path', PARKED_PATHS)
 def test_diagnostic_paths_clear_the_field(path, obstacles):
-    params = E1_PATHS[path]
+    params = PARKED_PATHS[path]
     a = math.radians(params['path_angle_deg'])
     offset = np.linspace(-params['half_width'], params['half_width'], 161)
     points = np.column_stack((params['center_x'] + offset * math.sin(a), offset * math.cos(a)))
@@ -90,8 +90,8 @@ def test_center_maneuvers_clear_the_field(obstacles):
 
 
 def test_four_robot_references_do_not_cross_each_other():
-    for t in np.arange(0, match_duration('e4'), .025):
-        positions = {'sentry': np.array(sample_match(t, 'e4')[0])}
+    for t in np.arange(0, match_duration('mcb_match'), .025):
+        positions = {'sentry': np.array(sample_match(t, 'mcb_match')[0])}
         positions.update({name: np.array(sample_robot(name, t)[0])
                           for name in ROUTES if name != 'sentry'})
         names = list(positions)

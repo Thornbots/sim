@@ -351,54 +351,50 @@ cv_dropout_probability:=0.03  # per-sample detection drop, placeholder
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
 
-`e2e.launch.py` is the match test, stage E1 (`../E2E_PLAN.md`): our
-robot parked with no camera, one red opponent riding `target_driver`'s
-path, and the real CV chain from `target_selector` to `cv_head_aim`, fed
-gz truth in place of YOLO and `roi_depth_node`. Field-safe paths are separate
-from the gz-free aiming bench: lateral at world y=-1.3 with x ±1.9 m,
-radial y=-0.9 to -1.7 m, diagonal centered at (0, -1.3), half-length
-0.65 m. Mesh regression checks include a 0.40 m robot footprint. Short
-paths brake before reaching high requested speeds; labels are speed limits.
-`test/e2e/test_e1.py` scores one cell per
-opponent speed and path: while `/cv/target` keeps sending aim points a
-shot leaves the gz muzzle at 10 Hz (the firmware's rule) and hits if it
-crosses a panel face. Shots `CVTarget.fire` asks for are logged beside.
+`e2e.launch.py` is the match test (`../E2E_PLAN.md`). Every stage runs the
+MCB emulator: the compiled sentry firmware (see Notes "MCB emulator") on a
+pty, with `dji_serial_bridge` and `mcb_relay` on the other end, the real CV
+chain from `target_selector` to `point_to_cv_target`, and no camera:
+`detector_standin` feeds gz truth in place of YOLO and `roi_depth_node`.
+Shots are the ones the firmware fires, each falling under gravity since the
+firmware pitches up for it. `point_to_cv_target` patrols with no target, as
+on the robot, so an opponent that starts out of view, or a track lost at
+4 m/s, is found again; patrol frames clear `fire`.
+
+| Stage | Test | What it scores |
+|---|---|---|
+| `mcb_parked` (default) | `test/e2e/test_mcb_parked.py` | our robot parked, one red opponent riding `target_driver`'s path; one test per speed and path |
+| `mcb_drive` | `test/e2e/test_mcb_drive.py` | our robot drives spawn to center against one red sentry |
+| `mcb_match` | `test/e2e/test_mcb_match.py` | the 2v2 center fight with ballistic shots and HP |
+
+`mcb_parked`'s field-safe paths are separate from the gz-free aiming bench:
+lateral at world y=-1.3 with x ±1.9 m, radial y=-0.9 to -1.7 m, diagonal
+centered at (0, -1.3), half-length 0.65 m. Mesh regression checks include
+a 0.40 m robot footprint. Short paths brake before reaching high requested
+speeds; labels are speed limits. Each cell fails on zero firmware shots or
+a hit rate under its floor. Shots `CVTarget.fire` asks for are logged
+beside. `firmware_fixes` is deprecated; the hosted build runs this
+checkout's code without overlays.
 
 ```bash
-ros2 launch sim e2e.launch.py                                 # all 12 cells
+ros2 launch sim e2e.launch.py                                 # mcb_parked, all 12 cells
 ros2 launch sim e2e.launch.py speeds:='0 2' paths:=lateral duration:=15
 ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:=1.5
 ```
 
-`stage:=e2` is stage E2: `pose_emulator`, `cv_head_aim` and the team stub
-give way to `mcb_emulator` (the sentry firmware, see Notes "MCB emulator")
-on a pty, with `dji_serial_bridge` and `mcb_relay` on the other end, and
-`test/e2e/test_e2.py` scores the shots the firmware fires, each falling
-under gravity since the firmware pitches up for it. Failures are ordinary
-pytest failures, including zero shots. `firmware_fixes` is deprecated;
-the hosted build runs this checkout's code without overlays. From E2 on,
-`point_to_cv_target` patrols with no target, as on the robot, so a cell
-whose opponent starts out of view, or a track lost at 4 m/s, is found
-again. E1 keeps patrol off: its scorer fires on every `/cv/target` frame.
-E2 bring-up waits for a valid `/cv/target_state`, since patrol keeps
-`/cv/target` fresh without one.
-
-Test-owned E1/E2 stacks bring up a parked, non-spinning opponent before
-requesting the first cell. Starting it at the launch's moving defaults
-left unscored motion dependent on wall-time bring-up speed. Parked bring-up
-does not resolve all acquisition failures. Each requested cell still sets its
-speed/spin and settles for three sim seconds before scoring.
-
-```bash
-ros2 launch sim e2e.launch.py stage:=e2 speeds:=0 paths:=lateral duration:=15
-```
+`mcb_parked`'s test-owned stack brings up a parked, non-spinning opponent
+and waits for a valid `/cv/target_state` before requesting the first cell
+(patrol keeps `/cv/target` fresh without one). Starting it at the launch's
+moving defaults left unscored motion dependent on wall-time bring-up speed.
+Each requested cell sets its speed/spin and settles for three sim seconds
+before scoring.
 
 `shots.jsonl` in `log_dir` (`/tmp/e2e_test_logs`) splits every miss into
 the barrel's angle off the aim and the aim's distance from the panel, and
 each case prints TargetState's centre, velocity and spin error against
 truth. `pytest_args:='--e2e-spin 0'` holds the spin for every cell.
-`states.jsonl` records stamped TargetState errors by case. E1/E2 shot and
-state records also include head-TF and map-localization errors against gz
+`states.jsonl` records stamped TargetState errors by case. `mcb_parked` shot
+and state records also include head-TF and map-localization errors against gz
 truth, and `odom_disagreement_m`: the MCB's POSE against TF `odom->root` at
 that POSE's stamp. That agreement is what a hit depends on; every aiming
 hop uses `odom`, so `map->root` error is logged but never blamed. Missing
@@ -430,7 +426,7 @@ it does not shorten their scoring windows.
   `cv_target_emulator`'s ray noise, 0 by default. Truth is gz's
   `/model/<name>/pose` at the tick; panel and camera offsets come from
   the URDF.
-- A `ros2 topic pub` puts us on blue until E2's MCB emulator.
+- Our team comes from the MCB emulator's `REF_SYS`, as on the robot.
 
 `sim.launch.py` and every test launch start a Foxglove bridge on port 8765
 (`foxglove:=false` turns it off). To run one next to anything else:
@@ -1143,8 +1139,7 @@ ros2 launch sim mcb.launch.py
 Use `drive:=simple` for the firmware's waypoint route or `drive:=auto` for
 NAV_GOAL; the default `stop` parks the robot. Foxglove serves on :8765, and
 gz/rviz open where a display is available. This launch uses the actual MCB
-and bridge without E1/E2's invalid opponent paths. E2 also uses the native
-MCB, but its scoring suite stays disabled until those paths are repaired.
+and bridge without an opponent; the `e2e.launch.py` stages score it.
 
 `firmware_binary:=/path/to/MCB-project.elf` selects another hosted build;
 `MCB_FIRMWARE_BINARY` supplies the default for both the node and tests.
@@ -1179,11 +1174,11 @@ python3 -m pytest test/mcb -v
 The native tests skip if the binary is absent; build it first to test the MCB.
 The bridge test also needs ROS. Wire-format tests remain plain Python.
 
-#### Firmware behaviour and historical E2 results
+#### Firmware behaviour and historical results (then stage E2, now `mcb_parked`)
 
 Where the firmware and `UART_PROTOCOL.md` disagree is listed, with
 MCBV3 file:line, in `../ros2_dji_serial_bridge/README.md` "Where the
-firmware stands". Behaviour that isn't a wire gap but changes what E2 can
+firmware stands". Behaviour that isn't a wire gap but changes what `mcb_parked` can
 score (paths under `MCB-project/src/`):
 
 - It aims at the latest `CvTarget` for 200 ms after it arrives: the field
@@ -1217,16 +1212,16 @@ so our `odom` and the MCB's odometry differ by a turn.
 
 With all three fixes (2026-10-03, container, still lateral cell): the
 aim lands within 3 mm of the panel and the barrel 1.55 deg above it, a
-24 m/s shot's drop over 3.2 m, so E2 now scores shots under gravity.
+24 m/s shot's drop over 3.2 m, so the stages now score shots under gravity.
 Then 28 of 40 hit (70%, barrel 0.36 deg off the aim, miss 0.020 m)
 on a clean track (centre 0.097 m), 2 of 40 and 1 of 30 on runs where
 the tracker read 1.6-1.9 m/s for the still target (T17).
 
 
-### Driving and combat diagnostics (E3)
+### Driving and combat diagnostics (`mcb_drive`)
 
 ```bash
-ros2 launch sim e2e.launch.py stage:=e3
+ros2 launch sim e2e.launch.py stage:=mcb_drive
 ```
 
 Our sentry starts at blue's provisional firmware spawn `(4.625, 0)`,
@@ -1251,15 +1246,15 @@ It does **not** mean combat accuracy passed: floors need repeated valid
 runs, and current moving runs expose localization and tracking failures.
 The spawn coordinates are firmware defaults, not surveyed starting zones.
 
-### Four-robot center fight (E4)
+### Four-robot center fight (`mcb_match`)
 
 ```bash
-ros2 launch sim e2e.launch.py stage:=e4 headless:=true
+ros2 launch sim e2e.launch.py stage:=mcb_match headless:=true
 ```
 
 Two blue and two red sentries leave their respective spawns on separate
 field-safe routes. The second lane leaves four seconds later; firing stays
-disabled until every route reaches center. Our robot runs the E3 center
+disabled until every route reaches center. Our robot runs `mcb_drive`'s center
 maneuvers; the three ghosts spin and use a truth-fed aimer with seed 2026,
 0.015 rad Gaussian aim noise, and a 2 Hz fire rate. The selector sees both
 red opponents and the blue ally. Only our robot runs the real CV stack.
@@ -1276,7 +1271,7 @@ the test checks HP and team return through `REF_SYS` on the Jetson UART.
 rates, HP, friendly intersections, damage taken and shot counts per robot.
 `shots.jsonl` records first impacts and HP after each resolved impact.
 The approach checks routing with firing disabled; center segments use the
-same diagnostic completion criterion as E3. Accuracy floors, repeated-run
+same diagnostic completion criterion as `mcb_drive`. Accuracy floors, repeated-run
 spread and standalone-versus-sequence equivalence remain uncalibrated.
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn
 are not modeled. Hurt-panel feedback is supplied, but the firmware's

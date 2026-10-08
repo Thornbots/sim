@@ -15,7 +15,7 @@
 """Field-safe diagnostic paths and team routes from spawn to the center fight."""
 import math
 
-E1_PATHS = {
+PARKED_PATHS = {
     'lateral': {'path_angle_deg': 0.0, 'center_x': 1.3, 'half_width': 1.9},
     'radial': {'path_angle_deg': 90.0, 'center_x': 1.3, 'half_width': 0.4},
     'diagonal': {'path_angle_deg': 45.0, 'center_x': 1.3, 'half_width': 0.65},
@@ -79,14 +79,14 @@ CENTER_LEGS = [
 ]
 
 
-def match_duration(stage='e3'):
+def match_duration(stage='mcb_drive'):
     """Return the duration of team spawn approaches and center maneuvers."""
     return ingress_duration(stage) + sum(
         duration if duration is not None else route_duration(points, speed)
         for _, points, speed, duration in CENTER_LEGS)
 
 
-def sample_match(seconds, stage='e3'):
+def sample_match(seconds, stage='mcb_drive'):
     """Return position, velocity, chassis spin and segment for our scripted route."""
     approach = ingress_duration(stage)
     if seconds < approach:
@@ -106,15 +106,15 @@ ROUTE_DELAYS = {'sentry': 0.0, 'opponent_0': 0.0, 'ally_0': 4.0, 'opponent_1': 4
 TEAMS = {'sentry': 'blue', 'ally_0': 'blue', 'opponent_0': 'red', 'opponent_1': 'red'}
 
 
-def ingress_duration(stage='e3'):
-    """Wait for both lanes to arrive before the center fight in E4."""
+def ingress_duration(stage='mcb_drive'):
+    """Wait for both lanes to arrive before the center fight in mcb_match."""
     return (max(route_duration(route) + ROUTE_DELAYS[name] for name, route in ROUTES.items())
-            if stage == 'e4' else route_duration(ROUTES['sentry']))
+            if stage == 'mcb_match' else route_duration(ROUTES['sentry']))
 
 
-def sample_robot(name, seconds, stage='e4'):
+def sample_robot(name, seconds, stage='mcb_match'):
     """Return reference pose/twist for a ghost; second lanes leave four seconds later."""
-    delay = ROUTE_DELAYS[name] if stage == 'e4' else 0.0
+    delay = ROUTE_DELAYS[name] if stage == 'mcb_match' else 0.0
     p, v, finished = sample_route(ROUTES[name], max(0, seconds - delay))
     yaw = math.pi if TEAMS[name] == 'blue' else 0.0
     spin = 0.0

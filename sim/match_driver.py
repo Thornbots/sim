@@ -35,7 +35,7 @@ class MatchDriver(Node):
     def __init__(self):
         super().__init__('match_driver')
         self.declare_parameter('active', False)
-        self.declare_parameter('stage', 'e3')
+        self.declare_parameter('stage', 'mcb_drive')
         self.declare_parameter('seed', 2026)
         self.stage = self.get_parameter('stage').value
         self.random = random.Random(self.get_parameter('seed').value)
@@ -54,9 +54,9 @@ class MatchDriver(Node):
         self.reference = self.create_publisher(Odometry, '/sim/match/reference', 10)
         self.paths = {name: self.create_publisher(Odometry, f'/sim/match/{name}/path', 10)
                       for name in (['opponent_0', 'opponent_1', 'ally_0']
-                                   if self.stage == 'e4' else ['opponent_0'])}
+                                   if self.stage == 'mcb_match' else ['opponent_0'])}
         self.create_subscription(Odometry, '/sim/raw_odom', self._on_odom, 10)
-        if self.stage == 'e4':
+        if self.stage == 'mcb_match':
             self._setup_combat()
         self.add_on_set_parameters_callback(self._on_params)
         self.create_timer(0.01, self._tick)
@@ -131,7 +131,7 @@ class MatchDriver(Node):
                     yaw = math.atan2(truth[1][1, 0], truth[1][0, 0])
                 v, omega = (0.0, 0.0), 0.0
             publisher.publish(self._path_message(name, p, v, yaw, omega, now.to_msg()))
-        if self.stage == 'e4' and self.start_s is not None:
+        if self.stage == 'mcb_match' and self.start_s is not None:
             if elapsed < match_duration(self.stage):
                 self._combat(elapsed, now, samples)
 

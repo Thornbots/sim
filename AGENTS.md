@@ -225,8 +225,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **The head controller holds the head when there's no target**, so a case can
   start with the target out of view. `estimation_harness` aims the head at
   the truth during each case's reset; before that, staggered stationary
-  after 4 m/s scored nothing. E2-E4 patrol instead (`e2e.launch.py`);
-  without it, 5 of 12 E2 cells fired nothing on nightly (2026-10-08).
+  after 4 m/s scored nothing. The `e2e.launch.py` stages patrol instead;
+  without it, 5 of 12 parked cells fired nothing on nightly (2026-10-08).
 - **Every CV test runs with ROS** (the user's rule, 2026-09-25): tune and
   score Part 2 on the estimation bench, never on a copy of the nodes outside ROS. The
   offline estimator (`tools/estimation_offline.py`) was removed for that:
@@ -245,21 +245,23 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   145 deg cone.
 - **The estimation bench's target is a phantom** with exact truth. No sim
   test runs YOLO (`../E2E_PLAN.md`).
-- **E1/E2 use field-safe paths** (`sim/match_scenario.py`), validated against
-  the field collision mesh with a 0.40 m footprint. Both suites fail normally;
-  no blanket skips or xfail. Keep them separate from the gz-free bench paths.
-- **E1/E2 test-owned stacks start the opponent parked**, then request the
-  first cell. Unscored bring-up motion otherwise depends on wall-time timing.
-  Archlinux acquisition failures remain open; pose diagnostics run without shots.
-- **E1 has no camera:** `detector_standin` publishes gz truth panels in
+- **Every `e2e.launch.py` stage runs the MCB emulator** (the user's call,
+  2026-10-08): `mcb_parked`, `mcb_drive`, `mcb_match`, tests
+  `test/e2e/test_mcb_*.py`. The `cv_head_aim` + `pose_emulator` stage (E1)
+  was removed; `cv_head_aim` stays for `sim.launch.py` and the benches.
+- **`mcb_parked` uses field-safe paths** (`sim/match_scenario.py`), validated
+  against the field collision mesh with a 0.40 m footprint. Suites fail
+  normally; no blanket skips or xfail. Keep them apart from the bench paths.
+- **`mcb_parked`'s test-owned stack starts the opponent parked**, then
+  requests the first cell. Unscored bring-up motion otherwise depends on
+  wall-time timing. Archlinux acquisition failures remain open.
+- **No stage has a camera:** `detector_standin` publishes gz truth panels in
   `roi_depth_node`'s place, without occlusion. All CV integration tests use ROS.
-- **E1 before both changes** (Mac, 2026-09-29, 15 s cells, lateral path):
-  stationary 149/149 hits; 2 m/s without spin 11/96, with 2 Hz spin 0-3%.
-  The barrel sat ~1 deg (p50) off the aim, the aim 0.4-0.7 m off the
-  panel; TargetState's velocity 0.86 m/s off at 2 m/s. The tracker is what
-  misses. Also open: `odom->root` walks ~1 cm/s with our robot parked and
-  the opponent spinning in lidar view, likely rf2o matching the moving
-  robot.
+- **`odom->root` walks ~1 cm/s with our robot parked** and the opponent
+  spinning in lidar view, likely rf2o matching the moving robot. `mcb_relay`
+  relocalizes the MCB only past its threshold, so `odom_disagreement_m`
+  reaches ~4.5 cm between relocalizes and the barrel 2.4 deg off at 1.15 m:
+  stationary-lateral scored 13% in one run, 78-90% in others (2026-10-08).
 - **A gz stack must not be the launch pytest runs in.** With
   `e2e.launch.py` bringing up the stack beside pytest, the tests' Shutdown
   left `gz sim` running past its ruby wrapper, and the next runs shared gz
@@ -358,17 +360,17 @@ and push here first, then bump this gitlink in `../` — one logical change, one
 bump, never a gitlink pointing at an unpushed commit. Full rule in
 `../CLAUDE.md` § Packages.
 
-## E3
+## mcb_drive
 
-`e2e.launch.py stage:=e3` runs a scripted blue-spawn-to-center route against
+`e2e.launch.py stage:=mcb_drive` runs a scripted blue-spawn-to-center route against
 one red sentry. The compiled firmware owns aim/fire, sim owns the route.
 `segments.json` separates diagnostic completion from combat accuracy;
 current localization and tracking losses remain open. Read README.md before
 interpreting a diagnostic-tier pass as a hit-rate result.
 
-## E4
+## mcb_match
 
-`stage:=e4` adds a blue ally and a second red opponent, separate spawn
+`stage:=mcb_match` adds a blue ally and a second red opponent, separate spawn
 routes, truth-fed ghost aim/fire, first-impact ballistic scoring and HP.
 Referee data goes through the compiled MCB parser and real Jetson UART.
 Keep approach fire disabled until all routes arrive. `match.json` is a

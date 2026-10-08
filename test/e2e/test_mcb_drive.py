@@ -26,9 +26,9 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(scope='module')
 def e2e_stack(request, ros_context):
     config = request.config
-    log_dir = config.getoption('--log-dir') or '/tmp/e3_test_logs'
+    log_dir = config.getoption('--log-dir') or '/tmp/mcb_drive_test_logs'
     os.makedirs(log_dir, exist_ok=True)
-    stack = harness.E2EStack(config.getoption('--headless'), log_dir, stage='e3',
+    stack = harness.E2EStack(config.getoption('--headless'), log_dir, stage='mcb_drive',
                              real_time_factor=config.getoption('--real-time-factor'))
     try:
         stack.start()
@@ -37,9 +37,9 @@ def e2e_stack(request, ros_context):
         stack.stop()
 
 
-def test_e3_spawn_to_center(e2e_stack):
+def test_mcb_drive_spawn_to_center(e2e_stack):
     shots = harness.run_match(e2e_stack)
-    harness.record_score(e2e_stack, 'e3-spawn-to-center', shots, harness.match_duration())
+    harness.record_score(e2e_stack, 'mcb_drive-spawn-to-center', shots, harness.match_duration())
     mcb = shots['mcb']
     assert mcb, 'firmware fired no shots on the spawn-to-center route'
     summaries = []

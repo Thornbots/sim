@@ -26,9 +26,9 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(scope='module')
 def e2e_stack(request, ros_context):
     config = request.config
-    log_dir = config.getoption('--log-dir') or '/tmp/e4_test_logs'
+    log_dir = config.getoption('--log-dir') or '/tmp/mcb_match_test_logs'
     os.makedirs(log_dir, exist_ok=True)
-    stack = harness.E2EStack(config.getoption('--headless'), log_dir, stage='e4',
+    stack = harness.E2EStack(config.getoption('--headless'), log_dir, stage='mcb_match',
                              real_time_factor=config.getoption('--real-time-factor'))
     try:
         stack.start()
@@ -37,7 +37,7 @@ def e2e_stack(request, ros_context):
         stack.stop()
 
 
-def test_e4_spawn_to_center_fight(e2e_stack):
+def test_mcb_match_spawn_to_center_fight(e2e_stack):
     shots = harness.run_match(e2e_stack)
     scorer = e2e_stack.scorer
     actual = shots['mcb']
