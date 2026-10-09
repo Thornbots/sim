@@ -151,7 +151,10 @@ the head, which holds world yaw as the MCB's IMU loop does;
 `yaw_bearing_damping:=` (N m s/rad, default 0, unmeasured) lets the spin drag
 the head. A cell
 passes on liveness until `LIMITS` in `test/cv/estimation_limits_data.py` has
-limits for it:
+limits for it. The table has 72 keyed cells, including 12 `chassis_spin:=9`
+cells. The two default `stationary45` cells (`chassis_spin:=0`) still have
+no p95 limits and pass only state-presence/valid-fraction checks. A 12/12
+default run therefore does not establish accuracy for those two cells:
 
 ```bash
 python3 tools/estimation_limits.py run1/ run2/ run3/   # each a log_dir:=
@@ -181,8 +184,11 @@ shortening what gets scored. On the dev laptop with `sentry_v2`, the drift
 suite runs about 1.2x real time, GUI or headless alike.
 
 Add an argument to run part of a suite. `scenario:=odom_stuck` runs one drift
-scenario and `backend:=slam` or `use_rf2o:=false` changes the stack. For the
-bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
+scenario; `backend:=mapping` builds a blank map, and `use_rf2o:=false`
+uses raw odometry. This suite rejects `backend:=slam`: no pose graph ships,
+and its launch has no saved-map override. Use `auto.launch.py` with an
+explicit saved `map_file` for localization-mode SLAM outside this suite. For
+the bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
 picks the moving cases. `headless:=true` drops the gz GUI and rviz from
 either. `--show-args` on either launch lists the rest.
 
@@ -330,15 +336,16 @@ robot spawns with no camera sensor, so gz renders nothing for it. The
 `camera` link and its TF stay, since the emulators and tracker place
 detections through that frame.
 
-`sentry_v2`'s camera is depth only, 640x480 at 60 Hz: the match test's
-detector stand-in reads truth, so nothing needs colour. It comes out as the
-robot's D435 topics: `/depth/image_rect_raw` (16UC1 millimetres, 0 for no
+The optional `sentry_v2` camera is depth only, 640x480 at 60 Hz. It is
+available for manual depth-pipeline checks; no current suite enables it.
+The match stages instead feed 3D truth through `detector_standin`. The optional
+camera publishes the robot's D435 topics: `/depth/image_rect_raw` (16UC1 millimetres, 0 for no
 data), `/depth/camera_info` and `/color/camera_info` (one lens, one set of
 intrinsics), and a latched identity `/extrinsics/depth_to_color`. The gz
 bridge and `depth_camera_emulator`, which converts gz's 32FC1 metres, run
-in `camera_container`, and `roi_depth_node` loads into it, as it shares the
-camera's container on the robot. Over DDS a 640x480 frame is past Fast
-DDS's 512 KB shared-memory segment, and most frames dropped: 14-18 of 60
+in `camera_container`. A manual ROI-depth check must load `roi_depth_node`
+into that container separately; `sim.launch.py` does not load it. Over DDS a
+640x480 frame is past Fast DDS's 512 KB shared-memory segment, and most frames dropped: 14-18 of 60
 Hz arrived (2026-09-29). Depth costs sim speed: the Mac's bare
 `sim.launch.py` runs at RTF 2.66 without it and 1.1 with it (llvmpipe).
 
@@ -373,8 +380,9 @@ chain from `target_selector` to `point_to_cv_target`, and no camera:
 `detector_standin` feeds gz truth in place of YOLO and `roi_depth_node`.
 Shots are the ones the firmware fires, each falling under gravity since the
 firmware pitches up for it. `point_to_cv_target` patrols with no target, as
-on the robot, so an opponent that starts out of view, or a track lost at
-4 m/s, is found again; patrol frames clear `fire`.
+on the robot, so it can sweep for an opponent that starts out of view or
+whose track was lost; patrol frames clear `fire`. Reacquisition and moving
+hit rates still vary (ROADMAP T17).
 
 | Stage | Test | What it scores |
 |---|---|---|
@@ -1200,8 +1208,9 @@ score (paths under `MCB-project/src/`):
   bearing from its odometry less the start's yaw (the IMU's zero), pitch
   from `Reticle::solveForPitch`, no lead (`AutoAimAndFireCommand.cpp:66-90`).
   Before the first frame it doesn't aim; `CvTarget{}`'s default flags patrol.
-- `solveForPitch` compares landing heights from the pitch pivot with `z` as
-  given (`Reticle.hpp:363-381`): a `z` off the ground aims 0.39 m high.
+- Current field-frame aim and pitch-height handling are documented in
+  [firmware coordination](../ros2_dji_serial_bridge/README.md#where-the-firmware-stands).
+  The old ground-z/pivot-z mismatch is fixed in pinned MCBV3 `nightly`.
 - One `tryShootOnce` per fire frame, `delay_ms - 80` after it arrives; under
   80 the `uint32` timeout lands in the past and it fires at once. The
   indexer's 50 ms minimum caps that at 20 Hz, so 40 Hz frames fire every
@@ -1209,12 +1218,16 @@ score (paths under `MCB-project/src/`):
 - `RELOCALIZE` moves odometry at once, anywhere, any HP
   (`JetsonSubsystem.cpp:76-81`). The RFID relocalize in
   `SimpleAutoDriveCommand` is gone; stuck 15 s, it spins in place.
-- With no frames it patrols at -0.2 rad/s only if the last frame set
-  `TYPE_C_BASED_PATROL`, and turns to a hit only if it set `TURN_TO_HIT`.
+- With an expired aim it patrols only if the last frame set
+  `TYPE_C_BASED_PATROL`. A hit turn with `TURN_TO_HIT` set can override a
+  live CV aim; see [firmware coordination](../ros2_dji_serial_bridge/README.md#where-the-firmware-stands).
 - The sentry drives `SimpleAutoDriveCommand`'s ARCC route, spinning -8 rad/s
-  moving and -12 at either end, even before the game in a 3v3. The 9 rad/s
-  `AutoDriveCommand` is never scheduled. All stage gating applies only when
-  the referee reports an RMUL 3v3 game.
+  moving and -12 at either end. The normal switch schedules this command,
+  not the NAV_GOAL reader; `mcb.launch.py drive:=auto` selects that reader
+  explicitly. RMUL 3v3 waypoint advancement waits for IN_GAME, while the
+  simple route can still spin before the game. The `mcb_drive` and
+  `mcb_match` stages park firmware drive and use `match_driver` for chassis
+  movement; their results do not validate the firmware route.
 
 E2 on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
 lateral, still and 1 m/s, 15 s each): `CV_TARGET` and `RELOCALIZE` frames
