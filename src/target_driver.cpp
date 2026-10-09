@@ -61,7 +61,8 @@ class TargetDriver : public rclcpp::Node {
     const double spin_accel = get_parameter("max_spin_accel").as_double();
     const double want_omega = 2.0 * M_PI * get_parameter("spin_hz").as_double();
     omega_ += std::clamp(want_omega - omega_, -spin_accel * dt, spin_accel * dt);
-    yaw_ = std::remainder(yaw_ + omega_ * dt, 2.0 * M_PI);
+    const double wrapped = std::fmod(yaw_ + omega_ * dt + M_PI, 2.0 * M_PI);
+    yaw_ = (wrapped < 0.0 ? wrapped + 2.0 * M_PI : wrapped) - M_PI;
     publish(vs_, omega_);
   }
 

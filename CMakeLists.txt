@@ -22,6 +22,7 @@ find_package(tf2_ros REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(rclcpp_components REQUIRED)
+find_package(rosidl_typesupport_introspection_cpp REQUIRED)
 find_package(realsense2_camera_msgs REQUIRED)
 find_package(urdf REQUIRED)
 find_package(vision_msgs REQUIRED)
@@ -42,13 +43,21 @@ ament_target_dependencies(bench_world
   visualization_msgs)
 install(TARGETS bench_world DESTINATION lib/${PROJECT_NAME})
 
-foreach(node target_driver point_shooter)
+foreach(node target_driver point_shooter target_state_truth target_state_markers head_slider_relay sim_clock)
   add_executable(${node} src/${node}.cpp)
   target_compile_features(${node} PUBLIC cxx_std_17)
   if("${node}" STREQUAL "target_driver")
     ament_target_dependencies(${node} rclcpp nav_msgs)
-  else()
+  elseif("${node}" STREQUAL "point_shooter")
     ament_target_dependencies(${node} dji_serial_bridge geometry_msgs nav_msgs rclcpp tf2_ros)
+  elseif("${node}" STREQUAL "target_state_truth")
+    ament_target_dependencies(${node} dji_serial_bridge nav_msgs rclcpp)
+  elseif("${node}" STREQUAL "target_state_markers")
+    ament_target_dependencies(${node} dji_serial_bridge geometry_msgs rclcpp visualization_msgs)
+  elseif("${node}" STREQUAL "sim_clock")
+    ament_target_dependencies(${node} rclcpp rosgraph_msgs rosidl_typesupport_introspection_cpp)
+  else()
+    ament_target_dependencies(${node} rclcpp)
   endif()
   install(TARGETS ${node} DESTINATION lib/${PROJECT_NAME})
 endforeach()
@@ -89,7 +98,11 @@ ament_python_install_package(${PROJECT_NAME})
 file(GLOB PYTHON_NODES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/*)
 list(REMOVE_ITEM PYTHON_NODES
   ${CMAKE_CURRENT_SOURCE_DIR}/scripts/target_driver
-  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/point_shooter)
+  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/point_shooter
+  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/target_state_truth
+  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/target_state_markers
+  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/head_slider_relay
+  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/sim_clock)
 install(PROGRAMS ${PYTHON_NODES} DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch urdf meshes world rviz DESTINATION share/${PROJECT_NAME})

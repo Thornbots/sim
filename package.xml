@@ -35,6 +35,7 @@
   <depend>rosgraph_msgs</depend>
   <depend>realsense2_camera_msgs</depend>
   <depend>rclcpp_components</depend>
+  <depend>rosidl_typesupport_introspection_cpp</depend>
   <depend>urdf</depend>
   <depend>vision_msgs</depend>
   <depend>gz_msgs_vendor</depend>
