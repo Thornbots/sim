@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shut down completed suites and return a failed launch for failed pytest runs."""
+"""Shut down completed suites and return a failed launch for failed native test runs."""
 from launch.actions import EmitEvent, LogInfo
 from launch.events import Shutdown
 
 
 def finish_suite(event, context, name):
-    """Keep child pytest failures visible to ros2 launch and shell callers."""
+    """Keep child suite failures visible to ros2 launch and shell callers."""
     if event.returncode:
         raise RuntimeError(f'{name} tests failed with code {event.returncode}')
     return [LogInfo(msg=f'{name} tests exited with code 0'),

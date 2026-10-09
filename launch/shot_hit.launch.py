@@ -18,14 +18,16 @@ Aiming bench: point_to_cv_target against a perfectly known target, no gz.
 `ros2 launch sim shot_hit.launch.py [speeds:='0.5 1'] [only_stationary:=true]`.
 sim_clock publishes /clock, point_shooter puts root at POINT_SHOOTER
 (bouncing along y at shooter_speed), target_driver moves the phantom target,
-target_state_truth publishes its true TargetState, and the pytest sends each
+target_state_truth publishes its true TargetState, and the C++ harness sends each
 shot from the shooter toward the newest aim (a perfect gimbal). Every miss is
 point_to_cv_target's. gz belongs to Part 2's estimation bench, not here.
 Stops when the tests finish; Ctrl-C stops the whole stack. `run_tests:=false`
-brings up the stack alone (test_shot_hit.py's cv_stack fixture does that).
+brings up the stack alone (the C++ harness does that).
 """
+import json
 import os
-import sys
+import subprocess
+from types import SimpleNamespace
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -45,35 +47,22 @@ from launch_ros.actions import Node
 from sim.display import display_error
 from sim.suite_exit import finish_suite
 
-# Installed as a symlink into share/sim/launch (--symlink-install), so the real
-# path leads back to src/sim; the constant covers a copying install.
-SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/cv'
-TEST_FILE = 'test_shot_hit.py'
-
-
-def _test_dir():
-    here = os.path.dirname(os.path.realpath(__file__))
-    for candidate in (os.path.join(here, '..', 'test', 'cv'), SOURCE_FALLBACK):
-        if os.path.exists(os.path.join(candidate, TEST_FILE)):
-            return os.path.normpath(candidate)
-    raise RuntimeError(f'could not find {TEST_FILE} next to {here} or in {SOURCE_FALLBACK}')
-
 
 def _is_true(context, name):
     return context.launch_configurations[name].lower() in ('true', '1', 'yes')
 
 
 def _stack(context):
-    test_dir = _test_dir()
-    # The harness owns the fire rate its score expects; read it rather than copy it.
-    sys.path.insert(0, test_dir)
-    import shot_hit_harness as harness
+    constants = subprocess.run(
+        ['ros2', 'run', 'sim', 'shot_hit_suite', '--print-launch-constants'],
+        check=True, capture_output=True, text=True).stdout
+    harness = SimpleNamespace(**json.loads(constants))
 
     headless = _is_true(context, 'headless') or display_error() is not None
     actions = _point_stack(context, harness, headless)
     if not _is_true(context, 'run_tests'):
         return actions
-    return actions + _tests(context, test_dir)
+    return actions + _tests(context)
 
 
 def cv_node(executable, package='thornbots_pkg', **params):
@@ -133,9 +122,8 @@ def _point_stack(context, harness, headless):
     return actions
 
 
-def _tests(context, test_dir):
-    cmd = [sys.executable, '-m', 'pytest', os.path.join(test_dir, TEST_FILE),
-           '-m', 'integration', '-v', '-s', '--external-stack',
+def _tests(context):
+    cmd = ['ros2', 'run', 'sim', 'shot_hit_suite', '--external-stack',
            '--panel-layout', context.launch_configurations['panel_layout'],
            '--target-path', context.launch_configurations['target_path'],
            '--shooter-speed', context.launch_configurations['shooter_speed']]
@@ -203,6 +191,6 @@ def generate_launch_description():
         DeclareLaunchArgument('foxglove', default_value='true',
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('pytest_args', default_value='',
-                              description="extra pytest args, e.g. '-k flat'"),
+                              description="extra gtest args, e.g. '--gtest_filter=*flat*'"),
     ]
     return LaunchDescription(args + [OpaqueFunction(function=_stack), _foxglove()])

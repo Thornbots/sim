@@ -20,12 +20,11 @@ bench_world (C++, one lockstep loop) is the clock, the phantom target, our
 chassis and head, /dji_serial_bridge/pose, the head controller and the detections off our
 head's camera. target_selector and target_tracker build the TargetState, and
 point_to_cv_target aims the head through bench_world's controller.
-Nothing fires. pytest (test_estimation.py) scores each state at its stamp.
+Nothing fires. The C++ estimation harness scores each state at its stamp.
 Stops when the tests finish; Ctrl-C stops everything. `run_tests:=false`
 brings up the stack alone.
 """
 import os
-import sys
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -44,19 +43,6 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from sim.display import display_error
 from sim.suite_exit import finish_suite
-
-# Installed as a symlink into share/sim/launch (--symlink-install), so the real
-# path leads back to src/sim; the constant covers a copying install.
-SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/cv'
-TEST_FILE = 'test_estimation.py'
-
-
-def _test_dir():
-    here = os.path.dirname(os.path.realpath(__file__))
-    for candidate in (os.path.join(here, '..', 'test', 'cv'), SOURCE_FALLBACK):
-        if os.path.exists(os.path.join(candidate, TEST_FILE)):
-            return os.path.normpath(candidate)
-    raise RuntimeError(f'could not find {TEST_FILE} next to {here} or in {SOURCE_FALLBACK}')
 
 
 def _is_true(context, name):
@@ -114,14 +100,13 @@ def _stack(context):
                                           'estimation.rviz')],
             parameters=[{'use_sim_time': True}]))
     if _is_true(context, 'run_tests'):
-        actions += _tests(context, _test_dir())
+        actions += _tests(context)
     return actions
 
 
-def _tests(context, test_dir):
+def _tests(context):
     cfg = context.launch_configurations
-    cmd = [sys.executable, '-m', 'pytest', os.path.join(test_dir, TEST_FILE),
-           '-m', 'integration', '-v', '-s', '--external-stack',
+    cmd = ['ros2', 'run', 'sim', 'estimation_suite', '--external-stack',
            '--panel-layout', cfg['panel_layout'], '--target-path', cfg['target_path'],
            '--shooter-speed', cfg['shooter_speed'], '--chassis-spin', cfg['chassis_spin'],
            '--camera-latency', cfg['camera_latency_s']]
@@ -208,6 +193,6 @@ def generate_launch_description():
         DeclareLaunchArgument('foxglove', default_value='true',
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('pytest_args', default_value='',
-                              description="extra pytest args, e.g. '-k flat'"),
+                              description="extra gtest args, e.g. '--gtest_filter=*flat*'"),
     ]
     return LaunchDescription(args + [OpaqueFunction(function=_stack), _foxglove()])

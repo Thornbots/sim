@@ -20,5 +20,5 @@ import pytest
 @pytest.mark.linter
 @pytest.mark.pep257
 def test_pep257():
-    rc = main(argv=['launch', 'scripts', 'sim', 'test'])
+    rc = main(argv=['launch', 'sim', 'test'])
     assert rc == 0, 'Found code style errors / warnings'

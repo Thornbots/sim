@@ -308,7 +308,14 @@ int main(int argc, char ** argv)
   rclcpp::init(argc, argv);
   auto node = std::make_shared<SimClock>();
   if (node->paced()) {
-    std::thread thread([node] {node->run_paced();});
+    std::thread thread([node] {
+      try {
+        node->run_paced();
+      } catch (const std::exception &) {
+        // Context shutdown can race a graph query in the pacing loop.
+        if (rclcpp::ok()) {throw;}
+      }
+    });
     rclcpp::spin(node);
     rclcpp::shutdown();
     thread.join();

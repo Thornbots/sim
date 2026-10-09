@@ -21,9 +21,10 @@ parked; mcb_drive drives from spawn to center; mcb_match adds a 2v2 fight.
 Tests own their stack process group; run_tests:=false launches only the stack.
 See README.md for design rationale and ../E2E_PLAN.md for acceptance criteria.
 """
+import json
 import math
 import os
-import sys
+import subprocess
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -43,13 +44,9 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
-from sim.match_scenario import PARKED_PATHS
 from sim.suite_exit import finish_suite
 
-SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/e2e'
-TEST_FILES = {'mcb_parked': 'test_mcb_parked.py', 'mcb_drive': 'test_mcb_drive.py',
-              'mcb_match': 'test_mcb_match.py'}
-TEST_FILE = TEST_FILES['mcb_parked']
+STAGES = ('mcb_parked', 'mcb_drive', 'mcb_match')
 DRIVING = ('mcb_drive', 'mcb_match')
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
@@ -71,22 +68,13 @@ def _sim(context):
                           'real_time_factor': config['real_time_factor'], **spawn}.items())]
 
 
-def _test_dir():
-    here = os.path.dirname(os.path.realpath(__file__))
-    for candidate in (os.path.join(here, '..', 'test', 'e2e'), SOURCE_FALLBACK):
-        if os.path.exists(os.path.join(candidate, TEST_FILE)):
-            return os.path.normpath(candidate)
-    raise RuntimeError(f'could not find {TEST_FILE} next to {here} or in {SOURCE_FALLBACK}')
-
-
 def _is_true(context, name):
     return context.launch_configurations[name].lower() in ('true', '1', 'yes')
 
 
 def _tests(context):
     config = context.launch_configurations
-    cmd = [sys.executable, '-m', 'pytest', os.path.join(_test_dir(), TEST_FILES[config['stage']]),
-           '-m', 'integration', '-v', '-s']
+    cmd = ['ros2', 'run', 'sim', 'e2e_suite', '--stage', config['stage']]
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
                      ('real_time_factor', '--real-time-factor'),
                      ('duration', '--e2e-duration'), ('log_dir', '--log-dir')):
@@ -105,6 +93,10 @@ def _tests(context):
 
 
 def generate_launch_description():
+    constants = subprocess.run(
+        ['ros2', 'run', 'sim', 'e2e_suite', '--print-launch-constants'],
+        check=True, capture_output=True, text=True).stdout
+    parked_paths = json.loads(constants)
     share = get_package_share_directory('sim')
     xacro_file = os.path.join(share, 'urdf', 'sentry_v2.urdf.xacro')
 
@@ -128,7 +120,7 @@ def generate_launch_description():
             'target_speed': ParameterValue(LaunchConfiguration('target_speed'), value_type=float),
             'spin_hz': ParameterValue(LaunchConfiguration('target_spin_hz'), value_type=float),
             'origin_yaw': SPAWN_YAW,  # sim.launch.py's spawn heading: the path stays in front
-            **PARKED_PATHS['lateral'],
+            **parked_paths['lateral'],
         }])
     # The path the opponent's OpponentMover system rides, into gz.
     path_topic = PythonExpression([
@@ -184,8 +176,8 @@ def generate_launch_description():
 
     def stack(context):
         stage = context.launch_configurations['stage']
-        if stage not in TEST_FILES:
-            raise RuntimeError(f"stage must be one of {', '.join(TEST_FILES)}, not '{stage}'")
+        if stage not in STAGES:
+            raise RuntimeError(f"stage must be one of {', '.join(STAGES)}, not '{stage}'")
         extras = []
         opponents = [OPPONENT]
         if stage == 'mcb_match':
@@ -227,7 +219,7 @@ def generate_launch_description():
         DeclareLaunchArgument('log_dir', default_value='',
                               description='where stack.log, shots.jsonl and scores.jsonl go'),
         DeclareLaunchArgument('pytest_args', default_value='',
-                              description="extra pytest args, e.g. '-x'"),
+                              description="extra gtest args, e.g. '--gtest_fail_fast'"),
         DeclareLaunchArgument('headless', default_value='false',
                               description='skip the gz GUI and rviz2'),
         DeclareLaunchArgument('foxglove', default_value='true',
@@ -238,7 +230,7 @@ def generate_launch_description():
                               description="the opponent's speed along its path, m/s"),
         DeclareLaunchArgument('target_spin_hz', default_value='1.5',
                               description="the opponent's chassis spin, Hz"),
-        # run_tests: pytest alone, which brings the stack up as one process
+        # run_tests: the C++ harness alone, which brings the stack up as one process
         # group and kills the group after; a stack here outlived the tests'
         # Shutdown (gz sim survived its ruby wrapper, 2026-09-29).
         OpaqueFunction(function=lambda context: _tests(context) if _is_true(

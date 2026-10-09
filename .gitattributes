@@ -1,0 +1,2 @@
+# Keep vendored upstream whitespace intact.
+third_party/** whitespace=-space-before-tab

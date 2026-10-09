@@ -19,8 +19,8 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -46,206 +46,75 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sim/combat.hpp"
 #include "sim/cv_head_aim_core.hpp"
+#include "sim/match_scenario.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "urdf/model.h"
 
-namespace
-{
+namespace {
 using Vector2 = Eigen::Vector2d;
 using Vector3 = Eigen::Vector3d;
 using Matrix4 = Eigen::Matrix4d;
 using Route = std::vector<Vector2>;
 
-struct PipeCloser
-{
-  void operator()(FILE * file) const {pclose(file);}
+struct PipeCloser {
+  void operator()(FILE *file) const { pclose(file); }
 };
 
-builtin_interfaces::msg::Time message_time(const rclcpp::Time & time)
-{
+builtin_interfaces::msg::Time message_time(const rclcpp::Time &time) {
   return rclcpp::convert_rcl_time_to_sec_nanos(time.nanoseconds());
 }
 
-const std::map<std::string, Route> kRoutes = {
-  {"sentry", {{4.625, 0.0}, {4.625, -2.35}, {1.55, -2.35}, {1.55, -0.65}}},
-  {"opponent_0", {{-4.625, 0.0}, {-4.625, -2.35}, {-1.55, -2.35}, {-1.55, -0.65}}},
-  {"ally_0", {{5.0, 0.9}, {5.0, -2.9}, {2.15, -2.9}, {2.15, -1.5},
-      {0.65, -1.5}, {0.65, 1.05}}},
-  {"opponent_1", {{-5.0, 0.9}, {-5.0, -2.9}, {-2.15, -2.9}, {-2.15, -1.5},
-      {-0.65, -1.5}, {-0.65, 1.05}}},
-};
-const std::vector<std::string> kRouteNames = {
-  "sentry", "opponent_0", "ally_0", "opponent_1"};
-const Vector2 kCenter(1.55, -0.65);
-const std::map<std::string, double> kDelays = {
-  {"sentry", 0.0}, {"opponent_0", 0.0}, {"ally_0", 4.0}, {"opponent_1", 4.0}};
-const std::map<std::string, std::string> kTeams = {
-  {"sentry", "blue"}, {"ally_0", "blue"},
-  {"opponent_0", "red"}, {"opponent_1", "red"}};
-
-struct RouteSample
-{
-  Vector2 position;
-  Vector2 velocity;
-  bool finished;
-};
-
-struct MatchSample
-{
-  Vector2 position;
-  Vector2 velocity;
+const std::map<std::string, Route> kRoutes = [] {
+  std::map<std::string, Route> result;
+  for (const auto &[name, points] : sim::match_scenario::routes()) {
+    for (const auto &point : points) {
+      result[name].emplace_back(point[0], point[1]);
+    }
+  }
+  return result;
+}();
+const std::vector<std::string> kRouteNames = {"sentry", "opponent_0", "ally_0",
+                                              "opponent_1"};
+const auto &kTeams = sim::match_scenario::teams();
+using sim::match_scenario::ingress_duration;
+using sim::match_scenario::match_duration;
+struct MatchSample {
+  Vector2 position, velocity;
   double spin;
 };
-
-struct RobotSample
-{
-  Vector2 position;
-  Vector2 velocity;
-  double yaw;
-  double spin;
+struct RobotSample {
+  Vector2 position, velocity;
+  double yaw, spin;
 };
-
-struct CenterLeg
-{
-  std::string name;
-  Route points;
-  double speed;
-  std::optional<double> duration;
-};
-
-const std::vector<CenterLeg> kCenterLegs = {
-  {"parked", {kCenter}, 1.0, 5.0},
-  {"straight_1", {kCenter, {1.55, -0.05}, kCenter}, 1.0, std::nullopt},
-  {"turn", {kCenter, {0.65, -0.65}, {0.65, -0.05}, {1.55, -0.05}, kCenter},
-    1.0, std::nullopt},
-  {"spin", {kCenter}, 1.0, 6.0},
-};
-
-double leg_duration(double length, double speed = 2.0, double accel = 2.0)
-{
-  if (length == 0.0) {return 0.0;}
-  const double peak = std::min(speed, std::sqrt(length * accel));
-  return length / peak + peak / accel;
+MatchSample sample_match(double seconds, const std::string &stage) {
+  const auto sample = sim::match_scenario::sample_match(seconds, stage);
+  return {{sample.position[0], sample.position[1]},
+          {sample.velocity[0], sample.velocity[1]},
+          sample.spin};
+}
+RobotSample sample_robot(const std::string &name, double seconds,
+                         const std::string &stage) {
+  const auto sample = sim::match_scenario::sample_robot(name, seconds, stage);
+  return {{sample.position[0], sample.position[1]},
+          {sample.velocity[0], sample.velocity[1]},
+          sample.yaw,
+          sample.spin};
 }
 
-double route_duration(const Route & points, double speed = 2.0)
-{
-  double duration = 0.0;
-  for (size_t i = 1; i < points.size(); ++i) {
-    duration += leg_duration((points[i] - points[i - 1]).norm(), speed);
-  }
-  return duration;
-}
-
-RouteSample sample_route(const Route & points, double seconds, double speed = 2.0)
-{
-  seconds = std::max(seconds, 0.0);
-  for (size_t i = 1; i < points.size(); ++i) {
-    const Vector2 & a = points[i - 1];
-    const Vector2 & b = points[i];
-    const double length = (b - a).norm();
-    const double duration = leg_duration(length, speed);
-    if (seconds > duration) {
-      seconds -= duration;
-      continue;
-    }
-    const double peak = std::min(speed, std::sqrt(length * 2.0));
-    const double ramp = peak / 2.0;
-    double distance, velocity;
-    if (seconds < ramp) {
-      distance = seconds * seconds;
-      velocity = 2.0 * seconds;
-    } else if (seconds <= duration - ramp) {
-      distance = peak * (seconds - ramp / 2.0);
-      velocity = peak;
-    } else {
-      const double remaining = duration - seconds;
-      distance = length - remaining * remaining;
-      velocity = 2.0 * remaining;
-    }
-    const Vector2 direction = (b - a) / length;
-    return {a + direction * distance, direction * velocity, false};
-  }
-  return {points.back(), Vector2::Zero(), true};
-}
-
-double ingress_duration(const std::string & stage)
-{
-  if (stage != "mcb_match") {
-    return route_duration(kRoutes.at("sentry"));
-  }
-  double longest = 0.0;
-  for (const auto & [name, route] : kRoutes) {
-    longest = std::max(longest, route_duration(route) + kDelays.at(name));
-  }
-  return longest;
-}
-
-double match_duration(const std::string & stage)
-{
-  double duration = ingress_duration(stage);
-  for (const auto & leg : kCenterLegs) {
-    duration += leg.duration.value_or(route_duration(leg.points, leg.speed));
-  }
-  return duration;
-}
-
-MatchSample sample_match(double seconds, const std::string & stage)
-{
-  const double approach = ingress_duration(stage);
-  if (seconds < approach) {
-    const auto route = sample_route(kRoutes.at("sentry"), seconds);
-    return {route.position, route.velocity, 0.0};
-  }
-  seconds -= approach;
-  for (const auto & leg : kCenterLegs) {
-    const double duration = leg.duration.value_or(route_duration(leg.points, leg.speed));
-    if (seconds < duration) {
-      const auto route = sample_route(leg.points, seconds, leg.speed);
-      return {route.position, route.velocity, leg.name == "spin" ? 9.0 : 0.0};
-    }
-    seconds -= duration;
-  }
-  return {kCenter, Vector2::Zero(), 0.0};
-}
-
-RobotSample sample_robot(const std::string & name, double seconds, const std::string & stage)
-{
-  const double delay = stage == "mcb_match" ? kDelays.at(name) : 0.0;
-  auto route = sample_route(kRoutes.at(name), std::max(0.0, seconds - delay));
-  double yaw = kTeams.at(name) == "blue" ? M_PI : 0.0;
-  double spin = 0.0;
-  const double fight = std::max(0.0, seconds - ingress_duration(stage));
-  if (route.finished && fight > 0.0) {
-    const double omega = 3.0 * M_PI;
-    const double ramp = omega / 20.0;
-    yaw += fight < ramp ? 20.0 * fight * fight / 2.0 : omega * (fight - ramp / 2.0);
-    spin = std::min(20.0 * fight, omega);
-    if (kTeams.at(name) == "red") {
-      const double amplitude = name == "opponent_0" ? 0.3 : 0.2;
-      const double frequency = name == "opponent_0" ? 2.0 : 1.5;
-      route.position.y() += amplitude * (1.0 - std::cos(frequency * fight));
-      route.velocity = Vector2(0.0, amplitude * frequency * std::sin(frequency * fight));
-    }
-  }
-  return {route.position, route.velocity, yaw, spin};
-}
-
-Matrix4 pose_matrix(const gz::msgs::Pose & pose)
-{
-  const auto & p = pose.position();
-  const auto & q = pose.orientation();
+Matrix4 pose_matrix(const gz::msgs::Pose &pose) {
+  const auto &p = pose.position();
+  const auto &q = pose.orientation();
   return sim::combat::pose_matrix(
-    Vector3(p.x(), p.y(), p.z()), Eigen::Quaterniond(q.w(), q.x(), q.y(), q.z()));
+      Vector3(p.x(), p.y(), p.z()),
+      Eigen::Quaterniond(q.w(), q.x(), q.y(), q.z()));
 }
 
-// CPython Random's integer seeding, 53-bit random(), and cached Box-Muller gauss().
-class PythonRandom
-{
+// CPython Random's integer seeding, 53-bit random(), and cached Box-Muller
+// gauss().
+class PythonRandom {
 public:
-  explicit PythonRandom(int64_t seed)
-  {
-    uint64_t magnitude = seed < 0 ? uint64_t(-(seed + 1)) + 1 : uint64_t(seed);
+  explicit PythonRandom(int64_t seed) {
+    uint64_t magnitude = seed < 0 ? static_cast<uint64_t>(-(seed + 1)) + 1 : static_cast<uint64_t>(seed);
     std::vector<uint32_t> key;
     do {
       key.push_back(static_cast<uint32_t>(magnitude));
@@ -254,8 +123,7 @@ public:
     init_by_array(key);
   }
 
-  double gauss(double sigma)
-  {
+  double gauss(double sigma) {
     double z;
     if (next_gauss_) {
       z = *next_gauss_;
@@ -273,34 +141,44 @@ private:
   static constexpr size_t kN = 624;
   static constexpr size_t kM = 397;
 
-  void init_by_array(const std::vector<uint32_t> & key)
-  {
+  void init_by_array(const std::vector<uint32_t> &key) {
     state_[0] = 19650218u;
     for (size_t i = 1; i < kN; ++i) {
       state_[i] = 1812433253u * (state_[i - 1] ^ (state_[i - 1] >> 30)) + i;
     }
     size_t i = 1, j = 0;
     for (size_t k = std::max(kN, key.size()); k > 0; --k) {
-      state_[i] = (state_[i] ^ ((state_[i - 1] ^ (state_[i - 1] >> 30)) * 1664525u)) +
-        key[j] + j;
-      if (++i >= kN) {state_[0] = state_[kN - 1]; i = 1;}
-      if (++j >= key.size()) {j = 0;}
+      state_[i] =
+          (state_[i] ^ ((state_[i - 1] ^ (state_[i - 1] >> 30)) * 1664525u)) +
+          key[j] + j;
+      if (++i >= kN) {
+        state_[0] = state_[kN - 1];
+        i = 1;
+      }
+      if (++j >= key.size()) {
+        j = 0;
+      }
     }
     for (size_t k = kN - 1; k > 0; --k) {
-      state_[i] = (state_[i] ^ ((state_[i - 1] ^ (state_[i - 1] >> 30)) * 1566083941u)) - i;
-      if (++i >= kN) {state_[0] = state_[kN - 1]; i = 1;}
+      state_[i] = (state_[i] ^
+                   ((state_[i - 1] ^ (state_[i - 1] >> 30)) * 1566083941u)) -
+                  i;
+      if (++i >= kN) {
+        state_[0] = state_[kN - 1];
+        i = 1;
+      }
     }
     state_[0] = 0x80000000u;
     index_ = kN;
   }
 
-  uint32_t next_uint32()
-  {
+  uint32_t next_uint32() {
     if (index_ >= kN) {
       for (size_t i = 0; i < kN; ++i) {
-        const uint32_t y = (state_[i] & 0x80000000u) |
-          (state_[(i + 1) % kN] & 0x7fffffffu);
-        state_[i] = state_[(i + kM) % kN] ^ (y >> 1) ^ ((y & 1u) ? 0x9908b0dfu : 0u);
+        const uint32_t y =
+            (state_[i] & 0x80000000u) | (state_[(i + 1) % kN] & 0x7fffffffu);
+        state_[i] =
+            state_[(i + kM) % kN] ^ (y >> 1) ^ ((y & 1u) ? 0x9908b0dfu : 0u);
       }
       index_ = 0;
     }
@@ -312,8 +190,7 @@ private:
     return y;
   }
 
-  double random()
-  {
+  double random() {
     const uint32_t a = next_uint32() >> 5;
     const uint32_t b = next_uint32() >> 6;
     return (a * 67108864.0 + b) / 9007199254740992.0;
@@ -324,10 +201,9 @@ private:
   std::optional<double> next_gauss_;
 };
 
-std::vector<Matrix4> armor_offsets()
-{
+std::vector<Matrix4> armor_offsets() {
   const std::string path = ament_index_cpp::get_package_share_directory("sim") +
-    "/urdf/sentry_v2.urdf.xacro";
+                           "/urdf/sentry_v2.urdf.xacro";
   const std::string command = "xacro '" + path + "'";
   std::unique_ptr<FILE, PipeCloser> pipe(popen(command.c_str(), "r"));
   if (!pipe) {
@@ -335,7 +211,8 @@ std::vector<Matrix4> armor_offsets()
   }
   std::string xml;
   std::array<char, 4096> buffer{};
-  while (const size_t count = fread(buffer.data(), 1, buffer.size(), pipe.get())) {
+  while (const size_t count =
+             fread(buffer.data(), 1, buffer.size(), pipe.get())) {
     xml.append(buffer.data(), count);
   }
   urdf::Model model;
@@ -348,61 +225,67 @@ std::vector<Matrix4> armor_offsets()
     if (!link || !link->parent_joint) {
       throw std::runtime_error("sentry URDF is missing an armor joint");
     }
-    const auto & origin = link->parent_joint->parent_to_joint_origin_transform;
+    const auto &origin = link->parent_joint->parent_to_joint_origin_transform;
     offsets.push_back(sim::combat::pose_matrix(
-      Vector3(origin.position.x, origin.position.y, origin.position.z),
-      Eigen::Quaterniond(
-        origin.rotation.w, origin.rotation.x, origin.rotation.y, origin.rotation.z)));
+        Vector3(origin.position.x, origin.position.y, origin.position.z),
+        Eigen::Quaterniond(origin.rotation.w, origin.rotation.x,
+                           origin.rotation.y, origin.rotation.z)));
   }
   return offsets;
 }
-}  // namespace
+} // namespace
 
-class MatchDriver : public rclcpp::Node
-{
+class MatchDriver : public rclcpp::Node {
 public:
   MatchDriver()
-  : Node("match_driver"), random_(declare_parameter("seed", 2026))
-  {
+      : Node("match_driver"), random_(declare_parameter("seed", 2026)) {
     declare_parameter("active", false);
     stage_ = declare_parameter("stage", std::string("mcb_drive"));
-    for (const auto & name : kRouteNames) {
+    for (const auto &name : kRouteNames) {
       hp_[name] = 400;
     }
     position_ = kRoutes.at("sentry").front();
     command_pub_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
-    reference_pub_ = create_publisher<nav_msgs::msg::Odometry>("/sim/match/reference", 10);
-    path_names_ = stage_ == "mcb_match" ?
-      std::vector<std::string>{"opponent_0", "opponent_1", "ally_0"} :
-      std::vector<std::string>{"opponent_0"};
-    for (const auto & name : path_names_) {
+    reference_pub_ =
+        create_publisher<nav_msgs::msg::Odometry>("/sim/match/reference", 10);
+    path_names_ =
+        stage_ == "mcb_match"
+            ? std::vector<std::string>{"opponent_0", "opponent_1", "ally_0"}
+            : std::vector<std::string>{"opponent_0"};
+    for (const auto &name : path_names_) {
       path_pubs_[name] = create_publisher<nav_msgs::msg::Odometry>(
-        "/sim/match/" + name + "/path", 10);
+          "/sim/match/" + name + "/path", 10);
     }
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-      "/sim/raw_odom", 10,
-      [this](nav_msgs::msg::Odometry::ConstSharedPtr message) {on_odom(*message);});
-    if (stage_ == "mcb_match") {setup_combat();}
+        "/sim/raw_odom", 10,
+        [this](nav_msgs::msg::Odometry::ConstSharedPtr message) {
+          on_odom(*message);
+        });
+    if (stage_ == "mcb_match") {
+      setup_combat();
+    }
     param_callback_ = add_on_set_parameters_callback(
-      [this](const std::vector<rclcpp::Parameter> & params) {return on_params(params);});
-    timer_ = create_timer(std::chrono::duration<double>(0.01), [this] {tick();});
-    RCLCPP_INFO(
-      get_logger(), "spawn-to-center scenario: %.2f sim seconds", match_duration(stage_));
+        [this](const std::vector<rclcpp::Parameter> &params) {
+          return on_params(params);
+        });
+    timer_ =
+        create_timer(std::chrono::duration<double>(0.01), [this] { tick(); });
+    RCLCPP_INFO(get_logger(), "spawn-to-center scenario: %.2f sim seconds",
+                match_duration(stage_));
   }
 
 private:
-  struct Truth
-  {
+  struct Truth {
     double stamp_s;
     Matrix4 root;
   };
 
-  rcl_interfaces::msg::SetParametersResult on_params(
-    const std::vector<rclcpp::Parameter> & params)
-  {
-    for (const auto & param : params) {
+  rcl_interfaces::msg::SetParametersResult
+  on_params(const std::vector<rclcpp::Parameter> &params) {
+    for (const auto &param : params) {
       if (param.get_name() == "active") {
-        start_s_ = param.as_bool() ? std::optional<double>(now().seconds()) : std::nullopt;
+        start_s_ = param.as_bool() ? std::optional<double>(now().seconds())
+                                   : std::nullopt;
         velocity_.setZero();
         spin_ = 0.0;
       }
@@ -412,26 +295,24 @@ private:
     return result;
   }
 
-  void on_odom(const nav_msgs::msg::Odometry & message)
-  {
-    const auto & p = message.pose.pose.position;
-    const auto & q = message.pose.pose.orientation;
-    const auto & v = message.twist.twist.linear;
+  void on_odom(const nav_msgs::msg::Odometry &message) {
+    const auto &p = message.pose.pose.position;
+    const auto &q = message.pose.pose.orientation;
+    const auto &v = message.twist.twist.linear;
     position_ = Vector2(p.x, p.y);
     const double tx = 2.0 * (q.y * v.z - q.z * v.y);
     const double ty = 2.0 * (q.z * v.x - q.x * v.z);
     const double tz = 2.0 * (q.x * v.y - q.y * v.x);
-    world_velocity_ = Vector2(
-      v.x + q.w * tx + q.y * tz - q.z * ty,
-      v.y + q.w * ty + q.z * tx - q.x * tz);
-    yaw_ = std::atan2(
-      2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+    world_velocity_ = Vector2(v.x + q.w * tx + q.y * tz - q.z * ty,
+                              v.y + q.w * ty + q.z * tx - q.x * tz);
+    yaw_ = std::atan2(2.0 * (q.w * q.z + q.x * q.y),
+                      1.0 - 2.0 * (q.y * q.y + q.z * q.z));
   }
 
-  nav_msgs::msg::Odometry path_message(
-    const std::string & name, const Vector2 & position, const Vector2 & velocity,
-    double yaw, double spin, const builtin_interfaces::msg::Time & stamp) const
-  {
+  nav_msgs::msg::Odometry
+  path_message(const std::string &name, const Vector2 &position,
+               const Vector2 &velocity, double yaw, double spin,
+               const builtin_interfaces::msg::Time &stamp) const {
     nav_msgs::msg::Odometry message;
     message.header.stamp = stamp;
     message.header.frame_id = "map";
@@ -447,8 +328,7 @@ private:
     return message;
   }
 
-  void tick()
-  {
+  void tick() {
     const rclcpp::Time current = now();
     const double seconds = current.seconds();
     const double previous = last_s_ && *last_s_ != 0.0 ? *last_s_ : seconds;
@@ -459,8 +339,9 @@ private:
     if (!start_s_) {
       path = {kRoutes.at("sentry").front(), Vector2::Zero(), 0.0};
     }
-    reference_pub_->publish(path_message(
-      "root", path.position, path.velocity, yaw_, path.spin, message_time(current)));
+    reference_pub_->publish(path_message("root", path.position, path.velocity,
+                                         yaw_, path.spin,
+                                         message_time(current)));
     if (hp_.at("sentry") == 0) {
       path.velocity.setZero();
       path.spin = 0.0;
@@ -468,7 +349,9 @@ private:
     }
     Vector2 desired = path.velocity + 2.0 * (path.position - position_);
     const double norm = desired.norm();
-    if (norm > 2.0) {desired *= 2.0 / norm;}
+    if (norm > 2.0) {
+      desired *= 2.0 / norm;
+    }
     const Vector2 delta = desired - velocity_;
     const double length = delta.norm();
     const double scale = length != 0.0 ? std::min(1.0, 2.0 * dt / length) : 1.0;
@@ -483,7 +366,7 @@ private:
 
     std::map<std::string, std::pair<Vector2, Vector2>> samples;
     samples["sentry"] = {position_, world_velocity_};
-    for (const auto & name : path_names_) {
+    for (const auto &name : path_names_) {
       auto robot = sample_robot(name, elapsed, stage_);
       samples[name] = {robot.position, robot.velocity};
       if (hp_.at(name) == 0) {
@@ -491,46 +374,50 @@ private:
         const auto found = truth_.find(name);
         if (found != truth_.end()) {
           robot.position = found->second.root.topRightCorner<2, 1>();
-          robot.yaw = std::atan2(found->second.root(1, 0), found->second.root(0, 0));
+          robot.yaw =
+              std::atan2(found->second.root(1, 0), found->second.root(0, 0));
         }
         robot.velocity.setZero();
         robot.spin = 0.0;
       }
-      path_pubs_.at(name)->publish(path_message(
-        name, robot.position, robot.velocity, robot.yaw, robot.spin, message_time(current)));
+      path_pubs_.at(name)->publish(
+          path_message(name, robot.position, robot.velocity, robot.yaw,
+                       robot.spin, message_time(current)));
     }
     if (stage_ == "mcb_match" && start_s_ && elapsed < match_duration(stage_)) {
       combat(elapsed, current, samples);
     }
   }
 
-  void setup_combat()
-  {
+  void setup_combat() {
     gz_ = std::make_unique<gz::transport::Node>();
     armor_offsets_ = armor_offsets();
-    for (const auto & name : path_names_) {
+    for (const auto &name : path_names_) {
       head_commands_[name] = {
-        gz_->Advertise<gz::msgs::Double>("/model/" + name + "/joint/headlink/cmd_pos"),
-        gz_->Advertise<gz::msgs::Double>("/model/" + name + "/joint/headpitch/cmd_pos")};
+          gz_->Advertise<gz::msgs::Double>("/model/" + name +
+                                           "/joint/headlink/cmd_pos"),
+          gz_->Advertise<gz::msgs::Double>("/model/" + name +
+                                           "/joint/headpitch/cmd_pos")};
       shot_pubs_[name] = create_publisher<std_msgs::msg::Header>(
-        "/sim/match/" + name + "/shot", 10);
+          "/sim/match/" + name + "/shot", 10);
     }
-    for (const auto & name : kRouteNames) {
+    for (const auto &name : kRouteNames) {
       gz_->Subscribe<gz::msgs::Pose_V>(
-        "/model/" + name + "/pose",
-        [this, name](const gz::msgs::Pose_V & message) {on_truth(name, message);});
+          "/model/" + name + "/pose",
+          [this, name](const gz::msgs::Pose_V &message) {
+            on_truth(name, message);
+          });
     }
     referee_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
-      "/sim/match/referee", 10,
-      [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
-        on_referee(*message);
-      });
+        "/sim/match/referee", 10,
+        [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
+          on_referee(*message);
+        });
   }
 
-  void on_referee(const diagnostic_msgs::msg::DiagnosticArray & message)
-  {
-    for (const auto & status : message.status) {
-      for (const auto & value : status.values) {
+  void on_referee(const diagnostic_msgs::msg::DiagnosticArray &message) {
+    for (const auto &status : message.status) {
+      for (const auto &value : status.values) {
         if (value.key == "hp" && hp_.count(status.name)) {
           hp_.at(status.name) = std::stoi(value.value);
         }
@@ -538,27 +425,33 @@ private:
     }
   }
 
-  void on_truth(const std::string & name, const gz::msgs::Pose_V & message)
-  {
-    const gz::msgs::Pose * model = nullptr;
-    const gz::msgs::Pose * root = nullptr;
-    for (const auto & pose : message.pose()) {
-      if (pose.name() == name) {model = &pose;}
-      if (pose.name() == name + "::root") {root = &pose;}
+  void on_truth(const std::string &name, const gz::msgs::Pose_V &message) {
+    const gz::msgs::Pose *model = nullptr;
+    const gz::msgs::Pose *root = nullptr;
+    for (const auto &pose : message.pose()) {
+      if (pose.name() == name) {
+        model = &pose;
+      }
+      if (pose.name() == name + "::root") {
+        root = &pose;
+      }
     }
-    if (!model || !root) {return;}
-    const double stamp_s = model->header().stamp().sec() +
-      model->header().stamp().nsec() * 1e-9;
+    if (!model || !root) {
+      return;
+    }
+    const double stamp_s =
+        model->header().stamp().sec() + model->header().stamp().nsec() * 1e-9;
     const Truth sample{stamp_s, pose_matrix(*model) * pose_matrix(*root)};
     std::lock_guard<std::mutex> lock(truth_mutex_);
-    if (!truth_.count(name)) {truth_order_.push_back(name);}
+    if (!truth_.count(name)) {
+      truth_order_.push_back(name);
+    }
     truth_[name] = sample;
   }
 
-  void combat(
-    double elapsed, const rclcpp::Time & current,
-    const std::map<std::string, std::pair<Vector2, Vector2>> & samples)
-  {
+  void
+  combat(double elapsed, const rclcpp::Time &current,
+         const std::map<std::string, std::pair<Vector2, Vector2>> &samples) {
     std::map<std::string, Truth> truth;
     std::vector<std::string> order;
     {
@@ -567,35 +460,38 @@ private:
       order = truth_order_;
     }
     const double seconds = current.seconds();
-    for (const auto & name : path_names_) {
-      if (hp_.at(name) == 0 || !truth.count(name) || seconds - truth.at(name).stamp_s > 0.1) {
+    for (const auto &name : path_names_) {
+      if (hp_.at(name) == 0 || !truth.count(name) ||
+          seconds - truth.at(name).stamp_s > 0.1) {
         continue;
       }
-      const Matrix4 & root = truth.at(name).root;
+      const Matrix4 &root = truth.at(name).root;
       std::optional<std::string> target;
       double nearest = 0.0;
-      for (const auto & enemy : order) {
+      for (const auto &enemy : order) {
         if (kTeams.at(enemy) == kTeams.at(name) || hp_.at(enemy) <= 0 ||
-          seconds - truth.at(enemy).stamp_s > 0.1)
-        {
+            seconds - truth.at(enemy).stamp_s > 0.1) {
           continue;
         }
-        const double distance =
-          (truth.at(enemy).root.topRightCorner<2, 1>() - root.topRightCorner<2, 1>()).norm();
+        const double distance = (truth.at(enemy).root.topRightCorner<2, 1>() -
+                                 root.topRightCorner<2, 1>())
+                                    .norm();
         if (!target || distance < nearest) {
           target = enemy;
           nearest = distance;
         }
       }
-      if (!target) {continue;}
-      const Matrix4 & target_root = truth.at(*target).root;
+      if (!target) {
+        continue;
+      }
+      const Matrix4 &target_root = truth.at(*target).root;
       Matrix4 panel = Matrix4::Zero();
       double facing = 0.0;
       bool first = true;
-      for (const auto & offset : armor_offsets_) {
+      for (const auto &offset : armor_offsets_) {
         const Matrix4 candidate = target_root * offset;
         const double score = candidate.topLeftCorner<3, 1>().dot(
-          root.topRightCorner<3, 1>() - candidate.topRightCorner<3, 1>());
+            root.topRightCorner<3, 1>() - candidate.topRightCorner<3, 1>());
         if (first || score > facing) {
           panel = candidate;
           facing = score;
@@ -607,7 +503,8 @@ private:
       aim.head<2>() += samples.at(*target).second * flight;
       aim.z() += 9.80665 * flight * flight / 2.0;
       const Vector3 relative =
-        (root.inverse() * Eigen::Vector4d(aim.x(), aim.y(), aim.z(), 1.0)).head<3>();
+          (root.inverse() * Eigen::Vector4d(aim.x(), aim.y(), aim.z(), 1.0))
+              .head<3>();
       auto [yaw, pitch] = sim::cv_head_aim::solve_head_angles(relative);
       yaw += random_.gauss(0.015);
       pitch += random_.gauss(0.015);
@@ -617,7 +514,9 @@ private:
       gz::msgs::Double pitch_message;
       pitch_message.set_data(std::clamp(pitch, -0.6, 0.6));
       head_commands_.at(name)[1].Publish(pitch_message);
-      if (elapsed < ingress_duration(stage_)) {continue;}
+      if (elapsed < ingress_duration(stage_)) {
+        continue;
+      }
       if (seconds >= next_fire_[name]) {
         std_msgs::msg::Header shot;
         shot.stamp = message_time(current);
@@ -645,19 +544,23 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr command_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr reference_pub_;
   std::vector<std::string> path_names_;
-  std::map<std::string, rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr> path_pubs_;
+  std::map<std::string, rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr>
+      path_pubs_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
-  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr referee_sub_;
-  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_callback_;
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
+      referee_sub_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
+      param_callback_;
   rclcpp::TimerBase::SharedPtr timer_;
   std::unique_ptr<gz::transport::Node> gz_;
   std::vector<Matrix4> armor_offsets_;
-  std::map<std::string, std::array<gz::transport::Node::Publisher, 2>> head_commands_;
-  std::map<std::string, rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr> shot_pubs_;
+  std::map<std::string, std::array<gz::transport::Node::Publisher, 2>>
+      head_commands_;
+  std::map<std::string, rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr>
+      shot_pubs_;
 };
 
-int main(int argc, char ** argv)
-{
+int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<MatchDriver>());
   rclcpp::shutdown();

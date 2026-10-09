@@ -9,13 +9,10 @@ turns noisy detections into a target model. The split is documented in the
 [CV interface](../thornbots_pkg/README.md#cv-interface); historical results
 are in [CV bench observations](docs/cv-bench-results-2026-09-28.md).
 
-`ament_cmake` builds the runtime C++ nodes, Gazebo components and `bench_world`.
-All ROS runtime nodes are C++. Python remains for launch files, pytest
-harnesses and tools. `auto_explore.py` supplies shared Gazebo helpers;
-`combat.py` and `match_scenario.py` serve the E2E score harness; and
-`mcb_firmware.py`, `mcb_emulator/pty_link.py` and `mcb_emulator/protocol.py`
-support the hosted firmware and its tests. `cv_target_emulator.py` keeps only
-geometry constants used by the URDF consistency test.
+`ament_cmake` builds the runtime nodes, Gazebo components, GTest harnesses,
+unit tests and offline CLI tools in C++17. Python remains for ROS launch
+files, their small display/event/constant adapters, and ament lint tests.
+The [native port map](#native-port-map) identifies the shared implementations.
 
 `/cmd_vel` remains a bare `Twist` because gz's diff-drive interface and the
 harnesses expect it; this is the workspace timestamp rule's standard-interface exception.
@@ -44,7 +41,7 @@ neighbouring panels staggered 90% of a panel's height apart
 target between cases; each case settles for 3s, then scores 30s of sim time.
 The bench fires at up to 40 Hz, far above the real launcher, and scores each
 case on hit rate and hits per expected shot equally (`score()` in
-`test/cv/shot_hit_harness.py`), so falling behind 40 Hz costs points.
+`test/cv/shot_hit_suite.cpp`), so falling behind 40 Hz costs points.
 
 There is no gz, robot or tracker. `sim_clock` publishes `/clock`,
 `point_shooter` puts `root` in `odom` (`POINT_SHOOTER`, 0.4 m up) and
@@ -68,7 +65,7 @@ three 4x runs, `keep_up` 1.00. Use `:=1` as the control.
 `chase_settle_s` picks `point_to_cv_target`'s spin mode: `>= 0` (the default,
 0) chases the facing panel and fires every tick, `< 0` is shotgating: hold
 the center line and time the fire. `gimbal_lag_s` defaults to 0, the perfect gimbal. Each cell has
-its own floor in `FLOORS` (`test/cv/shot_hit_harness.py`), the lowest score
+its own floor in `FLOORS` (`test/cv/shot_hit_suite.cpp`), the lowest score
 over three runs minus 10 points. Forty cells are measured: both layouts on
 lateral, radial and diagonal with a still shooter, and lateral at
 `shooter_speed:=1.0`. Any other cell falls back to the placeholders and says so. `target_path:=radial` or `diagonal`
@@ -89,7 +86,7 @@ left, back, right) in each target rotation. It is for reading, not scoring.
 `scores.jsonl` holds each case's score. Three runs' worth make the floors:
 
 ```bash
-python3 tools/shot_floors.py run1/ run2/ run3/   # each a log_dir:=
+ros2 run sim shot_floors run1/ run2/ run3/   # each a log_dir:=
 ```
 
 ```bash
@@ -97,11 +94,11 @@ source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 launch sim shot_hit.launch.py
 ```
 
-The suite launch commands return a nonzero exit status when pytest fails,
+The suite launch commands return a nonzero exit status when GTest fails,
 including collection errors, after shutting down their stack. Check the
-pytest summary as well as the measured hit rates: diagnostic-tier completion
-is not an accuracy guarantee. `tools/check_bench_log.py` also rejects failed
-pytest summaries and clock or lockstep stalls.
+GTest summary as well as the measured hit rates: diagnostic-tier completion
+is not an accuracy guarantee. `tools/check_bench_log.cpp` also rejects failed
+GTest summaries and clock or lockstep stalls.
 
 The CV estimation bench scores Part 2, not hits. `bench_world` (C++)
 is the whole world in one lockstep loop: `/clock`, the phantom target through
@@ -154,24 +151,24 @@ as on the aiming bench, and `process_noise_accel:=` sets the tracker's.
 the head, which holds world yaw as the MCB's IMU loop does;
 `yaw_bearing_damping:=` (N m s/rad, default 0, unmeasured) lets the spin drag
 the head. A cell
-passes on liveness until `LIMITS` in `test/cv/estimation_limits_data.py` has
+passes on liveness until `LIMITS` in `include/sim/estimation_limits_data.hpp` has
 limits for it. The table has 72 keyed cells, including 12 `chassis_spin:=9`
 cells. The two default `stationary45` cells (`chassis_spin:=0`) still have
 no p95 limits and pass only state-presence/valid-fraction checks. A 12/12
 default run therefore does not establish accuracy for those two cells:
 
 ```bash
-python3 tools/estimation_limits.py run1/ run2/ run3/   # each a log_dir:=
+ros2 run sim estimation_limits run1/ run2/ run3/   # each a log_dir:=
 ```
 
-`--keep test/cv/estimation_limits_data.py` keeps every cell the new runs
+`--keep include/sim/estimation_limits_data.hpp` keeps every cell the new runs
 don't score, so one axis can get limits without rerunning the rest.
 
 `estimation.jsonl` has one summary line per case and
 `estimation_states.jsonl` one line per scored state.
 
-The bench is one launch tree: the stack and the pytest that scores it. The
-localization launch runs pytest, and pytest starts the sim once
+The bench is one launch tree: the stack and the GTest that scores it. The
+localization launch runs GTest, and GTest starts the sim once
 (`run_tests:=false part:=sim`) and a fresh robot stack for each scenario
 (`part:=robot`). Between scenarios it stops the robot stack, teleports the
 robot back to spawn, removes anything a scenario spawned, and resets
@@ -198,8 +195,8 @@ either. `--show-args` on either launch lists the rest.
 
 `tools/run_suite.sh drift|ekf|shot_hit|estimation [args]` wraps any of these
 launches: it refuses to start over a running stack, tees the output to
-`/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.py` on it. It exits 0
-only when pytest passed and the checker trusts the run:
+`/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.cpp` on it. It exits 0
+only when GTest passed and the checker trusts the run:
 
 ```bash
 src/sim/tools/run_suite.sh drift scenario:=odom_stuck
@@ -237,31 +234,35 @@ and rebuild.
 
 ## More on the tests
 
-`colcon test` collects the Python unit and integration suites plus the C++ GTests.
+`colcon test` runs C++ unit tests and the ament lint checks for launch Python.
+Integration executables are installed but are invoked only through launch.
 
 | Tier | Files | Needs |
 | --- | --- | --- |
 | unit | `cpp/test_cv_head_aim.cpp`, `cpp/test_mcb_protocol.cpp`, `cpp/test_combat.cpp`, `cpp/test_target_odometry.cpp`, `cpp/test_depth_mm.cpp`, `cpp/test_panel_view.cpp` | GTest |
-| unit | `cv/test_urdf_constants.py`, `cv/test_estimation_metrics.py`, `test_suite_timing.py`, ament copyright/flake8/pep257 | Python + pytest |
-| integration | `localization/test_localization_drift.py` | gz-sim and a launch tree |
-| integration | `cv/test_shot_hit.py` | a launch tree, no gz |
-| integration | `cv/test_estimation.py` | a launch tree, no gz |
-| on demand | `localization/test_ekf_ground_truth.py` | gz-sim and a launch tree |
+| unit | `cpp/test_cv_bench.cpp`, `cpp/test_suite_timing.cpp`, `cpp/test_match_routes.cpp`, `cpp/test_foxglove_layouts.cpp` | GTest |
+| unit | `cpp/test_mcb_firmware.cpp`, `cpp/test_mcb_bridge_pty.cpp` | hosted firmware; bridge test also needs ROS |
+| launch API | `cpp/test_suite_exit.cpp` | ROS launch, no simulation |
+| lint | `test_copyright.py`, `test_flake8.py`, `test_pep257.py` | Python + pytest |
+| integration | `localization/localization_suite.cpp` | gz-sim and a launch tree |
+| integration | `cv/shot_hit_suite.cpp` | a launch tree, no gz |
+| integration | `cv/estimation_suite.cpp` | a launch tree, no gz |
+| on demand | `localization/localization_suite.cpp` | gz-sim and a launch tree |
 
-`setup.cfg` deselects the `integration` marker, so a plain `colcon test` runs
-only the unit tests and finishes in seconds. pytest's own `-m` overrides that
-(`colcon test`'s `--pytest-args` only reaches `ament_python` packages):
+The integration suites are separate executables, so a plain `colcon test`
+does not start Gazebo or a bench stack:
 
 ```bash
 colcon test --packages-select sim
 colcon test-result --test-result-base build/sim --verbose
-cd src/sim && python3 -m pytest test -m integration
+ros2 launch sim localization_tests.launch.py
+ros2 launch sim shot_hit.launch.py
+ros2 launch sim estimation.launch.py
+ros2 launch sim e2e.launch.py
 ```
 
-The on-demand tier is specialized checks run only when their subject
-changes, such as the EKF ground-truth test after an `ekf.yaml` edit. It
-carries `integration` too, but is skipped without `--run-on-demand`;
-`suite:=ekf` passes it.
+The on-demand EKF ground-truth tier runs after an `ekf.yaml` or rf2o change:
+`ros2 launch sim localization_tests.launch.py suite:=ekf`.
 
 An integration run ends with a `suite timing` table: wall seconds per case
 in sim start, bring-up, reset, settle, scored and teardown, and the RTF.
@@ -273,8 +274,8 @@ Before trusting a run's numbers, check its launch log, which `ros2 launch`
 names at the top of its output:
 
 ```bash
-python3 tools/check_bench_log.py ~/.ros/log/<run>/launch.log
-python3 tools/check_bench_log.py /tmp/localization_drift_tests/*.log  # drift and EKF suites
+ros2 run sim check_bench_log ~/.ros/log/<run>/launch.log
+ros2 run sim check_bench_log /tmp/localization_drift_tests/*.log  # drift and EKF suites
 ```
 
 It prints the result and the timing table, and exits 1 when a node crashed
@@ -285,21 +286,22 @@ rf2o's match grades (`/scan_odom/quality`), for setting
 summarise.
 
 ```bash
-python3 tools/rf2o_quality.py record /tmp/q.jsonl   # Ctrl-C when the suite ends
-python3 tools/rf2o_quality.py summary /tmp/q.jsonl
+ros2 run sim rf2o_quality record /tmp/q.jsonl   # Ctrl-C when the suite ends
+ros2 run sim rf2o_quality summary /tmp/q.jsonl
 ```
 
 The drift suite starts gz-sim once and a fresh `thornbots_pkg` stack for each
 scenario, resetting the sim between them (see "Run the tests");
 `restart_sim:=true` restarts gz per scenario instead. The aiming bench launches
 its stack once for all its cases, through `shot_hit.launch.py
-run_tests:=false` when pytest starts it. ROS topics are shared
+run_tests:=false` when GTest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
 the measurements.
 
 Rerun the drift suite whenever you tune `slam.yaml`, `amcl.yaml`, `ekf.yaml` or
-the noise model. `pytest_args:=` passes extra arguments such as `-k` through to
-pytest.
+the noise model. `gtest_args:=` forwards native GTest options on the
+localization launch. All suite launches retain `pytest_args:=` as a
+compatibility argument carrying native flags such as `--gtest_filter=*flat*`.
 
 `headless:=true` turns off the gz GUI and rviz2, which are on by default.
 `speed:=` changes the 4.0 m/s loop speed, but nobody has re-validated the
@@ -317,8 +319,8 @@ the source copy.
 
 Before you interpret a drift failure, read the notes below rather than the
 script docstrings. The shot-hit suite runs one test per case and prints a hit
-rate for each. Its pass conditions are in the `test/cv/test_shot_hit.py`
-docstring.
+rate for each. Its pass conditions are in the `test/cv/shot_hit_suite.cpp`
+assertions.
 
 ## Launch sim by hand
 
@@ -391,9 +393,9 @@ hit rates still vary (ROADMAP T17).
 
 | Stage | Test | What it scores |
 |---|---|---|
-| `mcb_parked` (default) | `test/e2e/test_mcb_parked.py` | our robot parked, one red opponent riding `target_driver`'s path; one test per speed and path |
-| `mcb_drive` | `test/e2e/test_mcb_drive.py` | our robot drives spawn to center against one red sentry |
-| `mcb_match` | `test/e2e/test_mcb_match.py` | the 2v2 center fight with ballistic shots and HP |
+| `mcb_parked` (default) | `test/e2e/e2e_suite.cpp` | our robot parked, one red opponent riding `target_driver`'s path; one test per speed and path |
+| `mcb_drive` | `test/e2e/e2e_suite.cpp` | our robot drives spawn to center against one red sentry |
+| `mcb_match` | `test/e2e/e2e_suite.cpp` | the 2v2 center fight with ballistic shots and HP |
 
 `mcb_parked`'s field-safe paths are separate from the gz-free aiming bench:
 lateral at world y=-1.3 with x ±1.9 m, radial y=-0.9 to -1.7 m, diagonal
@@ -427,7 +429,7 @@ truth, and `odom_disagreement_m`: the MCB's POSE against TF `odom->root` at
 that POSE's stamp. That agreement is what a hit depends on; every aiming
 hop uses `odom`, so `map->root` error is logged but never blamed. Missing
 stamped TF is reported as unavailable; latest TF is never substituted to
-calculate these errors. `python3 tools/compare_runs.py LOG_DIR_A LOG_DIR_B`
+calculate these errors. `ros2 run sim compare_runs LOG_DIR_A LOG_DIR_B`
 prints the first record where two runs' logs diverge.
 `poses.jsonl` samples head-TF and localization at 20 Hz even when tracking
 is lost and no shots fire. `real_time_factor` reaches the test-owned stack;
@@ -475,7 +477,7 @@ for `sim.launch.py` and the localization suite, `estimation.json` and
 "Import from file"). After editing an rviz config, regenerate them:
 
 ```bash
-python3 tools/rviz_to_foxglove.py   # --check: exit 1 if one is stale
+ros2 run sim rviz_to_foxglove --package-dir src/sim  # --check: exit 1 if stale
 ```
 
 `sim.launch.py` starts gz, spawns the robot, bridges its lidar, joint, odometry,
@@ -508,7 +510,7 @@ and removed on 2026-09-24 before it ever ran a full suite. We are staying on
 gz. The removed `sim/sapien_sim.py` is in the commit log if the question
 comes back.
 
-### tools/simplify_urdf.py and urdf/sentry_v2
+### tools/simplify_urdf.cpp and urdf/sentry_v2
 
 The mechanical team's Onshape export of the new sentry has 3782 links, 3781
 joints and 581 meshes (220 MB), with no collision geometry. Onshape turns
@@ -518,7 +520,7 @@ with `*_loop_closure` dummy links, so almost none of those joints are real
 motion. The export itself is not in the repo; regenerate from it with:
 
 ```bash
-python3 tools/simplify_urdf.py <export_dir> urdf/sentry_v2.yaml urdf/sentry_v2
+ros2 run sim simplify_urdf <export_dir> urdf/sentry_v2.yaml urdf/sentry_v2
 ```
 
 The tool collapses it to ten bodies: chassis (`root`), gimbal yaw (`head`),
@@ -543,10 +545,16 @@ Visuals are one convex hull per part, capped at 120 faces, with parts under
 15 mm left out: CAD tessellations are full of T-junctions that quadric
 decimation cannot reduce. That keeps the model at 6.4 MB.
 
+The native tool uses Assimp, Qhull and the pinned fast-simplification library.
+It preserves part assignment, mass, inertia and joint geometry. Qhull facet
+ordering can change the decimated visual mesh; regeneration is not a
+byte-for-byte reproduction of trimesh output. Review regenerated meshes before
+replacing the checked-in assets.
+
 The joint and link names match the old model's (`root`, `body`, `head`,
 `head_pitch`, `lidar`, `camera`, `headlink`, `headpitch`) and `headlink` turns about
 +z, CCW like the MCB's `head_yaw` (it was -z until 2026-10-03, which mirrored
-the camera on the sentry), and `test_urdf_constants.py` pins it.
+the camera on the sentry), and `test_cv_bench.cpp` pins it.
 The output frame puts the gun on +x (the export's +y) with the origin on the
 ground under the chassis centre.
 
@@ -585,7 +593,7 @@ only the URDF text should change, keep the committed meshes
 `sentry_v2.urdf.xacro` wraps the generated URDF for gz: colours, the lidar and
 camera sensors, the plugins, and a `muzzle` frame (see the CV head aim node
 note). `thornbots_pkg`'s `sentry.urdf.xacro` carries the same frames and
-meshes, and `test_urdf_constants.py` checks the two agree.
+meshes, and `test_cv_bench.cpp` checks the two agree.
 
 ### sentry_v2.urdf.xacro: motion model
 
@@ -635,7 +643,7 @@ the robot. Its sector (0.09-1.41 rad) now comes from slicing `sentry_v2`'s CAD
 at the scan plane, and still needs checking against a real `/scan_raw` (see
 `../thornbots_pkg/README.md`).
 
-### test_localization_drift.py
+### Localization drift suite
 
 Integration suite for `sentry_localization`'s drift and jerk correction
 against the pose emulator's noise model. It mirrors `auto.launch.py`'s two
@@ -645,12 +653,12 @@ axes: `--backend slam/mapping/amcl/none` (who owns `map->odom`) and `--use-rf2o`
 robot stack, drives, samples the correction TF, asserts, and stops the robot
 stack. The sim itself stops after the last scenario.
 
-`drift_harness.py` holds stack lifecycle, driving and scenarios;
-`test_localization_drift.py` is one parametrized test per scenario. That split
-lets `ekf_diag_harness.py` reuse `run_stack`/`drive` and puts `Scenario`'s
-`details` into the assertion message instead of pytest's capture. The harness
+`localization_suite.cpp` holds stack lifecycle, driving and scenarios;
+`localization_suite.cpp` is one parametrized test per scenario. That split
+lets `localization_suite.cpp` reuse `run_stack`/`drive` and puts `Scenario`'s
+`details` into the assertion message instead of GTest's capture. The harness
 launches the sim and each scenario's robot stack as trees in their own process
-groups and won't attach to a running stack. The stack gets SIGINT if pytest dies, so a killed
+groups and won't attach to a running stack. The stack gets SIGINT if GTest dies, so a killed
 run still tears it down.
 
 Each scenario watches the edge the backend owns (`BACKEND_FRAMES`):
@@ -976,9 +984,9 @@ got it instantly on the same QoS while a matched `spawn_sentry` waited 30+
 seconds. That's a `ros_gz_sim create` bug, not a race, so delays don't help.
 `-string` passes the URDF text directly.
 
-### test_ekf_ground_truth.py
+### EKF ground-truth suite
 
-This suite (`ekf_diag_harness.py`, run by `localization_tests.launch.py
+This suite (`localization_suite.cpp`, run by `localization_tests.launch.py
 suite:=ekf`) asks whether fusing `/scan_odom` into `/odom` through `ekf_node` gets closer to
 where the robot really is, which the drift suite can't answer. Drift scenarios
 run with noise off, so only slip corrupts `/odom`; at zero slip
@@ -1103,7 +1111,7 @@ the MCB holds it, then through the solve below.
 `cv_head_aim_core::solve_head_angles()` inverts the FK chain from root to the
 `muzzle` frame (root -> body -> headlink(yaw) -> headpitch(pitch) ->
 muzzlelink). `test/cpp/test_cv_head_aim.cpp` checks it against a separately
-written FK, and `test_urdf_constants.py` pins the C++ core header's constants to
+written FK, and `test_cv_bench.cpp` pins the C++ core header's constants to
 `thornbots_pkg`'s URDF and checks sim's model against it.
 
 The `muzzle` frame sits on `head_pitch` at (0, 0.1128, 0): on the pitch axis,
@@ -1146,7 +1154,7 @@ head follows each.
 ### MCB emulator
 
 The emulator compiles and runs the checked-out `firmware/MCBV3` C++ sources.
-The Python control port has been removed. `mcb_firmware.py` transports hardware
+The Python control port has been removed. `include/sim/mcb_firmware.hpp` transports hardware
 readings to `MCB-project/src/hosted/main.cpp`, which instantiates the actual
 `SentryControl` and runs its command scheduler in 1 ms steps. UART1 uses the
 PTY attached to the real `dji_serial_bridge`; MCBV3's own DJISerial parser,
@@ -1194,12 +1202,36 @@ indexer request, not measured projectile exit. `/mcb_emulator/shot` is a
 Run the native control and real-bridge checks without gz:
 
 ```sh
-cd src/sim
-python3 -m pytest test/mcb -v
+colcon test --packages-select sim --ctest-args -R test_mcb
 ```
 
 The native tests skip if the binary is absent; build it first to test the MCB.
 The bridge test also needs ROS. Pure wire-format behavior is covered by GTests.
+
+## Native port map
+
+| Former Python | C++ implementation |
+| --- | --- |
+| `test/localization/*` | `test/localization/localization_suite.cpp` (`localization_suite`, drift and EKF) |
+| `test/cv/shot_hit_harness.py`, `test_shot_hit.py` | `test/cv/shot_hit_suite.cpp`, `include/sim/cv_bench.hpp` |
+| `test/cv/estimation_harness.py`, `test_estimation.py`, `estimation_metrics.py` | `test/cv/estimation_suite.cpp`, `include/sim/cv_bench.hpp` |
+| `test/cv/estimation_limits_data.py` | `include/sim/estimation_limits_data.hpp` |
+| `test/e2e/*` | `test/e2e/e2e_suite.cpp`, `test/e2e/e2e_harness.cpp`, `include/sim/e2e_test_core.hpp` |
+| `test/mcb/*`, `sim/mcb_firmware.py`, `sim/mcb_emulator/pty_link.py` | `test/cpp/test_mcb_firmware.cpp`, `test_mcb_bridge_pty.cpp`, `include/sim/mcb_firmware.hpp` (also used by the runtime node) |
+| `sim/mcb_emulator/protocol.py` | `include/sim/mcb_protocol.hpp`, `src/mcb_protocol.cpp` |
+| `sim/combat.py`, `sim/match_scenario.py` | `src/combat.cpp`, `src/match_scenario.cpp` (also used by `match_driver`) |
+| `sim/suite_timing.py`, `sim/parent_death.py` | `src/suite_timing.cpp`, `src/process.cpp` |
+| `sim/auto_explore.py` Gazebo helpers, `sim/odometry.py` | `include/sim/gazebo_helpers.hpp`, `include/sim/target_odometry.hpp` |
+| `sim/display.py` probe, `sim/cv_target_emulator.py` constants | `src/display_probe.cpp`, `include/sim/cv_model_constants.hpp` |
+| Python unit tests and `conftest.py` fixtures | `test/cpp/*`, native suite environments and value-parameterized cases |
+| `tools/{check_bench_log,compare_runs,estimation_limits,shot_floors,rf2o_quality,rviz_to_foxglove,simplify_urdf}.py` | matching `tools/*.cpp`, installed as `ros2 run sim <name>` |
+
+`suite_exit.py` creates ROS launch events synchronously, `display.py` calls the
+native probe from launch, and `auto_explore.py` supplies the launch spawn
+heading. These small adapters remain Python because the launch API requires
+Python callables and constants. `launch/` and its ament lint tests also remain.
+The native `suite_exit` tests exercise successful, failed and collection-style
+child exit codes through the real launch service.
 
 #### Firmware behaviour and historical results (then stage E2, now `mcb_parked`)
 

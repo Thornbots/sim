@@ -13,20 +13,15 @@
 # limitations under the License.
 
 """
-Localization suites: the drift scenarios (suite:=drift) or the EKF ground-truth check (suite:=ekf).
+Launch the native drift/ground-truth suites and their test-owned ROS stacks.
 
-`ros2 launch sim localization_tests.launch.py [backend:=amcl] [scenario:=odom_stuck]`.
-Runs pytest, which starts the sim once through this file (run_tests:=false
-part:=sim) and one robot stack per scenario (part:=robot, auto.launch.py);
-restart_sim:=true brings the sim up fresh per scenario instead (part:=all,
-auto.launch.py 8s after the sim). Stops when the tests finish; Ctrl-C stops
-pytest, and its stacks with it. real_time_factor:=0 (the default) runs the sim
-unthrottled; the suites measure in sim time.
+The C++ harness starts the shared sim (part:=sim) and each robot stack
+(part:=robot); restart_sim:=true starts both again per case.
+All scored durations use sim time. See README.md for design rationale.
 """
 import os
-import sys
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -44,10 +39,6 @@ from launch.substitutions import LaunchConfiguration
 from sim.display import display_error
 from sim.suite_exit import finish_suite
 
-# Installed as a symlink into share/sim/launch (--symlink-install), so the real
-# path leads back to src/sim; the constant covers a copying install.
-SOURCE_FALLBACK = '/workspaces/isaac_ros-dev/src/sim/test/localization'
-TEST_FILES = {'drift': 'test_localization_drift.py', 'ekf': 'test_ekf_ground_truth.py'}
 # sim.launch.py's odom noise model, forwarded when given (the harness sets them
 # per scenario).
 SIM_PASSTHROUGH = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stddev',
@@ -56,15 +47,6 @@ SIM_PASSTHROUGH = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stdde
 # Head start for gz and the robot spawn before localization subscribes, so
 # its early "waiting for transform" noise stays out of the scanned logs.
 LOCALIZATION_DELAY_S = 8.0
-
-
-def _test_dir():
-    here = os.path.dirname(os.path.realpath(__file__))
-    for candidate in (os.path.join(here, '..', 'test', 'localization'), SOURCE_FALLBACK):
-        if os.path.exists(os.path.join(candidate, TEST_FILES['drift'])):
-            return os.path.normpath(candidate)
-    raise RuntimeError(f'could not find the localization tests next to {here} '
-                       f'or in {SOURCE_FALLBACK}')
 
 
 def _is_true(context, name):
@@ -112,9 +94,8 @@ def _stack(context):
 def _tests(context):
     config = context.launch_configurations
     suite = config['suite']
-    cmd = [sys.executable, '-m', 'pytest', os.path.join(_test_dir(), TEST_FILES[suite]),
-           '-m', 'integration', '-v', '-s',
-           '--real-time-factor', config['real_time_factor']]
+    cmd = [os.path.join(get_package_prefix('sim'), 'lib', 'sim', 'localization_suite'),
+           '--suite', suite, '--real-time-factor', config['real_time_factor']]
     if _is_true(context, 'headless'):
         cmd.append('--headless')
     if config['speed']:
@@ -136,10 +117,10 @@ def _tests(context):
         for arg in ('ekf_slip_ratio', 'ekf_drift_stddev', 'ekf_seconds'):
             if config[arg]:
                 cmd += ['--' + arg.replace('_', '-'), config[arg]]
+    cmd += config['gtest_args'].split()
     cmd += config['pytest_args'].split()
 
-    # sigterm_timeout: a scenario's teardown can take ~15s; SIGTERM kills
-    # pytest outright, before it stops its stack.
+    # A scenario's teardown can take ~15s before its process group is stopped.
     tests = ExecuteProcess(cmd=cmd, name='localization_tests', output='screen',
                            sigterm_timeout='30')
     done = RegisterEventHandler(OnProcessExit(
@@ -187,14 +168,16 @@ def generate_launch_description():
         DeclareLaunchArgument('spawn_yaw_deg', default_value='',
                               description='drift reset heading off spawn, deg; empty = 0'),
         DeclareLaunchArgument('ekf_slip_ratio', default_value='',
-                              description='ekf suite; empty = the pytest default'),
+                              description='ekf suite; empty = the suite default'),
         DeclareLaunchArgument('ekf_drift_stddev', default_value='',
-                              description='ekf suite; empty = the pytest default'),
+                              description='ekf suite; empty = the suite default'),
         DeclareLaunchArgument('ekf_seconds', default_value='',
-                              description='ekf suite; empty = the pytest default'),
+                              description='ekf suite; empty = the suite default'),
         DeclareLaunchArgument('foxglove', default_value='true',
                               description='Foxglove bridge on :8765'),
+        DeclareLaunchArgument('gtest_args', default_value='',
+                              description='extra GoogleTest arguments'),
         DeclareLaunchArgument('pytest_args', default_value='',
-                              description="extra pytest args, e.g. '-x'"),
+                              description='deprecated alias for gtest_args'),
     ]
     return LaunchDescription(args + [OpaqueFunction(function=_launch), _foxglove()])

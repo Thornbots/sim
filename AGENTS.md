@@ -32,24 +32,21 @@ hardware interfaces; its Python control port was removed. Build with
 `sim/tools/run_mcb_firmware.sh` is the host entry point, also the T3 MCB action:
 it copies this checkout's sources into an isolated container directory before
 building and launching, so T3 worktrees outside the bind mount work too.
-Pass `--build-only` to stop after building. The native tests under `test/mcb`
+Pass `--build-only` to stop after building. The native tests under `test/cpp`
 need `MCB_FIRMWARE_BINARY` if the executable is outside the normal firmware
 build path. They run without gz; the Gazebo smoke run still needs approval.
 
-`colcon test` collects both C++ GTests and pytest suites. The suites
-that launch `sim` + `thornbots_pkg` end to end carry the `integration` marker and
-are deselected by `setup.cfg`, so a plain `colcon test --packages-select sim`
-runs the unit tests only. `sim` is `ament_cmake` now, so `--pytest-args`
-doesn't reach it; run pytest directly for the integration tier. The
-`on_demand` EKF test is skipped there; `run_suite.sh ekf` runs it:
+`colcon test` runs registered C++ unit tests and Python launch lint checks.
+Integration suites are separate executables, invoked through their launch
+files or `tools/run_suite.sh`; `run_suite.sh ekf` runs the EKF ground-truth check.
 
 ```bash
 ../isaac_ros_common/scripts/dexec.sh -- colcon test --packages-select sim
-../isaac_ros_common/scripts/dexec.sh -- bash -c 'cd src/sim && python3 -m pytest test -m integration'
+../isaac_ros_common/scripts/dexec.sh -- src/sim/tools/run_suite.sh drift headless:=true
 ```
 
-Add C++ runtime nodes as CMake executables; keep Python modules only for launch,
-test harnesses and offline tools described in `README.md`.
+Add C++ runtime nodes as CMake executables; Python remains only for launch
+adapters and lint checks. See [test commands](README.md#more-on-the-tests).
 
 Both suites run from a launch file, so `kill_launch.sh <pid>` on the outer
 launch stops everything, per-scenario stacks included (`--show-args` lists
@@ -77,14 +74,11 @@ a separate axis and layers EKF fusion of `odom->root` on top of any of them;
 there is no `ekf` backend. It is on by default, matching `auto.launch.py`;
 `--no-use-rf2o` is the way back to raw `/odom` passthrough.
 
-`test/localization/` is `test_localization_drift.py` (one test per scenario) and
-`test_ekf_ground_truth.py`, both over `drift_harness.py`/`ekf_diag_harness.py`.
-`test/cv/` is `test_shot_hit.py` (integration, one test per layout/speed case,
-over `shot_hit_harness.py`). CV head aim math is covered by
-`test/cpp/test_cv_head_aim.cpp`. Pass `-s` when running pytest directly, or the measured numbers these
-suites print get captured.
+`test/localization/localization_suite.cpp` owns drift and EKF integration;
+`test/cv/{shot_hit,estimation}_suite.cpp` own the CV benches. Pure CV head
+aim math is covered by `test/cpp/test_cv_head_aim.cpp`.
 
-Every integration run ends with a `suite timing` table (`sim/suite_timing.py`):
+Every integration run ends with a `suite timing` table (`src/suite_timing.cpp`):
 wall seconds per case split into sim start, bring-up, reset, settle, scored
 and teardown, plus the RTF over the spans with a sim clock. Harnesses wrap
 their overhead in `suite_timing.phase()`; anything else in a case counts as
@@ -92,15 +86,15 @@ scored. Read it before and after any speed change.
 
 **Check every run before trusting it** (the user's rule, 2026-09-27): a
 bench can pass with rviz dead or a stack node crashed.
-`tools/check_bench_log.py` on the `dexec.sh -d` log, plus
+`ros2 run sim check_bench_log` on the `dexec.sh -d` log, plus
 `/tmp/localization_drift_tests/*.log` for drift and EKF, prints the table
 and exits 1 on a mid-run crash, a missing display or a wait that gave up.
 `dexec.sh` doesn't forward `DISPLAY`; to get the laptop's windows, prefix
 the launch with `env DISPLAY=:2` (`ls /tmp/.X11-unix`). Without one,
-pytest runs windowless and says so.
+GTest runs windowless and says so.
 
 `tools/run_suite.sh` does the live-session check, the launch and the
-`check_bench_log.py` pass in one go; the T3 `Sim:` actions in `../t3.json`
+native log check in one go; the T3 `Sim:` actions in `../t3.json`
 call it through `docker exec -it` so Ctrl-C reaches the stack. From the host
 it needs a TTY (`dexec.sh` has none), so use the launches above for detached
 runs.
@@ -127,7 +121,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **GUI on, not headless, and Foxglove is the main viewer** (the user's
   call, 2026-09-28). Every bench and `sim.launch.py` serve Foxglove on
   :8765; the gz and rviz windows open only where a display does (the
-  laptop), and pytest drops them elsewhere (the Mac container, no VNC).
+  laptop), and GTest drops them elsewhere (the Mac container, no VNC).
   Pass `--headless` only when asked. Launch through `dexec.sh -d`, never a
   bare `docker exec -d`, or a window fails to open.
 - **Always fully restart `sim` (fresh spawn) before restarting SLAM/explorer.**
@@ -155,7 +149,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   hostname (this laptop, 2026-09-28: `getent hosts archlinux` takes 10 s).
   Without it every gz `Node()` took 20 s, pose_emulator's `trigger_jerk`
   outlived the harness's 10 s wait, and each run's first reset took 21 s.
-  `sim.launch.py` and `auto_explore._gz_call` default it to `127.0.0.1`.
+  `sim.launch.py` and the native Gazebo helpers default it to `127.0.0.1`.
 - **Sim speed: the full stack caps at RTF ~1.55, cause unknown.** Idle
   `sim.launch.py` sits there with GUI or headless, rviz or not, and with the
   field collision simplified, so neither physics nor rendering sets it.
@@ -212,13 +206,13 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   with or without `yaw_bearing_damping:=0.05` (2026-09-29).
   Accuracy coverage and missing default `stationary45` limits are in
   [the estimation bench](README.md#run-the-tests); per-cell values and
-  their recorded runs live in `test/cv/estimation_limits_data.py`.
+  their recorded runs live in `include/sim/estimation_limits_data.hpp`.
 - **`bench_world` duplicates the estimation bench's share of `target_driver`,
   `cv_target_emulator`, `cv_head_aim` and `pose_emulator`**, which the gz
   sim and the aiming bench still use. A change to one of those that should
   reach the estimation bench has to be made in `src/bench_world.cpp` too.
 - **`/cv/target` is an `odom` point since 2026-09-27.** `cv_head_aim`,
-  `bench_world.cpp` and `shot_hit_harness.py` aim from our current pose, as
+  `bench_world.cpp` and `shot_hit_suite.cpp` aim from our current pose, as
   the MCB should; see [shared aim frame](../ros2_dji_serial_bridge/README.md#shared-aim-frame).
 - **The head controller holds the head when there's no target**, so a case can
   start with the target out of view. `estimation_harness` aims the head at
@@ -240,15 +234,15 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   check `ps -eo pid,ppid,cmd | grep install/` for such orphans too.
 - **Panels are canted 15 deg in the game (S122).** The emulator, both rviz
   views and the aiming bench keep the cant: a hit crosses the canted
-  0.135 x 0.125 m face (`off_face` in `shot_hit_harness.py`) inside the
+  0.135 x 0.125 m face (`off_face` in `shot_hit_suite.cpp`) inside the
   145 deg cone.
 - **The estimation bench's target is a phantom** with exact truth. No sim
   test runs YOLO (`../E2E_PLAN.md`).
 - **Every `e2e.launch.py` stage runs the MCB emulator** (the user's call,
   2026-10-08): `mcb_parked`, `mcb_drive`, `mcb_match`, tests
-  `test/e2e/test_mcb_*.py`. The `cv_head_aim` + `pose_emulator` stage (E1)
+  `test/e2e/e2e_suite.cpp`. The `cv_head_aim` + `pose_emulator` stage (E1)
   was removed; `cv_head_aim` stays for `sim.launch.py` and the benches.
-- **`mcb_parked` uses field-safe paths** (`sim/match_scenario.py`), validated
+- **`mcb_parked` uses field-safe paths** (`src/match_scenario.cpp`), validated
   against the field collision mesh with a 0.40 m footprint. Suites fail
   normally; no blanket skips or xfail. Keep them apart from the bench paths.
 - **`mcb_parked`'s test-owned stack starts the opponent parked**, then
@@ -261,8 +255,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   relocalizes the MCB only past its threshold, so `odom_disagreement_m`
   reaches ~4.5 cm between relocalizes and the barrel 2.4 deg off at 1.15 m:
   stationary-lateral scored 13% in one run, 78-90% in others (2026-10-08).
-- **A gz stack must not be the launch pytest runs in.** With
-  `e2e.launch.py` bringing up the stack beside pytest, the tests' Shutdown
+- **A gz stack must not be the launch GTest runs in.** With
+  `e2e.launch.py` bringing up the stack beside GTest, the tests' Shutdown
   left `gz sim` running past its ruby wrapper, and the next runs shared gz
   topics with it (five servers, camera stamps 142 s behind `/clock`). The
   fixture starts the stack as one process group and kills the group, as
@@ -314,7 +308,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   on every path and at `shooter_speed:=1.0`. A point shooter with a perfect
   gimbal; README.md has the setup. `FLOORS` holds 40 cells from three runs
   each on sentry_v2's canted armor faces (2026-09-29, chase, the Mac at
-  ~13x), through `tools/shot_floors.py`. Radial or
+  ~13x), through `tools/shot_floors.cpp`. Radial or
   diagonal with a moving shooter has no floor yet.
 - **Shot-hit results are optimistic.** Detection noise (0.005 m) is far
   cleaner than a D435, and slew limits and target accelerations are
@@ -338,12 +332,9 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 - **robot_localization 3.8 logs "Failed to meet update rate!" at ERROR**
   (Humble's printed it untagged), unthrottled, with no effect on the pose.
   `scan_log_for_errors` skips that line.
-- **`trimesh` isn't in `package.xml`**: noble has no apt `python3-trimesh`
-  and rosdep only a pip key. `install-sim.sh` pips it; only
-  `tools/simplify_urdf.py` uses it, and regenerating `urdf/sentry_v2` also
-  needs `fast_simplification`, `scipy==1.13.1` and `networkx==3.3`, pipped
-  by hand with `--no-deps` so the system numpy survives. The export
-  (`/home/tmp/sentry_export` on the laptop) isn't mounted in the container;
+- **URDF regeneration uses native dependencies from `package.xml`.** See
+  [the simplifier](README.md#toolssimplify_urdfcpp-and-urdfsentry_v2).
+  The export (`/home/tmp/sentry_export` on the laptop) isn't mounted in the container;
   copy it under the workspace root for the run and delete it after.
 - **`sentry*.urdf.xacro`'s `<gz_frame_id>` warns "not defined in SDF"**
   under Harmonic's sdformat, but gz-sensors still reads it (`/scan_raw`

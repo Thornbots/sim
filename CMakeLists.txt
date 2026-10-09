@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.8)
 project(sim)
 
-# C++ runtime nodes and bench world; Python remains for launch and test harnesses.
+# C++ runtime, suites and offline tools; Python supplies ROS launch glue.
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -11,6 +11,10 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
+find_package(GTest REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(assimp REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
@@ -71,6 +75,53 @@ target_link_libraries(combat Eigen3::Eigen)
 install(TARGETS combat
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 
+add_library(suite_support src/suite_timing.cpp src/process.cpp src/match_scenario.cpp)
+target_compile_features(suite_support PUBLIC cxx_std_17)
+target_include_directories(suite_support PUBLIC include)
+target_link_libraries(suite_support ${CMAKE_DL_LIBS})
+
+add_executable(display_probe src/display_probe.cpp)
+target_compile_features(display_probe PUBLIC cxx_std_17)
+target_link_libraries(display_probe suite_support)
+install(TARGETS display_probe DESTINATION lib/${PROJECT_NAME})
+
+foreach(tool check_bench_log compare_runs estimation_limits shot_floors rviz_to_foxglove rf2o_quality)
+  add_executable(${tool} tools/${tool}.cpp)
+  target_compile_features(${tool} PUBLIC cxx_std_17)
+  target_include_directories(${tool} PRIVATE include)
+  target_link_libraries(${tool} nlohmann_json::nlohmann_json)
+  if("${tool}" STREQUAL "rviz_to_foxglove")
+    target_link_libraries(${tool} yaml-cpp)
+    ament_target_dependencies(${tool} ament_index_cpp)
+  elseif("${tool}" STREQUAL "rf2o_quality")
+    ament_target_dependencies(${tool} rclcpp diagnostic_msgs)
+  endif()
+  install(TARGETS ${tool} DESTINATION lib/${PROJECT_NAME})
+endforeach()
+
+add_executable(simplify_urdf tools/simplify_urdf.cpp)
+target_compile_features(simplify_urdf PUBLIC cxx_std_17)
+target_include_directories(simplify_urdf SYSTEM PRIVATE third_party/fast_simplification)
+target_link_libraries(simplify_urdf Eigen3::Eigen assimp::assimp tinyxml2::tinyxml2 yaml-cpp qhull_r)
+install(TARGETS simplify_urdf DESTINATION lib/${PROJECT_NAME})
+
+foreach(suite shot_hit estimation e2e)
+  if("${suite}" STREQUAL "e2e")
+    add_executable(${suite}_suite test/e2e/e2e_suite.cpp test/e2e/e2e_harness.cpp)
+  else()
+    add_executable(${suite}_suite test/cv/${suite}_suite.cpp)
+  endif()
+  target_compile_features(${suite}_suite PUBLIC cxx_std_17)
+  target_include_directories(${suite}_suite PRIVATE include)
+  target_link_libraries(${suite}_suite suite_support combat cv_head_aim_core
+    GTest::gtest Eigen3::Eigen nlohmann_json::nlohmann_json tinyxml2::tinyxml2
+    gz-transport::core gz-msgs::core)
+  ament_target_dependencies(${suite}_suite
+    rclcpp rcl_interfaces nav_msgs std_msgs visualization_msgs dji_serial_bridge
+    diagnostic_msgs tf2_ros ament_index_cpp)
+  install(TARGETS ${suite}_suite DESTINATION lib/${PROJECT_NAME})
+endforeach()
+
 foreach(node target_driver point_shooter target_state_truth target_state_markers head_slider_relay sim_clock)
   add_executable(${node} src/${node}.cpp)
   target_compile_features(${node} PUBLIC cxx_std_17)
@@ -91,6 +142,15 @@ foreach(node target_driver point_shooter target_state_truth target_state_markers
   endif()
   install(TARGETS ${node} DESTINATION lib/${PROJECT_NAME})
 endforeach()
+
+add_executable(localization_suite test/localization/localization_suite.cpp)
+target_compile_features(localization_suite PUBLIC cxx_std_17)
+target_include_directories(localization_suite PRIVATE include)
+target_link_libraries(localization_suite suite_support GTest::gtest
+  gz-transport::core gz-msgs::core)
+ament_target_dependencies(localization_suite rclcpp diagnostic_msgs geometry_msgs
+  nav_msgs sensor_msgs rcl_interfaces std_srvs tf2_ros)
+install(TARGETS localization_suite DESTINATION lib/${PROJECT_NAME})
 
 add_executable(cv_head_aim src/cv_head_aim.cpp)
 target_compile_features(cv_head_aim PUBLIC cxx_std_17)
@@ -133,7 +193,7 @@ install(TARGETS opponent_driver DESTINATION lib/${PROJECT_NAME})
 add_executable(match_driver src/match_driver.cpp)
 target_compile_features(match_driver PUBLIC cxx_std_17)
 target_link_libraries(match_driver
-  Eigen3::Eigen combat cv_head_aim_core gz-transport::core gz-msgs::core)
+  Eigen3::Eigen combat cv_head_aim_core suite_support gz-transport::core gz-msgs::core)
 ament_target_dependencies(match_driver
   ament_index_cpp diagnostic_msgs geometry_msgs nav_msgs rcl_interfaces rclcpp std_msgs urdf)
 install(TARGETS match_driver DESTINATION lib/${PROJECT_NAME})
@@ -147,6 +207,7 @@ install(TARGETS pose_emulator DESTINATION lib/${PROJECT_NAME})
 
 add_executable(auto_explore src/auto_explore.cpp)
 target_compile_features(auto_explore PUBLIC cxx_std_17)
+target_include_directories(auto_explore PRIVATE include)
 target_link_libraries(auto_explore gz-transport::core gz-msgs::core)
 ament_target_dependencies(auto_explore rclcpp)
 install(TARGETS auto_explore DESTINATION lib/${PROJECT_NAME})
@@ -193,7 +254,7 @@ install(TARGETS opponent_mover LIBRARY DESTINATION lib)
 
 ament_python_install_package(${PROJECT_NAME})
 
-install(DIRECTORY launch urdf meshes world rviz DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch urdf meshes world rviz foxglove DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
@@ -215,12 +276,42 @@ if(BUILD_TESTING)
   ament_add_gtest(test_combat test/cpp/test_combat.cpp)
   target_include_directories(test_combat PRIVATE include)
   target_link_libraries(test_combat combat Eigen3::Eigen)
+  ament_add_gtest(test_cv_bench test/cpp/test_cv_bench.cpp)
+  target_include_directories(test_cv_bench PRIVATE include)
+  target_compile_definitions(test_cv_bench PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(test_cv_bench Eigen3::Eigen nlohmann_json::nlohmann_json tinyxml2::tinyxml2)
+  target_link_libraries(test_cv_bench cv_head_aim_core)
+  ament_add_gtest(test_mcb_firmware test/cpp/test_mcb_firmware.cpp)
+  target_include_directories(test_mcb_firmware PRIVATE include)
+  target_link_libraries(test_mcb_firmware mcb_protocol util)
+  ament_add_gtest(test_suite_timing test/cpp/test_suite_timing.cpp)
+  target_link_libraries(test_suite_timing suite_support)
+  ament_add_gtest(test_suite_node test/cpp/test_suite_node.cpp)
+  target_include_directories(test_suite_node PRIVATE include)
+  ament_target_dependencies(test_suite_node rclcpp rcl_interfaces)
+  ament_add_gtest(test_match_routes test/cpp/test_match_routes.cpp)
+  target_compile_definitions(test_match_routes PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(test_match_routes suite_support combat tinyxml2::tinyxml2)
+  ament_add_gtest(test_mcb_bridge_pty test/cpp/test_mcb_bridge_pty.cpp)
+  target_compile_definitions(test_mcb_bridge_pty PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(test_mcb_bridge_pty suite_support mcb_protocol util)
+  ament_target_dependencies(test_mcb_bridge_pty rclcpp dji_serial_bridge geometry_msgs)
+  ament_add_gtest(test_suite_exit test/cpp/test_suite_exit.cpp)
+  target_compile_definitions(test_suite_exit PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    SIM_CHECK_BENCH_LOG="$<TARGET_FILE:check_bench_log>")
+  target_link_libraries(test_suite_exit suite_support)
+  ament_add_gtest(test_foxglove_layouts test/cpp/test_foxglove_layouts.cpp)
+  target_compile_definitions(test_foxglove_layouts PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    SIM_RVIZ_TO_FOXGLOVE="$<TARGET_FILE:rviz_to_foxglove>")
+  target_link_libraries(test_foxglove_layouts suite_support)
   ament_add_gtest(test_target_odometry test/cpp/test_target_odometry.cpp)
   target_include_directories(test_target_odometry PRIVATE include)
   ament_target_dependencies(test_target_odometry builtin_interfaces dji_serial_bridge nav_msgs)
-  ament_add_pytest_test(sim_pytest test TIMEOUT 600
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    ENV "PYTEST_ADDOPTS=-p no:anyio")
+  foreach(lint copyright flake8 pep257)
+    ament_add_pytest_test(sim_${lint} test/test_${lint}.py TIMEOUT 120
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      ENV "PYTEST_ADDOPTS=-p no:anyio")
+  endforeach()
 endif()
 
 ament_package()

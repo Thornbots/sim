@@ -318,7 +318,14 @@ public:
       get_logger(), "bench_world: %s, physics %g ms, /clock every %g ms",
       rate_ > 0.0 ? (std::to_string(rate_) + "x").c_str() : "lockstep with the nodes under test",
       physics_step_s_ * 1e3, clock_step_s_ * 1e3);
-    loop_ = std::thread([this] {run();});
+    loop_ = std::thread([this] {
+      try {
+        run();
+      } catch (const std::exception &) {
+        // Context shutdown can race a graph query in the physics loop.
+        if (rclcpp::ok()) {throw;}
+      }
+    });
   }
 
   ~BenchWorld() override

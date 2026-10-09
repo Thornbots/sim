@@ -12,34 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Whether an X window can open here.
-
-Benches and sim.launch.py drop the gz and rviz windows where none can (the
-Mac container has no display) and are watched in Foxglove instead. Native
-macOS opens them on the screen through Cocoa, with no X server.
-"""
-import ctypes
+"""Python launch API adapter for the native display check."""
 import os
-import sys
+import subprocess
+
+from ament_index_python.packages import get_package_prefix
 
 
 def display_error():
-    """Return why no X window can open here, or None if one can."""
-    if sys.platform == 'darwin':
-        return None
-    display = os.environ.get('DISPLAY')
-    if not display:
-        return 'DISPLAY is unset'
-    try:
-        x11 = ctypes.cdll.LoadLibrary('libX11.so.6')
-    except OSError:
-        return None  # can't check; gz and rviz2 will say
-    x11.XOpenDisplay.restype = ctypes.c_void_p
-    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
-    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
-    handle = x11.XOpenDisplay(display.encode())
-    if not handle:
-        return f'cannot open DISPLAY={display}'
-    x11.XCloseDisplay(handle)
-    return None
+    """Return the native check's reason, or None when windows can open."""
+    executable = os.path.join(get_package_prefix('sim'), 'lib', 'sim', 'display_probe')
+    result = subprocess.run([executable], check=True, capture_output=True, text=True)
+    return result.stdout.strip() or None

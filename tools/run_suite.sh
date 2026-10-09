@@ -4,9 +4,9 @@
 #   tools/run_suite.sh drift|ekf|shot_hit|estimation [launch args...]
 #
 # Refuses to start on top of a live stack, tees the launch to
-# /tmp/sim_suite_<suite>_<time>.log, and ends with tools/check_bench_log.py
+# /tmp/sim_suite_<suite>_<time>.log, and ends with the native check_bench_log
 # on that log (plus this run's /tmp/localization_drift_tests/*.log for drift
-# and ekf). Exits 0 only if the checker trusts the run and pytest passed.
+# and ekf). Exits 0 only if the checker trusts the run and GTest passed.
 # Needs a TTY (docker exec -it) for Ctrl-C to reach the stack.
 set -uo pipefail
 
@@ -16,11 +16,12 @@ case "$SUITE" in
     ekf)        LAUNCH=(localization_tests.launch.py suite:=ekf) ;;
     shot_hit)   LAUNCH=(shot_hit.launch.py) ;;
     estimation) LAUNCH=(estimation.launch.py) ;;
-    *) echo "usage: $0 drift|ekf|shot_hit|estimation [launch args...]" >&2; exit 2 ;;
+    mcb_parked|mcb_drive|mcb_match) LAUNCH=(e2e.launch.py "stage:=$SUITE") ;;
+    *) echo "usage: $0 drift|ekf|shot_hit|estimation|mcb_parked|mcb_drive|mcb_match [launch args...]" >&2; exit 2 ;;
 esac
 
 LIVE=$(ps aux | grep -E 'gz sim|slam_toolbox|amcl|map_server|ekf_filter_node|pose_translator|pose_emulator|ros2 launch' \
-    | grep -v -e grep -e run_suite.sh)
+    | grep -v -e grep -e run_suite.sh -e defunct)
 if [ -n "$LIVE" ]; then
     echo "$LIVE"
     echo "run_suite.sh: a stack is already running; stop it first (kill_launch.sh -l)." >&2
@@ -31,13 +32,13 @@ if [[ "$SUITE" == drift || "$SUITE" == ekf ]] && ! command -v gz >/dev/null; the
     exit 1
 fi
 
-SIM_DIR="$(dirname "$(realpath "$0")")/.."
 LOG="/tmp/sim_suite_${SUITE}_$(date +%Y%m%d_%H%M%S).log"
 START=$(mktemp); trap 'rm -f "$START"' EXIT
 # A handler, not an ignore: Ctrl-C still reaches ros2 launch (handlers reset
 # on exec), and this script survives it to run the checker.
 trap 'true' INT
 ros2 launch sim "${LAUNCH[@]}" "$@" 2>&1 | tee -i "$LOG"
+LAUNCH_STATUS=${PIPESTATUS[0]}
 trap - INT
 
 LOGS=("$LOG")
@@ -46,13 +47,15 @@ if [[ "$SUITE" == drift || "$SUITE" == ekf ]]; then
     LOGS+=("${DRIFT[@]}")
 fi
 echo
-echo "== check_bench_log.py (launch log: $LOG)"
-python3 "$SIM_DIR/tools/check_bench_log.py" "${LOGS[@]}"; CHECK=$?
-# pytest's summary line, colors stripped: "== 9 passed, 1 failed in 58.38s ==";
-# past 60s pytest appends "(0:03:34)" after the seconds.
+echo "== check_bench_log (launch log: $LOG)"
+ros2 run sim check_bench_log "${LOGS[@]}"; CHECK=$?
+# The native suites preserve the historical summary line for log consumers.
 SUMMARY=$(sed 's/\x1b\[[0-9;]*m//g' "$LOG" | grep -E '=+ .* in [0-9.]+s( \([0-9:]+\))? =+' | tail -1)
 if [[ "$SUMMARY" != *passed* || "$SUMMARY" =~ failed|error ]]; then
-    echo "run_suite.sh: pytest did not pass: ${SUMMARY:-no summary line}" >&2
+    echo "run_suite.sh: suite did not pass: ${SUMMARY:-no summary line}" >&2
     exit 1
+fi
+if (( LAUNCH_STATUS != 0 )); then
+    exit "$LAUNCH_STATUS"
 fi
 exit $CHECK
