@@ -190,8 +190,8 @@ def generate_launch_description():
         'half the distance actually driven'
     )
 
-    # --- Optional fast-moving-target CV simulation (target_driver.py +
-    # cv_target_emulator.py). Off by default -- no new nodes/topics run
+    # --- Optional fast-moving-target CV simulation (target_driver +
+    # CV target emulator node. Off by default -- no new nodes/topics run
     # unless spawn_target:=true is passed, and neither new node depends on
     # thornbots_pkg's SLAM/AMCL/EKF stack (auto.launch.py); both only need
     # /sim/raw_odom + /sim/raw_joint_states, produced inside sim itself.
@@ -457,12 +457,12 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
-    # --- Teleport the chassis in sim via sim/auto_explore.py's grid sweep.
+    # --- Teleport the chassis in sim via auto_explore's grid sweep.
     # root has no parent joint any more (see the model xacro), so gz's
-    # physics now honors a direct world-pose write on it; auto_explore.py
+    # physics now honors a direct world-pose write on it; auto_explore
     # calls gz's own `/world/<world>/set_pose` service through `gz service`.
     # set_pose_bridge offers the same service to ROS as
-    # ros_gz_interfaces/srv/SetEntityPose, so actor_driver.py can call it
+    # ros_gz_interfaces/srv/SetEntityPose, so actor_driver can call it
     # every tick without starting a process per call.
     set_pose_bridge = Node(
         package='ros_gz_bridge',
@@ -475,7 +475,7 @@ def generate_launch_description():
 
     # --- Bridge for the head pan (see the model xacro's
     # JointPositionController on headlink, reintroduced now that root's
-    # inflated rotational inertia and auto_explore.py's before/after
+    # inflated rotational inertia and auto_explore's before/after
     # joint resets make it safe again). Lets the gz sim GUI's "Joint
     # Position Controller" panel slider and /head_pan_cmd drive the
     # head turn.

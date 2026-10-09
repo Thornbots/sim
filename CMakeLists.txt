@@ -11,7 +11,12 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(builtin_interfaces REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rcl_interfaces REQUIRED)
+find_package(ros_gz_interfaces REQUIRED)
 find_package(dji_serial_bridge REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -20,6 +25,8 @@ find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(tf2_msgs REQUIRED)
+find_package(TinyXML2 REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(rclcpp_components REQUIRED)
@@ -57,14 +64,23 @@ target_include_directories(mcb_protocol PUBLIC include)
 install(TARGETS mcb_protocol
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 
+add_library(combat src/combat.cpp)
+target_compile_features(combat PUBLIC cxx_std_17)
+target_include_directories(combat PUBLIC include)
+target_link_libraries(combat Eigen3::Eigen)
+install(TARGETS combat
+  ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+
 foreach(node target_driver point_shooter target_state_truth target_state_markers head_slider_relay sim_clock)
   add_executable(${node} src/${node}.cpp)
   target_compile_features(${node} PUBLIC cxx_std_17)
   if("${node}" STREQUAL "target_driver")
+    target_include_directories(${node} PRIVATE include)
     ament_target_dependencies(${node} rclcpp nav_msgs)
   elseif("${node}" STREQUAL "point_shooter")
     ament_target_dependencies(${node} dji_serial_bridge geometry_msgs nav_msgs rclcpp tf2_ros)
   elseif("${node}" STREQUAL "target_state_truth")
+    target_include_directories(${node} PRIVATE include)
     ament_target_dependencies(${node} dji_serial_bridge nav_msgs rclcpp)
   elseif("${node}" STREQUAL "target_state_markers")
     ament_target_dependencies(${node} dji_serial_bridge geometry_msgs rclcpp visualization_msgs)
@@ -89,12 +105,59 @@ target_compile_features(wasd_teleop PUBLIC cxx_std_17)
 ament_target_dependencies(wasd_teleop geometry_msgs rclcpp)
 install(TARGETS wasd_teleop DESTINATION lib/${PROJECT_NAME})
 
+add_executable(latch_holder src/latch_holder.cpp)
+target_compile_features(latch_holder PUBLIC cxx_std_17)
+ament_target_dependencies(latch_holder nav_msgs rclcpp std_msgs tf2_msgs)
+install(TARGETS latch_holder DESTINATION lib/${PROJECT_NAME})
+
+add_executable(mcb_emulator_node src/mcb_emulator_node.cpp)
+set_target_properties(mcb_emulator_node PROPERTIES OUTPUT_NAME mcb_emulator)
+target_compile_features(mcb_emulator_node PUBLIC cxx_std_17)
+target_link_libraries(mcb_emulator_node mcb_protocol util)
+ament_target_dependencies(mcb_emulator_node
+  geometry_msgs nav_msgs rcl_interfaces rclcpp sensor_msgs std_msgs)
+install(TARGETS mcb_emulator_node DESTINATION lib/${PROJECT_NAME})
+
+add_executable(actor_driver src/actor_driver.cpp)
+target_compile_features(actor_driver PUBLIC cxx_std_17)
+target_link_libraries(actor_driver gz-transport::core gz-msgs::core)
+ament_target_dependencies(actor_driver nav_msgs rclcpp ros_gz_interfaces)
+install(TARGETS actor_driver DESTINATION lib/${PROJECT_NAME})
+
+add_executable(opponent_driver src/opponent_driver.cpp)
+target_compile_features(opponent_driver PUBLIC cxx_std_17)
+target_link_libraries(opponent_driver gz-transport::core gz-msgs::core tinyxml2::tinyxml2)
+ament_target_dependencies(opponent_driver ament_index_cpp nav_msgs rclcpp)
+install(TARGETS opponent_driver DESTINATION lib/${PROJECT_NAME})
+
+add_executable(match_driver src/match_driver.cpp)
+target_compile_features(match_driver PUBLIC cxx_std_17)
+target_link_libraries(match_driver
+  Eigen3::Eigen combat cv_head_aim_core gz-transport::core gz-msgs::core)
+ament_target_dependencies(match_driver
+  ament_index_cpp diagnostic_msgs geometry_msgs nav_msgs rcl_interfaces rclcpp std_msgs urdf)
+install(TARGETS match_driver DESTINATION lib/${PROJECT_NAME})
+
 add_executable(pose_emulator src/pose_emulator.cpp)
 target_compile_features(pose_emulator PUBLIC cxx_std_17)
 target_link_libraries(pose_emulator gz-transport::core gz-msgs::core)
 ament_target_dependencies(pose_emulator
   dji_serial_bridge nav_msgs rclcpp sensor_msgs std_srvs)
 install(TARGETS pose_emulator DESTINATION lib/${PROJECT_NAME})
+
+add_executable(auto_explore src/auto_explore.cpp)
+target_compile_features(auto_explore PUBLIC cxx_std_17)
+target_link_libraries(auto_explore gz-transport::core gz-msgs::core)
+ament_target_dependencies(auto_explore rclcpp)
+install(TARGETS auto_explore DESTINATION lib/${PROJECT_NAME})
+
+add_executable(cv_target_emulator src/cv_target_emulator.cpp)
+target_compile_features(cv_target_emulator PUBLIC cxx_std_17)
+target_include_directories(cv_target_emulator PRIVATE include)
+target_link_libraries(cv_target_emulator Eigen3::Eigen)
+ament_target_dependencies(cv_target_emulator
+  dji_serial_bridge geometry_msgs nav_msgs rclcpp sensor_msgs visualization_msgs)
+install(TARGETS cv_target_emulator DESTINATION lib/${PROJECT_NAME})
 
 # A component, so it can share the camera's container with roi_depth_node.
 add_library(depth_camera_emulator SHARED src/depth_camera_emulator.cpp)
@@ -129,15 +192,6 @@ target_link_libraries(opponent_mover
 install(TARGETS opponent_mover LIBRARY DESTINATION lib)
 
 ament_python_install_package(${PROJECT_NAME})
-file(GLOB PYTHON_NODES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/*)
-list(REMOVE_ITEM PYTHON_NODES
-  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/target_driver
-  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/point_shooter
-  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/target_state_truth
-  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/target_state_markers
-  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/head_slider_relay
-  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/sim_clock)
-install(PROGRAMS ${PYTHON_NODES} DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch urdf meshes world rviz DESTINATION share/${PROJECT_NAME})
 
@@ -158,6 +212,12 @@ if(BUILD_TESTING)
   target_link_libraries(test_cv_head_aim cv_head_aim_core Eigen3::Eigen)
   ament_add_gtest(test_mcb_protocol test/cpp/test_mcb_protocol.cpp)
   target_link_libraries(test_mcb_protocol mcb_protocol)
+  ament_add_gtest(test_combat test/cpp/test_combat.cpp)
+  target_include_directories(test_combat PRIVATE include)
+  target_link_libraries(test_combat combat Eigen3::Eigen)
+  ament_add_gtest(test_target_odometry test/cpp/test_target_odometry.cpp)
+  target_include_directories(test_target_odometry PRIVATE include)
+  ament_target_dependencies(test_target_odometry builtin_interfaces dji_serial_bridge nav_msgs)
   ament_add_pytest_test(sim_pytest test TIMEOUT 600
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENV "PYTEST_ADDOPTS=-p no:anyio")

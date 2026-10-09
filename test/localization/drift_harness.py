@@ -40,7 +40,6 @@ import os
 import shlex
 import signal
 import subprocess
-import sys
 import time
 
 from diagnostic_msgs.msg import DiagnosticArray
@@ -645,7 +644,7 @@ def spawn_box_obstacle(name='unmapped_test_obstacle', xy=OBSTACLE_XY,
     _spawned_models.append(name)
 
 
-# moving_obstacles: sim/actor_driver.py's boxes, on its default paths and
+# moving_obstacles: actor_driver's boxes, on its default paths and
 # speeds (three segments crossing OBSTACLE_LOOP_LEGS's edges at 0.5-2 m/s).
 ACTOR_COUNT = 3
 ACTOR_PREFIX = 'moving_actor'
@@ -666,7 +665,7 @@ def start_actor_driver(helper, timeout=60.0):
     _spawned_models.extend(f'{ACTOR_PREFIX}_{i}' for i in range(ACTOR_COUNT))
     _actor_runs += 1
     _actor_driver = LaunchTree('actor_driver', [
-        sys.executable, '-m', 'sim.actor_driver', '--ros-args',
+        'ros2', 'run', 'sim', 'actor_driver', '--ros-args',
         '-p', 'use_sim_time:=true', '-p', f'count:={ACTOR_COUNT}',
         '-p', f'name_prefix:={ACTOR_PREFIX}',
         # The loop's corners in drive order, so boxes clear the next leg

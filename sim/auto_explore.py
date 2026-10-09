@@ -29,8 +29,6 @@ import os
 import re
 
 from google.protobuf import text_format
-import rclpy
-from rclpy.node import Node
 
 WORLD_NAME = 'ARCC_Field_2026'
 ENTITY_NAME = 'sentry'  # robot_name arg default in sim/launch/sim.launch.py
@@ -180,55 +178,3 @@ def remove_model(name):
         'remove', 'gz.msgs.Entity', 'gz.msgs.Boolean',
         f"name: '{name}', type: MODEL",
     )
-
-
-class AutoExplore(Node):
-
-    def __init__(self):
-        super().__init__('auto_explore')
-        self.waypoints = build_grid()
-        self.index = 0
-        self.done = False
-
-        self.get_logger().info(
-            f'grid sweep: {len(self.waypoints)} waypoints, '
-            f'x=[{GRID_X_MIN},{GRID_X_MAX}] y=[{GRID_Y_MIN},{GRID_Y_MAX}] '
-            f'spacing={GRID_SPACING}m'
-        )
-        self.timer = self.create_timer(DWELL_SECONDS, self.tick)
-        self.tick()  # go to the first waypoint immediately instead of
-        # waiting one full dwell period first
-
-    def tick(self):
-        if self.done:
-            return
-        x, y = self.waypoints[self.index]
-        if teleport(x, y):
-            self.get_logger().info(
-                f'waypoint {self.index + 1}/{len(self.waypoints)}: ({x:.2f}, {y:.2f})'
-            )
-        else:
-            self.get_logger().warn(
-                f'teleport to waypoint {self.index + 1} ({x:.2f}, {y:.2f}) failed'
-            )
-        self.index += 1
-        if self.index >= len(self.waypoints):
-            self.done = True
-            self.timer.cancel()
-            self.get_logger().info('grid sweep complete')
-
-
-def main(args=None):
-    rclpy.init(args=args)
-    node = AutoExplore()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
-
-
-if __name__ == '__main__':
-    main()

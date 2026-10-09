@@ -16,7 +16,7 @@
 Pin every hard-coded copy of the head FK chain against thornbots_pkg's URDF.
 
 The root->body->head->head_pitch->camera/muzzle constants are duplicated on
-purpose across cv_head_aim_core, cv_target_emulator, sim's sentry_v2 model
+purpose across the C++ cv_head_aim_core, cv_target_emulator, sim's sentry_v2 model
 and thornbots_pkg's URDF. That is fine for the FK *algebra*; it is not fine for the
 *numbers*, which had no cross-check at all. A drifted origin leaves every
 other test green (test_cv_head_aim.cpp compares its independent FK against
@@ -24,27 +24,19 @@ constants read from that same core, so it does not pin those values to URDF)
 and surfaces only as a collapsed shot-hit rate -- which is how -0.38885
 cost a debugging cycle already, see sim/README.md's ## Notes.
 
-So: parse the URDF and assert each copy against it. The emulator is read
-with `ast` rather than imported, because it pulls in
-rclpy and ROS message packages and this suite must stay runnable on a
-bare Python 3 + pytest install. Launches nothing, so not `integration`.
+So: parse the URDF and assert each copy against it. Python helpers are read
+with `ast`; C++ constants are read from their header. Launches nothing, so
+not `integration`.
 """
 import ast
 import math
 import os
 import re
-import sys
 import xml.etree.ElementTree as ET
 
 import pytest
 
 SIM_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-sys.path.insert(0, SIM_DIR)
-
-from sim.cv_head_aim_core import (  # noqa: E402
-    HEADLINK_ORIGIN_X, HEADLINK_ORIGIN_Y, HEADLINK_ORIGIN_Z, HEADPITCH_ORIGIN,
-    MUZZLELINK_ORIGIN,
-)
 
 WORKSPACE_SRC = os.path.dirname(SIM_DIR)
 # The reference: plain URDF, the whole chain in one file. sim's model is the
@@ -53,6 +45,7 @@ URDF = os.path.join(WORKSPACE_SRC, 'thornbots_pkg', 'urdf', 'sentry.urdf.xacro')
 SIM_URDF = os.path.join(SIM_DIR, 'urdf', 'sentry_v2', 'sentry_v2.urdf')
 SIM_XACRO = os.path.join(SIM_DIR, 'urdf', 'sentry_v2.urdf.xacro')
 EMULATOR = os.path.join(SIM_DIR, 'sim', 'cv_target_emulator.py')
+CV_CORE_HEADER = os.path.join(SIM_DIR, 'include', 'sim', 'cv_head_aim_core.hpp')
 
 # thornbots_pkg's head hangs off root; sim's goes root -> fastened_2 (identity)
 # -> headlink, so the chains agree while fastened_2 stays identity.
@@ -113,6 +106,31 @@ def _module_constants(py_path, names):
     return found
 
 
+def _cv_core_constants():
+    """Read the head FK constants from the C++ core header."""
+    with open(CV_CORE_HEADER) as source:
+        text = source.read()
+    names = {
+        'HEADLINK_ORIGIN_X': 'kHeadlinkOriginX',
+        'HEADLINK_ORIGIN_Y': 'kHeadlinkOriginY',
+        'HEADLINK_ORIGIN_Z': 'kHeadlinkOriginZ',
+        'HEADPITCH_ORIGIN_X': 'kHeadpitchOriginX',
+        'HEADPITCH_ORIGIN_Y': 'kHeadpitchOriginY',
+        'HEADPITCH_ORIGIN_Z': 'kHeadpitchOriginZ',
+        'MUZZLELINK_ORIGIN_X': 'kMuzzlelinkOriginX',
+        'MUZZLELINK_ORIGIN_Y': 'kMuzzlelinkOriginY',
+        'MUZZLELINK_ORIGIN_Z': 'kMuzzlelinkOriginZ',
+    }
+    values = {}
+    for output, constant in names.items():
+        match = re.search(rf'constexpr double {constant} = ([^;]+);', text)
+        assert match, f'{CV_CORE_HEADER} no longer defines {constant}'
+        values[output] = float(match.group(1))
+    for prefix in ('HEADPITCH_ORIGIN', 'MUZZLELINK_ORIGIN'):
+        values[prefix] = tuple(values[f'{prefix}_{axis}'] for axis in 'XYZ')
+    return values
+
+
 CHAIN_CONSTANTS = (
     '_T_FASTENED_2', '_HEADLINK_ORIGIN_R', '_HEADLINK_ORIGIN_T', '_HEADLINK_AXIS',
     '_HEADPITCH_ORIGIN_R', '_HEADPITCH_ORIGIN_T', '_HEADPITCH_AXIS',
@@ -144,10 +162,11 @@ def test_head_aim_core_matches_urdf():
     # The parallax solve's lever arms. The independent C++ FK test uses
     # literal URDF values, but this test pins these copies directly too.
     joints = _joint_origins(URDF)
-    assert (HEADLINK_ORIGIN_X, HEADLINK_ORIGIN_Y, HEADLINK_ORIGIN_Z) == pytest.approx(
+    constants = _cv_core_constants()
+    assert tuple(constants[f'HEADLINK_ORIGIN_{axis}'] for axis in 'XYZ') == pytest.approx(
         joints['headlink'][0], abs=EXACT_TOL)
-    assert HEADPITCH_ORIGIN == pytest.approx(joints['headpitch'][0], abs=EXACT_TOL)
-    assert MUZZLELINK_ORIGIN == pytest.approx(joints['muzzlelink'][0], abs=EXACT_TOL)
+    assert constants['HEADPITCH_ORIGIN'] == pytest.approx(joints['headpitch'][0], abs=EXACT_TOL)
+    assert constants['MUZZLELINK_ORIGIN'] == pytest.approx(joints['muzzlelink'][0], abs=EXACT_TOL)
     for name in ('headlink', 'headpitch', 'muzzlelink'):
         assert joints[name][1] == (0.0, 0.0, 0.0), f'{name} grew a rotation'
 

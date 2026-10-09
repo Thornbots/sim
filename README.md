@@ -10,8 +10,12 @@ turns noisy detections into a target model. The split is documented in the
 are in [CV bench observations](docs/cv-bench-results-2026-09-28.md).
 
 `ament_cmake` builds the runtime C++ nodes, Gazebo components and `bench_world`.
-Python remains for launch files, pytest harnesses and tools; a few runtime nodes
-are still Python while their ports are in progress.
+All ROS runtime nodes are C++. Python remains for launch files, pytest
+harnesses and tools. `auto_explore.py` supplies shared Gazebo helpers;
+`combat.py` and `match_scenario.py` serve the E2E score harness; and
+`mcb_firmware.py`, `mcb_emulator/pty_link.py` and `mcb_emulator/protocol.py`
+support the hosted firmware and its tests. `cv_target_emulator.py` keeps only
+geometry constants used by the URDF consistency test.
 
 `/cmd_vel` remains a bare `Twist` because gz's diff-drive interface and the
 harnesses expect it; this is the workspace timestamp rule's standard-interface exception.
@@ -237,7 +241,7 @@ and rebuild.
 
 | Tier | Files | Needs |
 | --- | --- | --- |
-| unit | `cpp/test_cv_head_aim.cpp`, `cpp/test_mcb_protocol.cpp`, `cpp/test_depth_mm.cpp`, `cpp/test_panel_view.cpp` | GTest |
+| unit | `cpp/test_cv_head_aim.cpp`, `cpp/test_mcb_protocol.cpp`, `cpp/test_combat.cpp`, `cpp/test_target_odometry.cpp`, `cpp/test_depth_mm.cpp`, `cpp/test_panel_view.cpp` | GTest |
 | unit | `cv/test_urdf_constants.py`, `cv/test_estimation_metrics.py`, `test_suite_timing.py`, ament copyright/flake8/pep257 | Python + pytest |
 | integration | `localization/test_localization_drift.py` | gz-sim and a launch tree |
 | integration | `cv/test_shot_hit.py` | a launch tree, no gz |
@@ -829,8 +833,7 @@ warning when hit.
 `ros_gz_sim create -string <inline SDF>` as a subprocess, since it fires
 mid-scenario after the pre-spawn baseline. Sim teardown removes it.
 
-`start_actor_driver` runs `python3 -m sim.actor_driver` (a checkout that
-hasn't rebuilt its console scripts still has the module) and waits for its
+`start_actor_driver` runs `ros2 run sim actor_driver` and waits for its
 "all N actors spawned" log line. `_reset_sim` and `teardown_stack` stop it
 before anything else, and `_reset_sim` removes its `moving_actor_<i>` boxes.
 
@@ -912,7 +915,7 @@ ticks queued and the head crawled toward stale positions. Reader and publisher
 are now separate threads sharing the latest value, with an `Event` that drops
 values arriving mid-publish.
 
-### auto_explore.py: teleport
+### Auto explore: teleport
 
 Teleport writes the gz world pose through `/world/<world>/set_pose` via
 `gz service`; ROS has no equivalent. It works because root is a free 6DOF body
@@ -928,7 +931,7 @@ The reset afterwards clears the one-step reaction impulse root's position jump
 can put through the body joints. On the old model, root's inflated rotational
 inertia damps its own angular velocity.
 
-### actor_driver.py: moving boxes
+### actor_driver: moving boxes
 
 `actor_driver` spawns `count` boxes (0.3 x 0.3 x 0.8 m) with
 `ros_gz_sim create` and walks each back and forth along a segment
@@ -938,7 +941,7 @@ advances the box by speed times the sim time since the last tick, so a slow
 tick makes a longer jump and the actor keeps its speed.
 
 The boxes are free bodies with no collision and gravity off. gz only
-honours `set_pose` on a free body (see the `auto_explore.py` note), and a
+honours `set_pose` on a free body (see the Auto explore note), and a
 static model is welded to the world. The lidar still sees them, since
 `gpu_lidar` renders visuals. With collision, each box sat on the field's STL
 mesh and ODE ran box-on-mesh contact every 1 ms step: gz's real-time factor
@@ -988,7 +991,7 @@ It turns on drift and continuous slip, drives the same loop, scores both
 estimators against `/sim/raw_odom` (mean, RMS, max Euclidean error), and
 asserts the EKF's mean error beats raw `/odom`'s.
 
-### target_driver.py / cv_target_emulator.py
+### Target driver / CV target emulator
 
 The target doesn't exist in gz. `target_driver` integrates `(x, y, z)` on a timer
 and publishes `nav_msgs/Odometry` on `/target/ground_truth_odom`, the same
@@ -1052,7 +1055,7 @@ and bearing std `noise_lateral_rad * range` (0.003, about a pixel). Both are
 datasheet estimates; measure them on the robot. Set both to 0 for the old
 5 mm-only noise.
 
-### target_state_truth.py: the aiming bench's perfect knowledge
+### target_state_truth: the aiming bench's perfect knowledge
 
 Stands in for the whole of Part 2 on the aiming bench (`shot_hit.launch.py`).
 For each `/target/ground_truth_odom` sample it
@@ -1069,7 +1072,7 @@ on `target_driver`'s constant-acceleration stretches, one step late at each
 switch. `valid` is always true, `confidence` 1, `robot_track_id` 1, `variance`
 zero. `panel_stagger_m` follows the case's layout (`CvStack.set_target`).
 
-### point_shooter.py
+### point_shooter
 
 Our chassis on the aiming bench. A second `target_driver`, named
 `shooter_driver`, with no spin and its output remapped to
@@ -1100,7 +1103,7 @@ the MCB holds it, then through the solve below.
 `cv_head_aim_core::solve_head_angles()` inverts the FK chain from root to the
 `muzzle` frame (root -> body -> headlink(yaw) -> headpitch(pitch) ->
 muzzlelink). `test/cpp/test_cv_head_aim.cpp` checks it against a separately
-written FK, and `test_urdf_constants.py` pins the Python helper's copied constants to
+written FK, and `test_urdf_constants.py` pins the C++ core header's constants to
 `thornbots_pkg`'s URDF and checks sim's model against it.
 
 The `muzzle` frame sits on `head_pitch` at (0, 0.1128, 0): on the pitch axis,
@@ -1196,7 +1199,7 @@ python3 -m pytest test/mcb -v
 ```
 
 The native tests skip if the binary is absent; build it first to test the MCB.
-The bridge test also needs ROS. Wire-format tests remain plain Python.
+The bridge test also needs ROS. Pure wire-format behavior is covered by GTests.
 
 #### Firmware behaviour and historical results (then stage E2, now `mcb_parked`)
 

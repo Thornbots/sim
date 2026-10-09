@@ -63,7 +63,7 @@ using dji_serial_bridge::msg::RobotPose;
 using visualization_msgs::msg::Marker;
 using visualization_msgs::msg::MarkerArray;
 
-// sentry_v2's head chain, as cv_target_emulator.py and cv_head_aim_core.py
+// sentry_v2's head chain, as cv_target_emulator and cv_head_aim_core
 // carry it (test_urdf_constants.py pins those to thornbots_pkg's URDF).
 const Vector3d kHeadlinkOrigin(-0.000171242, 9.52126e-05, 0.248293);
 const Vector3d kHeadpitchOrigin(-0.00760542, -0.100122, 0.14235);
@@ -175,7 +175,7 @@ public:
     case_align_steps_ = std::max<int64_t>(
       1, std::llround(declare_parameter("case_align_s", 0.1) / physics_step_s_));
     startup_wait_s_ = declare_parameter("startup_wait_s", 60.0);  // wall, for the nodes
-    // Target path and spin (target_driver.py), read live.
+    // Target path and spin (target_driver), read live.
     for (const auto & [name, value] : std::map<std::string, double>{
         {"target_speed", 0.0}, {"spin_hz", 0.0}, {"center_x", 3.0}, {"center_y", 0.0},
         {"half_width", 2.4}, {"path_angle_deg", 0.0}, {"target_z", 0.3},

@@ -48,9 +48,8 @@ doesn't reach it; run pytest directly for the integration tier. The
 ../isaac_ros_common/scripts/dexec.sh -- bash -c 'cd src/sim && python3 -m pytest test -m integration'
 ```
 
-A new Python node needs a `scripts/<name>` wrapper (copy one) and a rebuild
-with `--cmake-force-configure` to refresh the scripts glob;
-edits to existing modules are live through the symlink install.
+Add C++ runtime nodes as CMake executables; keep Python modules only for launch,
+test harnesses and offline tools described in `README.md`.
 
 Both suites run from a launch file, so `kill_launch.sh <pid>` on the outer
 launch stops everything, per-scenario stacks included (`--show-args` lists
@@ -230,7 +229,8 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   score Part 2 on the estimation bench, never on a copy of the nodes outside ROS. The
   offline estimator (`tools/estimation_offline.py`) was removed for that:
   it left out the head slewing and its tracker defaults drifted from the
-  node's. Pure-numpy unit tests of the `*_core.py` modules stay.
+  node's. Pure-logic port tests live in `test/cpp`; Python harness modules stay
+  where suites import them.
 - **`cv_target_emulator` adds D435-like ray noise** (depth 0.0036 r^2,
   bearing 0.003 r) on top of the 5 mm. Datasheet estimates, not measured.
 - **Launch long runs with `dexec.sh -d`, not a foreground `dexec.sh`.** On

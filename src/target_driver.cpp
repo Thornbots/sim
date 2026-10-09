@@ -13,6 +13,8 @@
 #include "rclcpp/create_timer.hpp"
 #include "rclcpp/rclcpp.hpp"
 
+#include "sim/target_odometry.hpp"
+
 class TargetDriver : public rclcpp::Node {
  public:
   TargetDriver() : Node("target_driver") {
@@ -67,29 +69,10 @@ class TargetDriver : public rclcpp::Node {
   }
 
   void publish(double vs, double omega) {
-    const double angle = get_parameter("path_angle_deg").as_double() * M_PI / 180.0;
-    double dx = std::sin(angle), dy = std::cos(angle);
-    const double origin = get_parameter("origin_yaw").as_double();
-    const double c = std::cos(origin), s = std::sin(origin);
-    const double x = get_parameter("center_x").as_double() + s_ * dx;
-    const double y = get_parameter("center_y").as_double() + s_ * dy;
-    dx = c * dx - s * dy;
-    dy = s * dx + c * dy;
-    const double yaw = yaw_ + origin;
-    nav_msgs::msg::Odometry msg;
-    msg.header.stamp = get_clock()->now();
-    msg.header.frame_id = frame_id_;
-    msg.child_frame_id = "target";
-    msg.pose.pose.position.x = c * x - s * y;
-    msg.pose.pose.position.y = s * x + c * y;
-    msg.pose.pose.position.z = target_z_;
-    msg.pose.pose.orientation.z = std::sin(yaw / 2.0);
-    msg.pose.pose.orientation.w = std::cos(yaw / 2.0);
-    const double cy = std::cos(yaw), sy = std::sin(yaw);
-    msg.twist.twist.linear.x = vs * (cy * dx + sy * dy);
-    msg.twist.twist.linear.y = vs * (-sy * dx + cy * dy);
-    msg.twist.twist.angular.z = omega;
-    pub_->publish(msg);
+    pub_->publish(sim::make_target_odometry(
+      get_clock()->now(), frame_id_, get_parameter("center_x").as_double(),
+      get_parameter("center_y").as_double(), get_parameter("path_angle_deg").as_double(),
+      get_parameter("origin_yaw").as_double(), target_z_, s_, yaw_, vs, omega));
   }
 
   double target_speed_{2.0}, spin_hz_{1.5}, target_z_{0.3};
