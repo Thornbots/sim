@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.8)
 project(sim)
 
-# C++ for the lockstep bench world, Python for everything else, one package.
+# C++ runtime nodes and bench world; Python remains for launch and test harnesses.
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -18,6 +18,7 @@ find_package(nav_msgs REQUIRED)
 find_package(rosgraph_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(rclcpp_components REQUIRED)
@@ -40,6 +41,17 @@ ament_target_dependencies(bench_world
   rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs
   visualization_msgs)
 install(TARGETS bench_world DESTINATION lib/${PROJECT_NAME})
+
+foreach(node target_driver point_shooter)
+  add_executable(${node} src/${node}.cpp)
+  target_compile_features(${node} PUBLIC cxx_std_17)
+  if("${node}" STREQUAL "target_driver")
+    ament_target_dependencies(${node} rclcpp nav_msgs)
+  else()
+    ament_target_dependencies(${node} dji_serial_bridge geometry_msgs nav_msgs rclcpp tf2_ros)
+  endif()
+  install(TARGETS ${node} DESTINATION lib/${PROJECT_NAME})
+endforeach()
 
 # A component, so it can share the camera's container with roi_depth_node.
 add_library(depth_camera_emulator SHARED src/depth_camera_emulator.cpp)
@@ -75,6 +87,9 @@ install(TARGETS opponent_mover LIBRARY DESTINATION lib)
 
 ament_python_install_package(${PROJECT_NAME})
 file(GLOB PYTHON_NODES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/*)
+list(REMOVE_ITEM PYTHON_NODES
+  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/target_driver
+  ${CMAKE_CURRENT_SOURCE_DIR}/scripts/point_shooter)
 install(PROGRAMS ${PYTHON_NODES} DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY launch urdf meshes world rviz DESTINATION share/${PROJECT_NAME})
