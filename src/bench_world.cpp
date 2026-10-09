@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // The estimation bench's world in one loop, no gz: /clock, the phantom target,
-// our chassis and head, /dji_serial_bridge/pose, the head controller (cv_head_aim.py) and the
+// our chassis and head, /dji_serial_bridge/pose, the head controller and the
 // detections (cv_target_emulator.py). rate 0 is lockstep: /clock holds at 0
 // until the nodes under test are up, detections go out once the tracker's
 // clock reads the last tick, the tracker echoes each before /clock moves on,
@@ -208,7 +208,7 @@ public:
     range_far_ = declare_parameter("range_far", 10.0);
     view_half_angle_ = declare_parameter("panel_view_half_angle", 75.0 * M_PI / 180.0);
     class_id_ = declare_parameter("class_id", 2);
-    // Head controller (cv_head_aim.py): rate-limited steps toward the aim.
+    // Head controller: rate-limited steps toward the aim.
     head_rate_hz_ = declare_parameter("head_control_rate_hz", 30.0);
     head_gain_ = declare_parameter("head_gain", 1.0);
     max_yaw_rate_ = declare_parameter("max_yaw_rate", 10.0);

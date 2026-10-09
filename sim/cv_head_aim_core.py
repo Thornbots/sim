@@ -13,9 +13,9 @@
 # limitations under the License.
 
 """
-cv_head_aim_core.py -- pure head-IK math for cv_head_aim.py, no rclpy import.
+cv_head_aim_core.py -- Python mirror of the C++ head-IK math, no rclpy import.
 
-Unit-tested standalone in test/cv/test_cv_head_aim.py. see README.md for
+Ported to the C++ core and checked by the cv_head_aim GTest. see README.md for
 design rationale
 """
 import math

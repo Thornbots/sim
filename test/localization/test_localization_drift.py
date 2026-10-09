@@ -15,7 +15,7 @@
 """
 Integration suite for sentry_localization's map-relative drift/jerk correction.
 
-Scored against sim's synthetic odom noise model (sim/pose_emulator.py). One
+Scored against sim's synthetic odom noise model (the pose emulator node). One
 test per scenario, in suite order; the stack lifecycle and the scenarios
 themselves live in drift_harness.py.
 

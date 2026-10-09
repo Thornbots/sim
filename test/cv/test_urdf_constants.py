@@ -19,8 +19,8 @@ The root->body->head->head_pitch->camera/muzzle constants are duplicated on
 purpose across cv_head_aim_core, cv_target_emulator, sim's sentry_v2 model
 and thornbots_pkg's URDF. That is fine for the FK *algebra*; it is not fine for the
 *numbers*, which had no cross-check at all. A drifted origin leaves every
-other test green (test_cv_head_aim.py imports its constants from the
-module it is testing, so both sides of its round-trip move together)
+other test green (test_cv_head_aim.cpp compares its independent FK against
+constants read from that same core, so it does not pin those values to URDF)
 and surfaces only as a collapsed shot-hit rate -- which is how -0.38885
 cost a debugging cycle already, see sim/README.md's ## Notes.
 
@@ -141,9 +141,8 @@ def _assert_chain_matches_urdf(py_path, end_link):
 
 
 def test_head_aim_core_matches_urdf():
-    # The parallax solve's lever arms. test_cv_head_aim.py's round-trip
-    # imports these from the module under test, so only the URDF can catch
-    # drift here.
+    # The parallax solve's lever arms. The independent C++ FK test uses
+    # literal URDF values, but this test pins these copies directly too.
     joints = _joint_origins(URDF)
     assert (HEADLINK_ORIGIN_X, HEADLINK_ORIGIN_Y, HEADLINK_ORIGIN_Z) == pytest.approx(
         joints['headlink'][0], abs=EXACT_TOL)

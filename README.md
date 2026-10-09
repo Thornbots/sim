@@ -9,9 +9,9 @@ turns noisy detections into a target model. The split is documented in the
 [CV interface](../thornbots_pkg/README.md#cv-interface); historical results
 are in [CV bench observations](docs/cv-bench-results-2026-09-28.md).
 
-The package is C++ and Python in one: `ament_cmake` builds `src/`'s
-`bench_world`, and `ament_cmake_python` installs the `sim` module, with one
-`scripts/` wrapper per Python node.
+`ament_cmake` builds the runtime C++ nodes, Gazebo components and `bench_world`.
+Python remains for launch files, pytest harnesses and tools; a few runtime nodes
+are still Python while their ports are in progress.
 
 `/cmd_vel` remains a bare `Twist` because gz's diff-drive interface and the
 harnesses expect it; this is the workspace timestamp rule's standard-interface exception.
@@ -233,11 +233,12 @@ and rebuild.
 
 ## More on the tests
 
-Everything under `test/` is pytest, and `colcon test` collects it.
+`colcon test` collects the Python unit and integration suites plus the C++ GTests.
 
 | Tier | Files | Needs |
 | --- | --- | --- |
-| unit | `cv/test_cv_head_aim.py`, `cv/test_urdf_constants.py`, `cv/test_estimation_metrics.py`, `test_suite_timing.py`, ament copyright/flake8/pep257 | Python + pytest |
+| unit | `cpp/test_cv_head_aim.cpp`, `cpp/test_mcb_protocol.cpp`, `cpp/test_depth_mm.cpp`, `cpp/test_panel_view.cpp` | GTest |
+| unit | `cv/test_urdf_constants.py`, `cv/test_estimation_metrics.py`, `test_suite_timing.py`, ament copyright/flake8/pep257 | Python + pytest |
 | integration | `localization/test_localization_drift.py` | gz-sim and a launch tree |
 | integration | `cv/test_shot_hit.py` | a launch tree, no gz |
 | integration | `cv/test_estimation.py` | a launch tree, no gz |
@@ -350,7 +351,7 @@ Hz arrived (2026-09-29). Depth costs sim speed: the Mac's bare
 `sim.launch.py` runs at RTF 2.66 without it and 1.1 with it (llvmpipe).
 
 These add synthetic wheel-odometry error. All are off by default; the
-`pose_emulator.py` note explains each one:
+The pose emulator's odometry noise note explains each one:
 
 ```bash
 odom_noise_enabled:=true    # master switch for drift + jitter
@@ -578,7 +579,7 @@ only the URDF text should change, keep the committed meshes
 (`git checkout -- urdf/sentry_v2/meshes`).
 
 `sentry_v2.urdf.xacro` wraps the generated URDF for gz: colours, the lidar and
-camera sensors, the plugins, and a `muzzle` frame (see the `cv_head_aim.py`
+camera sensors, the plugins, and a `muzzle` frame (see the CV head aim node
 note). `thornbots_pkg`'s `sentry.urdf.xacro` carries the same frames and
 meshes, and `test_urdf_constants.py` checks the two agree.
 
@@ -633,7 +634,7 @@ at the scan plane, and still needs checking against a real `/scan_raw` (see
 ### test_localization_drift.py
 
 Integration suite for `sentry_localization`'s drift and jerk correction
-against `pose_emulator.py`'s noise model. It mirrors `auto.launch.py`'s two
+against the pose emulator's noise model. It mirrors `auto.launch.py`'s two
 axes: `--backend slam/mapping/amcl/none` (who owns `map->odom`) and `--use-rf2o` /
 `--no-use-rf2o` (whether `odom->root` is EKF-fused; on by default, matching
 `auto.launch.py`). For each scenario it resets the shared sim, launches the
@@ -864,7 +865,7 @@ CPU contention from a stray rviz2 or other sessions slows scan processing to
 about 2 registrations in a ~35s run, so the post-drive `get_correction_tf()`
 uses a 5s timeout.
 
-### pose_emulator.py: odom noise model
+### Pose emulator: odom noise model
 
 It sends what the MCB sends: `head_yaw` in the world (gz's joint is relative
 to the chassis), velocity in the world (gz's twist is in the chassis frame),
@@ -895,7 +896,7 @@ corrects `map->odom`, and that correction is what the jerk tests. Fire one by
 hand with
 `ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger`.
 
-### head_slider_relay.py
+### Head slider relay
 
 The gz GUI slider always publishes to `/model/<model>/joint/<joint>/<axis>/cmd_pos`.
 ROS can't bridge that name (`parameter_bridge` raises `InvalidTopicNameError`
@@ -1081,12 +1082,12 @@ shooter's gimbal is perfect, so a spin changes nothing it scores. The
 estimation bench's `chassis_spin:=` is where spin is tested. The harness flies each shot from `root`'s interpolated position at
 exit with `root`'s velocity added, as a real projectile would carry it.
 
-### sim_clock.py
+### Sim clock
 
 `/clock` for stacks with no gz: `rate` sim seconds per wall second, stepped
 by measured wall time at 1 kHz.
 
-### cv_head_aim.py
+### CV head aim
 
 Subscribes `/cv/target` (from `thornbots_pkg`'s `point_to_cv_target`, so run
 `auto.launch.py` alongside `sim.launch.py spawn_target:=true`) and
@@ -1096,10 +1097,10 @@ aiming bench has its own perfect gimbal. `CVTarget.x/y/z` is an `odom`
 position; each tick it goes into root at the newest `odom->root`, the way
 the MCB holds it, then through the solve below.
 
-`cv_head_aim_core.solve_head_angles()` inverts the FK chain from root to the
+`cv_head_aim_core::solve_head_angles()` inverts the FK chain from root to the
 `muzzle` frame (root -> body -> headlink(yaw) -> headpitch(pitch) ->
-muzzlelink). `test/cv/test_cv_head_aim.py` checks it against a separately
-written FK, and `test_urdf_constants.py` pins the duplicated constants to
+muzzlelink). `test/cpp/test_cv_head_aim.cpp` checks it against a separately
+written FK, and `test_urdf_constants.py` pins the Python helper's copied constants to
 `thornbots_pkg`'s URDF and checks sim's model against it.
 
 The `muzzle` frame sits on `head_pitch` at (0, 0.1128, 0): on the pitch axis,

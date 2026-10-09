@@ -416,7 +416,7 @@ class LocalizationTestHelper(Node):
 
         The pin is permanent from then on, vel_x/vel_y included: it
         models a dead wheel encoder, not a recoverable glitch.
-        One-shot, no undo -- see pose_emulator.py's
+        One-shot, no undo -- see the pose emulator's
         _trigger_odom_stuck_srv.
         """
         client = self.create_client(

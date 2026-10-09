@@ -36,7 +36,7 @@ Pass `--build-only` to stop after building. The native tests under `test/mcb`
 need `MCB_FIRMWARE_BINARY` if the executable is outside the normal firmware
 build path. They run without gz; the Gazebo smoke run still needs approval.
 
-Everything under `test/` is pytest, collected by `colcon test`. The suites
+`colcon test` collects both C++ GTests and pytest suites. The suites
 that launch `sim` + `thornbots_pkg` end to end carry the `integration` marker and
 are deselected by `setup.cfg`, so a plain `colcon test --packages-select sim`
 runs the unit tests only. `sim` is `ament_cmake` now, so `--pytest-args`
@@ -81,8 +81,8 @@ there is no `ekf` backend. It is on by default, matching `auto.launch.py`;
 `test/localization/` is `test_localization_drift.py` (one test per scenario) and
 `test_ekf_ground_truth.py`, both over `drift_harness.py`/`ekf_diag_harness.py`.
 `test/cv/` is `test_shot_hit.py` (integration, one test per layout/speed case,
-over `shot_hit_harness.py`) and `test_cv_head_aim.py` (plain pytest, no stack
-needed). Pass `-s` when running pytest directly, or the measured numbers these
+over `shot_hit_harness.py`). CV head aim math is covered by
+`test/cpp/test_cv_head_aim.cpp`. Pass `-s` when running pytest directly, or the measured numbers these
 suites print get captured.
 
 Every integration run ends with a `suite timing` table (`sim/suite_timing.py`):
@@ -145,7 +145,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
 
 ## Scope
 
-- Owns the world, the sim URDF, `pose_emulator.py`'s noise model, and the
+- Owns the world, the sim URDF, the pose emulator's noise model, and the
   localization test suite.
 - Localization backends belong to `../sentry_localization`; hardware interface
   and CV target selection to `../thornbots_pkg`.
@@ -218,7 +218,7 @@ matches `dexec.sh`'s own bash wrapper. Clean up anything _you_ started, in a
   `cv_target_emulator`, `cv_head_aim` and `pose_emulator`**, which the gz
   sim and the aiming bench still use. A change to one of those that should
   reach the estimation bench has to be made in `src/bench_world.cpp` too.
-- **`/cv/target` is an `odom` point since 2026-09-27.** `cv_head_aim.py`,
+- **`/cv/target` is an `odom` point since 2026-09-27.** `cv_head_aim`,
   `bench_world.cpp` and `shot_hit_harness.py` aim from our current pose, as
   the MCB should; see [shared aim frame](../ros2_dji_serial_bridge/README.md#shared-aim-frame).
 - **The head controller holds the head when there's no target**, so a case can

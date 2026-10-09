@@ -18,6 +18,7 @@ find_package(nav_msgs REQUIRED)
 find_package(rosgraph_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
@@ -43,6 +44,19 @@ ament_target_dependencies(bench_world
   visualization_msgs)
 install(TARGETS bench_world DESTINATION lib/${PROJECT_NAME})
 
+add_library(cv_head_aim_core src/cv_head_aim_core.cpp)
+target_compile_features(cv_head_aim_core PUBLIC cxx_std_17)
+target_include_directories(cv_head_aim_core PUBLIC include)
+target_link_libraries(cv_head_aim_core Eigen3::Eigen)
+install(TARGETS cv_head_aim_core
+  ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+
+add_library(mcb_protocol src/mcb_protocol.cpp)
+target_compile_features(mcb_protocol PUBLIC cxx_std_17)
+target_include_directories(mcb_protocol PUBLIC include)
+install(TARGETS mcb_protocol
+  ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+
 foreach(node target_driver point_shooter target_state_truth target_state_markers head_slider_relay sim_clock)
   add_executable(${node} src/${node}.cpp)
   target_compile_features(${node} PUBLIC cxx_std_17)
@@ -61,6 +75,26 @@ foreach(node target_driver point_shooter target_state_truth target_state_markers
   endif()
   install(TARGETS ${node} DESTINATION lib/${PROJECT_NAME})
 endforeach()
+
+add_executable(cv_head_aim src/cv_head_aim.cpp)
+target_compile_features(cv_head_aim PUBLIC cxx_std_17)
+target_include_directories(cv_head_aim PRIVATE include)
+target_link_libraries(cv_head_aim cv_head_aim_core)
+ament_target_dependencies(cv_head_aim
+  dji_serial_bridge geometry_msgs nav_msgs rclcpp sensor_msgs std_msgs tf2_ros)
+install(TARGETS cv_head_aim DESTINATION lib/${PROJECT_NAME})
+
+add_executable(wasd_teleop src/wasd_teleop.cpp)
+target_compile_features(wasd_teleop PUBLIC cxx_std_17)
+ament_target_dependencies(wasd_teleop geometry_msgs rclcpp)
+install(TARGETS wasd_teleop DESTINATION lib/${PROJECT_NAME})
+
+add_executable(pose_emulator src/pose_emulator.cpp)
+target_compile_features(pose_emulator PUBLIC cxx_std_17)
+target_link_libraries(pose_emulator gz-transport::core gz-msgs::core)
+ament_target_dependencies(pose_emulator
+  dji_serial_bridge nav_msgs rclcpp sensor_msgs std_srvs)
+install(TARGETS pose_emulator DESTINATION lib/${PROJECT_NAME})
 
 # A component, so it can share the camera's container with roi_depth_node.
 add_library(depth_camera_emulator SHARED src/depth_camera_emulator.cpp)
@@ -119,6 +153,11 @@ if(BUILD_TESTING)
   ament_add_gtest(test_panel_view test/cpp/test_panel_view.cpp)
   target_include_directories(test_panel_view PRIVATE include)
   target_link_libraries(test_panel_view Eigen3::Eigen)
+  ament_add_gtest(test_cv_head_aim test/cpp/test_cv_head_aim.cpp)
+  target_include_directories(test_cv_head_aim PRIVATE include)
+  target_link_libraries(test_cv_head_aim cv_head_aim_core Eigen3::Eigen)
+  ament_add_gtest(test_mcb_protocol test/cpp/test_mcb_protocol.cpp)
+  target_link_libraries(test_mcb_protocol mcb_protocol)
   ament_add_pytest_test(sim_pytest test TIMEOUT 600
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENV "PYTEST_ADDOPTS=-p no:anyio")

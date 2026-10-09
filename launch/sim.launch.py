@@ -131,7 +131,7 @@ def generate_launch_description():
                     "the machine can, empty keeps the world file's value"
     )
 
-    # --- Optional synthetic wheel-odometry drift injection (pose_emulator.py).
+    # --- Optional synthetic wheel-odometry drift injection (pose emulator).
     # Off by default -- sim's /dji_serial_bridge/pose stays exact ground truth unless explicitly
     # opted into, so this never changes existing behavior by accident. Turn
     # it on to exercise/demonstrate slam_toolbox's map->odom correction, which
@@ -159,7 +159,7 @@ def generate_launch_description():
         'odom_jerk_stddev', default_value='0.2',
         description='Stddev (m) of the one-time impulse applied when a jerk is triggered'
     )
-    # Optional direction bias for the jerk above (see pose_emulator.py's
+    # Optional direction bias for the jerk above (see pose emulator's
     # declare_parameter comment) -- pulls the jerk toward
     # (odom_jerk_bias_x, odom_jerk_bias_y) instead of firing in a
     # uniformly random direction, for test loops whose corners sit close
@@ -178,7 +178,7 @@ def generate_launch_description():
         'odom_jerk_bias_y', default_value='0.0',
         description='Y target (m) the jerk direction is biased toward, when enabled'
     )
-    # Continuous wheel slip -- see pose_emulator.py's declare_parameter
+    # Continuous wheel slip -- see pose emulator's declare_parameter
     # comment for the full model (a FRACTION of every meter driven lost
     # from reported odometry, not a fixed amount lost per unit time like
     # drift above). 0.0 default: reported motion exactly tracks true
@@ -432,7 +432,7 @@ def generate_launch_description():
 
     # --- Bridges gz sim GUI's slider panel (fixed gz-transport topic
     # naming, not GUI-configurable) into headlink/headpitch's actual
-    # command topics -- see sim/head_slider_relay.py and README.md.
+    # command topics -- see the head slider relay node and README.md.
     # Not a ROS node (no rclpy), so no use_sim_time param.
     head_slider_relay = Node(
         package='sim',
@@ -634,7 +634,7 @@ def generate_launch_description():
     )
 
     # --- Turns thornbots_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd
-    # so the head actually tracks CV detections (see sim/cv_head_aim.py).
+    # so the head actually tracks CV detections (see the CV head aim node).
     # Needs thornbots_pkg's auto.launch.py running alongside this (for
     # point_to_cv_target -> /cv/target) -- same spawn_target gate as
     # cv_target_emulator above, since aiming only makes sense once a
