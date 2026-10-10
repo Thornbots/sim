@@ -113,6 +113,7 @@ public:
         create_publisher<std_msgs::msg::Float64>("/head_pitch_cmd", 10);
     cmd_vel_pub_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
     shot_pub_ = create_publisher<std_msgs::msg::Header>("~/shot", 10);
+    tick_pub_ = create_publisher<std_msgs::msg::Header>("~/tick", 100);
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "/sim/raw_odom", 10,
         [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
@@ -139,7 +140,14 @@ public:
 
 private:
   void tick() {
-    const int64_t now_ms = get_clock()->now().nanoseconds() / 1000000;
+    const auto stamp = get_clock()->now();
+    step(stamp.nanoseconds() / 1000000);
+    std_msgs::msg::Header ack;
+    ack.stamp = stamp;
+    tick_pub_->publish(ack);
+  }
+
+  void step(int64_t now_ms) {
     if (!hw_.ready) {
       last_ms_ = now_ms;
       return;
@@ -184,7 +192,7 @@ private:
       params_callback_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pan_pub_, pitch_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_pub_;
-  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr shot_pub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr shot_pub_, tick_pub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joints_sub_;
   rclcpp::TimerBase::SharedPtr tick_timer_, stats_timer_;

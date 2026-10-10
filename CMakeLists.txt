@@ -252,6 +252,26 @@ target_link_libraries(opponent_mover
   gz-sim::core gz-plugin::register gz-transport::core gz-msgs::core)
 install(TARGETS opponent_mover LIBRARY DESTINATION lib)
 
+add_library(lockstep_gate SHARED src/lockstep_gate.cpp)
+target_compile_features(lockstep_gate PUBLIC cxx_std_17)
+target_link_libraries(lockstep_gate
+  gz-sim::core gz-plugin::register gz-transport::core gz-msgs::core)
+install(TARGETS lockstep_gate LIBRARY DESTINATION lib)
+add_executable(lockstep_coordinator src/lockstep_coordinator.cpp)
+target_compile_features(lockstep_coordinator PUBLIC cxx_std_17)
+target_link_libraries(lockstep_coordinator gz-transport::core gz-msgs::core)
+ament_target_dependencies(lockstep_coordinator rclcpp diagnostic_msgs std_msgs)
+install(TARGETS lockstep_coordinator DESTINATION lib/${PROJECT_NAME})
+
+# On-demand transport/physics checks; registered colcon tests launch no gz.
+add_executable(lockstep_suite test/lockstep/lockstep_suite.cpp)
+target_compile_features(lockstep_suite PUBLIC cxx_std_17)
+target_include_directories(lockstep_suite PRIVATE include)
+target_compile_definitions(lockstep_suite PRIVATE SIM_LOCKSTEP_GATE="$<TARGET_FILE:lockstep_gate>")
+target_link_libraries(lockstep_suite suite_support GTest::gtest gz-transport::core gz-msgs::core)
+ament_target_dependencies(lockstep_suite rclcpp diagnostic_msgs std_msgs)
+install(TARGETS lockstep_suite DESTINATION lib/${PROJECT_NAME})
+
 ament_python_install_package(${PROJECT_NAME})
 
 install(DIRECTORY launch urdf meshes world rviz foxglove DESTINATION share/${PROJECT_NAME})

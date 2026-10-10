@@ -40,7 +40,7 @@ from launch.actions import (
     TimerAction,
 )
 from launch.conditions import IfCondition
-from launch.event_handlers import OnProcessExit, OnProcessStart
+from launch.event_handlers import OnProcessExit, OnProcessStart, OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     Command, LaunchConfiguration, PathJoinSubstitution)
@@ -56,21 +56,34 @@ RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
 
 
 def _world_with_rtf(context):
-    """Point `world` at a /tmp copy with real_time_factor:= applied; empty keeps the file's."""
+    """Copy the world with the requested speed cap and optional MCB lockstep gate."""
     rtf = context.launch_configurations['real_time_factor']
-    if not rtf:
+    lockstep = context.launch_configurations['lockstep'].lower() in ('true', '1', 'yes')
+    if not rtf and not lockstep:
         return []
-    rtf = str(float(rtf))  # reject a typo before gz sees it
     world = context.launch_configurations['world']
     with open(world) as f:
         sdf = f.read()
-    if not RTF_TAG.search(sdf):
-        raise RuntimeError('real_time_factor:= needs a <real_time_factor> tag in the world')
-    stem = os.path.splitext(os.path.basename(world))[0]
-    path = os.path.join(tempfile.gettempdir(), f'{stem}_rtf{rtf}.sdf')
-    with open(path, 'w') as f:
-        f.write(RTF_TAG.sub(f'<real_time_factor>{rtf}</real_time_factor>', sdf))
-    return [SetLaunchConfiguration('world', path)]
+    if rtf:
+        rtf = str(float(rtf))  # reject a typo before gz sees it
+        if not RTF_TAG.search(sdf):
+            raise RuntimeError('real_time_factor:= needs a <real_time_factor> tag in the world')
+        sdf = RTF_TAG.sub(f'<real_time_factor>{rtf}</real_time_factor>', sdf)
+    if lockstep:
+        sdf = sdf.replace('</world>',
+                          '<plugin filename="lockstep_gate" name="sim::LockstepGate">'
+                          '<max_wait_s>5.0</max_wait_s></plugin></world>', 1)
+    with tempfile.NamedTemporaryFile(mode='w', prefix='sim_world_', suffix='.sdf',
+                                     delete=False) as f:
+        path = f.name
+        f.write(sdf)
+
+    def remove_world(event, context):
+        os.unlink(path)
+        return []
+
+    return [SetLaunchConfiguration('world', path),
+            RegisterEventHandler(OnShutdown(on_shutdown=remove_world))]
 
 
 def generate_launch_description():
@@ -83,6 +96,9 @@ def generate_launch_description():
         'world', default_value=default_world,
         description='Full path to the .sdf world file to load'
     )
+    lockstep_arg = DeclareLaunchArgument(
+        'lockstep', default_value='false',
+        description='load the MCB lockstep gate; e2e.launch.py supplies its coordinator')
     model_arg = DeclareLaunchArgument(
         'model', default_value='sentry_v2', choices=['sentry_v2', 'sentry'],
         description='gz robot model: sentry_v2 (the new CAD, driven with contact) '
@@ -670,6 +686,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         world_arg,
+        lockstep_arg,
         model_arg,
         robot_name_arg,
         x_arg,

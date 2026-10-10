@@ -1153,6 +1153,32 @@ head follows each.
 
 ### MCB emulator
 
+`e2e.launch.py` defaults to `lockstep:=true`. The gz `LockstepGate` holds
+in `PostUpdate` at each 5 ms MCB batch deadline. The native MCB node publishes
+`/mcb_emulator/tick` after stepping and issuing commands, or after a batch
+with hardware not ready. `lockstep_coordinator` waits for that stamped
+`std_msgs/Header` before releasing the next deadline. Its schedule is anchored
+at sim zero, when the MCB's ROS timer is constructed; delayed acknowledgment
+arrival never sets the phase. Startup runs free until the first acknowledgment.
+
+`/sim/lockstep/status` reports holds, per-chain wall wait and timeout counts.
+The harness requires fresh status, at least one hold, and zero timeouts;
+the native log checker also rejects gate/coordinator timeout messages.
+`lockstep:=false` retains the ungated control run.
+
+This gates MCB batches, not the complete hit path: commands still cross the
+ROS/gz bridge asynchronously, UART is not modeled in sim time, and the other
+CV/localization chains and wall-time bring-up remain asynchronous. It does not
+establish identical shot sequences or finish workspace T17.
+
+The on-demand transport test runs a small gz world in its own process group
+and checks the held clock, zero timer phase after a late first acknowledgment,
+and missing-consumer timeout diagnostics:
+
+```sh
+ros2 run sim lockstep_suite
+```
+
 The emulator compiles and runs the checked-out `firmware/MCBV3` C++ sources.
 The Python control port has been removed. `include/sim/mcb_firmware.hpp` transports hardware
 readings to `MCB-project/src/hosted/main.cpp`, which instantiates the actual

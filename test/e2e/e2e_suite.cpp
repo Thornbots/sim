@@ -48,6 +48,8 @@ public:
         nodes.push_back("opponent_driver_opponent_1");
         nodes.push_back("opponent_driver_ally_0");
       }
+      if (cb::options.lockstep)
+        nodes.push_back("lockstep_coordinator");
       if (!cb::options.external)
         launch = std::make_unique<sim::LaunchTree>(
             std::vector<std::string>{
@@ -56,6 +58,7 @@ public:
                     std::string(cb::options.headless ? "true" : "false"),
                 "stage:=" + cb::options.stage, "target_speed:=0.0",
                 "target_spin_hz:=0.0", "real_time_factor:=" + cb::options.rtf,
+                "lockstep:=" + std::string(cb::options.lockstep ? "true" : "false"),
                 "firmware_fixes:=" + std::string(cb::options.no_firmware_fixes
                                                      ? "false"
                                                      : "true")},
@@ -206,6 +209,7 @@ TEST_P(E2ESuite, MCB) {
     s->spin_for(duration + .5);
     s->scoring = false;
     s->check_nodes(environment->nodes);
+    s->check_lockstep();
     for (const auto &e :
          std::vector<std::pair<std::string, std::vector<cb::Json>>>{
              {"states.jsonl", s->states}, {"poses.jsonl", s->route_records}})
@@ -236,6 +240,7 @@ TEST_P(E2ESuite, MCB) {
   s->spin_for(duration + .5 + .05 + .1);
   s->scoring = false;
   s->check_nodes(environment->nodes);
+  s->check_lockstep();
   cb::truncate(cb::options.log_dir + "/route.jsonl");
   for (const auto &r : s->route_records)
     cb::append_json(cb::options.log_dir + "/route.jsonl", r);
