@@ -31,7 +31,7 @@ struct Options {
   std::optional<double> spin;
   bool headless = false, external = false, skip_stationary = false,
        only_stationary = false, blackout = false, no_firmware_fixes = false,
-       fail_fast = false;
+       fail_fast = false, lockstep = true;
 };
 inline Options options;
 inline std::vector<std::string> split(const std::string &s) {
@@ -64,6 +64,8 @@ inline void parse_options(int &argc, char **argv) {
       options.blackout = true;
     else if (arg == "--no-firmware-fixes")
       options.no_firmware_fixes = true;
+    else if (arg == "--no-lockstep")
+      options.lockstep = false;
     else if (arg == "--shot-speeds" || arg == "--e2e-speeds") {
       options.speeds.clear();
       for (const auto &s : split(value()))

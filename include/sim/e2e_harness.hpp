@@ -19,6 +19,7 @@
 #include "sim/match_scenario.hpp"
 #include "sim/suite_node.hpp"
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <dji_serial_bridge/msg/cv_target.hpp>
 #include <dji_serial_bridge/msg/ref_sys_status.hpp>
 #include <dji_serial_bridge/msg/robot_pose.hpp>
@@ -59,6 +60,7 @@ public:
   explicit Scorer(const std::string &stage, const std::string &logpath);
   void reset();
   void spin_for(double seconds) override;
+  void check_lockstep();
   std::string stage, log_path;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
   std::map<std::string, std::vector<Json>> shots;
@@ -83,6 +85,7 @@ private:
   std::unique_ptr<combat::ShotResolver> resolver_;
   std::map<std::pair<std::string, double>, int> flight_steps_;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions_;
+  std::map<std::string, std::string> lockstep_status_;
   rclcpp::TimerBase::SharedPtr fire_timer_, pose_timer_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr referee_client_;
   std::optional<

@@ -21,6 +21,25 @@
 #include <iomanip>
 #include <tinyxml2.h>
 namespace sim::e2e {
+void Scorer::check_lockstep() {
+  if (!cv_bench::options.lockstep)
+    return;
+  const double end = now_s();
+  if (!wait_until([&] {
+        return lockstep_status_.count("sim_s") &&
+               std::stod(lockstep_status_.at("sim_s")) >= end;
+      }, 5, "fresh lockstep status"))
+    throw std::runtime_error("lockstep: missing or stale coordinator status");
+  const auto &s = lockstep_status_;
+  if (std::stoll(s.at("holds")) == 0)
+    throw std::runtime_error("lockstep: coordinator never held physics");
+  std::cout << "lockstep: " << s.at("holds") << " holds over " << s.at("sim_s")
+            << " sim s, " << s.at("timeouts") << " lockstep timeouts; gz wait "
+            << s.at("gz_step_wait_s") << " s, MCB wait "
+            << s.at("chain.mcb_batch.wait_s") << " s" << std::endl;
+  if (std::stoll(s.at("timeouts")))
+    throw std::runtime_error(s.at("timeouts") + " lockstep timeouts: invalid run");
+}
 namespace cb = cv_bench;
 template <class Q, class P> Matrix iso(const Q &q, const P &p) {
   return combat::pose_matrix({p.x, p.y, p.z},
@@ -118,6 +137,12 @@ Offsets urdf_offsets() {
 Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     : SimTimeNode("e2e_scorer"), stage(stage_), log_path(logpath),
       tf(get_clock()), offsets_(urdf_offsets()), listener_(tf, this, false) {
+  subscribe<diagnostic_msgs::msg::DiagnosticStatus>(
+      "/sim/lockstep/status", rclcpp::QoS(1).reliable().transient_local(),
+      [this](const auto &m) {
+        for (const auto &value : m.values)
+          lockstep_status_[value.key] = value.value;
+      });
   for (const auto &name :
        stage == "mcb_match"
            ? std::vector<std::string>{"sentry", "opponent_0", "opponent_1",

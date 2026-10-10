@@ -37,6 +37,7 @@ from launch.actions import (
     RegisterEventHandler,
     TimerAction,
 )
+from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
@@ -65,7 +66,8 @@ def _sim(context):
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
         launch_arguments={'gui': gui, 'rviz': gui, 'foxglove': config['foxglove'],
                           'camera': 'false', 'pose_emulator': 'false',
-                          'real_time_factor': config['real_time_factor'], **spawn}.items())]
+                          'real_time_factor': config['real_time_factor'],
+                          'lockstep': config['lockstep'], **spawn}.items())]
 
 
 def _is_true(context, name):
@@ -84,6 +86,8 @@ def _tests(context):
         cmd.append('--headless')
     if not _is_true(context, 'firmware_fixes'):
         cmd.append('--no-firmware-fixes')
+    if not _is_true(context, 'lockstep'):
+        cmd.append('--no-lockstep')
     cmd += config['pytest_args'].split()
     tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen')
     done = RegisterEventHandler(OnProcessExit(
@@ -173,6 +177,11 @@ def generate_launch_description():
     # The bridge opens the pty once, so it starts after the emulator makes it.
     common = [path_bridge, opponent_driver, mcb_emulator,
               TimerAction(period=2.0, actions=[bridge, mcb_relay])]
+    coordinator = Node(
+        package='sim', executable='lockstep_coordinator', output='screen',
+        parameters=[{'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
+                     'mcb_batch.phase_s': 0.0, 'mcb_batch.acks': ['/mcb_emulator/tick']}],
+        condition=IfCondition(LaunchConfiguration('lockstep')))
 
     def stack(context):
         stage = context.launch_configurations['stage']
@@ -194,7 +203,7 @@ def generate_launch_description():
                     arguments=[f'/model/{name}/path@nav_msgs/msg/Odometry]gz.msgs.Odometry'],
                     remappings=[(f'/model/{name}/path', topic)],
                     parameters=[{'use_sim_time': True}])]
-        return ([detector(opponents)] + extras + common
+        return ([coordinator, detector(opponents)] + extras + common
                 + ([match_driver] if stage in DRIVING else [target_driver])
                 + [TimerAction(period=ROBOT_DELAY_S, actions=[robot])])
 
@@ -226,6 +235,8 @@ def generate_launch_description():
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('real_time_factor', default_value='0',
                               description='sim speed cap; 0 = as fast as it runs'),
+        DeclareLaunchArgument('lockstep', default_value='true',
+                              description='hold gz at MCB batch deadlines until its tick arrives'),
         DeclareLaunchArgument('target_speed', default_value='2.0',
                               description="the opponent's speed along its path, m/s"),
         DeclareLaunchArgument('target_spin_hz', default_value='1.5',

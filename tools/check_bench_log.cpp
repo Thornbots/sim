@@ -33,7 +33,7 @@ Report check(const std::string &path) {
     {"no display", std::regex("Qt platform plugin|could not connect to display"), true},
     {"wait gave up", std::regex(R"(wall-clock cap hit|\[wait_until\] timed out)"), true},
     {"stack not ready", std::regex("stack NOT ready"), true},
-    {"lockstep timeout", std::regex(R"(lockstep: .* timed out after|[1-9]\d* lockstep timeouts)"), true},
+    {"lockstep timeout", std::regex(R"(lockstep timeout:|LockstepGate: lockstep timeout|lockstep: .* timed out after|[1-9]\d* lockstep timeouts)"), true},
     {"clock failure", std::regex("clock stalled|clock moved backwards"), true},
     {"pacing gate dropped", std::regex("silent, no longer pacing"), false},
     {"ODE contact overflow", std::regex("hash table bucket overflow"), false}};

@@ -65,6 +65,8 @@ INSTANTIATE_TEST_SUITE_P(
         CheckCase{"================ 1 error in 1.0s ================", true},
         CheckCase{"lockstep: 0 lockstep timeouts", false},
         CheckCase{"lockstep: 2 lockstep timeouts", true},
+        CheckCase{"lockstep timeout: mcb_batch at 0.065 s, no ack", true},
+        CheckCase{"LockstepGate: lockstep timeout 1 held at 0.065 s", true},
         CheckCase{"E2E clock stalled during scoring", true},
         CheckCase{"lockstep: /cv/target/state_ack timed out after 0.50 s wall",
                   true}));
