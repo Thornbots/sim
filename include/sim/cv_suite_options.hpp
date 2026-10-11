@@ -28,7 +28,8 @@ struct Options {
   std::string layout = "both", path = "lateral", log_dir, stage = "mcb_parked",
               rtf = "0", filter;
   double duration = 0, shooter = 0, chassis = 0, latency = 0;
-  std::optional<double> spin;
+  std::optional<double> spin, shot_yaw, shot_spin, panel_switch_margin_rad;
+  double model_yaw_jitter_rad = 0;
   bool headless = false, external = false, skip_stationary = false,
        only_stationary = false, blackout = false, no_firmware_fixes = false,
        fail_fast = false, lockstep = true;
@@ -74,6 +75,14 @@ inline void parse_options(int &argc, char **argv) {
       options.paths = split(value());
     else if (arg == "--e2e-spin")
       options.spin = std::stod(value());
+    else if (arg == "--shot-yaw-deg")
+      options.shot_yaw = std::stod(value());
+    else if (arg == "--shot-spin")
+      options.shot_spin = std::stod(value());
+    else if (arg == "--model-yaw-jitter-rad")
+      options.model_yaw_jitter_rad = std::stod(value());
+    else if (arg == "--panel-switch-margin-rad")
+      options.panel_switch_margin_rad = std::stod(value());
     else if (arg == "--shot-duration" || arg == "--e2e-duration")
       options.duration = std::stod(value());
     else if (arg == "--panel-layout")
@@ -148,16 +157,29 @@ inline std::vector<Cell> cells(bool estimation) {
       c.speed = speed;
       c.yaw = yaw;
       c.stagger = layout == "flat" ? 0 : kStagger;
-      c.spin = speed == 0 ? 0
+      c.spin = (!estimation && options.shot_spin)
+                   ? *options.shot_spin
+                   : speed == 0 ? 0
                           : spin_hz(speed,
                                     *std::min_element(options.speeds.begin(),
                                                       options.speeds.end()),
                                     *std::max_element(options.speeds.begin(),
                                                       options.speeds.end()));
+      if (!estimation && options.shot_yaw)
+        c.yaw = *options.shot_yaw;
       c.name = cell_id(layout, speed, options.path, options.shooter,
                        estimation && options.blackout,
-                       estimation ? options.latency : 0, yaw,
+                       estimation ? options.latency : 0, c.yaw,
                        estimation ? options.chassis : 0);
+      if (!estimation && (options.shot_yaw || options.shot_spin ||
+                          options.model_yaw_jitter_rad != 0)) {
+        if (options.shot_yaw)
+          c.name += "-yaw" + number(*options.shot_yaw);
+        if (options.shot_spin)
+          c.name += "-spin" + number(*options.shot_spin);
+        if (options.model_yaw_jitter_rad != 0)
+          c.name += "-yawjitter" + number(options.model_yaw_jitter_rad);
+      }
       if (options.filter.empty() ||
           c.name.find(options.filter) != std::string::npos)
         out.push_back(c);
