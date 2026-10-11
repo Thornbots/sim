@@ -1188,6 +1188,8 @@ head follows each.
 ### MCB emulator
 
 Motor-path validation: [2026-10-11 report](docs/mcb-motor-plant-2026-10-11.md).
+Raw aim/localization isolation and current combat limits:
+[controlled comparison and three-repeat results](docs/aim-localization-coupling-2026-10-11.md).
 
 `e2e.launch.py` defaults to `lockstep:=true`. The gz `LockstepGate` holds
 in `PostUpdate` at each 5 ms MCB acknowledgment deadline. The gz MCB system publishes

@@ -967,7 +967,7 @@ void odom_stuck(Scenario &sc) {
       std::string detail =
           truth ? "  ground_truth_error=" + fixed(*truth) + " m" : "";
       if (odom && helper.truth) {
-        detail += "  odom->root=(" + fixed((*odom)[0], 3) + ", " +
+        detail += "  nav_odom->root=(" + fixed((*odom)[0], 3) + ", " +
                   fixed((*odom)[1], 3) + ")  truth=(" +
                   fixed((*helper.truth)[0]) + ", " + fixed((*helper.truth)[1]) +
                   ")  true_yaw=" + fixed(helper.truth_yaw * 180 / kPi, 2) +
@@ -1277,7 +1277,7 @@ TEST(EkfGroundTruth, BeatsRawOdometry) {
   ASSERT_TRUE(ready(sc, helper))
       << "FAIL: stack never reached a healthy /scan rate";
   ASSERT_TRUE(helper.wait_correction(45.0))
-      << "FAIL: odom->root never became available within 45s";
+      << "FAIL: nav_odom->root never became available within 45s";
   const auto end = Clock::now() + std::chrono::seconds(15);
   while (Clock::now() < end && !sample()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
