@@ -72,10 +72,15 @@ delay 150 ms requests the native indexer at 70-79 ms, accounting for its
 An initial zero-delay probe before readiness produced no shot. Warming the
 fixture reproduced the documented behavior in the unchanged pinned firmware;
 no firmware change was needed. These are indexer-request observations, not
-projectile exits. The E2E harness adds 50 ms to that request, versus firmware's
-80 ms allowance; a 150 ms request therefore has modeled exit near 120 ms,
-not 150 ms. Hardware timing calibration remains open; this measurement did
-not change either placeholder.
+projectile exits. In `test/e2e/e2e_harness.cpp`, `Scorer` subscribes to
+`/mcb_emulator/shot` and queues the MCB shot at `t + .05`, where `t` is the
+indexer-request stamp published by `src/mcb_emulator_node.cpp`. That inline
+50 ms delay is separate from the aiming bench's `cv_bench.hpp::kFireLatency`
+and the Jetson's `firmware_latency_s` planning parameter. A request measured
+at 70-79 ms therefore starts its E2E modeled flight at 120-129 ms after
+receipt, rather than 150 ms. This is a source-derived E2E timing implication,
+not a measured live projectile exit. Hardware calibration remains open;
+this measurement did not change either placeholder.
 
 Raw logs, scores, probe script and firmware behavior logs are retained under
 `/home/blaise/workspaces/isaac_ros-jazzy/test-mcb-2026-10-11/` on this box.
