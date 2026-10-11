@@ -10,9 +10,12 @@ Fresh baseline: workspace `843a9ff`, sim `0db8ec7`, thornbots `7b3032a`, bridge 
 
 - **Before:** original EKF aim TF and active RELOCALIZE; one fresh run of each stage.
 - **Raw control:** same baseline binaries; remap only the legacy aim TF broadcaster input from `/localization/odom` to `/odom`, and relay RELOCALIZE to an unused topic. Both approved driving/match runs completed with UART RELOCALIZE TX count zero. The temporary patches are retained with the artifacts and are absent from final source.
-- **After:** raw POSE/aim on both sides, navigation RELOCALIZE active; three runs of every stage. MCBV3 `cb9f420`, bridge `f81014b`, thornbots `4982c8e`, and the sim revision containing this report. The [wire owner](../../ros2_dji_serial_bridge/UART_PROTOCOL.md#message-types) and [frame design](../../thornbots_pkg/README.md#pose_translator) define the split.
+- **After (before review fixes):** raw POSE/aim on both sides, navigation RELOCALIZE active; three runs of every stage. MCBV3 `91a3b04` (ELF behavior from `cb9f420`; the later commit pins the CI fixture), bridge `f81014b`, thornbots `4982c8e`, and sim `c1ec751` for the published report. The [wire owner](../../ros2_dji_serial_bridge/UART_PROTOCOL.md#message-types) and [frame design](../../thornbots_pkg/README.md#pose_translator) define the split. Localization diagnostic string edits in `c1ec751` were compiled but not integration-run for these measurements.
 
 Raw control and final split change which TF edge AMCL observes; localization p95 is therefore a diagnostic comparison, not a controlled localization-tuning result. A single baseline/control run also cannot establish statistical causality or repeatability.
+
+The parked baseline localization was broken (7.348 m p95). Its before/after
+numbers are not a controlled comparison and do not establish an improvement.
 
 ## Per-stage results
 
@@ -25,7 +28,7 @@ Hits are native MCB hits (enemy hits for match). Parked totals sum the native pe
 | mcb_parked | after r2 | 80/488 | 16.39 | 1.114 | 4916/4916 | 0.000 | 1/1 |
 | mcb_parked | after r3 | 66/488 | 13.52 | 1.734 | 4921/4921 | 0.000 | 1/1 |
 | mcb_drive | before r1 | 0/47 | 0.00 | 0.209 | 2541/2541 | 0.085 | 0/0 |
-| mcb_drive | raw-control r1 | 0/48 | 0.00 | 0.171 | 2541/2541 | 0.000 | 0/0 |
+| mcb_drive | raw-control r1 | 0/47 | 0.00 | 0.171 | 2541/2541 | 0.000 | 0/0 |
 | mcb_drive | after r1 | 1/47 | 2.13 | 0.242 | 2541/2541 | 0.000 | 0/0 |
 | mcb_drive | after r2 | 0/48 | 0.00 | 0.353 | 2542/2542 | 0.000 | 1/1 |
 | mcb_drive | after r3 | 0/46 | 0.00 | 0.295 | 2542/2542 | 0.000 | 1/1 |
@@ -36,6 +39,10 @@ Hits are native MCB hits (enemy hits for match). Parked totals sum the native pe
 | mcb_match | after r3 | 1/36 | 2.78 | 0.747 | 3386/3386 | 0.000 | 1/1 |
 
 Exit 0 means accepted by that check; exit 1 is a scored rejection. Every listed run completed its scoring window with zero lockstep timeouts. Floor, zero-hit, route, or friendly-intersection failures remain failures; none were hidden.
+
+Raw-control drive logged 48 native shots: 47 belonged to route segments and
+one miss was tagged `finished`. The table excludes that unscored tail shot
+and agrees with the segment totals below.
 
 All three final parked runs failed their cell hit floors. Final drive repeats 2 and 3 failed on zero native hits. Raw-control match and final match repeats 2 and 3 each failed on one friendly intersection; final match repeat 1 had none. Every drive/match route segment stayed below its 0.40 m p95 route limit.
 
@@ -136,9 +143,66 @@ The final code keeps raw `odom->root` independent of either navigation transform
 
 `mcb_drive` now requires at least one native hit in the full scored route; a measured diagnosis cannot make zero hits pass. After repeat 2 scored zero hits and failed both the native assertion and log checker, directly exercising this rule. Per-segment diagnostic criteria remain. `mcb_match` retains its existing diagnostic criterion and zero-friendly-intersection assertion. That match criterion is still weaker than calibrated combat accuracy.
 
+## Review-fix rerun
+
+One approved run per stage after the review fixes: MCBV3 `290e555` (hosted ELF
+rebuilt from it), bridge `baf0167`, thornbots `abf072a`, sentry_localization
+`c2713ec`, sim `a66e581`. The relay now sends RELOCALIZE only when the
+navigation offset changes, and the EKF no longer feeds back heading. An
+intermediate review run (thornbots `7970f43`, sentry_localization `049e6bb`
+content, uncommitted sim harness) is listed for context. Navigation p95 is the
+new stamped `nav_odom->root` truth error; earlier runs did not record it.
+
+| Stage | Run | Hits/shots | Hit % | Localization p95 m | Navigation p95 m | Loc samples | RELOCALIZE TX | Aim disagreement max m | Test/checker exit |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| mcb_parked | review r1 | 112/487 | 23.00 | 1.551 | 1.624 | 4913/4913 | 100 | 2.6e-10 | 1/1 |
+| mcb_parked | final r1 | 50/488 | 10.25 | 0.475 | 1.688 | 4918/4918 | 86 | 4.1e-10 | 1/1 |
+| mcb_drive | review r1 | 2/49 | 4.08 | 0.306 | 0.391 | 2542/2542 | 5 | 2.0e-9 | 0/0 |
+| mcb_drive | final r1 | 0/50 | 0.00 | 0.581 | 0.313 | 2542/2542 | 4 | 6.4e-10 | 1/1 |
+| mcb_match | review r1 | 0/36 | 0.00 | 0.227 | 0.274 | 3386/3386 | 7 | 1.7e-9 | 0/0 |
+| mcb_match | final r1 | 0/36 | 0.00 | 0.455 | 0.771 | 3369/3386 | 13 | 1.9e-9 | 1/1 |
+
+Against the earlier after-change repeats 1/2/3:
+
+- Hit %: parked 22.45/16.39/13.52 -> 10.25, drive 2.13/0/0 -> 0, match
+  5.56/8.33/2.78 -> 0. Stationary parked cells alone swing 0-100% between
+  runs (stationary-radial 87.80% review, 0.00% final), so one run cannot
+  separate a change from run-to-run aim variance.
+- Localization p95: parked 0.646/1.114/1.734 -> 0.475, drive
+  0.242/0.353/0.295 -> 0.581, match 0.274/0.271/0.747 -> 0.455. Parked is
+  below the earlier spread, drive above it, match inside it.
+- RELOCALIZE TX per run fell from 39-881 (27-872 at the last diagnostic
+  sample) to 4-86, the intended effect of gating against the last sent offset.
+- Raw aim/MCB disagreement stayed at or below 2.0e-9 m in every run.
+
+Final drive failed the zero-native-hit assertion. Final match failed on one
+friendly intersection; 17 of its 3386 route samples had no stamped
+localization transform. Final parked failed 6 of 12 cell floors (review run:
+7). All runs had zero lockstep timeouts; route p95 stayed below 0.40 m.
+
+| Final r1 segment | Drive shots | Drive hit % | Drive loc p95 m | Match shots | Match hit % | Match loc p95 m |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| approach_2 | 13 | 0.00 | 0.523 | 0 | 0.00 | 0.100 |
+| parked | 10 | 0.00 | 0.398 | 10 | 0.00 | 0.455 |
+| straight_1 | 5 | 0.00 | 0.407 | 4 | 0.00 | 0.494 |
+| turn | 10 | 0.00 | 0.611 | 10 | 0.00 | 0.326 |
+| spin | 12 | 0.00 | 0.421 | 12 | 0.00 | 0.237 |
+
+Localization suite on the final build: the EKF trajectory check passed
+(fused vs truth mean 0.034 m, RMS 0.035, max 0.042; raw `/odom` mean 0.121 m).
+The drift suite passed 8/9. `scan_degraded` failed its during-degradation
+limit at 0.508 m against < 0.5 m; before and after were 0.126 and 0.136 m.
+The intermediate review run passed 9/9 with 0.451 m during, so this check has
+little margin. It was not rerun.
+
 ## Tests, limits and skipped work
 
 - Fresh Jazzy builds passed. Firmware: 31 geometry/control tests and 5 hosted regression tests passed with GCC 14.
+- Review-fix build: firmware 31 + 5 hosted tests passed (GCC 14). Registered
+  cases: bridge 51 (9 existing lint skips), thornbots 125, sentry_localization
+  33, all passing; sim 187 with only the 2 existing lint failures below
+  (each counted twice by colcon). Quality checks and actionlint pass in every
+  changed repo.
 - Registered cases: bridge 42 (0 failures, 9 existing lint-file skips), thornbots 111 (0 failures), sim 169 (2 existing lint failures, no skips). All native tests passed, including 79 compiled-firmware checks and 3 real bridge/PTY checks. The new frame tests cover camera-chain invariance, interpolation, and missing/stale/future raw pose.
 - Required Python 3.12 repository quality checks and `actionlint -shellcheck=""` pass in each changed repo; no baselines grew.
 - Firmware hosted CI passes after pinning the updated immutable sim UART fixture in `91a3b04`; the initial CI failure was the old fixture expecting RELOCALIZE to move POSE.
@@ -148,6 +212,6 @@ The final code keeps raw `odom->root` independent of either navigation transform
 
 ## Artifacts and reproduction
 
-Raw data and commands: `/home/blaise/workspaces/isaac_ros-jazzy/test-aim-2026-10-11/`. Each run retains launch/stack/checker logs, shot/state/pose or route records, and native scores. `before-outcomes.json`, `raw-control-outcomes.json`, and `after-outcomes.json` record process/checker exits. The preserved before/after ELFs and temporary raw-control patches identify the treatment.
+Raw data and commands: `/home/blaise/workspaces/isaac_ros-jazzy/test-aim-2026-10-11/`; the review-fix rerun is in `test-aim-final-2026-10-11/` (`final_metrics.py`, `final-MCB-project.elf`), the intermediate review run in `test-aim-review-2026-10-11/`. Each run retains launch/stack/checker logs, shot/state/pose or route records, and native scores. `before-outcomes.json`, `raw-control-outcomes.json`, and `after-outcomes.json` record process/checker exits. The preserved before/after ELFs and temporary raw-control patches identify the treatment.
 
 Recreate the baseline from the pins above in a separate checkout and ROS build; apply the saved remapping patches only for raw control. The prepared isolated install now contains the final implementation. For final runs, source `test-aim-2026-10-11/install/setup.bash` and set `MCB_FIRMWARE_BINARY` to `after-MCB-project.elf`, then run the normal [stage commands](../README.md#launch-sim-by-hand). The saved `run_stages.py` owns process groups, checks for live stacks and records checker results; `make_report.py` uses linear p95 interpolation, matching the native scorer. Any new integration run still requires the workspace run approval.
