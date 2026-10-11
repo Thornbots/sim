@@ -36,12 +36,13 @@ of the standard run: run it after changing the EKF or rf2o config.
 
 The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
-neighbouring panels staggered 90% of a panel's height apart
+neighbouring panels staggered 9.47 cm apart vertically (about 76% of a
+panel's 12.5 cm height)
 (`panel_layout:=` picks one). It launches the stack once and only changes the
 target between cases; each case settles for 3s, then scores 30s of sim time.
 The bench fires at up to 40 Hz, far above the real launcher, and scores each
-case on hit rate and hits per expected shot equally (`score()` in
-`test/cv/shot_hit_suite.cpp`), so falling behind 40 Hz costs points.
+case on hit rate and hits per expected shot equally (the `total`
+blend in `test/cv/shot_hit_suite.cpp`), so falling behind 40 Hz costs points.
 
 There is no gz, robot or tracker. `sim_clock` publishes `/clock`,
 `point_shooter` puts `root` in `odom` (`POINT_SHOOTER`, 0.4 m up) and
@@ -54,7 +55,7 @@ target's panels in rviz.
 
 `real_time_factor:=0` (the default) runs it as fast as the stack keeps up.
 `sim_clock` steps sim time 2 ms at a time and stops exactly one period past
-the newest stamp on `/cv/target_state`, `/dji_serial_bridge/pose`, `/cv/target` and the
+the newest stamp on `/cv/target_state`, `/dji_serial_bridge/pose`, `/cv/target/tick` and the
 scorer's `/bench/progress` until that topic publishes, so no node falls
 behind and each 40 Hz tick is stamped on its deadline; a topic with
 no publisher left (the scorer between cases) stops holding it. A fixed
@@ -65,7 +66,7 @@ three 4x runs, `keep_up` 1.00. Use `:=1` as the control.
 `chase_settle_s` picks `point_to_cv_target`'s spin mode: `>= 0` (the default,
 0) chases the facing panel and fires every tick, `< 0` is shotgating: hold
 the center line and time the fire. `gimbal_lag_s` defaults to 0, the perfect gimbal. Each cell has
-its own floor in `FLOORS` (`test/cv/shot_hit_suite.cpp`), the lowest score
+its own floor in `FLOORS` (`include/sim/shot_floors_data.hpp`), the lowest score
 over three runs minus 10 points. Forty cells are measured: both layouts on
 lateral, radial and diagonal with a still shooter, and lateral at
 `shooter_speed:=1.0`. Any other cell falls back to the placeholders and says so. `target_path:=radial` or `diagonal`
@@ -385,8 +386,9 @@ into that container separately; `sim.launch.py` does not load it. Over DDS a
 Hz arrived (2026-09-29). Depth costs sim speed: the Mac's bare
 `sim.launch.py` runs at RTF 2.66 without it and 1.1 with it (llvmpipe).
 
-These add synthetic wheel-odometry error. All are off by default; the
-The pose emulator's odometry noise note explains each one:
+These add synthetic wheel-odometry error. Drift and jitter are gated by
+`odom_noise_enabled` (default off); the
+[pose emulator note](#pose-emulator-odom-noise-model) explains each one:
 
 ```bash
 odom_noise_enabled:=true    # master switch for drift + jitter
@@ -552,7 +554,7 @@ motion. The export itself is not in the repo; regenerate from it with:
 ros2 run sim simplify_urdf <export_dir> urdf/sentry_v2.yaml urdf/sentry_v2
 ```
 
-The tool collapses it to ten bodies: chassis (`root`), gimbal yaw (`head`),
+The tool collapses it to eleven bodies (plus `body`, a massless frame): chassis (`root`), gimbal yaw (`head`),
 gimbal pitch (`head_pitch`), and per corner a sprung carrier and an omni
 wheel. Each body's mass and inertia are summed exactly (parallel-axis), so the
 total stays 8.92 kg. Assignment, in order:
@@ -682,15 +684,16 @@ axes: `--backend slam/mapping/amcl/none` (who owns `map->odom`) and `--use-rf2o`
 robot stack, drives, samples the correction TF, asserts, and stops the robot
 stack. The sim itself stops after the last scenario.
 
-`localization_suite.cpp` holds stack lifecycle, driving and scenarios;
-`localization_suite.cpp` is one parametrized test per scenario. That split
-lets `localization_suite.cpp` reuse `run_stack`/`drive` and puts `Scenario`'s
-`details` into the assertion message instead of GTest's capture. The harness
+`test/localization/localization_suite.cpp` holds stack lifecycle (`run_stack`),
+driving (`drive`) and the scenarios, with one parametrized `TEST_P` per
+scenario; `Scenario`'s `details` go into the assertion message instead of
+GTest's capture. The harness
 launches the sim and each scenario's robot stack as trees in their own process
 groups and won't attach to a running stack. The stack gets SIGINT if GTest dies, so a killed
-run still tears it down.
+run still tears it down; `sim::check_no_orphans` runs before and after the
+suite.
 
-Each scenario watches the edge the backend owns (`BACKEND_FRAMES`):
+Each scenario watches the edge the backend owns (`run_stack` picks it):
 
 | Backend | Edge | Gate |
 | --- | --- | --- |
@@ -707,7 +710,7 @@ the world origin, so its `map` frame is the world's. Like `none`, it scores
 `map->root` against `/sim/raw_odom` in `noise_correction` and the
 cornering-loop scenarios; the rest watch `map->odom` as under `slam`. Each
 scenario's stack builds a fresh map: nothing carries between scenarios.
-`odom_stuck` drives two mapping laps first (`ODOM_STUCK_MAPPING_LAPS`).
+`odom_stuck` drives two mapping laps first.
 
 `mapping --use-rf2o` passes 9/9 (2026-10-02, archlinux, unthrottled):
 cornering loops 0.02-0.09 m truth error, `noise_correction` 0.04 m,
@@ -731,7 +734,7 @@ so should `moving_obstacles`. They do: 0.022, 0.037 and 0.020 m, with
 map layer nothing pulls the error back once the scan recovers.
 
 amcl with and without EKF under slip, measured 2026-07-26 against a 0.30m
-bound; verdicts shown against today's 0.40m `MAX_DELTA_THRESHOLD`:
+bound; verdicts shown against today's 0.40m `kMaxDelta`:
 
 | `odom_slip_ratio` | `amcl` | `amcl` + `use_rf2o:=true` |
 | --- | --- | --- |
@@ -753,8 +756,8 @@ The suite runs them in this order.
    saved maps sit that far off the gz world (measured before both were turned
    into the field frame, the same turn for each). A
    growing offset would be a real problem.
-2. `noise_correction` drives the 3m square under drift and jitter (no slip or
-   jerks) for a fixed 30s (60s before 2026-07-27). The second half's samples
+2. `noise_correction` drives the 3m square under drift and jitter (slip 0.02,
+   no jerks) for a fixed 30s (60s before 2026-07-27). The second half's samples
    must stay under 2x the first half's max. The window doesn't exit early, so
    a stalled TF can't cause an open-ended drive.
 3. `drift_correction` drives the same square, no obstacle. The hard
@@ -767,27 +770,27 @@ The suite runs them in this order.
    obstacle. A pass here means nothing if `drift_correction` failed.
 5. `moving_obstacles` drives the same square while `actor_driver` walks three
    unmapped boxes across its -x, +y and +x edges at 1.0, 2.0 and 0.5
-   m/s. It scores like `drift_correction`, on `MAX_DELTA_THRESHOLD`, and logs
+   m/s. It scores like `drift_correction`, on `kMaxDelta`, and logs
    each sample's `map->root` error against `/sim/raw_odom`. It also fails if
    `actor_driver` dies mid-loop. Under `slam`, ROADMAP.md T3 also wants the
    actors' cells checked in `/map` at the end; that check isn't built yet.
    Under `none` it scores ground-truth error, like `drift_correction`.
 6. `real_accel` drives the `drift_correction` square with every leg ramped
-   at `REAL_ACCEL` (1.2 m/s^2, close to the real chassis) instead of
-   `DRIVE_ACCEL` (20), so a 3 m side peaks near 1.9 m/s. Same metric and
+   at 1.2 m/s^2 (close to the real chassis) instead of `--drive-accel`
+   (default 20), so a 3 m side peaks near 1.9 m/s. Same metric and
    threshold as `drift_correction`.
 7. `jerk_with_motion` (slam/amcl) models a collision impulse. Each trial fires
-   `trigger_jerk`, drives one leg to the next corner, then requires a
-   correction proportional to the jerk or an end state within
-   `MAX_DELTA_THRESHOLD`. Jerks are biased toward `OBSTACLE_XY` so they don't
-   push the robot into nearby walls, and the leg absorbs the actual (dx, dy)
-   so the robot still lands on its corner. `JERK_WITH_MOTION_REPEATS` (8)
+   `trigger_jerk`, drives one leg to the next corner, then requires
+   `map->odom` to have moved more than 0.3x the applied jerk, or to sit within
+   `kMaxDelta` of its pre-jerk value. Jerks (stddev 0.24) are biased toward
+   the world origin so they don't push the robot into nearby walls, and the leg
+   absorbs the actual (dx, dy) so the robot still lands on its corner. Eight
    trials share one stack (relaunching costs 15-20s each) and all must pass.
    A closing lap follows.
 8. `odom_stuck` models a dead encoder: `trigger_odom_stuck` pins `/dji_serial_bridge/pose` x/y
    and velocity at zero with fresh timestamps. It checks liveness only, since
    there is no valid odometry to bound drift against: scans keep processing
-   and pairwise TF spread exceeds `ODOM_STUCK_MIN_TF_SPREAD` (1cm).
+   and pairwise TF spread exceeds 1cm.
    Measured 2026-07-27: `amcl` fails, stuck at 0.0000m for 30s, because the
    scan-match gate runs on odom-reported travel and frozen odom never reopens
    it. The stack really does depend on odometry to stay live. `amcl --use-rf2o`
@@ -811,8 +814,8 @@ The suite runs them in this order.
    deg arc (a robot parked against the lidar), then restores it for two more
    laps. It scores ground-truth error of `parent->root` against
    `/sim/raw_odom` after every leg, and logs `/scan_odom/quality`'s grades
-   per phase. The blackout legs pass under `SCAN_BLACKOUT_MAX_ERROR` (0.5
-   m), the rest under `MAX_DELTA_THRESHOLD` (0.4 m). Across four runs
+   per phase. The blackout legs pass under 0.5 m, the rest under `kMaxDelta`
+   (0.4 m). Across four runs
    (2026-09-27) the blackout peaked at 0.398-0.432 m, failing three against
    0.4 m, while before and after stayed under 0.154 m.
 
@@ -821,89 +824,79 @@ of the travel gate instead of testing recovery. A no-leak-before-motion check
 in `jerk_with_motion` (2026-07-26) failed for reasons unrelated to the
 correction.
 
-#### Geometry constants
+#### Geometry and helpers
 
-`OBSTACLE_XY = (0.0, 0.0)` is the world origin, where the box and robot both
-spawn, so loop centre and box coincide by construction.
-
-`OBSTACLE_LOOP_LEGS` is a 3m square there, corners at (+-1.5, +-1.5), widened
-from 2m on 2026-07-26 (`4f182e7`). Legs are `(vx, vy, duration)`, 0.75s at
-4.0 m/s. Wall clearances are known on x only: +x clears `upper_mid`
-(x=2.49) by 0.99m, -x clears `lower_mid` (x=-2.11) by 0.61m and
+Every cornering scenario traces `loop_legs()`: a 3m square centred on the
+world origin, where the box and robot spawn, with corners at (+-1.5, +-1.5).
+Each leg is `3 / --speed` seconds (0.75s at the 4.0 m/s default), and
+`reposition()` drives to the start corner first. The square was widened from
+2m on 2026-07-26 (`4f182e7`). Wall clearances are known on x only: +x clears
+`upper_mid` (x=2.49) by 0.99m, -x clears `lower_mid` (x=-2.11) by 0.61m and
 `bottom_wall`'s ramp edge (x=-3.35) by 1.85m. `lower_mid` is the tightest, so
-start from it if you widen the loop.
+start from it if you widen the loop. A 6-leg field tour that cleared every
+wall's bounding box by ~0.77m still hit a wall after ~10 open-loop laps, as
+small per-leg errors added up, which is why the suite uses the smaller loop.
+`cornering` and `scan_degraded` dwell 1.0s after each leg so scan and TF settle;
+nobody has validated 1.0s, so change it if the delta won't get under the
+threshold.
 
-`OBSTACLE_LOOP_DWELL_SECONDS = 1.0` lets scan and TF settle after each
-reversal. Speed stays at 4.0 m/s, so the dwell is what you can adjust. Nobody
-has validated 1.0s; change it if `max_delta` won't get under the threshold.
+`Helper::scans_flowing(10, 60.0)` decides when the stack is ready. slam_toolbox
+and amcl publish an identity TF at startup before any scan, so waiting on TF
+can start assertions on a cold stack. Once, under load, slam_toolbox registered
+2 scans in 30+ seconds.
 
-No scenario drives `PATROL_LEGS` any more; it stays as the geometry the loop
-above came from. A 6-leg field tour that cleared every wall's bounding box by
-~0.77m still hit a wall after ~10 open-loop laps, as small per-leg errors added
-up, which is why the suite switched to the smaller loop.
-
-#### Helpers
-
-`wait_for_scans_flowing` decides when the stack is ready. slam_toolbox and amcl
-publish an identity TF at startup before any scan, so waiting on TF can start
-assertions on a cold stack. Once, under load, slam_toolbox registered 2 scans
-in 30+ seconds.
-
-`call_trigger_jerk_and_get_dxdy` parses the applied (dx, dy) from the
-`Trigger` response instead of assuming `odom_jerk_stddev`, since one draw can
-land far under its stddev and the corrective leg needs the real vector. It
-returns `None` if parsing fails, so a change to the message format weakens the
-check instead of crashing it.
+`jerk_with_motion` parses the applied (dx, dy) from the `Trigger` response
+instead of assuming `odom_jerk_stddev`, since one draw can land far under its
+stddev and the corrective leg needs the real vector. If parsing fails it logs
+that and uses dx = dy = 0, so a change to the message format weakens the check
+instead of crashing it.
 
 `drive()` re-aims every tick at the leg's ground-truth endpoint from
-`/sim/raw_odom` until within `WAYPOINT_TOLERANCE` (0.03m). Its ticks, like
-`spin_for` and every observe window, count sim seconds; the wall clock only
-guards against a stalled `/clock`. A fixed Twist for a
+`/sim/raw_odom` until within 0.03m. Its ticks, like `spin_for` and every
+observe window, count sim seconds; the wall clock only guards against a
+stalled `/clock`. A fixed Twist for a
 wall-clock duration undershot whenever gz's real-time factor dipped under load;
 gating on projected distance fixed undershoot but not lateral drift. Speed is
-capped at `dist / CONTROL_PERIOD` (0.1s) so it tapers near the target. At full
+capped at `dist / 0.1s` so it tapers near the target. At full
 4.0 m/s one tick covers 0.4m, which overshot the tolerance and oscillated at
-every corner. `duration` remains a safety cap (3x, at least +5s) that logs a
-warning when hit.
+every corner. The safety cap (3x `duration`, at least +5s) logs a warning
+when hit.
 
-`spawn_box_obstacle` spawns a `<static>` box with
-`ros_gz_sim create -string <inline SDF>` as a subprocess, since it fires
-mid-scenario after the pre-spawn baseline. Sim teardown removes it.
-
-`start_actor_driver` runs `ros2 run sim actor_driver` and waits for its
-"all N actors spawned" log line. `_reset_sim` and `teardown_stack` stop it
-before anything else, and `_reset_sim` removes its `moving_actor_<i>` boxes.
+`spawn_box()` creates a `<static>` box through `sim::gazebo::spawn_model`
+(gz-transport) mid-scenario, after the pre-spawn baseline. `start_actor()`
+runs `ros2 run sim actor_driver` and waits for its "all 3 actors spawned" log
+line. `stop_actor()` runs first in every stack and sim teardown, and the next
+`run_stack` removes the `spawned` models from the world.
 
 #### Thresholds
 
-`MAX_DELTA_THRESHOLD = 0.40` m covers `noise_correction`, both drift scenarios,
-and the fallback pass for `jerk_with_motion` (a small jerk can demand an
-unrealistically tiny correction). It was 0.20 on 2026-07-26, 0.30 later that
+`kMaxDelta` = 0.40 m covers `noise_correction`, both drift scenarios, the
+post-blackout `scan_degraded` legs and the fallback pass for
+`jerk_with_motion` (a small jerk can demand an unrealistically tiny
+correction). It was 0.20 on 2026-07-26, 0.30 later that
 day when no config reached 0.20 at 0.25 slip, and 0.40 on 2026-07-27 once the
 chosen config (tuned `slam`, no EKF, 0.15 slip) measured 0.30-0.33m. See
 `sentry_localization/README.md`'s tuning history.
 
-`CORRECTION_FRACTION` is 0.3. slam_toolbox plateaus at a partial correction,
-typically 40-70% of the jerk, because scan matching corrects the pose graph
-incrementally. 0.5 sat at that plateau's edge and flaked; 0.3 keeps margin
-and still catches the known-broken case (`minimum_travel_distance` at 0.5,
-indistinguishable from zero). It was never checked against amcl's plateau, so
-suspect it first if amcl runs flake.
+`jerk_with_motion`'s 0.3 correction fraction: slam_toolbox plateaus at a
+partial correction, typically 40-70% of the jerk, because scan matching
+corrects the pose graph incrementally. 0.5 sat at that plateau's edge and
+flaked; 0.3 keeps margin and still catches the known-broken case
+(`minimum_travel_distance` at 0.5, indistinguishable from zero). It was never
+checked against amcl's plateau, so suspect it first if amcl runs flake.
 
-That calibration used 0.15 m/s and `JERK_STDDEV=0.3`. Both have changed: 4.0
-m/s, and `JERK_STDDEV` 0.5, then 0.08, now 0.24 for a ~30cm mean jerk
+That calibration used 0.15 m/s and a jerk stddev of 0.3. Both have changed: 4.0
+m/s, and stddev 0.5, then 0.08, now 0.24 for a ~30cm mean jerk
 (magnitude of two N(0, stddev) draws is Rayleigh, mean
 `stddev * sqrt(pi/2)`). Re-derive the plateau if pass rates look off.
 
-On 2026-07-23 the correction step was a `while` loop driving `PATROL_LEGS`
-for up to 60s until the threshold was crossed. The TF stalled for an unrelated
-reason, the loop never exited, and open-loop drift took the robot off the field
-and crashed gz physics. The step now drives one bounded leg and takes one TF
-sample.
-
-CPU contention from a stray rviz2 or other sessions slows scan processing to
-about 2 registrations in a ~35s run, so the post-drive `get_correction_tf()`
-uses a 5s timeout.
+On 2026-07-23 a correction step looped for up to 60s until the threshold was
+crossed. The TF stalled for an unrelated reason, the loop never exited, and
+open-loop drift took the robot off the field and crashed gz physics. Each
+step now drives one bounded leg and takes one TF sample. CPU contention from
+a stray rviz2 or other sessions slows scan processing to about 2
+registrations in a ~35s run, so `jerk_with_motion`'s post-drive
+`correction(5.0)` waits up to 5s.
 
 ### Pose emulator: odom noise model
 
@@ -915,7 +908,10 @@ yet. `sentry_v2` picks up ~1 deg of chassis yaw in hard corners; before
 through, so the lidar's TF heading was off by that yaw.
 
 Sim ground truth has no wheel drift, so nothing would exercise `map->odom`
-correction. These params add it, all off by default:
+correction. These params add it. Drift and jitter apply only while
+`odom_noise_enabled` is true (default false; `sim.launch.py` passes it
+through), so their nonzero defaults (0.0005 and 0.001 m) do nothing until
+it is set. The other params act on their own:
 
 - `odom_drift_stddev`: random-walk step (m/callback) added to a persistent
   offset.
@@ -1146,8 +1142,8 @@ written FK, and `test_cv_bench.cpp` pins the C++ core header's constants to
 The `muzzle` frame sits on `head_pitch` at (0, 0.1128, 0): on the pitch axis,
 between the two stacked flywheels. In the CAD the barrel is 0.3915 m up and
 the pitch axis 0.3906 m, so the barrel really does sit on the axis. In the head
-frame that puts the muzzle `MUZZLE_Y` = 0.0127 m left of the yaw axis and
-`MUZZLE_Z` = 0.391 m above root.
+frame that puts the muzzle `kMuzzleY` = 0.0127 m left of the yaw axis and
+`kMuzzleZ` = 0.391 m above root.
 
 It aims along the ray from the muzzle. Before 2026-09-09 it aimed from root,
 assuming a ~0.35m offset wouldn't matter at range. That's true for flight time,
@@ -1156,8 +1152,8 @@ old model every stationary shot missed by ~0.33m against a 0.05m hit radius.
 
 The solve is closed-form even though the muzzle's position depends on the yaw
 being solved. The shot leaves along the head's +x, and whatever the yaw that
-line passes `MUZZLE_Y` to the left of the yaw axis. So azimuth is
-`bearing - asin(MUZZLE_Y / horizontal_range)`, with bearing and range taken
+line passes `kMuzzleY` to the left of the yaw axis. So azimuth is
+`bearing - asin(kMuzzleY / horizontal_range)`, with bearing and range taken
 from the yaw axis, and pitch follows from the elevation seen from the muzzle
 at that azimuth. The muzzle is on the pitch axis, so pitching never moves it.
 Head yaw is the azimuth, because `headlink` turns about +z, CCW like the MCB's
