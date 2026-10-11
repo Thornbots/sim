@@ -94,6 +94,35 @@ source /workspaces/isaac_ros-dev/install/setup.bash
 ros2 launch sim shot_hit.launch.py
 ```
 
+To compare panel switching with a stationary target initially facing 45 deg,
+set `only_stationary:=true target_yaw_deg:=45`; for a slow turn at 0.2 rad/s,
+use `target_spin_hz:=0.0318309886`. `panel_switch_margin_rad:=` optionally
+overrides the aim node's margin; empty leaves its own default in force. For
+three runs at each margin for both scenarios, use distinct log directories:
+
+```bash
+for repeat in 1 2 3; do
+  for margin in 0 0.2 0.3; do
+    ros2 launch sim shot_hit.launch.py only_stationary:=true target_yaw_deg:=45 panel_switch_margin_rad:=$margin log_dir:=/tmp/shot45-$margin-$repeat
+    ros2 launch sim shot_hit.launch.py only_stationary:=true target_yaw_deg:=45 target_spin_hz:=0.0318309886 panel_switch_margin_rad:=$margin log_dir:=/tmp/slow-spin-$margin-$repeat
+  done
+done
+```
+
+`model_yaw_jitter_rad` adds a synthetic 4 Hz sinusoid to the published target
+model's yaw only. Its default is zero, which preserves exact truth; true target
+odometry and panel-hit scoring stay unchanged. `scores.jsonl` records the
+scenario settings, aim yaw and pitch total variation, and selected-panel flips.
+Angles are measured from each scored CV aim to the newest shooter position;
+total variation sums shortest angular differences. A selected panel is the
+nearest predicted panel center to the aim point at the aim stamp plus a rough
+flight time (aim range divided by muzzle speed); the first sample establishes
+the panel and is not counted as a flip. Future panel centers use current
+truth velocity and angular rate beyond the newest odometry sample. The
+[2026-10-11 measurement](docs/panel-choice-2026-10-11.md) compares exact-yaw
+controls and synthetic jitter; no measured hit-rate floors are assigned to
+these custom cells.
+
 The suite launch commands return a nonzero exit status when GTest fails,
 including collection errors, after shutting down their stack. Check the
 GTest summary as well as the measured hit rates: diagnostic-tier completion
@@ -1230,6 +1259,11 @@ Run the native control and real-bridge checks without gz:
 ```sh
 colcon test --packages-select sim --ctest-args -R test_mcb
 ```
+
+The compiled-firmware checks also cover non-firing aim hold after target
+expiry, immediate fire after fixture readiness, and delayed indexer requests.
+See [firmware observations and timing-model limits](docs/panel-choice-2026-10-11.md#compiled-firmware-checks)
+and the [fresh-build/live UART verification](docs/mcb-hosted-check-2026-10-11.md).
 
 The native tests skip if the binary is absent; build it first to test the MCB.
 The bridge test also needs ROS. Pure wire-format behavior is covered by GTests.

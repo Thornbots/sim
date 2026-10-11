@@ -26,6 +26,7 @@ class TargetDriver : public rclcpp::Node {
     declare_parameter("half_width", 2.4);
     declare_parameter("path_angle_deg", 0.0);
     declare_parameter("origin_yaw", 0.0);
+    declare_parameter("yaw_offset", 0.0);
     target_z_ = declare_parameter("target_z", 0.3);
     frame_id_ = declare_parameter("frame_id", std::string("odom"));
     declare_parameter("max_accel", 6.0);
@@ -72,7 +73,8 @@ class TargetDriver : public rclcpp::Node {
     pub_->publish(sim::make_target_odometry(
       get_clock()->now(), frame_id_, get_parameter("center_x").as_double(),
       get_parameter("center_y").as_double(), get_parameter("path_angle_deg").as_double(),
-      get_parameter("origin_yaw").as_double(), target_z_, s_, yaw_, vs, omega));
+      get_parameter("origin_yaw").as_double(), target_z_, s_,
+      yaw_ + get_parameter("yaw_offset").as_double(), vs, omega));
   }
 
   double target_speed_{2.0}, spin_hz_{1.5}, target_z_{0.3};

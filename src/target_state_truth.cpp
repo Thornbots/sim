@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 #include <functional>
+#include <cmath>
 #include <memory>
 #include <string>
 
@@ -21,6 +22,7 @@ public:
     declare_parameter("panel_radius_x", 0.252);
     declare_parameter("panel_radius_y", 0.252);
     declare_parameter("panel_stagger_m", 0.0);
+    declare_parameter("model_yaw_jitter_rad", 0.0);
     pub_ = create_publisher<dji_serial_bridge::msg::TargetState>(output_topic, 10);
     sub_ = create_subscription<nav_msgs::msg::Odometry>(
       "/target/ground_truth_odom", 50,
@@ -33,7 +35,12 @@ private:
     const double radius = get_parameter("panel_radius_x").as_double();
     const double radius_y = get_parameter("panel_radius_y").as_double();
     const double stagger = get_parameter("panel_stagger_m").as_double();
-    pub_->publish(core_.update(*msg, radius, radius_y, stagger));
+    auto output = core_.update(*msg, radius, radius_y, stagger);
+    const auto & stamp = msg->header.stamp;
+    const double t = stamp.sec + stamp.nanosec * 1e-9;
+    output.yaw += static_cast<float>(get_parameter("model_yaw_jitter_rad").as_double() *
+                                     std::sin(2.0 * M_PI * 4.0 * t));
+    pub_->publish(output);
   }
 
   sim::TargetStateTruthCore core_;

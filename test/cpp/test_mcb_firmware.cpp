@@ -118,6 +118,32 @@ TEST_F(McbFirmware, AimsAndFires) {
   EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
   EXPECT_GE(result.shots.size(), 8U);
 }
+TEST_F(McbFirmware, HoldsNonFiringAimAfterTheTargetExpires) {
+  const auto packet = wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 0, 0});
+  ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
+            static_cast<ssize_t>(packet.size()));
+  const auto result = run(500);
+  EXPECT_TRUE(result.shots.empty());
+  EXPECT_NEAR(result.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+}
+TEST_F(McbFirmware, ZeroDelayFireRequestsAShotImmediately) {
+  run(200);  // Let referee, motor feedback and command scheduling become ready.
+  const auto start = firmware->time_ms();
+  const auto result = run(100, wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 0, wire::kCvTargetFlagFire}));
+  ASSERT_FALSE(result.shots.empty());
+  EXPECT_LT(result.shots.front() - start, 10U);
+}
+TEST_F(McbFirmware, FireDelayAccountsForItsNativeIndexerLatency) {
+  run(200);
+  const auto start = firmware->time_ms();
+  const auto result = run(200, wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 150, wire::kCvTargetFlagFire}));
+  ASSERT_FALSE(result.shots.empty());
+  EXPECT_GE(result.shots.front() - start, 70U);
+  EXPECT_LT(result.shots.front() - start, 80U);
+}
 TEST_F(McbFirmware, Relocalizes) {
   const auto poses = messages<wire::Pose>(
       run(200, wire::frame(wire::Relocalize{1.25F, -0.75F})));
