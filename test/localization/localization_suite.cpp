@@ -424,8 +424,8 @@ std::unique_ptr<Stack> run_stack(bool noise,
   if (backend.empty()) {
     backend = options.backend;
   }
-  const std::string parent = backend == "none" ? "odom" : "map",
-                    child = backend == "none" ? "root" : "odom";
+  const std::string parent = backend == "none" ? "nav_odom" : "map",
+                    child = backend == "none" ? "root" : "nav_odom";
   std::filesystem::create_directories(kLogDir);
   auto stack = std::make_unique<Stack>();
   const auto helper_for = [&] {
@@ -963,7 +963,7 @@ void odom_stuck(Scenario &sc) {
     if (p_now) {
       samples.push_back(*p_now);
       const auto truth = truth_error(helper);
-      const auto odom = helper.transform("odom", "root", 0.0);
+      const auto odom = helper.transform("nav_odom", "root", 0.0);
       std::string detail =
           truth ? "  ground_truth_error=" + fixed(*truth) + " m" : "";
       if (odom && helper.truth) {
@@ -1258,7 +1258,7 @@ TEST(EkfGroundTruth, BeatsRawOdometry) {
       odom_copy = odom;
     }
     try {
-      const auto tf = buffer.lookupTransform("odom", "root", tf2::TimePointZero,
+      const auto tf = buffer.lookupTransform("nav_odom", "root", tf2::TimePointZero,
                                              tf2::durationFromSec(0.5));
       if (truth_copy && odom_copy) {
         return std::array<Point, 3>{

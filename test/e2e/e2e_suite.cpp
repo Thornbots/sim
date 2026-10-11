@@ -335,6 +335,9 @@ TEST_P(E2ESuite, MCB) {
         << summaries.dump(2) << '\n';
     ASSERT_FALSE(actual.empty())
         << "firmware fired no shots on spawn-to-center route";
+    EXPECT_GT(std::count_if(actual.begin(), actual.end(), [](const auto & shot) {
+        return shot["hit"].template get<bool>();
+      }), 0) << "mcb_drive scored zero hits; a diagnosis cannot satisfy combat acceptance";
     return;
   }
   cb::Json hp = cb::Json::object(), counts = cb::Json::object();

@@ -458,9 +458,11 @@ each case prints TargetState's centre, velocity and spin error against
 truth. `pytest_args:='--e2e-spin 0'` holds the spin for every cell.
 `states.jsonl` records stamped TargetState errors by case. `mcb_parked` shot
 and state records also include head-TF and map-localization errors against gz
-truth, and `odom_disagreement_m`: the MCB's POSE against TF `odom->root` at
-that POSE's stamp. That agreement is what a hit depends on; every aiming
-hop uses `odom`, so `map->root` error is logged but never blamed. Missing
+truth. The localization error is `map->root` truth error, not just the
+`nav_odom->root` pose. `odom_disagreement_m` compares raw MCB POSE with TF
+`odom->root` at that POSE's stamp. That agreement is what a hit depends on;
+the aiming path uses raw `odom` and bypasses both navigation corrections.
+Missing
 stamped TF is reported as unavailable; latest TF is never substituted to
 calculate these errors. `ros2 run sim compare_runs LOG_DIR_A LOG_DIR_B`
 prints the first record where two runs' logs diverge.
@@ -679,10 +681,13 @@ at the scan plane, and still needs checking against a real `/scan_raw` (see
 ### Localization drift suite
 
 Integration suite for `sentry_localization`'s drift and jerk correction
-against the pose emulator's noise model. It mirrors `auto.launch.py`'s two
-axes: `--backend slam/mapping/amcl/none` (who owns `map->odom`) and `--use-rf2o` /
-`--no-use-rf2o` (whether `odom->root` is EKF-fused; on by default, matching
-`auto.launch.py`). For each scenario it resets the shared sim, launches the
+against the pose emulator's noise model. The current tree keeps raw MCB POSE
+on `/odom` and `odom->root`; localization corrections are `map->nav_odom`,
+and the fused navigation pose is measured through `nav_odom->root`. TF is
+`map->nav_odom->odom->root`; see [the owning frame design](../thornbots_pkg/README.md#pose_translator).
+The suite's backend axis is `--backend slam/mapping/amcl/none` (map-edge
+owner) and `--use-rf2o` (whether scan matching informs the fused navigation
+pose). For each scenario it resets the shared sim, launches the
 robot stack, drives, samples the correction TF, asserts, and stops the robot
 stack. The sim itself stops after the last scenario.
 
@@ -695,26 +700,28 @@ groups and won't attach to a running stack. The stack gets SIGINT if GTest dies,
 run still tears it down; `sim::check_no_orphans` runs before and after the
 suite.
 
-Each scenario watches the edge the backend owns (`run_stack` picks it):
+`run_stack` picks the current navigation transform to measure:
 
 | Backend | Edge | Gate |
 | --- | --- | --- |
-| `slam` | `map->odom` | distance since last scan (`minimum_travel_distance`) |
-| `mapping` | `map->odom` | as `slam`, on a map it builds from blank |
-| `amcl` | `map->odom` | `update_min_d`/`update_min_a` |
-| `none` | `odom->root` | no map node; `ekf_node` unless `--no-use-rf2o`, then raw `/odom` |
+| `slam` | `map->nav_odom` | distance since last scan (`minimum_travel_distance`) |
+| `mapping` | `map->nav_odom` | as `slam`, on a map it builds from blank |
+| `amcl` | `map->nav_odom` | `update_min_d`/`update_min_a` |
+| `none` | `nav_odom->root` pose | no map node; fused navigation pose, with raw `/odom` as the pod odometry baseline |
 
-`--use-rf2o` swaps `odom->root`'s source to `ekf_node` and leaves `map->odom`
-alone.
+`--use-rf2o` changes the fused navigation pose and leaves `map->nav_odom`
+alone. Dated measurements below retain the frame names used when those runs
+were collected under the previous architecture.
 
 `mapping` starts slam_toolbox on a blank map (`load_map:=false`) at spawn,
 the world origin, so its `map` frame is the world's. Like `none`, it scores
 `map->root` against `/sim/raw_odom` in `noise_correction` and the
-cornering-loop scenarios; the rest watch `map->odom` as under `slam`. Each
+cornering-loop scenarios; the rest watch `map->nav_odom` as under `slam`. Each
 scenario's stack builds a fresh map: nothing carries between scenarios.
 `odom_stuck` drives two mapping laps first.
 
-`mapping --use-rf2o` passes 9/9 (2026-10-02, archlinux, unthrottled):
+`mapping --use-rf2o` passed 9/9
+(2026-10-02, archlinux, unthrottled):
 cornering loops 0.02-0.09 m truth error, `noise_correction` 0.04 m,
 `scan_degraded` 0.43 m during and 0.07 m after. `--no-use-rf2o` fails 5/9
 (Mac): the three 4 m/s loops at 0.41-0.42 m, `scan_degraded` 0.42 m after,
@@ -1180,8 +1187,7 @@ head follows each.
 
 ### MCB emulator
 
-Motor-path validation and current combat/repeatability limits:
-[2026-10-11 report](docs/mcb-motor-plant-2026-10-11.md).
+Motor-path validation: [2026-10-11 report](docs/mcb-motor-plant-2026-10-11.md).
 
 `e2e.launch.py` defaults to `lockstep:=true`. The gz `LockstepGate` holds
 in `PostUpdate` at each 5 ms MCB acknowledgment deadline. The gz MCB system publishes
@@ -1335,6 +1341,12 @@ child exit codes through the real launch service.
 
 #### Firmware behaviour and historical results (then stage E2, now `mcb_parked`)
 
+Current firmware uses corrected `getX/getY` for navigation and raw
+`getAimX/getAimY` for POSE and gimbal aim. `RELOCALIZE` updates only the
+navigation offset; raw POSE remains unchanged. The current wire contract is
+owned by [UART_PROTOCOL message types](../ros2_dji_serial_bridge/UART_PROTOCOL.md#message-types).
+The bullets and measurements below describe dated earlier behavior.
+
 Where the firmware and `UART_PROTOCOL.md` disagree is listed, with
 MCBV3 file:line, in `../ros2_dji_serial_bridge/README.md` "Where the
 firmware stands". Behaviour that isn't a wire gap but changes what `mcb_parked` can
@@ -1351,7 +1363,7 @@ score (paths under `MCB-project/src/`):
   80 the `uint32` timeout lands in the past and it fires at once. The
   indexer's 50 ms minimum caps that at 20 Hz, so 40 Hz frames fire every
   other one.
-- `RELOCALIZE` moves odometry at once, anywhere, any HP
+- Historically, `RELOCALIZE` moved odometry at once, anywhere, any HP
   (`JetsonSubsystem.cpp:76-81`). The RFID relocalize in
   `SimpleAutoDriveCommand` is gone; stuck 15 s, it spins in place.
 - With an expired aim it patrols only if the last frame set
@@ -1403,14 +1415,17 @@ referee output, and the real AMCL + rf2o + EKF stack remains in the loop.
 
 `segments.json` reports hit rates and the measured failing hop per segment,
 checked down the hit path: no shots, aim off the panel, head-TF stamps, then
-the barrel off the aim. Localization (`map->root`) is never the diagnosis.
+the barrel off the aim. Fused navigation error is diagnostic; raw `odom`
+remains the aim frame.
 `shots.jsonl` includes route, localization, head-TF and aim errors at fire
 time. `route.jsonl` captures those diagnostics even when no shots fire.
-A diagnostic-tier pass means nodes and clock remained live, every route
-segment completed within 0.40 m p95, stamped localization data existed,
-and a low hit rate named a measured failing hop, as allowed in E2E_PLAN.
+A route and localization diagnostic pass means nodes and clock remained live,
+every route segment completed within 0.40 m p95, stamped navigation data
+existed, and a low hit rate named a measured failing hop. `mcb_drive` also
+fails when the native total hit count is zero, even with complete diagnostics;
+per-segment diagnostics remain available to identify the failing hop.
 It does **not** mean combat accuracy passed: floors need repeated valid
-runs, and current moving runs expose localization and tracking failures.
+runs, and current moving runs expose tracking and gimbal misses.
 The spawn coordinates are firmware defaults, not surveyed starting zones.
 
 ### Four-robot center fight (`mcb_match`)
@@ -1437,8 +1452,9 @@ the test checks HP and team return through `REF_SYS` on the Jetson UART.
 `match.json` reports per-segment route and localization error, enemy hit
 rates, HP, friendly intersections, damage taken and shot counts per robot.
 `shots.jsonl` records first impacts and HP after each resolved impact.
-The approach checks routing with firing disabled; center segments use the
-same diagnostic completion criterion as `mcb_drive`. Accuracy floors, repeated-run
+The approach checks routing with firing disabled; center segments retain the
+same route and localization diagnostic criterion as `mcb_drive`, while the
+match pass criterion is unchanged. Accuracy floors, repeated-run
 spread and standalone-versus-sequence equivalence remain uncalibrated.
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn
 are not modeled. Hurt-panel feedback is supplied, but the firmware's

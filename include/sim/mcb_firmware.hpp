@@ -272,6 +272,7 @@ private:
 };
 
 struct GzHardware {
+  // Boot-relative pod input stays raw; firmware alone owns navigation corrections.
   bool ready = false, seen_odom = false, seen_joints = false;
   double chassis_yaw = 0.0, chassis_rate = 0.0;
   std::array<double, 2> pos{}, vel{}, yaw_joint{}, pitch_joint{};

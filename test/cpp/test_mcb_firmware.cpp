@@ -159,12 +159,23 @@ TEST_F(McbFirmware, PhysicalCanSpeedChangesFirmwareMotorOutputs) {
   EXPECT_LT(still.motors[8], 0);
   EXPECT_GT(moving.motors[8], still.motors[8]);
 }
-TEST_F(McbFirmware, Relocalizes) {
-  const auto poses = messages<wire::Pose>(
-      run(200, wire::frame(wire::Relocalize{1.25F, -0.75F})));
+TEST_F(McbFirmware, RelocalizationPreservesRawPoseAndHeldAim) {
+  const auto aim = wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 0, 0});
+  const auto before = run(200, aim);
+  const auto after = run(100, wire::frame(wire::Relocalize{1.25F, -0.75F}));
+  const auto poses = messages<wire::Pose>(after);
   ASSERT_FALSE(poses.empty());
-  EXPECT_NEAR(poses.back().x, 1.25, 1e-6);
-  EXPECT_NEAR(poses.back().y, -0.75, 1e-6);
+  EXPECT_NEAR(poses.back().x, -firmware->start_x(), 1e-6);
+  EXPECT_NEAR(poses.back().y, firmware->start_y(), 1e-6);
+  EXPECT_NEAR(after.outputs.back().yaw, before.outputs.back().yaw, 1e-6);
+  EXPECT_NEAR(after.outputs.back().pitch, before.outputs.back().pitch, 1e-6);
+  const auto moving = run(100, aim, {0.25, 0.5});
+  const auto moving_poses = messages<wire::Pose>(moving);
+  ASSERT_FALSE(moving_poses.empty());
+  EXPECT_NEAR(moving_poses.back().x, -firmware->start_x() + 0.5, 1e-6);
+  EXPECT_NEAR(moving_poses.back().y, firmware->start_y() - 0.25, 1e-6);
+  EXPECT_NEAR(moving.outputs.back().yaw, std::atan2(1.25, 2.5), 1e-6);
 }
 TEST_F(McbFirmware, RejectsCorruptCv) {
   auto packet =
