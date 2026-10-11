@@ -420,7 +420,9 @@ Shots are the ones the firmware fires, each falling under gravity since the
 firmware pitches up for it. `point_to_cv_target` patrols with no target, as
 on the robot, so it can sweep for an opponent that starts out of view or
 whose track was lost; patrol frames clear `fire`. Reacquisition and moving
-hit rates still vary (ROADMAP T17).
+hit rates still vary (ROADMAP T17). The
+[2026-10-11 hosted-firmware run](docs/match-check-2026-10-11.md) records all
+cells/segments, checker verdicts and comparison with the previous status.
 
 | Stage | Test | What it scores |
 |---|---|---|
