@@ -68,6 +68,7 @@ INSTANTIATE_TEST_SUITE_P(
         CheckCase{"lockstep timeout: mcb_batch at 0.065 s, no ack", true},
         CheckCase{"LockstepGate: lockstep timeout 1 held at 0.065 s", true},
         CheckCase{"E2E clock stalled during scoring", true},
+        CheckCase{"user interrupted with ctrl-c\n[ERROR] [launch]: Caught exception in launch: missing world", true},
         CheckCase{"lockstep: /cv/target/state_ack timed out after 0.50 s wall",
                   true}));
 } // namespace

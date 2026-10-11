@@ -79,7 +79,10 @@ def _world_with_rtf(context):
         f.write(sdf)
 
     def remove_world(event, context):
-        os.unlink(path)
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass  # Shutdown can be emitted by both the parent and child launch.
         return []
 
     return [SetLaunchConfiguration('world', path),
