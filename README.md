@@ -458,8 +458,9 @@ each case prints TargetState's centre, velocity and spin error against
 truth. `pytest_args:='--e2e-spin 0'` holds the spin for every cell.
 `states.jsonl` records stamped TargetState errors by case. `mcb_parked` shot
 and state records also include head-TF and map-localization errors against gz
-truth. The localization error is `map->root` truth error, not just the
-`nav_odom->root` pose. `odom_disagreement_m` compares raw MCB POSE with TF
+truth. The localization error is `map->root` truth error;
+`navigation_error_m` is the `nav_odom->root` xy truth error at the same stamp.
+`odom_disagreement_m` compares raw MCB POSE with TF
 `odom->root` at that POSE's stamp. That agreement is what a hit depends on;
 the aiming path uses raw `odom` and bypasses both navigation corrections.
 Missing
@@ -730,9 +731,9 @@ and `odom_stuck`, whose `map->odom` freezes as amcl's does without rf2o
 check while lost (1-5 m truth error), and mapping keeps writing to the map
 the whole time.
 
-Under `none`, `odom->root` is the robot's own position, so its change says
+Under `none`, `nav_odom->root` is the robot's own position, so its change says
 nothing about error. `noise_correction` and the three cornering-loop scenarios
-score `odom->root`'s distance from `/sim/raw_odom` there instead, against the
+score `nav_odom->root`'s distance from `/sim/raw_odom` there instead, against the
 same thresholds. `jerk_with_motion` is skipped for `none`: `ekf_node` fuses
 `/odom` velocity only (`odom0_config`), with no travel gate, so neither
 expectation is defined. With no map to miss a feature from, `drift_correction`
@@ -916,7 +917,7 @@ yet. `sentry_v2` picks up ~1 deg of chassis yaw in hard corners; before
 2026-09-29 `/dji_serial_bridge/pose` passed the relative joint and chassis-frame velocity
 through, so the lidar's TF heading was off by that yaw.
 
-Sim ground truth has no wheel drift, so nothing would exercise `map->odom`
+Sim ground truth has no wheel drift, so nothing would exercise `map->nav_odom`
 correction. These params add it. Drift and jitter apply only while
 `odom_noise_enabled` is true (default false; `sim.launch.py` passes it
 through), so their nonzero defaults (0.0005 and 0.001 m) do nothing until
@@ -937,7 +938,7 @@ it is set. The other params act on their own:
 `trigger_jerk()` moves the gz robot by a random (dx, dy) and subtracts the
 same (dx, dy) from the drift accumulator, so `/dji_serial_bridge/pose` doesn't jump. The encoders
 never saw the move. The error appears when the next scan match disagrees and
-corrects `map->odom`, and that correction is what the jerk tests. Fire one by
+corrects `map->nav_odom`, and that correction is what the jerk tests. Fire one by
 hand with
 `ros2 service call /pose_emulator/trigger_jerk std_srvs/srv/Trigger`.
 
@@ -1026,8 +1027,8 @@ where the robot really is, which the drift suite can't answer. Drift scenarios
 run with noise off, so only slip corrupts `/odom`; at zero slip
 `pose_emulator` reports exact ground truth and no EKF can beat it. Old "EKF is
 worse than raw /odom" numbers came from that setup and say nothing about the
-EKF. Those scenarios also score `map->odom`, while the EKF's edge is
-`odom->root`, dominated by the robot's own motion.
+EKF. Those scenarios also score `map->nav_odom`, while the EKF's edge is
+`nav_odom->root`, dominated by the robot's own motion.
 
 It turns on drift and continuous slip, drives the same loop, scores both
 estimators against `/sim/raw_odom` (mean, RMS, max Euclidean error), and

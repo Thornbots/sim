@@ -364,6 +364,15 @@ Json Scorer::pose_errors(double t) {
   } catch (const tf2::TransformException &) {
     out["localization_error_m"] = nullptr;
   }
+  try {
+    const auto tr = tf.lookupTransform(
+        "nav_odom", "root",
+        rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
+    out["navigation_error_m"] = std::hypot(
+        tr.translation.x - ours->root(0, 3), tr.translation.y - ours->root(1, 3));
+  } catch (const tf2::TransformException &) {
+    out["navigation_error_m"] = nullptr;
+  }
   return out;
 }
 Json Scorer::aim_split(double launch, const Vec &origin, const Vec &direction,

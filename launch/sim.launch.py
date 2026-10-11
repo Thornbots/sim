@@ -153,7 +153,7 @@ def generate_launch_description():
     # --- Optional synthetic wheel-odometry drift injection (pose emulator).
     # Off by default -- sim's /dji_serial_bridge/pose stays exact ground truth unless explicitly
     # opted into, so this never changes existing behavior by accident. Turn
-    # it on to exercise/demonstrate slam_toolbox's map->odom correction, which
+    # it on to exercise/demonstrate slam_toolbox's map->nav_odom correction, which
     # otherwise has nothing real to correct against in sim.
     odom_noise_enabled_arg = DeclareLaunchArgument(
         'odom_noise_enabled', default_value='false',
