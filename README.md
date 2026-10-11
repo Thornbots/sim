@@ -1265,6 +1265,14 @@ expiry, immediate fire after fixture readiness, and delayed indexer requests.
 See [firmware observations and timing-model limits](docs/panel-choice-2026-10-11.md#compiled-firmware-checks)
 and the [fresh-build/live UART verification](docs/mcb-hosted-check-2026-10-11.md).
 
+The bit-3 patrol marker is exercised through the real bridge for all sixteen
+flag combinations, then through compiled firmware with the marker clear/set.
+The firmware tests verify aim parsing, fire-bit independence, game-stage fire
+gating, patrol permission after target expiry, and hit-turn permission after
+damage. The marker is informational; current firmware ignores it. See the
+[wire contract](../ros2_dji_serial_bridge/UART_PROTOCOL.md#cv_target-id1--aim-point-and-fire-decision)
+and [2026-10-11 firmware verification](docs/patrol-flag-2026-10-11.md).
+
 The native tests skip if the binary is absent; build it first to test the MCB.
 The bridge test also needs ROS. Pure wire-format behavior is covered by GTests.
 
