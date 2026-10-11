@@ -1360,8 +1360,9 @@ score (paths under `MCB-project/src/`):
   not the NAV_GOAL reader; `mcb.launch.py drive:=auto` selects that reader
   explicitly. RMUL 3v3 waypoint advancement waits for IN_GAME, while the
   simple route can still spin before the game. The `mcb_drive` and
-  `mcb_match` stages park firmware drive and use `match_driver` for chassis
-  movement; their results do not validate the firmware route.
+  `mcb_match` stages send `match_driver` velocity commands through the native
+  firmware drivetrain controller and CAN motor plant; their results do not
+  validate the firmware route.
 
 E2 on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
 lateral, still and 1 m/s, 15 s each): `CV_TARGET` and `RELOCALIZE` frames

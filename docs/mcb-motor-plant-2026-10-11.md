@@ -44,3 +44,23 @@ focused motor check used the integrated trees.
 Container logs: `/tmp/track_i_can_parked_5`, `/tmp/track_i_can_parked_final`,
 `/tmp/track_i_can_drive`, `/tmp/track_i_can_match_final`; the focused check
 log is `/tmp/mcb_physics_19150.log`. No live test nodes remain after teardown.
+
+## T33 integration check
+
+After merging the latest package nightlies, including T33's patrol flag,
+all 92 native MCB cases pass with zero skips (79 firmware, six protocol,
+four motor and three bridge). Firmware control/hosted regressions still pass.
+The direct motor check reaches +0.600020 and -0.499983 rad, with peak shaft
+speeds 226.618 and 404.491 rad/s and clean shutdown (`/tmp/mcb_physics_22960.log`).
+
+The integrated match passes in 41.80 s wall, RTF 1.13: 432 referee frames,
+36 firmware shots, zero friendly intersections, opponent_1 HP 360.
+Route p95 is 0.274, 0.0011, 0.072, 0.119 and 0.025 m. Center aim-error
+diagnostics remain; this is diagnostic completion, not an accuracy floor.
+The native log checker accepts both checks. Match artifacts live in
+`/tmp/track_i_can_match_t33`; launch log `/tmp/track_i_can_match_t33.log`.
+
+Docs updated with this change: sim README and AGENTS Open links; firmware
+README and AGENTS Open links; bridge README, UART_PROTOCOL and AGENTS Open
+links; workspace E2E_PLAN, E2E_LOCKSTEP_PLAN, ROADMAP and CHANGELOG Unreleased.
+No sections or anchors were moved.
