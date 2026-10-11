@@ -207,3 +207,45 @@ TEST_F(McbFirmware, AutoDriveAcceptsNavGoal) {
   EXPECT_GT(output.spin, 1);
 }
 } // namespace
+
+class McbPatrolFlag : public McbFirmware, public testing::WithParamInterface<uint8_t> {};
+TEST_P(McbPatrolFlag, ParsesAimAndOnlyFireBitRequestsShots) {
+  run(200);
+  const auto result = run(300, wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 100, GetParam()}));
+  EXPECT_NEAR(result.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+  EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
+  EXPECT_EQ(result.shots.empty(), (GetParam() & wire::kCvTargetFlagFire) == 0);
+}
+TEST_P(McbPatrolFlag, PatrolAfterExpiryRequiresItsPermissionBit) {
+  run(200);
+  const auto aimed = run(100, wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 100, GetParam()}));
+  const auto expired = run(500);
+  const double swing = std::abs(hw::wrap(expired.outputs.back().yaw - aimed.outputs.back().yaw));
+  if (GetParam() & wire::kCvTargetFlagTypeCBasedPatrol) {
+    EXPECT_GT(swing, 0.05);
+  } else {
+    EXPECT_LT(swing, 1e-5);
+  }
+}
+TEST_P(McbPatrolFlag, DamageTurnRequiresItsPermissionBit) {
+  run(200);
+  const auto frame = wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 100, GetParam()});
+  run(100, frame);
+  ref.current_hp = 380;
+  ref.hurt_armor_id = 1;
+  const auto hit = run(100, frame);
+  const double expected = (GetParam() & wire::kCvTargetFlagTurnToHit) ? hw::kPi / 2 : std::atan2(1.0, 3.0);
+  EXPECT_NEAR(hit.outputs.back().yaw, expected, 1e-5);
+}
+TEST_P(McbPatrolFlag, StageGateStillBlocksFire) {
+  run(200);
+  ref.game_stage = 0;
+  run(100);  // Deliver the next periodic referee frame before asking to fire.
+  const auto result = run(500, wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 100, GetParam()}));
+  EXPECT_TRUE(result.shots.empty());
+}
+INSTANTIATE_TEST_SUITE_P(AllFlags, McbPatrolFlag, testing::Range<uint8_t>(0, 16));

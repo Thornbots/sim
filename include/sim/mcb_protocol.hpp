@@ -26,6 +26,7 @@ constexpr uint16_t kCrc16Init = 0xFFFF;
 constexpr uint8_t kCvTargetFlagFire = 0x01;
 constexpr uint8_t kCvTargetFlagTypeCBasedPatrol = 0x02;
 constexpr uint8_t kCvTargetFlagTurnToHit = 0x04;
+constexpr uint8_t kCvTargetFlagPatrol = 0x08;
 constexpr uint8_t kCvTargetFlagsDefault =
   kCvTargetFlagTurnToHit | kCvTargetFlagTypeCBasedPatrol;
 
