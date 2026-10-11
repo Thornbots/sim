@@ -42,6 +42,7 @@
 #include <unistd.h>
 
 #include "sim/mcb_protocol.hpp"
+#include "sim/mcb_motor.hpp"
 extern char **environ;
 namespace sim::mcb_firmware {
 constexpr double kPi = 3.14159265358979323846;
@@ -336,6 +337,8 @@ public:
       mode_ = 1;
     } else if (drive == "auto") {
       mode_ = 2;
+    } else if (drive == "external") {
+      mode_ = 3;
     } else {
       throw std::invalid_argument("unknown MCB drive mode: " + drive);
     }
@@ -350,7 +353,7 @@ public:
     }
     try {
       spawn(master_fd);
-      if (read(4) != std::vector<uint8_t>{'M', 'C', 'B', '1'}) {
+      if (read(4) != std::vector<uint8_t>{'M', 'C', 'B', '2'}) {
         throw std::runtime_error(
             "MCB firmware hardware interface version mismatch");
       }
@@ -394,10 +397,18 @@ public:
   struct Output {
     double yaw, pitch, right, forward, spin;
     std::vector<uint32_t> shots;
+    mcb_motor::Commands motors{};
   };
 
   Output step(int64_t cycles, const std::array<double, 10> &readings,
               const Referee &ref) {
+    mcb_motor::Plant fixture;
+    return step(cycles, readings, ref, fixture.feedback(readings, 0, 0, 0, 0));
+  }
+
+  Output step(int64_t cycles, const std::array<double, 10> &readings,
+              const Referee &ref, const mcb_motor::Feedback &motors,
+              const std::array<double, 3> &external = {}) {
     if (cycles < 1 || cycles > 100) {
       throw std::invalid_argument(
           "MCB hardware ticks must contain 1..100 cycles");
@@ -413,6 +424,8 @@ public:
     }
     append_u32(input, static_cast<uint32_t>(packets.size()));
     append_u32(input, mode_);
+    for (const auto &motor : motors) input.insert(input.end(), motor.begin(), motor.end());
+    for (const double value : external) append_float(input, value);
     input.insert(input.end(), packets.begin(), packets.end());
     size_t offset = 0;
     while (offset < input.size()) {
@@ -426,13 +439,17 @@ public:
       }
       offset += static_cast<size_t>(sent);
     }
-    const auto output = read(28);
+    const auto output = read(48);
     Output result{
         read_float(output.data()),      read_float(output.data() + 4),
         read_float(output.data() + 8),  read_float(output.data() + 12),
         read_float(output.data() + 16), {}};
     const uint32_t count = read_u32(output.data() + 20);
     time_ms_ = read_u32(output.data() + 24);
+    for (size_t i = 0; i < result.motors.size(); ++i) {
+      result.motors[i] = static_cast<int16_t>(static_cast<uint16_t>(output[28 + 2 * i]) |
+                                             static_cast<uint16_t>(output[29 + 2 * i]) << 8);
+    }
     const auto shots = read(static_cast<size_t>(count) * 4);
     for (size_t i = 0; i < count; ++i) {
       result.shots.push_back(read_u32(shots.data() + i * 4));
@@ -480,7 +497,9 @@ private:
     sigemptyset(&defaults);
     sigaddset(&defaults, SIGPIPE);
     posix_spawnattr_setsigdefault(&attributes, &defaults);
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGDEF);
+    // Parent destruction closes stdin; group SIGINT must not kill a tick mid-read.
+    posix_spawnattr_setpgroup(&attributes, 0);
+    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP);
     const int error = posix_spawn(&pid_, binary_.c_str(), &actions, &attributes,
                                   argv, envp.data());
     posix_spawnattr_destroy(&attributes);

@@ -32,6 +32,7 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
+    EmitEvent,
     IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
@@ -39,6 +40,7 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -66,6 +68,10 @@ def _sim(context):
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
         launch_arguments={'gui': gui, 'rviz': gui, 'foxglove': config['foxglove'],
                           'camera': 'false', 'pose_emulator': 'false',
+                          'mcb_physics': 'true',
+                          'mcb_drive': 'external' if config['stage'] in DRIVING else 'stop',
+                          'firmware_binary': config['firmware_binary'],
+                          'mcb_game_stage': '3' if config['stage'] == 'mcb_match' else '4',
                           'real_time_factor': config['real_time_factor'],
                           'lockstep': config['lockstep'], **spawn}.items())]
 
@@ -142,16 +148,6 @@ def generate_launch_description():
         remappings=[('/target/ground_truth_odom', path_topic)])
     # The hosted firmware parked (DrivetrainStopCommand) on a pty, as
     # auto.launch.py starts the bridge and relay with real_hardware:=true.
-    mcb_emulator = Node(
-        package='sim', executable='mcb_emulator', name='mcb_emulator', output='screen',
-        parameters=[{'use_sim_time': True, 'device_link': MCB_PTY, 'drive': 'stop',
-                     'firmware_binary': LaunchConfiguration('firmware_binary'),
-                     'game_stage': ParameterValue(PythonExpression([
-                         "3 if '", LaunchConfiguration('stage'), "' == 'mcb_match' else 4"]),
-                         value_type=int)}],
-        remappings=[('/cmd_vel', PythonExpression([
-            "'/mcb_emulator/cmd_vel' if '", LaunchConfiguration('stage'),
-            "' in ", repr(DRIVING), " else '/cmd_vel'"]))])
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
@@ -175,8 +171,12 @@ def generate_launch_description():
         package='sim', executable='match_driver', name='match_driver', output='screen',
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
     # The bridge opens the pty once, so it starts after the emulator makes it.
-    common = [path_bridge, opponent_driver, mcb_emulator,
-              TimerAction(period=2.0, actions=[bridge, mcb_relay])]
+    uart_ready = Node(package='sim', executable='mcb_ready', arguments=[MCB_PTY], output='screen')
+    uart_start = RegisterEventHandler(OnProcessExit(
+        target_action=uart_ready,
+        on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
+            EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
+    common = [path_bridge, opponent_driver, uart_start, uart_ready]
     coordinator = Node(
         package='sim', executable='lockstep_coordinator', output='screen',
         parameters=[{'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,

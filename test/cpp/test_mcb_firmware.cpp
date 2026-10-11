@@ -144,6 +144,21 @@ TEST_F(McbFirmware, FireDelayAccountsForItsNativeIndexerLatency) {
   EXPECT_GE(result.shots.front() - start, 70U);
   EXPECT_LT(result.shots.front() - start, 80U);
 }
+TEST_F(McbFirmware, PhysicalCanSpeedChangesFirmwareMotorOutputs) {
+  firmware->set_mode(3);
+  hw::Firmware::Output still{}, moving{};
+  sim::mcb_motor::Plant plant;
+  for (int i = 0; i < 200; ++i) {
+    still = firmware->step(1, {}, ref, plant.feedback({}, 0, 0, 0, 0.001), {0, 1, 0});
+  }
+  for (int i = 0; i < 200; ++i) {
+    moving = firmware->step(1, {}, ref, plant.feedback({}, 1, 0, 0, 0.001), {0, 1, 0});
+  }
+  EXPECT_GT(still.motors[6], 0);
+  EXPECT_LT(moving.motors[6], still.motors[6]);
+  EXPECT_LT(still.motors[8], 0);
+  EXPECT_GT(moving.motors[8], still.motors[8]);
+}
 TEST_F(McbFirmware, Relocalizes) {
   const auto poses = messages<wire::Pose>(
       run(200, wire::frame(wire::Relocalize{1.25F, -0.75F})));

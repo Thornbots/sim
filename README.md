@@ -1178,12 +1178,15 @@ head follows each.
 
 ### MCB emulator
 
+Motor-path validation and current combat/repeatability limits:
+[2026-10-11 report](docs/mcb-motor-plant-2026-10-11.md).
+
 `e2e.launch.py` defaults to `lockstep:=true`. The gz `LockstepGate` holds
-in `PostUpdate` at each 5 ms MCB batch deadline. The native MCB node publishes
-`/mcb_emulator/tick` after stepping and issuing commands, or after a batch
-with hardware not ready. `lockstep_coordinator` waits for that stamped
+in `PostUpdate` at each 5 ms MCB acknowledgment deadline. The gz MCB system publishes
+`/mcb_emulator/tick` after each 1 ms firmware tick and application of its motor
+outputs. `lockstep_coordinator` waits for that stamped
 `std_msgs/Header` before releasing the next deadline. Its schedule is anchored
-at sim zero, when the MCB's ROS timer is constructed; delayed acknowledgment
+at sim zero; delayed acknowledgment
 arrival never sets the phase. Startup runs free until the first acknowledgment.
 
 `/sim/lockstep/status` reports holds, per-chain wall wait and timeout counts.
@@ -1191,8 +1194,8 @@ The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.
 `lockstep:=false` retains the ungated control run.
 
-This gates MCB batches, not the complete hit path: commands still cross the
-ROS/gz bridge asynchronously, UART is not modeled in sim time, and the other
+This gates MCB acknowledgments, not the complete hit path: UART is not modeled
+in sim time, and the other
 CV/localization chains and wall-time bring-up remain asynchronous. It does not
 establish identical shot sequences or finish workspace T17.
 
@@ -1206,7 +1209,7 @@ ros2 run sim lockstep_suite
 
 The emulator compiles and runs the checked-out `firmware/MCBV3` C++ sources.
 The Python control port has been removed. `include/sim/mcb_firmware.hpp` transports hardware
-readings to `MCB-project/src/hosted/main.cpp`, which instantiates the actual
+readings and DJI CAN feedback to `MCB-project/src/hosted/main.cpp`, which instantiates the actual
 `SentryControl` and runs its command scheduler in 1 ms steps. UART1 uses the
 PTY attached to the real `dji_serial_bridge`; MCBV3's own DJISerial parser,
 mailbox, JetsonSubsystem, ballistics, aim/fire and drive commands run unchanged.
@@ -1216,7 +1219,7 @@ From the workspace root, in the ROS container:
 ```sh
 git -C src submodule update --init --checkout firmware/MCBV3
 git -C src/firmware/MCBV3 submodule update --init taproot-scripts
-apt-get install -y scons g++-11
+apt-get install -y scons g++-14
 src/sim/tools/build_mcb_firmware.sh
 colcon build --packages-select sim --symlink-install
 ros2 launch sim mcb.launch.py
@@ -1228,25 +1231,55 @@ gz/rviz open where a display is available. This launch uses the actual MCB
 and bridge without an opponent; the `e2e.launch.py` stages score it.
 
 `firmware_binary:=/path/to/MCB-project.elf` selects another hosted build;
-`MCB_FIRMWARE_BINARY` supplies the default for both the node and tests.
+`MCB_FIRMWARE_BINARY` supplies the default for both the gz system and tests.
 The normal default is the firmware's `build/sim/scons-release/MCB-project.elf`.
 Re-run the build after firmware edits: SCons tracks the original sources and
 headers. There is no Python `firmware_fixes` overlay; the firmware under test
 is exactly what the checked-out C++ implements. This is a host executable,
 not the STM32 ELF flashed to the board.
 
-The fake interfaces are calibrated IMU and joint-encoder readings, Pico
+The fake interfaces are calibrated IMU readings, Pico
 odometry, centred DBUS input with both switches up, referee UART frames,
 ADC and CAN motor feedback. The DBUS and referee packets go through the
 real parsers. Referee state remains live node parameters. The firmware's
 start constants are read from the executable and used to map gz truth into
 the pods' frame, so its field-frame POSE agrees with the gz spawn.
 
-The fixture replaces boot calibration and hardware polling. CAN feedback
-currently keeps motors online with zero shaft speed/current; ADC returns 0.
-gz's joint position and chassis velocity controllers apply the firmware's
-setpoints, so motor dynamics, CAN timing, MCU interrupts, calibration and
-physical homing are not validated. A shot records a successful native
+`McbFirmwareSystem` owns the firmware process and PTY inside gz. It reads
+pose, twist and gimbal joints from the ECM, runs one firmware cycle per 1 ms
+physics step, then applies motor outputs as joint torques and a chassis wrench.
+`mcb_physics:=true` removes both JointPositionControllers and VelocityControl.
+The UART bridge starts only after the PTY exists. The former ROS timer adapter
+is removed; `mcb.launch.py` uses this same physics path.
+
+The motor plant in `include/sim/mcb_motor.hpp` returns DJI 8-byte encoder,
+signed shaft-RPM, current and temperature feedback for all ten motors. The
+firmware's own CAN parser, encoder interface and controllers consume it. Yaw
+and drivetrain commands are M3508 current units; pitch uses GM6020 voltage
+and a back-EMF/resistance model. Gear ratios and motor constants follow the
+sentry firmware. The chassis uses an omni-wheel force/velocity projection with
+estimated per-wheel traction; wheel speeds assume rolling without slip.
+Flywheel, indexer and odometry-motor rotors have estimated inertia and load;
+they have no mesh in gz. This validates control against a motor plant, not
+measured tire, ESC, gearbox or launcher behaviour.
+
+`/mcb_emulator/motors` publishes `sensor_msgs/JointState` at 100 Hz, stamped
+with the physics sample time. Names identify CAN bus and hexadecimal motor
+ID; positions and velocities are shaft radians and rad/s, effort is shaft
+torque in N m. This is plant feedback, not a new firmware UART message.
+
+The focused integration check drives the native UART aim command directly,
+with gz gimbal inertia and no CV/localization stack:
+
+```sh
+ros2 run sim mcb_physics_suite
+```
+
+The fixture still replaces boot calibration and hardware polling; ADC returns
+0. CAN frames arrive once per tick without arbitration or transmission delay.
+MCU interrupts, instruction timing, calibration and physical homing remain
+unvalidated. The `MCB2` pipe format is private hosted IPC, not the Jetson UART
+contract. A shot records a successful native
 indexer request, not measured projectile exit. `/mcb_emulator/shot` is a
 `std_msgs/Header` stamped with that request's sim time.
 
@@ -1282,7 +1315,7 @@ intervals. Pure wire-format behavior is covered by GTests.
 | `test/cv/estimation_harness.py`, `test_estimation.py`, `estimation_metrics.py` | `test/cv/estimation_suite.cpp`, `include/sim/cv_bench.hpp` |
 | `test/cv/estimation_limits_data.py` | `include/sim/estimation_limits_data.hpp` |
 | `test/e2e/*` | `test/e2e/e2e_suite.cpp`, `test/e2e/e2e_harness.cpp`, `include/sim/e2e_test_core.hpp` |
-| `test/mcb/*`, `sim/mcb_firmware.py`, `sim/mcb_emulator/pty_link.py` | `test/cpp/test_mcb_firmware.cpp`, `test_mcb_bridge_pty.cpp`, `include/sim/mcb_firmware.hpp` (also used by the runtime node) |
+| `test/mcb/*`, `sim/mcb_firmware.py`, `sim/mcb_emulator/pty_link.py` | `test/cpp/test_mcb_firmware.cpp`, `test_mcb_bridge_pty.cpp`, `include/sim/mcb_firmware.hpp` (also used by the gz system) |
 | `sim/mcb_emulator/protocol.py` | `include/sim/mcb_protocol.hpp`, `src/mcb_protocol.cpp` |
 | `sim/combat.py`, `sim/match_scenario.py` | `src/combat.cpp`, `src/match_scenario.cpp` (also used by `match_driver`) |
 | `sim/suite_timing.py`, `sim/parent_death.py` | `src/suite_timing.cpp`, `src/process.cpp` |
@@ -1327,8 +1360,9 @@ score (paths under `MCB-project/src/`):
   not the NAV_GOAL reader; `mcb.launch.py drive:=auto` selects that reader
   explicitly. RMUL 3v3 waypoint advancement waits for IN_GAME, while the
   simple route can still spin before the game. The `mcb_drive` and
-  `mcb_match` stages park firmware drive and use `match_driver` for chassis
-  movement; their results do not validate the firmware route.
+  `mcb_match` stages send `match_driver` velocity commands through the native
+  firmware drivetrain controller and CAN motor plant; their results do not
+  validate the firmware route.
 
 E2 on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
 lateral, still and 1 m/s, 15 s each): `CV_TARGET` and `RELOCALIZE` frames
@@ -1359,8 +1393,10 @@ south ends of the side walls and stop in the center. Our chassis then
 parks, translates at a 1 m/s cap, makes a 90-degree corner, and spins at
 9 rad/s. The approach reaches a 2 m/s cap; acceleration is 2 m/s².
 These are scripted sim routes, pending a real navigation publisher.
-`match_driver` owns `/cmd_vel`; firmware drive output is remapped to
-`/mcb_emulator/cmd_vel`. The real firmware retains aim/fire, UART, pose and
+`match_driver` supplies `/cmd_vel` to the hosted fixture's external drive mode.
+The firmware's drivetrain controller converts it to motor currents, and the
+MCB physics system applies those currents as forces, without VelocityControl.
+The real firmware retains aim/fire, UART, pose and
 referee output, and the real AMCL + rf2o + EKF stack remains in the loop.
 
 `segments.json` reports hit rates and the measured failing hop per segment,

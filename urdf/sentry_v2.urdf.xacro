@@ -7,6 +7,12 @@
      see README.md for design rationale -->
 <robot name="sentry" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="camera" default="false"/>
+  <xacro:arg name="mcb_physics" default="false"/>
+  <xacro:arg name="mcb_drive" default="stop"/>
+  <xacro:arg name="firmware_binary" default=""/>
+  <xacro:arg name="mcb_game_stage" default="4"/>
+  <xacro:arg name="mcb_device_link" default="/tmp/mcb_emulator_pty"/>
+  <xacro:arg name="mcb_auto_fire" default="true"/>
   <!-- The gz model name, so each copy's plugin topics are its own. -->
   <xacro:arg name="name" default="sentry"/>
   <!-- An opponent carries no sensors and has no gravity or contacts;
@@ -164,6 +170,7 @@
     <!-- Head yaw and pitch track /head_pan_cmd and /head_pitch_cmd (rad).
          d_gain is sized for the real gimbal: about 0.031 kg m^2 about the
          yaw axis and 0.009 about pitch, near critical damping at p 75. -->
+    <xacro:unless value="$(arg mcb_physics)">
     <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
       <joint_name>headlink</joint_name>
       <topic>/model/${name}/joint/headlink/cmd_pos</topic>
@@ -193,6 +200,16 @@
     <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
       <topic>/model/${name}/cmd_vel</topic>
     </plugin>
+    </xacro:unless>
+    <xacro:if value="$(arg mcb_physics)">
+      <plugin filename="mcb_firmware_system" name="sim::McbFirmwareSystem">
+        <drive>$(arg mcb_drive)</drive>
+        <firmware_binary>$(arg firmware_binary)</firmware_binary>
+        <game_stage>$(arg mcb_game_stage)</game_stage>
+        <device_link>$(arg mcb_device_link)</device_link>
+        <auto_fire>$(arg mcb_auto_fire)</auto_fire>
+      </plugin>
+    </xacro:if>
   </gazebo>
 
   <xacro:if value="$(arg opponent)">
