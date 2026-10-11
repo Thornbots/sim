@@ -24,7 +24,6 @@ from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
 from sim.display import display_error
 
 
@@ -35,13 +34,11 @@ def stack(context):
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
         launch_arguments={'pose_emulator': 'false', 'camera': 'false',
                           'gui': str(windows).lower(), 'rviz': str(windows).lower(),
+                          'mcb_physics': 'true', 'mcb_drive': LaunchConfiguration('drive'),
+                          'mcb_device_link': LaunchConfiguration('device_link'),
+                          'mcb_auto_fire': LaunchConfiguration('auto_fire'),
+                          'firmware_binary': LaunchConfiguration('firmware_binary'),
                           'real_time_factor': '1'}.items())
-    mcb = Node(package='sim', executable='mcb_emulator', output='screen', parameters=[{
-        'use_sim_time': True,
-        'device_link': LaunchConfiguration('device_link'),
-        'firmware_binary': LaunchConfiguration('firmware_binary'),
-        'drive': LaunchConfiguration('drive'),
-        'auto_fire': ParameterValue(LaunchConfiguration('auto_fire'), value_type=bool)}])
     bridge = Node(package='dji_serial_bridge', executable='dji_serial_bridge_node',
                   name='dji_serial_bridge', output='screen', parameters=[{
                       'use_sim_time': True, 'device': LaunchConfiguration('device_link'),
@@ -53,9 +50,13 @@ def stack(context):
                           'use_rf2o': 'false', 'patrol_enabled': 'false'}.items())
     relay = Node(package='thornbots_pkg', executable='mcb_relay', output='screen',
                  parameters=[{'use_sim_time': True}])
-    fail = RegisterEventHandler(OnProcessExit(target_action=mcb, on_exit=[
-        EmitEvent(event=Shutdown(reason='MCB firmware adapter exited'))]))
-    return [sim, fail, mcb, TimerAction(period=2.0, actions=[bridge, relay]),
+    ready = Node(package='sim', executable='mcb_ready', output='screen',
+                 arguments=[LaunchConfiguration('device_link')])
+    start_uart = RegisterEventHandler(OnProcessExit(
+        target_action=ready,
+        on_exit=lambda event, context: [bridge, relay] if event.returncode == 0 else [
+            EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
+    return [sim, start_uart, ready,
             TimerAction(period=8.0, actions=[robot])]
 
 

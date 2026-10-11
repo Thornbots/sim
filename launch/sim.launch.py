@@ -322,6 +322,12 @@ def generate_launch_description():
         arguments=[
             '-string', Command(['xacro '] + model_xacro
                                + [' camera:=', LaunchConfiguration('camera'),
+                                  ' mcb_physics:=', LaunchConfiguration('mcb_physics'),
+                                  ' mcb_drive:=', LaunchConfiguration('mcb_drive'),
+                                  ' firmware_binary:=', LaunchConfiguration('firmware_binary'),
+                                  ' mcb_game_stage:=', LaunchConfiguration('mcb_game_stage'),
+                                  ' mcb_device_link:=', LaunchConfiguration('mcb_device_link'),
+                                  ' mcb_auto_fire:=', LaunchConfiguration('mcb_auto_fire'),
                                   ' name:=', robot_name]),
             '-name', robot_name,
             '-x', LaunchConfiguration('x'),
@@ -688,6 +694,12 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument('mcb_physics', default_value='false'),
+        DeclareLaunchArgument('mcb_drive', default_value='stop'),
+        DeclareLaunchArgument('firmware_binary', default_value=''),
+        DeclareLaunchArgument('mcb_game_stage', default_value='4'),
+        DeclareLaunchArgument('mcb_device_link', default_value='/tmp/mcb_emulator_pty'),
+        DeclareLaunchArgument('mcb_auto_fire', default_value='true'),
         world_arg,
         lockstep_arg,
         model_arg,
