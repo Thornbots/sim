@@ -1274,7 +1274,8 @@ damage. The marker is informational; current firmware ignores it. See the
 and [2026-10-11 firmware verification](docs/patrol-flag-2026-10-11.md).
 
 The native tests skip if the binary is absent; build it first to test the MCB.
-The bridge test also needs ROS. Pure wire-format behavior is covered by GTests.
+The bridge tests also need ROS and cover disabled/negative diagnostic
+intervals. Pure wire-format behavior is covered by GTests.
 
 ## Native port map
 

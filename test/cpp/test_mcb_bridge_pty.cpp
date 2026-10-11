@@ -188,7 +188,8 @@ TEST(McbBridgePty, PacksAllCvFlagCombinationsThroughTheRealBridge) {
       "/dji_serial_bridge/cv_target", rclcpp::SensorDataQoS());
   sim::LaunchTree bridge("bridge", {"env", "ROS_DOMAIN_ID=87", "ros2", "run",
       "dji_serial_bridge", "dji_serial_bridge_node", "--ros-args", "-p",
-      "device:=" + link.link(), "-p", "debug_log:=false", "-p", "read_poll_ms:=2"},
+      "device:=" + link.link(), "-p", "debug_log:=false", "-p", "read_poll_ms:=2",
+      "-p", "diag_interval_s:=0"},
       (directory / "bridge.log").string());
   wire::DJISerial parser;
   for (uint8_t flags = 0; flags < 16; ++flags) {
@@ -224,4 +225,20 @@ TEST(McbBridgePty, PacksAllCvFlagCombinationsThroughTheRealBridge) {
     }
     ASSERT_TRUE(received) << "flags=" << static_cast<int>(flags) << '\n' << bridge.read_log();
   }
+  EXPECT_NE(bridge.read_log().find("Diagnostic summary disabled"), std::string::npos);
+  EXPECT_EQ(bridge.read_log().find("── DIAG"), std::string::npos);
+}
+
+TEST(McbBridgePty, RejectsNegativeDiagnosticIntervalBeforeOpeningTheDevice) {
+  const auto log = "/tmp/mcb_negative_diag_" + std::to_string(getpid()) + ".log";
+  sim::LaunchTree bridge("bridge", {"env", "ROS_DOMAIN_ID=87", "ros2", "run",
+      "dji_serial_bridge", "dji_serial_bridge_node", "--ros-args", "-p",
+      "device:=/unused-negative-diag-test", "-p", "diag_interval_s:=-1"}, log);
+  const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (bridge.alive() && std::chrono::steady_clock::now() < end) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  EXPECT_FALSE(bridge.alive());
+  EXPECT_NE(bridge.read_log().find("diag_interval_s must be nonnegative"), std::string::npos);
+  EXPECT_EQ(bridge.read_log().find("cannot be stat"), std::string::npos);
 }

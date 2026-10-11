@@ -25,14 +25,15 @@ bridge executable. Full commands and logs are retained in that directory.
 
 - Fresh hosted GCC 14 build: successful, warnings treated as errors.
 - MCBV3: 31 core tests and four hosted regression tests pass.
-- Sim: 174 registered test results pass without skips, including 78 compiled
+- Sim: 175 registered test results pass without skips, including 78 compiled
   firmware cases and six pure protocol cases. The firmware matrix uses every
   combination of bits 0-3, verifying aim parsing, fire-bit independence,
   game-stage fire gating, patrol permission after expiry and damage-turn
   permission during a live aim. Bit 3 alone never requests a shot.
 - The real bridge PTY test packs every bit combination, checking all 15 payload
   bytes' fields and the unchanged payload size. Its existing firmware/bridge
-  test also passes.
+  test also passes. Zero diagnostic interval disables summaries while UART
+  traffic flows; a negative interval is rejected before opening the device.
 - Thornbots: 110 test results pass, including sweep/hit-turn patrol markers
   and firing/non-firing target points with the marker clear.
 - Bridge: six registered test results pass. Quality/actionlint pass in all
