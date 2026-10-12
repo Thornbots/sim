@@ -76,6 +76,12 @@ struct Plant {
         // Unmeshed rotors: M3508 torque, estimated inertia and viscous load.
         speed[i] += (0.02299 * current[i] - 0.0001 * speed[i]) * dt / 0.00005;
         angle[i] += speed[i] * dt;
+        // A loaded cartridge stops reverse indexing at home; current remains
+        // present so the firmware can detect the stall through CAN feedback.
+        if (i == 2 && angle[i] > 0) {
+          angle[i] = 0;
+          speed[i] = 0;
+        }
       }
     }
     Feedback result{};

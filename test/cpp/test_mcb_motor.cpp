@@ -68,3 +68,15 @@ TEST(McbMotor, AuxiliaryRotorAcceleratesAndReturnsMeasuredCurrent) {
   EXPECT_GT(static_cast<int16_t>((data[4][2] << 8) | data[4][3]), 0);
   EXPECT_EQ(static_cast<int16_t>((data[4][4] << 8) | data[4][5]), 819);
 }
+TEST(McbMotor, LoadedIndexerHomesAgainstAStopAndCanAdvanceForward) {
+  motor::Plant plant;
+  plant.commands[2] = 4000;
+  motor::Feedback data{};
+  for (int tick = 0; tick < 200; ++tick) data = plant.feedback({}, 0, 0, 0, .001);
+  EXPECT_EQ(plant.angle[2], 0);
+  EXPECT_EQ(plant.speed[2], 0);
+  EXPECT_GT(static_cast<int16_t>((data[2][4] << 8) | data[2][5]), 2000);
+  plant.commands[2] = -4000;
+  for (int tick = 0; tick < 200; ++tick) plant.feedback({}, 0, 0, 0, .001);
+  EXPECT_LT(plant.angle[2], -2 * motor::kPi);
+}
