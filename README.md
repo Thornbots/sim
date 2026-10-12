@@ -1334,10 +1334,15 @@ noise, thermal transients, bus faults and full device register behaviour are
 not modeled. Projectile exits follow forward indexer shaft travel in the motor
 plant, using the estimated gearbox/chamber geometry; reverse unjam travel is
 not counted again. This observes physical indexing, rather than reading or
-instrumenting firmware counters. Combat stages still use the hosted backend
+instrumenting firmware counters. A loaded-cartridge reverse stop supplies
+the CAN stall current used by the firmware's indexer homing routine; its
+geometry and load remain estimates, with no finite ammunition model.
+Combat stages still use the hosted backend
 until board stage integration is validated.
 
-The fake interfaces are calibrated IMU readings, Pico
+#### Shared motor plant and UART transport
+
+The hosted fixture's fake interfaces are calibrated IMU readings, Pico
 odometry, centred DBUS input with both switches up, referee UART frames,
 ADC and CAN motor feedback. The DBUS and referee packets go through the
 real parsers. Referee state remains live node parameters. The firmware's
@@ -1376,7 +1381,9 @@ with gz gimbal inertia and no CV/localization stack:
 ros2 run sim mcb_physics_suite
 ```
 
-The fixture still replaces boot calibration and hardware polling; ADC returns
+#### Hosted fixture limits
+
+The hosted fixture still replaces boot calibration and hardware polling; ADC returns
 0. CAN frames arrive once per tick without arbitration or transmission delay.
 MCU interrupts, instruction timing, calibration and physical homing remain
 unvalidated. The `MCB2` pipe format is private hosted IPC, not the Jetson UART

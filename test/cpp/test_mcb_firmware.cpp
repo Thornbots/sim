@@ -87,6 +87,19 @@ protected:
     return out;
   }
 };
+TEST_F(McbFirmware, IndexerResumesWhenSetupBecomesInGame) {
+  ref.game_stage = 2;
+  run(9000);
+  ref.game_stage = 4;
+  const auto target = wire::frame(wire::CvTarget{
+      static_cast<float>(firmware->start_x() - 3), 1, .2F, 100, 1});
+  const auto result = run(500, target);
+  ASSERT_FALSE(result.shots.empty()) << "the firmware never requested indexing";
+  EXPECT_TRUE(std::any_of(result.outputs.begin(), result.outputs.end(),
+      [](const auto &output) { return std::abs(output.motors[2]) > 100; }))
+      << "shoot requests left the physical indexer stopped after SETUP";
+}
+
 TEST_F(McbFirmware, SendsPoseRefereeAndEchoesPing) {
   const auto result = run(1000, wire::frame(wire::Ping{42}));
   const auto poses = messages<wire::Pose>(result);
