@@ -24,8 +24,16 @@ remain at [the owner](../README.md#driving-and-combat-diagnostics-mcb_drive).
   diagnosis was aim error; this is diagnostic completion, not combat accuracy.
 - That run required manual map_server/AMCL activation after a lifecycle response
   timeout. The lifecycle manager needed SIGKILL on teardown. It establishes
-  firmware/motor behavior but is not clean acceptance. Fresh drive, match and
-  parked board runs remain pending.
+  firmware/motor behavior but is not clean acceptance. The clean rerun below supersedes this acceptance evidence.
+
+- Clean board drive (`/tmp/dexec_81866.log`,
+  `/tmp/track_i_auto_drive_clean_20261012`) passed without intervention and the
+  log checker accepted it. Total 766.893 wall seconds (211.8 bring-up, 554.7
+  scored, 0.4 teardown); 26.536 simulated seconds, 5,297 holds, zero timeouts.
+  UART remained CRC-clean. Approach displacement 4.655 m, p95 speed 1.772 m/s;
+  p95 spin 12.527 rad/s. Six of 35 physical shots hit (17.1%); no approach shots.
+  Localization p95 was 0.104 m in approach and 0.112 m in spin. The diagnostic
+  was measured aim error. Board match and parked acceptance remain pending.
 
 ## Firmware review
 
