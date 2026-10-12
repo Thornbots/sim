@@ -30,6 +30,9 @@ inline std::array<uint8_t, 8> packet(double angle, double speed, double current)
 struct Plant {
   Commands commands{};
   std::array<double, 10> angle{}, speed{}, current{};
+  std::array<double, 4> wheel_speed{};
+  // Effective roller/bearing resistance; estimated, not a measured tire coefficient.
+  double rolling_resistance = 0.03;
 
   // readings use the firmware's pod axes; chassis twist is in ROS body axes.
   Feedback feedback(const std::array<double, 10> &readings,
@@ -44,7 +47,8 @@ struct Plant {
         (right + forward) / std::sqrt(2.0), (-right + forward) / std::sqrt(2.0),
         (-right - forward) / std::sqrt(2.0), (right - forward) / std::sqrt(2.0)};
     for (size_t i = 0; i < 4; ++i) {
-      speed[i + 6] = scale * (wheel[i] - kTrack * spin / 2);
+      wheel_speed[i] = wheel[i] - kTrack * spin / 2;
+      speed[i + 6] = scale * wheel_speed[i];
       angle[i + 6] += speed[i + 6] * dt;
     }
     for (size_t i = 0; i < 10; ++i) {
@@ -74,6 +78,9 @@ struct Plant {
     std::array<double, 4> force{};
     for (size_t i = 0; i < 4; ++i) {
       force[i] = 0.02299 * kDriveRatio / kWheelRadius * commands[i + 6] / 819.2;
+      // Dissipate rolling motion even with zero motor current; no position constraint.
+      force[i] -= rolling_resistance * 15.68 * 9.81 / 4 *
+                  std::tanh(wheel_speed[i] / 0.001);
       // Estimated tire traction, shared evenly; contacts still belong to gz.
       force[i] = std::clamp(force[i], -15.68 * 9.81 * 0.9 / 4, 15.68 * 9.81 * 0.9 / 4);
     }

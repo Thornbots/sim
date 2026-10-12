@@ -1,6 +1,7 @@
 // Copyright 2026 Thornbots. SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
 #include "sim/mcb_motor.hpp"
+#include "sim/mcb_sensors.hpp"
 namespace motor = sim::mcb_motor;
 
 TEST(McbMotor, EncodesDjiSignedFeedbackAndWrapsEncoder) {
@@ -50,4 +51,32 @@ TEST(McbMotor, AuxiliaryRotorAcceleratesAndReturnsMeasuredCurrent) {
   EXPECT_GT(plant.speed[4], 30);
   EXPECT_GT(static_cast<int16_t>((data[4][2] << 8) | data[4][3]), 0);
   EXPECT_EQ(static_cast<int16_t>((data[4][4] << 8) | data[4][5]), 819);
+}
+
+TEST(McbMotor, PassiveRollingResistanceDissipatesEveryChassisAxis) {
+  motor::Plant plant;
+  for (const auto &v : std::array<std::array<double, 3>, 6>{
+           {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0},
+            {0, 0, 1}, {0, 0, -1}}}) {
+    plant.feedback({}, v[0], v[1], v[2], .001);
+    const auto f = plant.chassis_wrench();
+    EXPECT_LT(f[0] * v[0] + f[1] * v[1] + f[2] * v[2], 0);
+  }
+  plant.feedback({}, 0, 0, 0, .001);
+  const auto rest = plant.chassis_wrench();
+  EXPECT_DOUBLE_EQ(rest[0], 0);
+  EXPECT_DOUBLE_EQ(rest[1], 0);
+  EXPECT_DOUBLE_EQ(rest[2], 0);
+  plant.rolling_resistance = 0;
+  plant.feedback({}, 1, 0, 0, .001);
+  EXPECT_DOUBLE_EQ(plant.chassis_wrench()[0], 0);
+}
+
+TEST(McbSensors, ImuSamplesAreEightTicksOld) {
+  sim::McbImuDelay imu;
+  for (int tick = 0; tick < 30; ++tick) {
+    const auto sample = imu.sample(tick * .01, tick * .02);
+    EXPECT_DOUBLE_EQ(sample[0], std::max(0, tick - 8) * .01);
+    EXPECT_DOUBLE_EQ(sample[1], std::max(0, tick - 8) * .02);
+  }
 }

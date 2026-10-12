@@ -76,6 +76,13 @@ target_link_libraries(combat Eigen3::Eigen)
 install(TARGETS combat
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 
+add_library(pose_history src/pose_history.cpp)
+target_compile_features(pose_history PUBLIC cxx_std_17)
+target_include_directories(pose_history PUBLIC include)
+target_link_libraries(pose_history PUBLIC combat Eigen3::Eigen gz-msgs::core)
+install(TARGETS pose_history
+  ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+
 add_library(suite_support src/suite_timing.cpp src/process.cpp src/match_scenario.cpp)
 target_compile_features(suite_support PUBLIC cxx_std_17)
 target_include_directories(suite_support PUBLIC include)
@@ -117,6 +124,9 @@ foreach(suite shot_hit estimation e2e)
   target_link_libraries(${suite}_suite suite_support combat cv_head_aim_core
     GTest::gtest Eigen3::Eigen nlohmann_json::nlohmann_json tinyxml2::tinyxml2
     gz-transport::core gz-msgs::core)
+  if("${suite}" STREQUAL "e2e")
+    target_link_libraries(${suite}_suite pose_history)
+  endif()
   ament_target_dependencies(${suite}_suite
     rclcpp rcl_interfaces nav_msgs std_msgs visualization_msgs dji_serial_bridge
     diagnostic_msgs tf2_ros ament_index_cpp)
@@ -339,6 +349,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_target_odometry test/cpp/test_target_odometry.cpp)
   target_include_directories(test_target_odometry PRIVATE include)
   ament_target_dependencies(test_target_odometry builtin_interfaces dji_serial_bridge nav_msgs)
+  ament_add_gtest(test_pose_history test/cpp/test_pose_history.cpp)
+  target_include_directories(test_pose_history PRIVATE include)
+  target_link_libraries(test_pose_history pose_history Eigen3::Eigen)
   foreach(lint copyright flake8 pep257)
     ament_add_pytest_test(sim_${lint} test/test_${lint}.py TIMEOUT 120
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

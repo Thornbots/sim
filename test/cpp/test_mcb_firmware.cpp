@@ -100,6 +100,8 @@ TEST_F(McbFirmware, SendsPoseRefereeAndEchoesPing) {
   EXPECT_FALSE(messages<wire::Ping>(result).empty());
 }
 TEST_F(McbFirmware, ConsumesFakeSensors) {
+  // Fixed fake poses cannot respond to motor torque; isolate sensor decoding.
+  ref.game_stage = 1;
   const auto poses = messages<wire::Pose>(
       run(200, {}, {0.25, 0.5, 0.1, 0.2, 0.7, 0.3, 0.4, 0.1, 0.2, 0.0}));
   ASSERT_FALSE(poses.empty());
@@ -275,3 +277,20 @@ TEST_P(McbPatrolFlag, StageGateStillBlocksFire) {
   EXPECT_TRUE(result.shots.empty());
 }
 INSTANTIATE_TEST_SUITE_P(AllFlags, McbPatrolFlag, testing::Range<uint8_t>(0, 16));
+
+TEST_F(McbFirmware, ParkedChassisOpposesWheelMotionOnlyWhenPoweredInGame) {
+  sim::mcb_motor::Plant plant;
+  const auto feedback = plant.feedback({}, 0, .3, 0, .001);
+  hw::Firmware::Output output{};
+  for (int i = 0; i < 20; ++i) output = firmware->step(5, {}, ref, feedback);
+  double power = 0;
+  for (int i = 0; i < 4; ++i) power += output.motors[6 + i] * plant.speed[6 + i];
+  EXPECT_LT(power, 0) << "A parked powered chassis must brake wheel motion";
+  ref.chassis_power = false;
+  for (int i = 0; i < 21; ++i) output = firmware->step(5, {}, ref, feedback);
+  for (int i = 0; i < 4; ++i) EXPECT_EQ(output.motors[6 + i], 0);
+  ref.chassis_power = true;
+  ref.game_stage = 1;
+  for (int i = 0; i < 21; ++i) output = firmware->step(5, {}, ref, feedback);
+  for (int i = 0; i < 4; ++i) EXPECT_EQ(output.motors[6 + i], 0);
+}

@@ -1275,12 +1275,22 @@ Flywheel, indexer and odometry-motor rotors have estimated inertia and load;
 they have no mesh in gz. This validates control against a motor plant, not
 measured tire, ESC, gearbox or launcher behaviour.
 
-Zero current is not a parking brake: the frictionless wheel contacts allow
-chassis motion under gimbal reaction and existing momentum. `mcb_parked`
-records truth displacement in `parking.jsonl` and rejects any cell moving
-more than 0.10 m from its first scored position. This is a stationary-bench
-acceptance limit, not a calibrated tire parameter. Friction/braking-model
-calibration remains open; see the [follow-up measurements](docs/aim-followup-2026-10-12.md).
+The plant adds passive wheel/roller resistance to the frictionless CAD contacts:
+`rolling_resistance=0.03` times each wheel's nominal normal load, smoothed
+through zero tangential speed. It dissipates motion without clamping chassis
+velocity or pose. The firmware parked command holds zero wheel velocity
+while chassis power is available in game; outside that state it writes zero
+current. The passive resistance alone did not hold a rapidly tracking chassis.
+This coefficient is estimated, not a measured tire parameter. `mcb_parked`
+records maximum truth displacement in `parking.jsonl` and rejects cells
+moving more than 0.03 m. The gyro feed delays yaw/rate by eight 1 ms ticks to
+match firmware's IMU predictor; CAN feedback stays current.
+Calibration and rejected treatments are recorded in the
+[accuracy investigation](docs/aim-accuracy-2026-10-12.md).
+
+`/mcb_emulator/gimbal_setpoint` publishes firmware desired field yaw and pitch
+at 100 Hz for command-versus-achieved diagnostics; it carries the physics
+stamp and does not change the UART payload.
 
 `/mcb_emulator/motors` publishes `sensor_msgs/JointState` at 100 Hz, stamped
 with the physics sample time. Names identify CAN bus and hexadecimal motor
@@ -1462,8 +1472,11 @@ maneuvers; the three ghosts spin and use a truth-fed aimer with seed 2026,
 0.015 rad Gaussian aim noise, and a 2 Hz fire rate. The selector sees both
 red opponents and the blue ally. Only our robot runs the real CV stack.
 
-The scorer advances 25 m/s ballistic shots under gravity against the field
-mesh, chassis hulls and canted armor. The first impact absorbs the shot;
+The scorer advances 24 m/s ballistic shots under gravity against the field
+mesh, chassis hulls and canted armor. It includes the physical muzzle velocity
+at launch, including chassis motion. 24 m/s matches the checked-out sentry
+firmware ballistic solver; the E2E Jetson planner uses the same value. The
+first impact absorbs the shot;
 damage requires more than 12 m/s relative normal speed, the exposure cone,
 and the panel's 50 ms dead time. Each robot starts with 400 HP; hits cost
 20 HP. Defeated robots stop moving and shooting. Referee HP, team, stage,

@@ -84,6 +84,7 @@ def _tests(context):
     config = context.launch_configurations
     cmd = ['ros2', 'run', 'sim', 'e2e_suite', '--stage', config['stage']]
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
+                     ('pose_latency_s', '--pose-latency-s'),
                      ('real_time_factor', '--real-time-factor'),
                      ('duration', '--e2e-duration'), ('log_dir', '--log-dir')):
         if config[arg]:
@@ -162,6 +163,8 @@ def generate_launch_description():
         # Patrol stays on, as on the robot: patrol frames clear `fire`, and
         # it reacquires an opponent that starts out of view or is lost.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
+                          'pose_latency_s': LaunchConfiguration('pose_latency_s'),
+                          'v_muzzle': '24.0',
                           'use_rf2o': 'true', 'load_map': 'true', 'patrol_enabled': 'true',
                           'initial_x': PythonExpression([
                               "'4.625' if '", LaunchConfiguration('stage'),
@@ -220,6 +223,8 @@ def generate_launch_description():
         DeclareLaunchArgument('speeds', default_value='',
                               description="opponent speeds, m/s, 0 = stationary, e.g. '0 2'; "
                                           'empty = the harness default'),
+        DeclareLaunchArgument('pose_latency_s', default_value='0.0',
+                              description='Capture-time pose transport calibration, seconds'),
         DeclareLaunchArgument('paths', default_value='',
                               description="target_driver paths, e.g. 'lateral radial'; "
                                           'empty = all three'),

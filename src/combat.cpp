@@ -200,9 +200,10 @@ ShotResolver::ShotResolver(Mesh field_mesh, Mesh hull_mesh, std::vector<Eigen::M
 Impact ShotResolver::resolve(
   const std::string & shooter, const Eigen::Vector3d & origin,
   const Eigen::Vector3d & barrel, double launch, const Histories & histories,
-  std::optional<double> until, int start_step) const
+  std::optional<double> until, int start_step,
+  const Eigen::Vector3d & launch_velocity) const
 {
-  const Eigen::Vector3d velocity = kMuzzleSpeed * barrel;
+  const Eigen::Vector3d velocity = kMuzzleSpeed * barrel + launch_velocity;
   const Eigen::Vector3d gravity(0.0, 0.0, kGravity);
   const Eigen::Vector3d end = origin + velocity * kFlightS + gravity * (kFlightS * kFlightS / 2);
   const Eigen::Vector3d low = (origin.cwiseMin(end).array() - 0.4).matrix();

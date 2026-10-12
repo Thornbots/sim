@@ -58,6 +58,7 @@ public:
                 "headless:=" +
                     std::string(cb::options.headless ? "true" : "false"),
                 "stage:=" + cb::options.stage, "target_speed:=0.0",
+                "pose_latency_s:=" + cb::number(cb::options.pose_latency_s),
                 "target_spin_hz:=0.0", "real_time_factor:=" + cb::options.rtf,
                 "lockstep:=" + std::string(cb::options.lockstep ? "true" : "false"),
                 "firmware_fixes:=" + std::string(cb::options.no_firmware_fixes
@@ -233,7 +234,7 @@ TEST_P(E2ESuite, MCB) {
     cb::append_json(cb::options.log_dir + "/parking.jsonl",
                     {{"cell", c.name},
                      {"chassis_max_displacement_m", chassis_displacement}});
-    EXPECT_LE(chassis_displacement, .1)
+    EXPECT_LE(chassis_displacement, .03)
         << c.name << ": chassis moved during a parked-shooter cell";
     const auto &mcb = s->shots.at("mcb");
     int hit = 0;
@@ -259,6 +260,8 @@ TEST_P(E2ESuite, MCB) {
   cb::truncate(cb::options.log_dir + "/route.jsonl");
   for (const auto &r : s->route_records)
     cb::append_json(cb::options.log_dir + "/route.jsonl", r);
+  for (const auto &r : s->states)
+    cb::append_json(cb::options.log_dir + "/states.jsonl", r);
   if (cb::options.stage == "mcb_drive") {
     environment->record_score(c.name, sim::match_scenario::match_duration());
   }
