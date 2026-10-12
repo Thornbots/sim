@@ -67,6 +67,7 @@ public:
   std::vector<Json> states, route_records;
   std::vector<dji_serial_bridge::msg::RefSysStatus> referee_messages;
   std::optional<double> match_start, target_stamp, state_stamp;
+  std::optional<double> center_time;
   bool scoring = false;
   double score_until = INFINITY;
   std::unique_ptr<combat::Referee> referee;
@@ -78,8 +79,8 @@ private:
   Offsets offsets_;
   gz::transport::Node gz_;
   tf2_ros::TransformListener listener_;
-  std::deque<std::pair<double, Vec>> aims_, references_, mcb_poses_;
-  std::vector<double> pending_reference_;
+  std::deque<std::pair<double, Vec>> aims_, mcb_poses_;
+  std::vector<double> pending_poses_;
   std::vector<dji_serial_bridge::msg::TargetState> pending_states_;
   std::vector<std::pair<std::string, double>> pending_;
   std::unique_ptr<combat::ShotResolver> resolver_;

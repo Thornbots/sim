@@ -188,21 +188,9 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
                                      if (scoring && t < score_until)
                                        pending_.push_back({"mcb", t + .05});
                                    });
-  if (driving())
-    subscribe<nav_msgs::msg::Odometry>(
-        "/sim/match/reference", rclcpp::QoS(10), [this](const auto &m) {
-          double t = stamp_s(m.header.stamp);
-          references_.push_back(
-              {t, {m.pose.pose.position.x, m.pose.pose.position.y, 0}});
-          if (scoring)
-            pending_reference_.push_back(t);
-          while (references_.front().first < t - 3)
-            references_.pop_front();
-        });
-  else
-    pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
+  pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
       if (scoring)
-        pending_reference_.push_back(now_s());
+        pending_poses_.push_back(now_s());
     });
   fire_timer_ =
       create_timer(std::chrono::milliseconds(100), [this]() { fire_tick(); });
@@ -248,6 +236,8 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     subscribe<dji_serial_bridge::msg::RefSysStatus>(
         "/dji_serial_bridge/ref_sys", rclcpp::SensorDataQoS(),
         [this](const auto &m) { referee_messages.push_back(m); });
+  }
+  if (driving()) {
     referee_client_ = create_client<rcl_interfaces::srv::SetParameters>(
         "/mcb_emulator/set_parameters");
     referee_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
@@ -276,7 +266,7 @@ void Scorer::reset() {
   states.clear();
   pending_states_.clear();
   route_records.clear();
-  pending_reference_.clear();
+  pending_poses_.clear();
   score_until = INFINITY;
   flight_steps_.clear();
 }
@@ -304,9 +294,20 @@ Json Scorer::pose_errors(double t) {
   Json out = {
       {"chassis_tilt_deg",
        180 / cb::kPi * std::acos(std::clamp(ours->root(2, 2), -1., 1.))}};
-  if (match_start)
-    out["segment"] =
-        match_scenario::sample_match(t - *match_start, stage).segment;
+  if (match_start) {
+    const auto previous = histories.at("sentry")->at(t - .05);
+    double speed = 0, spin = 0;
+    if (previous) {
+      speed = (ours->root.block<2, 1>(0, 3) - previous->root.block<2, 1>(0, 3)).norm() / .05;
+      const Eigen::Matrix3d rotation = previous->root.block<3, 3>(0, 0).transpose() * ours->root.block<3, 3>(0, 0);
+      spin = std::atan2(rotation(1, 0), rotation(0, 0)) / .05;
+    }
+    out["speed_m_s"] = speed;
+    out["spin_rad_s"] = spin;
+    out["start_displacement_m"] = std::hypot(ours->root(0, 3) - 4.625, ours->root(1, 3));
+    out["segment"] = !center_time || t < *center_time ? "approach" :
+                     speed > .2 ? "drive" : std::abs(spin) > .5 ? "spin" : "parked";
+  }
   auto world = world_T_odom(t);
   try {
     if (!world || !ours->head)
@@ -345,12 +346,6 @@ Json Scorer::pose_errors(double t) {
             tr.translation.x - i->second.x(), tr.translation.y - i->second.y());
       } catch (const tf2::TransformException &) {
       }
-      break;
-    }
-  for (auto i = references_.rbegin(); i != references_.rend(); ++i)
-    if (i->first <= t) {
-      out["route_error_m"] =
-          (ours->root.block<2, 1>(0, 3) - i->second.head<2>()).norm();
       break;
     }
   try {
@@ -531,7 +526,7 @@ void Scorer::fire_tick() {
       states_keep.push_back(m);
   pending_states_ = std::move(states_keep);
   std::vector<double> ref_keep;
-  for (double t : pending_reference_)
+  for (double t : pending_poses_)
     if (t > now - .1)
       ref_keep.push_back(t);
     else {
@@ -539,7 +534,7 @@ void Scorer::fire_tick() {
       out["t"] = t;
       route_records.push_back(out);
     }
-  pending_reference_ = std::move(ref_keep);
+  pending_poses_ = std::move(ref_keep);
   std::vector<std::pair<std::string, double>> keep;
   std::vector<std::pair<std::string, Json>> completed;
   for (const auto &e : pending_) {
@@ -596,14 +591,23 @@ void Scorer::fire_tick() {
     shots[e.first].push_back(shot);
     cb::append_json(log_path, shot);
   }
-  if (stage == "mcb_match")
+  if (driving())
     sync_referee();
 }
 void Scorer::sync_referee() {
   double elapsed = now_s() - match_start.value_or(now_s());
+  if (match_start && !center_time) {
+    bool ready = true;
+    for (const auto &[name, history] : histories) {
+      const auto pose = history->at(now_s() - .01);
+      ready &= pose && std::abs(pose->root(0, 3)) < match_scenario::kCenterHalfWidth &&
+                       std::abs(pose->root(1, 3)) < match_scenario::kCenterHalfHeight;
+    }
+    if (ready) center_time = now_s();
+  }
   diagnostic_msgs::msg::DiagnosticArray msg;
   msg.header.stamp = get_clock()->now();
-  for (const auto &p : referee->hit_points()) {
+  if (referee) for (const auto &p : referee->hit_points()) {
     diagnostic_msgs::msg::DiagnosticStatus s;
     s.name = s.hardware_id = p.first;
     s.level = p.second ? 0 : 2;
@@ -616,6 +620,13 @@ void Scorer::sync_referee() {
     s.values = {hp, team};
     msg.status.push_back(s);
   }
+  diagnostic_msgs::msg::DiagnosticStatus gate;
+  gate.name = "approach";
+  diagnostic_msgs::msg::KeyValue ready;
+  ready.key = "center_ready";
+  ready.value = center_time ? "true" : "false";
+  gate.values = {ready};
+  msg.status.push_back(gate);
   referee_pub_->publish(msg);
   if (referee_future_) {
     if (referee_future_->wait_for(std::chrono::seconds(0)) !=
@@ -630,17 +641,18 @@ void Scorer::sync_referee() {
   if (!referee_client_->service_is_ready())
     return;
   auto req = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
+  const bool alive = !referee || referee->hp("sentry") > 0;
   for (const auto &p : std::vector<rclcpp::Parameter>{
-           rclcpp::Parameter("current_hp", referee->hp("sentry")),
+           rclcpp::Parameter("current_hp", referee ? referee->hp("sentry") : 400),
+           rclcpp::Parameter("drive", std::string(match_start && alive ? "simple" : "stop")),
+           rclcpp::Parameter("auto_fire", alive && center_time.has_value()),
            rclcpp::Parameter(
                "game_stage",
-               elapsed >= match_scenario::match_duration("mcb_match")     ? 5
-               : elapsed >= match_scenario::ingress_duration("mcb_match") ? 4
-                                                                          : 3),
+               elapsed >= match_scenario::match_duration(stage) ? 5 : 4),
            rclcpp::Parameter("stage_time_remaining",
                              std::max(0, 300 - static_cast<int>(elapsed))),
            rclcpp::Parameter("hurt_armor_id", hurt_armor_id),
-           rclcpp::Parameter("shooter_power", referee->hp("sentry") > 0)})
+           rclcpp::Parameter("shooter_power", alive)})
     req->parameters.push_back(p.to_parameter_msg());
   referee_future_ = referee_client_->async_send_request(req);
 }

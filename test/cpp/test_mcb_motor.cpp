@@ -58,6 +58,14 @@ TEST(McbMotor, SpeedFeedbackClosesTheDriveLoopAndPitchHasBackEmf) {
   EXPECT_GT(still[1], 0);
   EXPECT_LT(moving[1], still[1]);
 }
+TEST(McbMotor, TractionLimitUsesTheSimulatedRobotMass) {
+  motor::Plant plant;
+  plant.commands = {0, 0, 0, 0, 0, 0, 16000, 16000, -16000, -16000};
+  const auto light = plant.chassis_wrench(5);
+  const auto heavy = plant.chassis_wrench(10);
+  EXPECT_NEAR(heavy[0], 2 * light[0], 1e-9);
+  EXPECT_NEAR(light[1], 0, 1e-9);
+}
 
 TEST(McbMotor, AuxiliaryRotorAcceleratesAndReturnsMeasuredCurrent) {
   motor::Plant plant;

@@ -42,7 +42,7 @@ public:
       timing::set_sim_clock([this]() { return scorer->now_s(); });
       if (cb::options.stage != "mcb_parked") {
         nodes.erase(std::find(nodes.begin(), nodes.end(), "target_driver"));
-        nodes.push_back("match_driver");
+        nodes.push_back("match_environment");
       }
       if (cb::options.stage == "mcb_match") {
         nodes.push_back("opponent_driver_opponent_1");
@@ -232,7 +232,7 @@ TEST_P(E2ESuite, MCB) {
     return;
   }
   s->reset();
-  environment->control->set_params("match_driver",
+  environment->control->set_params("match_environment",
                                    {rclcpp::Parameter("active", true)});
   s->match_start = s->now_s();
   double duration = sim::match_scenario::match_duration(cb::options.stage);
@@ -266,22 +266,24 @@ TEST_P(E2ESuite, MCB) {
   }
   cb::Json summaries = cb::Json::array();
   for (const auto &segment :
-       {"approach_2", "parked", "straight_1", "turn", "spin"}) {
+       {"approach", "drive", "spin", "parked"}) {
     std::vector<cb::Json> records, telemetry;
-    std::vector<double> route, pose;
+    std::vector<double> displacement, speed, spin, pose;
     for (const auto &r : actual)
       if (r.value("segment", std::string()) == segment)
         records.push_back(r);
     for (const auto &r : s->route_records)
       if (r.value("segment", std::string()) == segment) {
         telemetry.push_back(r);
-        if (r.contains("route_error_m"))
-          route.push_back(r["route_error_m"]);
+        displacement.push_back(r.value("start_displacement_m", 0.0));
+        speed.push_back(r.value("speed_m_s", 0.0));
+        spin.push_back(std::abs(r.value("spin_rad_s", 0.0)));
         if (r.contains("localization_error_m") &&
             !r["localization_error_m"].is_null())
           pose.push_back(r["localization_error_m"]);
       }
-    bool fighting = std::string(segment) != "approach_2";
+    if (telemetry.empty() && records.empty()) continue;
+    bool fighting = std::string(segment) != "approach";
     auto diagnosis = match && !fighting
                          ? cb::Json(nullptr)
                          : ee::segment_diagnostics(*s, segment, records);
@@ -297,8 +299,10 @@ TEST_P(E2ESuite, MCB) {
         {"shots", records.size()},
         {match ? "enemy_hit_rate" : "hit_rate", rate},
         {"diagnosis", diagnosis},
-        {"route_p95_m", route.empty() ? cb::Json(nullptr)
-                                      : cb::Json(cb::percentile(route, 95))},
+        {"start_displacement_max_m", displacement.empty() ? cb::Json(nullptr)
+                                      : cb::Json(*std::max_element(displacement.begin(), displacement.end()))},
+        {"speed_p95_m_s", speed.empty() ? cb::Json(nullptr) : cb::Json(cb::percentile(speed, 95))},
+        {"spin_p95_rad_s", spin.empty() ? cb::Json(nullptr) : cb::Json(cb::percentile(spin, 95))},
         {"localization_p95_m", pose.empty()
                                    ? cb::Json(nullptr)
                                    : cb::Json(cb::percentile(pose, 95))}};
@@ -316,10 +320,6 @@ TEST_P(E2ESuite, MCB) {
     }
     summaries.push_back(summary);
     std::cout << cb::python_repr(summary) << '\n';
-    EXPECT_FALSE(route.empty()) << segment << ": route not followed";
-    if (!route.empty()) {
-      EXPECT_LT(cb::percentile(route, 95), .4) << segment;
-    }
     EXPECT_FALSE(pose.empty())
         << segment << ": no stamped localization diagnostics";
     if (!match || fighting) {
@@ -330,6 +330,14 @@ TEST_P(E2ESuite, MCB) {
           << "firmware fired before every robot reached center";
     }
   }
+  EXPECT_TRUE(s->center_time.has_value()) << "firmware auto-drive never brought every robot to center";
+  double displacement = 0, spin = 0;
+  for (const auto &record : s->route_records) {
+    displacement = std::max(displacement, record.value("start_displacement_m", 0.0));
+    spin = std::max(spin, std::abs(record.value("spin_rad_s", 0.0)));
+  }
+  EXPECT_GT(displacement, 1.0) << "firmware auto-drive produced no translation";
+  EXPECT_GT(spin, 1.0) << "firmware auto-drive produced no chassis rotation";
   if (!match) {
     std::ofstream(cb::options.log_dir + "/segments.json")
         << summaries.dump(2) << '\n';

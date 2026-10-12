@@ -311,6 +311,16 @@ struct GzHardware {
   }
 };
 
+inline uint32_t control_mode(const std::string &drive, bool auto_fire) {
+  uint32_t mode;
+  if (drive == "stop") mode = 0;
+  else if (drive == "simple") mode = 1;
+  else if (drive == "auto") mode = 2;
+  else if (drive == "external") mode = 3;
+  else throw std::invalid_argument("unknown MCB drive mode: " + drive);
+  return mode | (auto_fire ? 0 : 4);
+}
+
 class Firmware {
 public:
   Firmware(int master_fd, const std::string &requested_binary,
@@ -333,20 +343,7 @@ public:
                       .string();
       }
     }
-    if (drive == "stop") {
-      mode_ = 0;
-    } else if (drive == "simple") {
-      mode_ = 1;
-    } else if (drive == "auto") {
-      mode_ = 2;
-    } else if (drive == "external") {
-      mode_ = 3;
-    } else {
-      throw std::invalid_argument("unknown MCB drive mode: " + drive);
-    }
-    if (!auto_fire) {
-      mode_ |= 4;
-    }
+    mode_ = control_mode(drive, auto_fire);
     if (access(binary_.c_str(), adapter_.empty() ? X_OK : R_OK) != 0) {
       throw std::runtime_error(
           "MCB firmware binary not built: " + binary_ +
@@ -356,7 +353,7 @@ public:
     }
     try {
       spawn(master_fd);
-      if (read(4, adapter_.empty() ? 5 : 600) != std::vector<uint8_t>{'M', 'C', 'B', '2'}) {
+      if (read(4, adapter_.empty() ? 5 : 600) != std::vector<uint8_t>{'M', 'C', 'B', '3'}) {
         throw std::runtime_error(
             "MCB firmware hardware interface version mismatch");
       }
@@ -411,7 +408,8 @@ public:
 
   Output step(int64_t cycles, const std::array<double, 10> &readings,
               const Referee &ref, const mcb_motor::Feedback &motors,
-              const std::array<double, 3> &external = {}) {
+              const std::array<double, 3> &external = {},
+              const std::optional<std::array<double, 6>> &imu = {}) {
     if (cycles < 1 || cycles > 100) {
       throw std::invalid_argument(
           "MCB hardware ticks must contain 1..100 cycles");
@@ -429,6 +427,8 @@ public:
     append_u32(input, mode_);
     for (const auto &motor : motors) input.insert(input.end(), motor.begin(), motor.end());
     for (const double value : external) append_float(input, value);
+    const auto sample = imu.value_or(std::array<double, 6>{0, 0, readings[5], 0, 0, 1});
+    for (const double value : sample) append_float(input, value);
     input.insert(input.end(), packets.begin(), packets.end());
     size_t offset = 0;
     while (offset < input.size()) {

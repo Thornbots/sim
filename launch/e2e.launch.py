@@ -59,8 +59,6 @@ MCB_PTY = '/tmp/mcb_emulator_pty'
 
 def _sim(context):
     config = context.launch_configurations
-    if config['backend'] == 'renode' and config['stage'] in DRIVING:
-        raise RuntimeError('Renode driving stages require firmware auto-drive integration')
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
     spawn = ({'x': '4.625', 'y': '0.0', 'yaw': str(math.pi)}
@@ -72,10 +70,11 @@ def _sim(context):
         launch_arguments={'gui': gui, 'rviz': gui, 'foxglove': config['foxglove'],
                           'camera': 'false', 'pose_emulator': 'false',
                           'mcb_physics': 'true',
-                          'mcb_drive': 'external' if config['stage'] in DRIVING else 'stop',
+                          'mcb_drive': 'stop',
+                          'mcb_auto_fire': 'false' if config['stage'] in DRIVING else 'true',
                           'firmware_binary': config['firmware_binary'],
                           'mcb_backend': config['backend'],
-                          'mcb_game_stage': '3' if config['stage'] == 'mcb_match' else '4',
+                          'mcb_game_stage': '4',
                           'real_time_factor': config['real_time_factor'],
                           'lockstep': config['lockstep'], **spawn}.items())]
 
@@ -174,8 +173,8 @@ def generate_launch_description():
                               "'4.625' if '", LaunchConfiguration('stage'),
                               "' in ", repr(DRIVING), " else '0.0'"])}.items())
 
-    match_driver = Node(
-        package='sim', executable='match_driver', name='match_driver', output='screen',
+    match_environment = Node(
+        package='sim', executable='match_environment', name='match_environment', output='screen',
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
     # The bridge opens the pty once, so it starts after the emulator makes it.
     uart_ready = Node(package='sim', executable='mcb_ready', arguments=[MCB_PTY,
@@ -213,7 +212,7 @@ def generate_launch_description():
                     remappings=[(f'/model/{name}/path', topic)],
                     parameters=[{'use_sim_time': True}])]
         return ([coordinator, detector(opponents)] + extras + common
-                + ([match_driver] if stage in DRIVING else [target_driver])
+                + ([match_environment] if stage in DRIVING else [target_driver])
                 + [TimerAction(period=ROBOT_DELAY_S, actions=[robot])])
 
     return LaunchDescription([
@@ -224,7 +223,7 @@ def generate_launch_description():
                               description='Deprecated: the native MCB runs its checked-out code'),
         DeclareLaunchArgument('firmware_binary', default_value='',
                               description='Hosted MCB executable; empty uses the firmware build'),
-        DeclareLaunchArgument('backend', default_value='hosted', choices=['hosted', 'renode']),
+        DeclareLaunchArgument('backend', default_value='renode', choices=['hosted', 'renode']),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('speeds', default_value='',

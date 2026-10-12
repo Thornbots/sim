@@ -68,7 +68,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('firmware_binary', default_value='',
                               description='Hosted MCB executable; default is its release build'),
-        DeclareLaunchArgument('backend', default_value='hosted', choices=['hosted', 'renode']),
+        DeclareLaunchArgument('backend', default_value='renode', choices=['hosted', 'renode']),
         DeclareLaunchArgument('device_link', default_value='/tmp/mcb_emulator_pty'),
         DeclareLaunchArgument('drive', default_value='stop', choices=['stop', 'simple', 'auto']),
         DeclareLaunchArgument('auto_fire', default_value='true'),

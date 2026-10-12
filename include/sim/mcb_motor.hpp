@@ -95,12 +95,12 @@ struct Plant {
     return {yaw, 0.741 * kPitchRatio * pitch_current};
   }
 
-  std::array<double, 3> chassis_wrench() const {
+  std::array<double, 3> chassis_wrench(double mass = 15.68) const {
     std::array<double, 4> force{};
     for (size_t i = 0; i < 4; ++i) {
       force[i] = 0.02299 * kDriveRatio / kWheelRadius * commands[i + 6] / 819.2;
       // Estimated tire traction, shared evenly; contacts still belong to gz.
-      force[i] = std::clamp(force[i], -15.68 * 9.81 * 0.9 / 4, 15.68 * 9.81 * 0.9 / 4);
+      force[i] = std::clamp(force[i], -mass * 9.81 * 0.9 / 4, mass * 9.81 * 0.9 / 4);
     }
     return {(force[0] + force[1] - force[2] - force[3]) / std::sqrt(2.0),
             -(force[0] - force[1] - force[2] + force[3]) / std::sqrt(2.0),
