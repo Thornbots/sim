@@ -222,7 +222,7 @@ def generate_launch_description():
         DeclareLaunchArgument('firmware_fixes', default_value='true',
                               description='Deprecated: the native MCB runs its checked-out code'),
         DeclareLaunchArgument('firmware_binary', default_value='',
-                              description='Hosted MCB executable; empty uses the firmware build'),
+                              description='MCB executable or board ELF; empty uses the selected backend release build'),
         DeclareLaunchArgument('backend', default_value='renode', choices=['hosted', 'renode']),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),

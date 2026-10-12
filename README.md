@@ -439,6 +439,9 @@ a hit rate under its floor. Shots `CVTarget.fire` asks for are logged
 beside. `firmware_fixes` is deprecated; the hosted build runs this
 checkout's code without overlays.
 
+Stages default to board execution: follow the [Type C build](#type-c-board-execution-with-renode)
+first, or pass `backend:=hosted` after the [hosted build](#mcb-emulator).
+
 ```bash
 ros2 launch sim e2e.launch.py                                 # mcb_parked, all 12 cells
 ros2 launch sim e2e.launch.py speeds:='0 2' paths:=lateral duration:=15
@@ -1211,7 +1214,7 @@ and missing-consumer timeout diagnostics:
 ros2 run sim lockstep_suite
 ```
 
-The default hosted backend compiles and runs the checked-out `firmware/MCBV3` C++ sources.
+The explicitly selected hosted backend compiles and runs the checked-out `firmware/MCBV3` C++ sources.
 The Python control port has been removed. `include/sim/mcb_firmware.hpp` transports hardware
 readings and DJI CAN feedback to `MCB-project/src/hosted/main.cpp`, which instantiates the actual
 `SentryControl` and runs its command scheduler in 1 ms steps. UART1 uses the
@@ -1226,11 +1229,11 @@ git -C src/firmware/MCBV3 submodule update --init taproot-scripts
 apt-get install -y scons g++-14
 src/sim/tools/build_mcb_firmware.sh
 colcon build --packages-select sim --symlink-install
-ros2 launch sim mcb.launch.py
+ros2 launch sim mcb.launch.py backend:=hosted
 ```
 
-Use `drive:=simple` for the firmware's waypoint route or `drive:=auto` for
-NAV_GOAL; the default `stop` parks the robot. Foxglove serves on :8765, and
+Use `drive:=simple` for the firmware's waypoint route or, with `backend:=hosted`,
+`drive:=auto` for NAV_GOAL; the default `stop` parks the robot. Foxglove serves on :8765, and
 gz/rviz open where a display is available. This launch uses the actual MCB
 and bridge without an opponent; the `e2e.launch.py` stages score it.
 
