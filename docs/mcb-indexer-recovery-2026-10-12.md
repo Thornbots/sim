@@ -40,7 +40,9 @@ Jetson fire requests. It passed in 496.836 wall seconds (203.1 bring-up,
 64.2 settling, 227.1 scoring, 2.3 teardown; scored RTF about 0.05). The
 620 tracked states had median centre-XY error 0.041 m. The run had zero
 lockstep timeouts and zero UART CRC errors; Renode and the launch tree
-exited cleanly. This is one cell, not calibrated combat floors or repeatability.
+exited cleanly, and the native checker accepted the suite log. Shutdown still
+reported ros_gz_bridge/RViz aborts; this does not resolve the separate track E
+shutdown work. This is one cell, not calibrated combat floors or repeatability.
 
 ## Critical firmware review
 
