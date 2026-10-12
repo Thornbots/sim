@@ -46,9 +46,7 @@ Keep approach firing disabled until all routes reach center.
 - `odom_stuck` intentionally checks liveness, not recovered localization:
   [scenarios](README.md#scenarios). Never invert rf2o's warping to retune a regression.
 - No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
-- Clean board-stage acceptance for firmware auto-drive remains in
-  [track I](../ROADMAP.md#i-mcb-emulator); [current evidence](docs/mcb-auto-drive-2026-10-12.md).
-  Current motor-plant limits live in
+- [Board-stage verification](docs/mcb-auto-drive-2026-10-12.md); motor-plant limits live in
   [MCB emulator](README.md#mcb-emulator).
   Noise, gimbal dynamics, suspension and spawn coordinates remain estimates;
   [model limits](README.md#sentry_v2urdfxacro-motion-model).

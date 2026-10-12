@@ -1535,8 +1535,8 @@ and a low hit rate named a measured failing hop, as allowed in E2E_PLAN.
 It does **not** mean combat accuracy passed: floors need repeated valid
 runs, and current moving runs expose localization and tracking failures.
 The spawn coordinates are firmware defaults, not surveyed starting zones.
-[Verification and pending acceptance](docs/mcb-auto-drive-2026-10-12.md) distinguish
-board feedback/control evidence from clean stage runs.
+[Board-stage verification](docs/mcb-auto-drive-2026-10-12.md) records clean
+parked, drive and match runs, the focused CAN/gz check, and accuracy limits.
 
 ### Four-robot center fight (`mcb_match`)
 

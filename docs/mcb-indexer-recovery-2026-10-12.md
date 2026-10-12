@@ -62,4 +62,5 @@ motor despite accepted shot requests after SETUP/calibration.
   counters and documents the loaded-cartridge model; this report and the
   board report contain accepted and rejected measurements.
 - Workspace CHANGELOG Unreleased and current ROADMAP status accompany the
-  coordinated pin bump; the remaining track I item is firmware auto-drive.
+  coordinated pin bump. Firmware auto-drive was completed in the
+  [follow-up verification](mcb-auto-drive-2026-10-12.md).

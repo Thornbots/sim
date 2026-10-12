@@ -33,7 +33,7 @@ remain at [the owner](../README.md#driving-and-combat-diagnostics-mcb_drive).
   UART remained CRC-clean. Approach displacement 4.655 m, p95 speed 1.772 m/s;
   p95 spin 12.527 rad/s. Six of 35 physical shots hit (17.1%); no approach shots.
   Localization p95 was 0.104 m in approach and 0.112 m in spin. The diagnostic
-  was measured aim error. Parked acceptance remains pending.
+  was measured aim error. All three board stages now have clean acceptance below.
 
 - Clean board match (`/tmp/dexec_90319.log`,
   `/tmp/track_i_auto_match_clean_20261012`) passed without intervention and the
@@ -44,6 +44,35 @@ remain at [the owner](../README.md#driving-and-combat-diagnostics-mcb_drive).
   12.524 rad/s. No approach shots fired. All robots reached center, combat HP
   changed, and the firmware referee/team checks passed. Localization p95 was
   0.100 m in approach and 0.087 m in spin; the diagnostic was measured aim error.
+
+- Final board parked cell (`/tmp/dexec_94659.log`,
+  `/tmp/track_i_parked_final_20261012`): lateral 1 m/s, opponent spin 2 Hz,
+  scored duration 10 s. Four of 20 physical shots hit (20%); test and log checker
+  pass. Total 494.233 wall seconds, 14.083 simulated seconds, 2,806 holds and
+  zero timeouts. The 619 TargetState samples had 0.023 m center error. Teardown
+  was clean. This is one representative moving cell, not the full 12-cell sweep.
+  The earlier 19/20 result predates restored CAN1 reception and is not a current
+  accuracy baseline.
+- Final focused board CAN/gz check (`/tmp/dexec_99277.log`) passed in 256.918 s:
+  yaw commands +0.6 and -0.5 rad reached +0.601942 and -0.501643 rad and stopped.
+  Actual CAN2 pitch commands peaked at 6.86 V, below the 10 V firmware clamp;
+  541 POSE and 60 REF_SYS frames had zero CRC errors. Owned stack shutdown was
+  clean. The earlier 24000 pitch observation was CAN1 odometry data returned
+  for both bus callbacks, not the board's pitch command.
+
+- Final hosted compatibility drive (`/tmp/dexec_7866.log`,
+  `/tmp/track_i_hosted_final_20261012`) passed and the log checker accepted it
+  in 55.606 wall seconds. Twenty-three of 35 firmware-issued shots hit (65.7%);
+  these are the hosted counter, not board physical-exit measurements. AMCL
+  required SIGKILL during teardown; that lifecycle/shutdown work is outside
+  this track and is not evidence of clean stack shutdown.
+
+All required board integration paths are exercised. Track I's implementation
+and clean stage acceptance are complete. Combat accuracy/repeatability and
+physical calibration remain in the existing match/estimation tracks; bus wire
+serialization, cycle timing, finite ammunition and mechanical fidelity limits
+remain at the owning README. No physical robot run or concurrent aim/raw-odometry
+change is included here.
 
 ## Firmware review
 
