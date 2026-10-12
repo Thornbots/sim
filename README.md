@@ -1307,6 +1307,12 @@ and peripheral timers continue across reconnects. It waits for the server to
 listen again before calling the C client, whose failed-connect path can exit
 instead of returning an error.
 
+`TypeCCan` corrects Renode 1.17.0's CAN2 software-reset path: reset preserves
+CAN1's shared filter banks instead of disabling wheel feedback. The on-demand
+connection suite checks this register invariant as well as reconnects.
+The motor device exposes generated-feedback counts separately from commands;
+counts alone do not prove firmware reception.
+
 The E2E harness allows 120 wall seconds per scored sim second for this backend,
 versus 20 for hosted execution. Its five-wall-second clock-stall guard and
 lockstep timeout rejection remain active; a slow emulator is not a passed test.

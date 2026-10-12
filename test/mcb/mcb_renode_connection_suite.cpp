@@ -19,16 +19,22 @@ TEST(RenodeConnection, ReconnectsPreservePeripheralState) {
   close(socket);
   const auto base = "/tmp/renode_connection_" + std::to_string(getpid());
   std::ofstream(base + ".repl") <<
+    "can1: CAN.TypeCCan @ sysbus <0x40006400, +0x400>\n"
+    "can2: CAN.TypeCCan @ sysbus <0x40006800, +0x400>\n    master: can1\n"
     "motors1: CAN.TypeCMotors @ sysbus 0xF0001000\n"
     "motors2: CAN.TypeCMotors @ sysbus 0xF0001100\n";
   std::ofstream(base + ".resc") << "include @" SIM_SOURCE_DIR "/renode/TypeC.cs\n"
     "mach create \"type-c\"\nmachine LoadPlatformDescription @" << base << ".repl\n"
+    "sysbus.can1 WriteDoubleWord 0x200 0xe01\n"
+    "sysbus.can1 WriteDoubleWord 0x21c 1\n"
+    "sysbus.can2 WriteDoubleWord 0x0 0x8000\n"
     "emulation CreateExternalControlServer \"server\" " << port << '\n';
   sim::LaunchTree server("renode_connection",
     {SIM_RENODE_ROOT "/renode", "--disable-gui", "--plain", "--port", "-1", base + ".resc"},
     base + ".log");
   {
     sim::type_c::Board board(port);
+    EXPECT_EQ(board.read_register(0x4000661c), 1U) << "CAN2 reset must preserve CAN1 filters";
     const std::array<uint8_t, 8> expected{1, 2, 3, 4, 5, 6, 7, 8};
     board.write(0xf0001010, expected.data(), expected.size());
     for (int request = 0; request < 24000; ++request) {

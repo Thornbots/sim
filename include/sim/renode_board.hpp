@@ -62,6 +62,11 @@ public:
   void read(uint64_t address, uint8_t *data, size_t size) {
     if (size) call(renode_sysbus_read(bus_, address, AW_BYTE, data, size));
   }
+  uint32_t read_register(uint64_t address) {
+    uint32_t value = 0;
+    call(renode_sysbus_read(bus_, address, AW_DOUBLE_WORD, &value, 1));
+    return value;
+  }
   void stream(uint64_t address, const uint8_t *data, size_t size) {
     for (size_t offset = 0; offset < size; offset += 256)
       write(address, data + offset, std::min(size - offset, size_t{256}));
