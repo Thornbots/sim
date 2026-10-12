@@ -26,7 +26,7 @@ struct Options {
   std::vector<double> speeds{.5, 1, 2, 4};
   std::vector<std::string> paths{"lateral", "radial", "diagonal"};
   std::string layout = "both", path = "lateral", log_dir, stage = "mcb_parked",
-              rtf = "0", filter;
+              rtf = "0", filter, backend = "hosted";
   double duration = 0, shooter = 0, chassis = 0, latency = 0;
   std::optional<double> spin, shot_yaw, shot_spin, panel_switch_margin_rad;
   double model_yaw_jitter_rad = 0;
@@ -55,6 +55,11 @@ inline void parse_options(int &argc, char **argv) {
     };
     if (arg == "--headless")
       options.headless = true;
+    else if (arg == "--backend") {
+      options.backend = value();
+      if (options.backend != "hosted" && options.backend != "renode")
+        throw std::runtime_error("backend must be hosted or renode");
+    }
     else if (arg == "--external-stack")
       options.external = true;
     else if (arg == "--skip-stationary")

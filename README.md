@@ -1182,6 +1182,8 @@ head follows each.
 
 Motor-path validation and current combat/repeatability limits:
 [2026-10-11 report](docs/mcb-motor-plant-2026-10-11.md).
+Board boot, UART/CAN and gz validation:
+[Type C report](docs/mcb-type-c-2026-10-11.md).
 
 `e2e.launch.py` defaults to `lockstep:=true`. The gz `LockstepGate` holds
 in `PostUpdate` at each 5 ms MCB acknowledgment deadline. The gz MCB system publishes
@@ -1209,7 +1211,7 @@ and missing-consumer timeout diagnostics:
 ros2 run sim lockstep_suite
 ```
 
-The emulator compiles and runs the checked-out `firmware/MCBV3` C++ sources.
+The default hosted backend compiles and runs the checked-out `firmware/MCBV3` C++ sources.
 The Python control port has been removed. `include/sim/mcb_firmware.hpp` transports hardware
 readings and DJI CAN feedback to `MCB-project/src/hosted/main.cpp`, which instantiates the actual
 `SentryControl` and runs its command scheduler in 1 ms steps. UART1 uses the
@@ -1240,6 +1242,95 @@ headers. There is no Python `firmware_fixes` overlay; the firmware under test
 is exactly what the checked-out C++ implements. This is a host executable,
 not the STM32 ELF flashed to the board.
 
+#### Type C board execution with Renode
+
+The optional `backend:=renode` uses Renode 1.17.0's Cortex-M4/STM32F4
+platform and the normal `scons build robot=sentry profile=release` ELF.
+`mcb_type_c` extracts that ELF's flash image and loads its symbols separately:
+loading all ELF physical segments directly overlaps the initialized-data image.
+The reset vector, startup constructors, RAM initialization, peripheral drivers,
+interrupt handlers, 4,000-sample IMU calibration and command scheduler execute
+from the board binary. The adapter does not write firmware RAM or force its state.
+
+Renode was selected because QEMU's
+[`STM32F405` SoC](https://github.com/qemu/qemu/blob/615ece3c406b262996e569f29ea6eed0d81c4d8d/hw/arm/stm32f405_soc.c)
+still maps I²C, CAN, GPIO and DMA as unimplemented devices. That board would
+need new controller models before this firmware could use its hardware paths.
+
+Build in the Linux ROS container with ARM GCC 13, GCC 14, CMake and SCons:
+
+```sh
+src/sim/tools/install_renode.sh /tmp/renode-1.17.0
+(cd src/firmware/MCBV3/MCB-project && scons build robot=sentry profile=release -j4)
+colcon build --packages-select sim --symlink-install --cmake-args \
+  -DSIM_RENODE_ROOT=/tmp/renode-1.17.0/renode_1.17.0-portable
+ros2 launch sim mcb.launch.py backend:=renode drive:=stop
+SIM_MCB_BACKEND=renode ros2 run sim mcb_physics_suite
+ros2 run sim mcb_renode_connection_suite
+ros2 run sim e2e_suite --backend renode --stage mcb_parked \
+  --e2e-speeds 0 --e2e-paths lateral --e2e-duration 10
+```
+
+`SIM_RENODE_ROOT` enables the adapter at build time; `MCB_RENODE_ROOT` can
+override the portable installation at runtime. `firmware_binary` selects the
+board ELF with this backend. Startup waits up to 600 wall seconds for a valid
+board POSE after calibration; gz physics starts after that stationary boot.
+The board's boot clock therefore leads sim time by the calibration interval.
+Per-run extracted flash, platform, script and Renode log remain in the printed
+`/tmp/mcb-type-c-*` directory. The adapter owns and shuts down its Renode process.
+Supported drive selections are `stop` and `simple`; `auto` and `external` are
+hosted fixture controls and are rejected by the board adapter.
+The Renode parked scene faces the blue team's start heading and rotates its
+target paths with it. The calibrated gyro starts at zero; the hosted fixture
+can supply an arbitrary initial gyro angle directly, which the board cannot.
+`mcb_drive`/`mcb_match` still use hosted scripted velocities until firmware
+auto-drive stage integration lands.
+
+The Jetson PTY transports actual USART1 bytes. Referee packets enter USART6,
+and DBUS packets enter USART3 (remote absent during the power-on guard,
+then centred sticks; right UP selects auto-drive, MID parks). `auto_fire:=false`
+selects left MID and also disables firmware auto-aim, as with the hosted fixture.
+`renode/TypeC.cs` models BMI088 SPI registers/chip selects, Pico I²C pod
+readings and the MT6701 absolute encoder. The current IMU model assumes the
+Type C turns with the yaw assembly independently of barrel pitch, matching
+sentry's use of gyro-Z/yaw; gyro-Z follows gz and gravity stays vertical.
+This mounting assumption is not a robot measurement.
+CAN feedback is staggered across each 1 ms virtual step to respect the board's
+three-frame RX FIFO. Board-generated `0x200`/`0x1ff` commands feed the same
+gz motor plant as the hosted backend. Each bus has its own `TypeCMotors` device;
+feedback and DR16 repetition run on Renode's virtual clock. The adapter avoids
+1.17.0's C CAN callback registration, which omits the bus descriptor and can
+return CAN1 commands for both buses. It reads commands from the two devices
+after advancing instruction execution. The control connection reconnects every
+10,000 requests to bound 1.17.0's receive-thread stack growth; machine state
+and peripheral timers continue across reconnects. It waits for the server to
+listen again before calling the C client, whose failed-connect path can exit
+instead of returning an error.
+
+The E2E harness allows 120 wall seconds per scored sim second for this backend,
+versus 20 for hosted execution. Its five-wall-second clock-stall guard and
+lockstep timeout rejection remain active; a slow emulator is not a passed test.
+`mcb_renode_connection_suite` exercises reconnects without booting firmware and
+checks that peripheral state survives; it is built when `SIM_RENODE_ROOT` is set.
+
+The I²C model derives from Renode infrastructure
+[`066a7f13`](https://github.com/renode/renode-infrastructure/blob/066a7f13c052215632d469c995c89aea37c573b1/src/Emulator/Peripherals/Peripherals/I2C/STM32F1_I2C.cs)
+under its retained MIT license. Its two local corrections clear STOP when the
+condition is emitted and derive byte timing from CCR/DUTY instead of the APB
+clock. SysTick uses an effective 21 MHz because this firmware selects AHB/8
+and Renode ignores CLKSOURCE; DWT remains 168 MHz.
+The firmware's divide-by-zero trap writes are enabled in the NVIC model.
+
+This is instruction/peripheral execution, not a cycle-accurate STM32 timing
+measurement. Renode's instruction timing cannot certify real 1 kHz deadlines.
+UART input currently enters device queues without wire serialization; sensor
+noise, thermal transients, bus faults and full device register behaviour are
+not modeled. Projectile exits follow forward indexer shaft travel in the motor
+plant, using the estimated gearbox/chamber geometry; reverse unjam travel is
+not counted again. This observes physical indexing, rather than reading or
+instrumenting firmware counters. Combat stages still use the hosted backend
+until board stage integration is validated.
+
 The fake interfaces are calibrated IMU readings, Pico
 odometry, centred DBUS input with both switches up, referee UART frames,
 ADC and CAN motor feedback. The DBUS and referee packets go through the
@@ -1251,7 +1342,9 @@ the pods' frame, so its field-frame POSE agrees with the gz spawn.
 pose, twist and gimbal joints from the ECM, runs one firmware cycle per 1 ms
 physics step, then applies motor outputs as joint torques and a chassis wrench.
 `mcb_physics:=true` removes both JointPositionControllers and VelocityControl.
-The UART bridge starts only after the PTY exists. The former ROS timer adapter
+The UART bridge starts after `mcb_ready` observes a CRC-valid POSE on the PTY.
+It waits 30 wall seconds for hosted execution or 600 for Renode boot.
+The former ROS timer adapter
 is removed; `mcb.launch.py` uses this same physics path.
 
 The motor plant in `include/sim/mcb_motor.hpp` returns DJI 8-byte encoder,

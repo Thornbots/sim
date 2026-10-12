@@ -3,6 +3,23 @@
 #include "sim/mcb_motor.hpp"
 namespace motor = sim::mcb_motor;
 
+TEST(McbMotor, ProjectileExitWrapsShaftFeedbackAndDoesNotCountUnjamTwice) {
+  motor::ProjectileExit exit;
+  unsigned shots = 0;
+  const auto advance = [&](double begin, double end) {
+    const double direction = end > begin ? 1 : -1;
+    for (double turns = begin; direction * turns <= direction * end; turns += direction / 16)
+      shots += exit.update(motor::packet(-turns * 2 * motor::kPi, 0, 0));
+  };
+  advance(0, 4.5);
+  EXPECT_EQ(shots, 1u);
+  advance(4.5, 3.5);
+  advance(3.5, 4.5);
+  EXPECT_EQ(shots, 1u);
+  advance(4.5, 9);
+  EXPECT_EQ(shots, 2u);
+}
+
 TEST(McbMotor, EncodesDjiSignedFeedbackAndWrapsEncoder) {
   const auto data = motor::packet(-motor::kPi / 2, -100 * motor::kPi / 30, -2);
   EXPECT_EQ((data[0] << 8) | data[1], 6144);
