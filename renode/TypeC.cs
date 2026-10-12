@@ -126,11 +126,23 @@ namespace Antmicro.Renode.Peripherals.Sensors
 }
 namespace Antmicro.Renode.Peripherals.CAN
 {
+    // Renode 1.17's CAN_MCR.RESET path resets shared filters even on CAN2.
+    // Its public Reset() already preserves those filters for the slave.
+    public sealed class TypeCCan : STMCAN, Antmicro.Renode.Peripherals.Bus.IDoubleWordPeripheral
+    {
+        public TypeCCan(STMCAN master = null) : base(master) {}
+        public new void WriteDoubleWord(long offset, uint value)
+        {
+            if(offset == 0 && (value & (1U << 15)) != 0) { Reset(); return; }
+            base.WriteDoubleWord(offset, value);
+        }
+    }
+
     // DJI motors on one CAN bus: each enabled ID 0x201..0x208 reports its latest
     // host-written 8-byte feedback once per virtual millisecond, one frame per
     // 150 us slot so the board's three-frame RX FIFO is not flooded.
     // 0x00-0x3f feedback (8 bytes per ID), 0x40 enable mask, 0x80-0x8f latest
-    // 0x200/0x1ff command payloads, 0x90 command frame count.
+    // 0x200/0x1ff command payloads, 0x90 command frame count, 0x94 generated feedback frame count.
     public sealed class TypeCMotors : ICAN, Antmicro.Renode.Peripherals.Bus.IBytePeripheral, Antmicro.Renode.Peripherals.Bus.IDoubleWordPeripheral, IKnownSize
     {
         public TypeCMotors(IMachine machine)
@@ -140,10 +152,11 @@ namespace Antmicro.Renode.Peripherals.CAN
             timer.LimitReached += SendSlot;
         }
         public long Size => 0x100;
-        public void Reset() { Array.Clear(registers, 0, registers.Length); slot = 0; frames = 0; timer.Reset(); }
-        public byte ReadByte(long offset) { return offset < 0x90 ? registers[offset] : (byte)(frames >> (int)(8 * (offset - 0x90))); }
+        public void Reset() { Array.Clear(registers, 0, registers.Length); slot = 0; frames = 0; feedbackFrames = 0; timer.Reset(); }
+        public byte ReadByte(long offset) { return offset < 0x90 ? registers[offset] :
+            (byte)(ReadDoubleWord(offset & ~3L) >> (int)(8 * (offset & 3))); }
         public void WriteByte(long offset, byte value) { if(offset <= 0x40) registers[offset] = value; }
-        public uint ReadDoubleWord(long offset) { return offset == 0x90 ? frames : BitConverter.ToUInt32(registers, (int)offset); }
+        public uint ReadDoubleWord(long offset) { return offset == 0x90 ? frames : offset == 0x94 ? feedbackFrames : BitConverter.ToUInt32(registers, (int)offset); }
         public void WriteDoubleWord(long offset, uint value)
         {
             var data = BitConverter.GetBytes(value);
@@ -175,12 +188,13 @@ namespace Antmicro.Renode.Peripherals.CAN
             if(index < 0) return;
             var data = new byte[8];
             Array.Copy(registers, 8 * index, data, 0, 8);
+            feedbackFrames++;
             FrameSent?.Invoke(new CANMessageFrame((uint)(0x201 + index), data));
         }
 
         private readonly LimitTimer timer;
         private readonly byte[] registers = new byte[0x90];
         private int slot;
-        private uint frames;
+        private uint frames, feedbackFrames;
     }
 }

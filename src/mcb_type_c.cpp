@@ -66,6 +66,9 @@ public:
     const auto i2c = platform.find(original);
     if (i2c == std::string::npos) throw std::runtime_error("Unexpected Renode STM32 platform");
     platform.replace(i2c, original.size(), "i2c2: I2C.TypeCI2C");
+    for (size_t can = platform.find("CAN.STMCAN"); can != std::string::npos;
+         can = platform.find("CAN.STMCAN", can))
+      platform.replace(can, std::string("CAN.STMCAN").size(), "CAN.TypeCCan");
     auto devices = read_file(models / "TypeC.repl");
     const auto include = devices.find("using \"");
     devices.erase(include, devices.find('\n', include) - include + 1);
