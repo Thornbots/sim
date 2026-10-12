@@ -81,7 +81,8 @@ public:
                             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4};
     write(0xf0000300, data, sizeof(data));
   }
-  void sensors(const std::array<double, 10> &readings) {
+  void sensors(const std::array<double, 10> &readings,
+               const std::array<double, 6> &imu = {0, 0, 0, 0, 0, 1}) {
     std::vector<uint8_t> bytes;
     for (size_t i = 0; i < 4; ++i) mcb_firmware::append_float(bytes, readings[i]);
     write(0xf0000400, bytes.data(), bytes.size());
@@ -90,10 +91,10 @@ public:
       mcb_firmware::append_u16(bytes, static_cast<uint16_t>(static_cast<int16_t>(
           std::clamp(std::round(value), -32768.0, 32767.0))));
     };
-    // Yaw-only IMU mounting model; see README's Type C limits.
-    word(0); word(0);
-    word(readings[5] * 32767 / (2000 * mcb_motor::kPi / 180));
-    word(0); word(0); word(32768 / 3.0);
+    // Gyroscope rad/s and specific force in g, in the yaw-link sensor frame.
+    for (size_t axis = 0; axis < 3; ++axis)
+      word(imu[axis] * 32767 / (2000 * mcb_motor::kPi / 180));
+    for (size_t axis = 3; axis < 6; ++axis) word(imu[axis] * 32768 / 3.0);
     // The pod steering encoder is inverted by the board's hardware definition.
     const double turn = (readings[4] - readings[6]) / (2 * mcb_motor::kPi);
     mcb_firmware::append_u16(bytes, 16383 - static_cast<uint16_t>(

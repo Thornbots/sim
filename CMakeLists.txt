@@ -208,13 +208,13 @@ target_link_libraries(opponent_driver gz-transport::core gz-msgs::core tinyxml2:
 ament_target_dependencies(opponent_driver ament_index_cpp nav_msgs rclcpp)
 install(TARGETS opponent_driver DESTINATION lib/${PROJECT_NAME})
 
-add_executable(match_driver src/match_driver.cpp)
-target_compile_features(match_driver PUBLIC cxx_std_17)
-target_link_libraries(match_driver
+add_executable(match_environment src/match_environment.cpp)
+target_compile_features(match_environment PUBLIC cxx_std_17)
+target_link_libraries(match_environment
   Eigen3::Eigen combat cv_head_aim_core suite_support gz-transport::core gz-msgs::core)
-ament_target_dependencies(match_driver
+ament_target_dependencies(match_environment
   ament_index_cpp diagnostic_msgs geometry_msgs nav_msgs rcl_interfaces rclcpp std_msgs urdf)
-install(TARGETS match_driver DESTINATION lib/${PROJECT_NAME})
+install(TARGETS match_environment DESTINATION lib/${PROJECT_NAME})
 
 add_executable(pose_emulator src/pose_emulator.cpp)
 target_compile_features(pose_emulator PUBLIC cxx_std_17)

@@ -28,9 +28,9 @@ Read [tests](README.md#run-the-tests), [build](README.md#build) and
 
 Own worlds, sim URDF, sensor/pose noise models and integration suites.
 Backends belong to `sentry_localization`, robot/CV behavior to `thornbots_pkg`.
-Every `e2e.launch.py` stage runs checked-out MCB firmware inside gz's
-1 ms physics step and the real UART bridge. The parked stage and `mcb.launch.py`
-also support the board ELF in Renode; build instructions and model limits are in
+Every `e2e.launch.py` stage defaults to the checked-out board ELF in Renode
+inside gz's 1 ms physics step and the real UART bridge. Hosted execution is an
+explicit fast fixture; build instructions and model limits are in
 [MCB emulator](README.md#mcb-emulator). Never downgrade its wire contract.
 Keep field-safe match paths separate from bench paths; no blanket skips/xfail.
 Keep approach firing disabled until all routes reach center.
@@ -46,8 +46,7 @@ Keep approach firing disabled until all routes reach center.
 - `odom_stuck` intentionally checks liveness, not recovered localization:
   [scenarios](README.md#scenarios). Never invert rf2o's warping to retune a regression.
 - No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
-- Driving-stage board integration and firmware auto-drive remain in
-  [track I](../ROADMAP.md#i-mcb-emulator); current motor-plant limits live in
+- [Board-stage verification](docs/mcb-auto-drive-2026-10-12.md); motor-plant limits live in
   [MCB emulator](README.md#mcb-emulator).
   Noise, gimbal dynamics, suspension and spawn coordinates remain estimates;
   [model limits](README.md#sentry_v2urdfxacro-motion-model).

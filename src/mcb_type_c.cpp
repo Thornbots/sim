@@ -44,13 +44,14 @@ struct Input {
   uint32_t referee_bytes, mode;
   sim::mcb_motor::Feedback feedback;
   float external[3];
+  float imu[6];
 };
 struct Output {
   float yaw = 0, pitch = 0, right = 0, forward = 0, spin = 0;
   uint32_t shots = 0, time_ms = 0;
   sim::mcb_motor::Commands motors{};
 };
-static_assert(sizeof(Input) == 144 && sizeof(Output) == 48);
+static_assert(sizeof(Input) == 168 && sizeof(Output) == 48);
 class Emulator {
 public:
   explicit Emulator(const std::string &elf) {
@@ -149,7 +150,7 @@ int main() {
     std::cerr << "Type C calibrated; CAN frames=" << board.frames()
               << " start=" << initial->x << ',' << initial->y
               << " logs=" << emulator.directory() << '\n';
-    std::fwrite("MCB2", 1, 4, stdout);
+    std::fwrite("MCB3", 1, 4, stdout);
     const float start[] = {initial->x, initial->y};
     std::fwrite(start, sizeof(float), 2, stdout);
     std::fflush(stdout);
@@ -166,7 +167,9 @@ int main() {
         throw std::runtime_error("Truncated referee input");
       board.referee(frames);
       std::copy(std::begin(input.readings), std::end(input.readings), readings.begin());
-      board.sensors(readings);
+      std::array<double, 6> imu;
+      std::copy(std::begin(input.imu), std::end(input.imu), imu.begin());
+      board.sensors(readings, imu);
       board.feedback(input.feedback);
       if (input.mode != remote_mode) {
         board.remote((input.mode & 3) == 1, !(input.mode & 4));
