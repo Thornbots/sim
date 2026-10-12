@@ -439,6 +439,9 @@ a hit rate under its floor. Shots `CVTarget.fire` asks for are logged
 beside. `firmware_fixes` is deprecated; the hosted build runs this
 checkout's code without overlays.
 
+Stages default to board execution: follow the [Type C build](#type-c-board-execution-with-renode)
+first, or pass `backend:=hosted` after the [hosted build](#mcb-emulator).
+
 ```bash
 ros2 launch sim e2e.launch.py                                 # mcb_parked, all 12 cells
 ros2 launch sim e2e.launch.py speeds:='0 2' paths:=lateral duration:=15
@@ -1189,9 +1192,14 @@ head follows each.
 ### MCB emulator
 
 Motor-path validation: [2026-10-11 report](docs/mcb-motor-plant-2026-10-11.md).
-Raw aim/localization isolation and current combat limits:
+Raw aim/localization isolation and combat limits:
 [controlled comparison and three-repeat results](docs/aim-localization-coupling-2026-10-11.md),
-[follow-up frame/timing and repeatability investigation](docs/aim-followup-2026-10-12.md).
+[follow-up frame/timing and repeatability investigation](docs/aim-followup-2026-10-12.md),
+and the [2026-10-12 accuracy investigation](docs/aim-accuracy-2026-10-12.md).
+The accuracy investigation records hosted-fixture measurements from a source
+snapshot before track I; it does not establish board accuracy. Board boot,
+UART/CAN and gz validation are in the [Type C report](docs/mcb-type-c-2026-10-11.md)
+and [board auto-drive report](docs/mcb-auto-drive-2026-10-12.md).
 
 `e2e.launch.py` defaults to `lockstep:=true`. The gz `LockstepGate` holds
 in `PostUpdate` at each 5 ms MCB acknowledgment deadline. The gz MCB system publishes
@@ -1219,7 +1227,7 @@ and missing-consumer timeout diagnostics:
 ros2 run sim lockstep_suite
 ```
 
-The emulator compiles and runs the checked-out `firmware/MCBV3` C++ sources.
+The explicitly selected hosted backend compiles and runs the checked-out `firmware/MCBV3` C++ sources.
 The Python control port has been removed. `include/sim/mcb_firmware.hpp` transports hardware
 readings and DJI CAN feedback to `MCB-project/src/hosted/main.cpp`, which instantiates the actual
 `SentryControl` and runs its command scheduler in 1 ms steps. UART1 uses the
@@ -1234,11 +1242,13 @@ git -C src/firmware/MCBV3 submodule update --init taproot-scripts
 apt-get install -y scons g++-14
 src/sim/tools/build_mcb_firmware.sh
 colcon build --packages-select sim --symlink-install
-ros2 launch sim mcb.launch.py
+ros2 launch sim mcb.launch.py backend:=hosted
 ```
 
-Use `drive:=simple` for the firmware's waypoint route or `drive:=auto` for
-NAV_GOAL; the default `stop` commands zero drivetrain current. Foxglove serves on :8765, and
+Use `drive:=simple` for the firmware's waypoint route or, with
+`backend:=hosted`, `drive:=auto` for NAV_GOAL. The default `stop` parks the
+robot; firmware powered zero-velocity holding applies in game. Foxglove serves
+on :8765, and
 gz/rviz open where a display is available. This launch uses the actual MCB
 and bridge without an opponent; the `e2e.launch.py` stages score it.
 
@@ -1250,7 +1260,111 @@ headers. There is no Python `firmware_fixes` overlay; the firmware under test
 is exactly what the checked-out C++ implements. This is a host executable,
 not the STM32 ELF flashed to the board.
 
-The fake interfaces are calibrated IMU readings, Pico
+#### Type C board execution with Renode
+
+The default `backend:=renode` in the MCB and E2E launches uses Renode 1.17.0's Cortex-M4/STM32F4
+platform and the normal `scons build robot=sentry profile=release` ELF.
+`mcb_type_c` extracts that ELF's flash image and loads its symbols separately:
+loading all ELF physical segments directly overlaps the initialized-data image.
+The reset vector, startup constructors, RAM initialization, peripheral drivers,
+interrupt handlers, 4,000-sample IMU calibration and command scheduler execute
+from the board binary. The adapter does not write firmware RAM or force its state.
+
+Renode was selected because QEMU's
+[`STM32F405` SoC](https://github.com/qemu/qemu/blob/615ece3c406b262996e569f29ea6eed0d81c4d8d/hw/arm/stm32f405_soc.c)
+still maps I²C, CAN, GPIO and DMA as unimplemented devices. That board would
+need new controller models before this firmware could use its hardware paths.
+
+Build in the Linux ROS container with ARM GCC 13, GCC 14, CMake and SCons:
+
+```sh
+src/sim/tools/install_renode.sh /tmp/renode-1.17.0
+(cd src/firmware/MCBV3/MCB-project && scons build robot=sentry profile=release -j4)
+colcon build --packages-select sim --symlink-install --cmake-args \
+  -DSIM_RENODE_ROOT=/tmp/renode-1.17.0/renode_1.17.0-portable
+ros2 launch sim mcb.launch.py backend:=renode drive:=stop
+SIM_MCB_BACKEND=renode ros2 run sim mcb_physics_suite
+ros2 run sim mcb_renode_connection_suite
+ros2 run sim e2e_suite --backend renode --stage mcb_parked \
+  --e2e-speeds 0 --e2e-paths lateral --e2e-duration 10
+```
+
+`SIM_RENODE_ROOT` enables the adapter at build time; `MCB_RENODE_ROOT` can
+override the portable installation at runtime. `firmware_binary` selects the
+board ELF with this backend. Startup waits up to 600 wall seconds for a valid
+board POSE after calibration; gz physics starts after that stationary boot.
+The board's boot clock therefore leads sim time by the calibration interval.
+Per-run extracted flash, platform, script and Renode log remain in the printed
+`/tmp/mcb-type-c-*` directory. The adapter owns and shuts down its Renode process.
+Supported drive selections are `stop` and `simple`; `auto` and `external` are
+hosted fixture controls and are rejected by the board adapter.
+The Renode parked scene faces the blue team's start heading and rotates its
+target paths with it. The calibrated gyro starts at zero; the hosted fixture
+can supply an arbitrary initial gyro angle directly, which the board cannot.
+`backend:=hosted` explicitly selects the faster native fixture. Driving stages
+use the firmware's `SimpleAutoDriveCommand` with either backend; they arm it
+after bring-up through the modeled remote, rather than publishing velocities.
+
+The Jetson PTY transports actual USART1 bytes. Referee packets enter USART6,
+and DBUS packets enter USART3 (remote absent through the power-on guard and
+stationary calibration so firmware samples its yaw home, then centred sticks; right UP selects auto-drive, MID parks). `auto_fire:=false`
+selects left MID and also disables firmware auto-aim, as with the hosted fixture.
+`renode/TypeC.cs` models BMI088 SPI registers/chip selects, Pico I²C pod
+readings and the MT6701 absolute encoder. The IMU is modeled in the yaw-link
+frame, independently of barrel pitch. All three local angular-velocity and
+specific-force components come from that link's gz pose, angular velocity and
+linear acceleration, with Earth gravity included. Thus chassis tilt and
+translation reach the real BMI088 SPI driver/AHRS. The exact sensor mounting
+pose, noise and vibration are not robot measurements.
+CAN feedback is staggered across each 1 ms virtual step to respect the board's
+three-frame RX FIFO. Board-generated `0x200`/`0x1ff` commands feed the same
+gz motor plant as the hosted backend. Each bus has its own `TypeCMotors` device;
+feedback and DR16 repetition run on Renode's virtual clock. The adapter avoids
+1.17.0's C CAN callback registration, which omits the bus descriptor and can
+return CAN1 commands for both buses. It reads commands from the two devices
+after advancing instruction execution. The control connection reconnects every
+10,000 requests to bound 1.17.0's receive-thread stack growth; machine state
+and peripheral timers continue across reconnects. It waits for the server to
+listen again before calling the C client, whose failed-connect path can exit
+instead of returning an error.
+
+`TypeCCan` corrects Renode 1.17.0's CAN2 software-reset path: reset preserves
+CAN1's shared filter banks instead of disabling wheel feedback. The on-demand
+connection suite checks this register invariant as well as reconnects.
+The motor device exposes generated-feedback counts separately from commands;
+counts alone do not prove firmware reception.
+
+The E2E harness allows 120 wall seconds per scored sim second for this backend,
+versus 20 for hosted execution. Its five-wall-second clock-stall guard and
+lockstep timeout rejection remain active; a slow emulator is not a passed test.
+`mcb_renode_connection_suite` exercises reconnects without booting firmware and
+checks that peripheral state survives; it is built when `SIM_RENODE_ROOT` is set.
+
+The I²C model derives from Renode infrastructure
+[`066a7f13`](https://github.com/renode/renode-infrastructure/blob/066a7f13c052215632d469c995c89aea37c573b1/src/Emulator/Peripherals/Peripherals/I2C/STM32F1_I2C.cs)
+under its retained MIT license. Its two local corrections clear STOP when the
+condition is emitted and derive byte timing from CCR/DUTY instead of the APB
+clock. SysTick uses an effective 21 MHz because this firmware selects AHB/8
+and Renode ignores CLKSOURCE; DWT remains 168 MHz.
+The firmware's divide-by-zero trap writes are enabled in the NVIC model.
+
+This is instruction/peripheral execution, not a cycle-accurate STM32 timing
+measurement. Renode's instruction timing cannot certify real 1 kHz deadlines.
+UART input currently enters device queues without wire serialization; sensor
+noise, thermal transients, bus faults and full device register behaviour are
+not modeled. Projectile exits follow forward indexer shaft travel in the motor
+plant, using the estimated gearbox/chamber geometry; reverse unjam travel is
+not counted again. This observes physical indexing, rather than reading or
+instrumenting firmware counters. A loaded-cartridge reverse stop supplies
+the CAN stall current used by the firmware's indexer homing routine; its
+geometry and load remain estimates, with no finite ammunition model.
+The hosted backend reports issued-shot counters; the board backend reports
+modeled physical exits. The [indexer recovery investigation](docs/mcb-indexer-recovery-2026-10-12.md)
+explains why those observations must be distinguished.
+
+#### Shared motor plant and UART transport
+
+The hosted fixture's fake interfaces are calibrated IMU readings, Pico
 odometry, centred DBUS input with both switches up, referee UART frames,
 ADC and CAN motor feedback. The DBUS and referee packets go through the
 real parsers. Referee state remains live node parameters. The firmware's
@@ -1261,7 +1375,9 @@ the pods' frame, so its field-frame POSE agrees with the gz spawn.
 pose, twist and gimbal joints from the ECM, runs one firmware cycle per 1 ms
 physics step, then applies motor outputs as joint torques and a chassis wrench.
 `mcb_physics:=true` removes both JointPositionControllers and VelocityControl.
-The UART bridge starts only after the PTY exists. The former ROS timer adapter
+The UART bridge starts after `mcb_ready` observes a CRC-valid POSE on the PTY.
+It waits 30 wall seconds for hosted execution or 600 for Renode boot.
+The former ROS timer adapter
 is removed; `mcb.launch.py` uses this same physics path.
 
 The motor plant in `include/sim/mcb_motor.hpp` returns DJI 8-byte encoder,
@@ -1270,7 +1386,8 @@ firmware's own CAN parser, encoder interface and controllers consume it. Yaw
 and drivetrain commands are M3508 current units; pitch uses GM6020 voltage
 and a back-EMF/resistance model. Gear ratios and motor constants follow the
 sentry firmware. The chassis uses an omni-wheel force/velocity projection with
-estimated per-wheel traction; wheel speeds assume rolling without slip.
+estimated per-wheel traction, capped using the total model mass read from gz
+inertials; wheel speeds assume rolling without slip.
 Flywheel, indexer and odometry-motor rotors have estimated inertia and load;
 they have no mesh in gz. This validates control against a motor plant, not
 measured tire, ESC, gearbox or launcher behaviour.
@@ -1283,12 +1400,19 @@ while chassis power is available in game; outside that state it writes zero
 current. The passive resistance alone did not hold a rapidly tracking chassis.
 This coefficient is estimated, not a measured tire parameter. `mcb_parked`
 records maximum truth displacement in `parking.jsonl` and rejects cells
-moving more than 0.03 m. The gyro feed delays yaw/rate by eight 1 ms ticks to
-match firmware's IMU predictor; CAN feedback stays current.
+moving more than 0.03 m. Only the hosted direct-sensor fixture delays gyro
+yaw/rate by eight 1 ms ticks to match the firmware predictor; the board path
+runs the full IMU filter, which owns sample age. CAN feedback stays current.
 Calibration and rejected treatments are recorded in the
-[accuracy investigation](docs/aim-accuracy-2026-10-12.md).
+[accuracy investigation](docs/aim-accuracy-2026-10-12.md), a hosted
+pre-track-I source baseline rather than board accuracy evidence.
 
-`/mcb_emulator/gimbal_setpoint` publishes firmware desired field yaw and pitch
+`/mcb_emulator/shot` is the physical chamber-exit event inferred from CAN
+indexer motion, stamped at that physics sample on both backends. The native
+scorer launches at that stamp and adds no firing-delay estimate. Hosted
+firmware request counters remain debug outputs, not physical shots.
+
+`/mcb_emulator/gimbal_setpoint` publishes hosted firmware desired field yaw and pitch
 at 100 Hz for command-versus-achieved diagnostics; it carries the physics
 stamp and does not change the UART payload.
 
@@ -1304,10 +1428,12 @@ with gz gimbal inertia and no CV/localization stack:
 ros2 run sim mcb_physics_suite
 ```
 
-The fixture still replaces boot calibration and hardware polling; ADC returns
+#### Hosted fixture limits
+
+The hosted fixture still replaces boot calibration and hardware polling; ADC returns
 0. CAN frames arrive once per tick without arbitration or transmission delay.
 MCU interrupts, instruction timing, calibration and physical homing remain
-unvalidated. The `MCB2` pipe format is private hosted IPC, not the Jetson UART
+unvalidated. The `MCB3` pipe format is private fixture IPC, not the Jetson UART
 contract. A shot records a successful native
 indexer request, not measured projectile exit. `/mcb_emulator/shot` is a
 `std_msgs/Header` stamped with that request's sim time.
@@ -1346,7 +1472,7 @@ intervals. Pure wire-format behavior is covered by GTests.
 | `test/e2e/*` | `test/e2e/e2e_suite.cpp`, `test/e2e/e2e_harness.cpp`, `include/sim/e2e_test_core.hpp` |
 | `test/mcb/*`, `sim/mcb_firmware.py`, `sim/mcb_emulator/pty_link.py` | `test/cpp/test_mcb_firmware.cpp`, `test_mcb_bridge_pty.cpp`, `include/sim/mcb_firmware.hpp` (also used by the gz system) |
 | `sim/mcb_emulator/protocol.py` | `include/sim/mcb_protocol.hpp`, `src/mcb_protocol.cpp` |
-| `sim/combat.py`, `sim/match_scenario.py` | `src/combat.cpp`, `src/match_scenario.cpp` (also used by `match_driver`) |
+| `sim/combat.py`, `sim/match_scenario.py` | `src/combat.cpp`, `src/match_scenario.cpp` (also used by `match_environment`) |
 | `sim/suite_timing.py`, `sim/parent_death.py` | `src/suite_timing.cpp`, `src/process.cpp` |
 | `sim/auto_explore.py` Gazebo helpers, `sim/odometry.py` | `include/sim/gazebo_helpers.hpp`, `include/sim/target_odometry.hpp` |
 | `sim/display.py` probe, `sim/cv_target_emulator.py` constants | `src/display_probe.cpp`, `include/sim/cv_model_constants.hpp` |
@@ -1392,12 +1518,12 @@ score (paths under `MCB-project/src/`):
   live CV aim; see [firmware coordination](../ros2_dji_serial_bridge/README.md#where-the-firmware-stands).
 - The sentry drives `SimpleAutoDriveCommand`'s ARCC route, spinning -8 rad/s
   moving and -12 at either end. The normal switch schedules this command,
-  not the NAV_GOAL reader; `mcb.launch.py drive:=auto` selects that reader
+  not the NAV_GOAL reader; `mcb.launch.py backend:=hosted drive:=auto` selects that reader
   explicitly. RMUL 3v3 waypoint advancement waits for IN_GAME, while the
   simple route can still spin before the game. The `mcb_drive` and
-  `mcb_match` stages send `match_driver` velocity commands through the native
-  firmware drivetrain controller and CAN motor plant; their results do not
-  validate the firmware route.
+  `mcb_match` stages arm the firmware's own simple auto-drive after bring-up.
+  Its waypoints and spin requests come from the checked-out firmware;
+  the simulator controls the surrounding ghosts and referee inputs.
 
 E2 on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
 lateral, still and 1 m/s, 15 s each): `CV_TARGET` and `RELOCALIZE` frames
@@ -1423,41 +1549,55 @@ ros2 launch sim e2e.launch.py stage:=mcb_drive
 ```
 
 Our sentry starts at blue's provisional firmware spawn `(4.625, 0)`,
-facing red; the opponent starts at `(-4.625, 0)`. Both travel around the
-south ends of the side walls and stop in the center. Our chassis then
-parks, translates at a 1 m/s cap, makes a 90-degree corner, and spins at
-9 rad/s. The approach reaches a 2 m/s cap; acceleration is 2 m/s².
-These are scripted sim routes, pending a real navigation publisher.
-`match_driver` supplies `/cmd_vel` to the hosted fixture's external drive mode.
-The firmware's drivetrain controller converts it to motor currents, and the
-MCB physics system applies those currents as forces, without VelocityControl.
-The real firmware retains aim/fire, UART, pose and
-referee output, and the real AMCL + rf2o + EKF stack remains in the loop.
+facing red; the opponent starts at `(-4.625, 0)`. After bring-up the scorer
+arms the firmware's own `SimpleAutoDriveCommand` (the sentry's ARCC rough
+route). The selected command generates its waypoints, translations and spin
+requests; its own controller emits CAN motor commands applied as forces in gz.
+`match_environment` supplies only ghost routes and combat inputs. It publishes
+no chassis velocity or reference route for our robot. A later navigation
+publisher remains separate work.
+
+`backend:=renode` is the default and uses the normal board ELF.
+`backend:=hosted` explicitly selects the faster fixture, whose remote switches
+now follow the same stop/simple and aim/fire selections. Startup holds drive
+in centred manual mode. At stage arm the right switch selects auto-drive;
+the left stays MID until every robot's truth root enters the estimated
+field-centre fight zone, then switches UP to enable automatic aim/fire.
+Referee stage is IN_GAME so the firmware can advance waypoints during approach.
+The real AMCL + rf2o + EKF stack remains in the loop.
 
 `segments.json` reports hit rates and the measured failing hop per segment,
 checked down the hit path: no shots, aim off the panel, head-TF stamps, then
-the barrel off the aim. Fused navigation error is diagnostic; raw `odom`
-remains the aim frame.
-`shots.jsonl` includes route, localization, head-TF and aim errors at fire
-time. `route.jsonl` captures those diagnostics even when no shots fire.
+the barrel off the aim. Fused navigation and localization errors are
+frame-specific diagnostics; raw `odom` remains the aiming frame. `shots.jsonl`
+records localization, head-TF and aim errors at fire time. `route.jsonl` also
+samples truth displacement, speed and spin when no shots fire. Stages measure
+firmware approach, driving, spinning and parked motion, not a scripted
+straight/corner route; there is no scripted route-error metric for firmware
+auto-drive.
+
 `navigation_error_m` compares local `nav_odom->root` with field truth;
-`localization_error_m` includes the global `map->nav_odom` correction.
-The first metric measures field alignment of dead reckoning, not globally
-localized navigation accuracy. These reference frames coincide only at
-initialization. Logged xy positions, map correction and lookup errors allow
-frame composition and missing stamped transforms to be checked directly.
-Pose scoring retries an unavailable transform at the original capture stamp
-for at most one simulated second. `pose_score_delay_s` records the delay;
-terminal gaps retain null errors and the lookup exception. No latest TF is
-substituted, and failed native checks remain failures.
-A route and localization diagnostic pass means nodes and clock remained live,
-every route segment completed within 0.40 m p95, stamped navigation data
-existed, and a low hit rate named a measured failing hop. `mcb_drive` also
-fails when the native total hit count is zero, even with complete diagnostics;
-per-segment diagnostics remain available to identify the failing hop.
+`localization_error_m` measures the globally corrected `map->root` pose and
+therefore includes `map->nav_odom`. Navigation error describes field alignment
+of dead reckoning, not globally localized navigation accuracy. These frames
+coincide only at initialization. Logged xy positions, map correction and
+lookup errors support checking frame composition and missing stamped
+transforms directly. Pose scoring retries an unavailable transform at the
+original capture stamp for at most one simulated second. `pose_score_delay_s`
+records the delay; terminal gaps retain null errors and the lookup exception.
+Latest TF is never substituted, and failed native checks remain failures.
+
+A diagnostic-tier pass means nodes and clock remained live, the firmware
+translated and rotated, every robot reached the configured centre zone,
+stamped localization data existed, and a low hit rate named a measured failing
+hop, as allowed in E2E_PLAN. `mcb_drive` also fails when its native total hit
+count is zero, even with complete diagnostics; per-segment diagnostics remain
+available. These checks establish diagnostic completion, not combat accuracy.
 It does **not** mean combat accuracy passed: floors need repeated valid
 runs, and current moving runs expose tracking and gimbal misses.
 The spawn coordinates are firmware defaults, not surveyed starting zones.
+[Board-stage verification](docs/mcb-auto-drive-2026-10-12.md) records clean
+parked, drive and match runs, the focused CAN/gz check, and accuracy limits.
 
 ### Four-robot center fight (`mcb_match`)
 
@@ -1467,8 +1607,8 @@ ros2 launch sim e2e.launch.py stage:=mcb_match headless:=true
 
 Two blue and two red sentries leave their respective spawns on separate
 field-safe routes. The second lane leaves four seconds later; firing stays
-disabled until every route reaches center. Our robot runs `mcb_drive`'s center
-maneuvers; the three ghosts spin and use a truth-fed aimer with seed 2026,
+disabled until every truth root reaches the centre zone. Our robot runs its
+firmware waypoint/spin behavior; the three ghosts spin and use a truth-fed aimer with seed 2026,
 0.015 rad Gaussian aim noise, and a 2 Hz fire rate. The selector sees both
 red opponents and the blue ally. Only our robot runs the real CV stack.
 
@@ -1480,10 +1620,10 @@ first impact absorbs the shot;
 damage requires more than 12 m/s relative normal speed, the exposure cone,
 and the panel's 50 ms dead time. Each robot starts with 400 HP; hits cost
 20 HP. Defeated robots stop moving and shooting. Referee HP, team, stage,
-time and hurt panel feed the hosted firmware's physical referee parser;
+time and hurt panel feed the firmware's referee UART parser;
 the test checks HP and team return through `REF_SYS` on the Jetson UART.
 
-`match.json` reports per-segment route and localization error, enemy hit
+`match.json` reports per-segment measured motion and localization error, enemy hit
 rates, HP, friendly intersections, damage taken and shot counts per robot.
 `shots.jsonl` records first impacts and HP after each resolved impact.
 The approach checks routing with firing disabled; center segments retain the

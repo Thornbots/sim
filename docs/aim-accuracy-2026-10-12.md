@@ -7,8 +7,10 @@ the final three full-stage repeats remain pending.
 
 ## Phase results
 
-Hit counts below use native MCB shots (`kind == "mcb"`); drive hits are panel
-hits and match hits are enemy hits. Segment counts come from each stage's
+Drive/match counts use native MCB shot records (`kind == "mcb"`); drive hits
+are panel hits and match hits are enemy hits. Parked brake cell totals use
+the native `scores.jsonl` snapshots: raw JSONL can include later completions
+after a cell score snapshot and therefore has a different total. Segment counts come from each stage's
 `shots.jsonl`; localization, navigation and route values are p95 metres from
 capture-stamped `route.jsonl` records, using the native linear percentile
 interpolation. `loc/nav/route` is the column order.
@@ -198,12 +200,12 @@ The table gives native MCB hits/shots for each 20-second parked cell. These are 
 | match r2 | no MCB shots | 0.193/0.230/0.228 | 0/3386 each | 3 | fail: `mcb_match_spawn_to_center` |
 | match r3 | total 2/37 (5.4%); parked 0/10; straight 0/5; turn 2/10; spin 0/12 | 0.220/0.091/0.260 | 0/3386 each | 1 | pass |
 | parked r1 | 272/484 across 12 cells | n/a | n/a | 19 | pass |
-| parked r2 | 279/487 across 12 cells | n/a | n/a | 18 | fail: `mcb_parked_speed4_radial` |
+| parked r2 | 279/487 across 12 cells | n/a | n/a | 18 | fail: `mcb_parked_speed1_radial` |
 | parked r3 | 270/481 across 12 cells | n/a | n/a | 14 | fail: `mcb_parked_speed4_radial` |
 
 Every completed drive/match route record had numeric localization, navigation and route errors (zero null/missing values). The failed match r2 did produce pose records before its spawn-to-center assertion; its shot log is empty. Lockstep reported zero timeouts in every completed artifact; no lockstep-invalid run is counted as valid accuracy. RELOCALIZE TX counts are log events and are reported as diagnostics, not scored accuracy.
 
-The native checker passed the remaining completed stage runs. “Pass” here means that stage’s native suite and log checker accepted that invocation; it does not mean all nine invocations passed. Failed brake runs remain in the score tables as diagnostics, not accepted accuracy results. Hit counts across repeats vary substantially, and the two failed parked repeats each had one failed speed 4 radial cell. These data show the powered-holding displacement change, but they do not establish repeatable moving-shot accuracy or a reliability floor.
+The native checker passed the remaining completed stage runs. “Pass” here means that stage’s native suite and log checker accepted that invocation; it does not mean all nine invocations passed. Failed brake runs remain in the score tables as diagnostics, not accepted accuracy results. Hit counts across repeats vary substantially, and r2 failed the speed 1 radial cell and r3 failed the speed 4 radial cell. These data show the powered-holding displacement change, but they do not establish repeatable moving-shot accuracy or a reliability floor.
 
 ## Remaining evidence gaps
 
@@ -229,9 +231,9 @@ horizon and ballistic assumptions; a missed shot can still fall back to
 `opponent_0`. `aim_off_panel_m` remains a legacy lead/impact diagnostic and
 should not be interpreted as direct tracker-center error.
 
-No repeated accuracy claim is justified by these one-run phases. The final
-three full-stage repeats are still needed, followed by a review of score,
-lockstep health, and the capture-time error distributions.
+The three powered-holding repeats above establish chassis stability within
+the 3 cm bound. They do not establish reliable moving-target accuracy. Fresh
+comparisons with the merged nightly board route follow in a separate section.
 
 ## Artifacts
 

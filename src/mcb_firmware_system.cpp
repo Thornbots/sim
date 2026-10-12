@@ -3,11 +3,13 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <ament_index_cpp/get_package_prefix.hpp>
 #include <gz/plugin/Register.hh>
 #include <gz/sim/Link.hh>
 #include <gz/sim/Model.hh>
 #include <gz/sim/System.hh>
 #include <gz/sim/components/JointForceCmd.hh>
+#include <gz/sim/components/Inertial.hh>
 #include <gz/sim/components/JointPosition.hh>
 #include <gz/sim/components/JointVelocity.hh>
 #include <geometry_msgs/msg/twist.hpp>
@@ -28,6 +30,15 @@ public:
     gz::sim::Model model(entity);
     body_ = gz::sim::Link(model.CanonicalLink(ecm));
     body_.EnableVelocityChecks(ecm);
+    head_ = gz::sim::Link(model.LinkByName(ecm, "head"));
+    if (!head_.Valid(ecm)) throw std::runtime_error("MCB requires the yaw head link");
+    head_.EnableVelocityChecks(ecm);
+    head_.EnableAccelerationChecks(ecm);
+    for (const auto link : model.Links(ecm)) {
+      const auto inertial = ecm.Component<gz::sim::components::Inertial>(link);
+      if (inertial) mass_ += inertial->Data().MassMatrix().Mass();
+    }
+    if (mass_ <= 0) throw std::runtime_error("MCB motor plant requires model mass");
     yaw_ = model.JointByName(ecm, "headlink");
     pitch_ = model.JointByName(ecm, "headpitch");
     for (auto joint : {yaw_, pitch_}) {
@@ -53,9 +64,31 @@ public:
       node_->declare_parameter<bool>(entry.first, entry.second);
       referee_.apply(node_->get_parameter(entry.first));
     }
+    drive_ = sdf->Get<std::string>("drive", "stop").first;
+    auto_fire_ = sdf->Get<bool>("auto_fire", true).first;
+    backend_ = sdf->Get<std::string>("backend", "hosted").first;
+    node_->declare_parameter("drive", drive_);
+    node_->declare_parameter("auto_fire", auto_fire_);
     parameters_ = node_->add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &params) {
-      for (const auto &p : params) referee_.apply(p);
       rcl_interfaces::msg::SetParametersResult result;
+      for (const auto &p : params) {
+        if (p.get_name() == "drive") {
+          try {
+            const auto mode = mcb_firmware::control_mode(p.as_string(), true);
+            if (backend_ == "renode" && mode > 1) throw std::invalid_argument("Board drive must be stop/simple");
+          } catch (const std::exception &error) {
+            result.reason = error.what();
+            result.successful = false;
+            return result;
+          }
+        }
+      }
+      for (const auto &p : params) {
+        referee_.apply(p);
+        if (p.get_name() == "drive") drive_ = p.as_string();
+        if (p.get_name() == "auto_fire") auto_fire_ = p.as_bool();
+      }
+      if (firmware_) firmware_->set_mode(mcb_firmware::control_mode(drive_, auto_fire_));
       result.successful = true;
       return result;
     });
@@ -63,7 +96,6 @@ public:
     ticks_ = node_->create_publisher<std_msgs::msg::Header>("~/tick", 100);
     motors_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/motors", 10);
     setpoints_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/gimbal_setpoint", 100);
-    drive_ = sdf->Get<std::string>("drive", "stop").first;
     command_ = node_->create_subscription<geometry_msgs::msg::Twist>("/cmd_vel", 10,
       [this](geometry_msgs::msg::Twist::ConstSharedPtr msg) {
         external_ = {-msg->linear.y, msg->linear.x, msg->angular.z};
@@ -74,9 +106,13 @@ public:
     executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(executor_options);
     executor_->add_node(node_);
     pty_ = std::make_unique<mcb_firmware::PtyLink>(sdf->Get<std::string>("device_link", "/tmp/mcb_emulator_pty").first);
+    const auto backend = sdf->Get<std::string>("backend", "hosted").first;
+    if (backend != "hosted" && backend != "renode") throw std::runtime_error("Unknown MCB backend: " + backend);
+    const auto adapter = backend == "renode" ?
+        ament_index_cpp::get_package_prefix("sim") + "/lib/sim/mcb_type_c" : "";
     firmware_ = std::make_unique<mcb_firmware::Firmware>(pty_->master(),
         sdf->Get<std::string>("firmware_binary", "").first, drive_,
-        sdf->Get<bool>("auto_fire", true).first);
+        sdf->Get<bool>("auto_fire", true).first, adapter);
     RCLCPP_INFO(node_->get_logger(), "MCB physical motor system: %s, drive=%s",
                 firmware_->binary().c_str(), drive_.c_str());
   }
@@ -95,11 +131,15 @@ public:
     const auto pos = body_.WorldPose(ecm);
     const auto vel = body_.WorldLinearVelocity(ecm);
     const auto rate = body_.WorldAngularVelocity(ecm);
+    const auto head_pose = head_.WorldPose(ecm);
+    const auto head_rate = head_.WorldAngularVelocity(ecm);
+    const auto head_accel = head_.WorldLinearAcceleration(ecm);
     const auto yp = ecm.Component<gz::sim::components::JointPosition>(yaw_);
     const auto yv = ecm.Component<gz::sim::components::JointVelocity>(yaw_);
     const auto pp = ecm.Component<gz::sim::components::JointPosition>(pitch_);
     const auto pv = ecm.Component<gz::sim::components::JointVelocity>(pitch_);
-    if (!pos || !vel || !rate || yp->Data().empty() || yv->Data().empty() ||
+    if (!pos || !vel || !rate || !head_pose || !head_rate || !head_accel ||
+        yp->Data().empty() || yv->Data().empty() ||
         pp->Data().empty() || pv->Data().empty()) return;
     const double dt = std::chrono::duration<double>(info.dt).count();
     if (std::abs(dt - 0.001) > 1e-9) throw std::runtime_error("MCB requires 1 ms physics steps");
@@ -111,13 +151,24 @@ public:
     hw.yaw_joint = {yp->Data()[0], yv->Data()[0]};
     hw.pitch_joint = {pp->Data()[0], pv->Data()[0]};
     auto readings = firmware_->gz_readings(hw, referee_);
-    const auto imu = imu_.sample(readings[4], readings[5]);
-    readings[4] = imu[0];
-    readings[5] = imu[1];
+    const auto gyro = head_pose->Rot().RotateVectorReverse(*head_rate);
+    const double heading = referee_.robot_id > 100 ? mcb_motor::kPi : 0;
+    const double yaw = head_pose->Rot().Yaw() - heading;
+    readings[4] = std::atan2(std::sin(yaw), std::cos(yaw));
+    readings[5] = gyro.Z();
+    if (backend_ == "hosted") {
+      const auto delayed = imu_.sample(readings[4], readings[5]);
+      readings[4] = delayed[0];
+      readings[5] = delayed[1];
+    }
     const auto body_velocity = pos->Rot().RotateVectorReverse(*vel);
     const auto feedback = plant_.feedback(readings, body_velocity.X(), body_velocity.Y(), rate->Z(), dt);
     if (current_time_ - command_time_ > 0.1) external_ = {};
-    const auto output = firmware_->step(1, readings, referee_, feedback, external_);
+    const auto acceleration = head_pose->Rot().RotateVectorReverse(
+        *head_accel + gz::math::Vector3d(0, 0, 9.80665)) / 9.80665;
+    const std::array<double, 6> imu{gyro.X(), gyro.Y(), gyro.Z(),
+                                  acceleration.X(), acceleration.Y(), acceleration.Z()};
+    const auto output = firmware_->step(1, readings, referee_, feedback, external_, imu);
     plant_.commands = output.motors;
     const auto effort = plant_.gimbal_effort(yv->Data()[0], pv->Data()[0]);
     for (const auto &pair : {std::make_pair(yaw_, effort[0]), std::make_pair(pitch_, effort[1])}) {
@@ -125,12 +176,12 @@ public:
       if (force) force->Data() = {pair.second};
       else ecm.CreateComponent(pair.first, gz::sim::components::JointForceCmd({pair.second}));
     }
-    const auto wrench = plant_.chassis_wrench();
+    const auto wrench = plant_.chassis_wrench(mass_);
     body_.AddWorldWrench(ecm, pos->Rot().RotateVector({wrench[0], wrench[1], 0}), {0, 0, wrench[2]});
     std_msgs::msg::Header tick;
     tick.stamp = rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count());
     ticks_->publish(tick);
-    if (firmware_->time_ms() % 10 == 0) {
+    if (backend_ == "hosted" && firmware_->time_ms() % 10 == 0) {
       sensor_msgs::msg::JointState setpoint;
       setpoint.header = tick;
       setpoint.header.frame_id = "odom";
@@ -149,7 +200,8 @@ public:
       }
       motors_->publish(motors);
     }
-    for ([[maybe_unused]] auto shot : output.shots) {
+    const auto exits = projectiles_.update(feedback[2]);
+    for (uint32_t shot = 0; shot < exits; ++shot) {
       tick.frame_id = "muzzle";
       shots_->publish(tick);
     }
@@ -157,13 +209,17 @@ public:
 
 private:
   gz::sim::Link body_{gz::sim::kNullEntity};
+  gz::sim::Link head_{gz::sim::kNullEntity};
   gz::sim::Entity yaw_ = gz::sim::kNullEntity, pitch_ = gz::sim::kNullEntity;
   mcb_firmware::Referee referee_;
   mcb_motor::Plant plant_;
+  mcb_motor::ProjectileExit projectiles_;
   McbImuDelay imu_;
   std::array<double, 3> external_{};
   double current_time_ = 0, command_time_ = 0;
-  std::string drive_;
+  std::string drive_, backend_;
+  bool auto_fire_ = true;
+  double mass_ = 0;
   std::shared_ptr<rclcpp::Context> context_;
   rclcpp::Node::SharedPtr node_;
   std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;

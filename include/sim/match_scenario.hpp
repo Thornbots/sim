@@ -29,6 +29,8 @@ const std::map<std::string, Route> &routes();
 const std::map<std::string, std::string> &teams();
 const std::map<std::string, double> &route_delays();
 constexpr double kRouteAccel = 2.0, kRouteSpeed = 2.0;
+// Estimated field-centre fight zone, not a firmware waypoint or navigation target.
+constexpr double kCenterHalfWidth = 1.8, kCenterHalfHeight = 1.2;
 double leg_duration(double length, double speed = kRouteSpeed,
                     double accel = kRouteAccel);
 double route_duration(const Route &points, double speed = kRouteSpeed);

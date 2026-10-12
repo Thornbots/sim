@@ -14,6 +14,7 @@
 
 """Gazebo hardware fixture, compiled sentry firmware, and the real UART bridge."""
 import os
+import math
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -22,13 +23,14 @@ from launch.actions import (DeclareLaunchArgument, EmitEvent, IncludeLaunchDescr
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from sim.display import display_error
 
 
 def stack(context):
     windows = display_error() is None
+    spawn = {'yaw': str(math.pi)} if context.launch_configurations['backend'] == 'renode' else {}
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
@@ -38,7 +40,8 @@ def stack(context):
                           'mcb_device_link': LaunchConfiguration('device_link'),
                           'mcb_auto_fire': LaunchConfiguration('auto_fire'),
                           'firmware_binary': LaunchConfiguration('firmware_binary'),
-                          'real_time_factor': '1'}.items())
+                          'mcb_backend': LaunchConfiguration('backend'),
+                          'real_time_factor': '1', **spawn}.items())
     bridge = Node(package='dji_serial_bridge', executable='dji_serial_bridge_node',
                   name='dji_serial_bridge', output='screen', parameters=[{
                       'use_sim_time': True, 'device': LaunchConfiguration('device_link'),
@@ -51,7 +54,8 @@ def stack(context):
     relay = Node(package='thornbots_pkg', executable='mcb_relay', output='screen',
                  parameters=[{'use_sim_time': True}])
     ready = Node(package='sim', executable='mcb_ready', output='screen',
-                 arguments=[LaunchConfiguration('device_link')])
+                 arguments=[LaunchConfiguration('device_link'), PythonExpression([
+                     "'600' if '", LaunchConfiguration('backend'), "' == 'renode' else '30'"])])
     start_uart = RegisterEventHandler(OnProcessExit(
         target_action=ready,
         on_exit=lambda event, context: [bridge, relay] if event.returncode == 0 else [
@@ -63,7 +67,8 @@ def stack(context):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('firmware_binary', default_value='',
-                              description='Hosted MCB executable; default is its release build'),
+                              description='MCB executable or board ELF; default is the selected backend release build'),
+        DeclareLaunchArgument('backend', default_value='renode', choices=['hosted', 'renode']),
         DeclareLaunchArgument('device_link', default_value='/tmp/mcb_emulator_pty'),
         DeclareLaunchArgument('drive', default_value='stop', choices=['stop', 'simple', 'auto']),
         DeclareLaunchArgument('auto_fire', default_value='true'),

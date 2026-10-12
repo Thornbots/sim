@@ -87,6 +87,19 @@ protected:
     return out;
   }
 };
+TEST_F(McbFirmware, IndexerResumesWhenSetupBecomesInGame) {
+  ref.game_stage = 2;
+  run(9000);
+  ref.game_stage = 4;
+  const auto target = wire::frame(wire::CvTarget{
+      static_cast<float>(firmware->start_x() - 3), 1, .2F, 100, 1});
+  const auto result = run(500, target);
+  ASSERT_FALSE(result.shots.empty()) << "the firmware never requested indexing";
+  EXPECT_TRUE(std::any_of(result.outputs.begin(), result.outputs.end(),
+      [](const auto &output) { return std::abs(output.motors[2]) > 100; }))
+      << "shoot requests left the physical indexer stopped after SETUP";
+}
+
 TEST_F(McbFirmware, SendsPoseRefereeAndEchoesPing) {
   const auto result = run(1000, wire::frame(wire::Ping{42}));
   const auto poses = messages<wire::Pose>(result);
@@ -278,7 +291,7 @@ TEST_P(McbPatrolFlag, StageGateStillBlocksFire) {
 }
 INSTANTIATE_TEST_SUITE_P(AllFlags, McbPatrolFlag, testing::Range<uint8_t>(0, 16));
 
-TEST_F(McbFirmware, ParkedChassisOpposesWheelMotionOnlyWhenPoweredInGame) {
+TEST_F(McbFirmware, ParkedWheelControllerBrakesMotionAndHonorsRefereePower) {
   sim::mcb_motor::Plant plant;
   const auto feedback = plant.feedback({}, 0, .3, 0, .001);
   hw::Firmware::Output output{};
@@ -290,7 +303,8 @@ TEST_F(McbFirmware, ParkedChassisOpposesWheelMotionOnlyWhenPoweredInGame) {
   for (int i = 0; i < 21; ++i) output = firmware->step(5, {}, ref, feedback);
   for (int i = 0; i < 4; ++i) EXPECT_EQ(output.motors[6 + i], 0);
   ref.chassis_power = true;
-  ref.game_stage = 1;
   for (int i = 0; i < 21; ++i) output = firmware->step(5, {}, ref, feedback);
-  for (int i = 0; i < 4; ++i) EXPECT_EQ(output.motors[6 + i], 0);
+  power = 0;
+  for (int i = 0; i < 4; ++i) power += output.motors[6 + i] * plant.speed[6 + i];
+  EXPECT_LT(power, 0);
 }

@@ -315,10 +315,21 @@ struct GzHardware {
   }
 };
 
+inline uint32_t control_mode(const std::string &drive, bool auto_fire) {
+  uint32_t mode;
+  if (drive == "stop") mode = 0;
+  else if (drive == "simple") mode = 1;
+  else if (drive == "auto") mode = 2;
+  else if (drive == "external") mode = 3;
+  else throw std::invalid_argument("unknown MCB drive mode: " + drive);
+  return mode | (auto_fire ? 0 : 4);
+}
+
 class Firmware {
 public:
   Firmware(int master_fd, const std::string &requested_binary,
-           const std::string &drive, bool auto_fire) {
+           const std::string &drive, bool auto_fire, const std::string &adapter = "") {
+    adapter_ = adapter;
     binary_ = requested_binary;
     if (binary_.empty()) {
       const char *override_path = std::getenv("MCB_FIRMWARE_BINARY");
@@ -330,34 +341,23 @@ public:
                        .parent_path()
                        .parent_path()
                        .parent_path() /
-                   "firmware/MCBV3/MCB-project/build/sim/scons-release/"
+                   (adapter_.empty() ? "firmware/MCBV3/MCB-project/build/sim/scons-release/" :
+                                       "firmware/MCBV3/MCB-project/build/hardware/scons-release/") /
                    "MCB-project.elf")
                       .string();
       }
     }
-    if (drive == "stop") {
-      mode_ = 0;
-    } else if (drive == "simple") {
-      mode_ = 1;
-    } else if (drive == "auto") {
-      mode_ = 2;
-    } else if (drive == "external") {
-      mode_ = 3;
-    } else {
-      throw std::invalid_argument("unknown MCB drive mode: " + drive);
-    }
-    if (!auto_fire) {
-      mode_ |= 4;
-    }
-    if (access(binary_.c_str(), X_OK) != 0) {
+    mode_ = control_mode(drive, auto_fire);
+    if (access(binary_.c_str(), adapter_.empty() ? X_OK : R_OK) != 0) {
       throw std::runtime_error(
           "MCB firmware binary not built: " + binary_ +
-          ". Run src/sim/tools/build_mcb_firmware.sh first, or set "
+          (adapter_.empty() ? ". Run src/sim/tools/build_mcb_firmware.sh first, or set " :
+                              ". Build scons build robot=sentry profile=release first, or set ") +
           "firmware_binary / MCB_FIRMWARE_BINARY.");
     }
     try {
       spawn(master_fd);
-      if (read(4) != std::vector<uint8_t>{'M', 'C', 'B', '2'}) {
+      if (read(4, adapter_.empty() ? 5 : 600) != std::vector<uint8_t>{'M', 'C', 'B', '3'}) {
         throw std::runtime_error(
             "MCB firmware hardware interface version mismatch");
       }
@@ -412,7 +412,8 @@ public:
 
   Output step(int64_t cycles, const std::array<double, 10> &readings,
               const Referee &ref, const mcb_motor::Feedback &motors,
-              const std::array<double, 3> &external = {}) {
+              const std::array<double, 3> &external = {},
+              const std::optional<std::array<double, 6>> &imu = {}) {
     if (cycles < 1 || cycles > 100) {
       throw std::invalid_argument(
           "MCB hardware ticks must contain 1..100 cycles");
@@ -430,6 +431,8 @@ public:
     append_u32(input, mode_);
     for (const auto &motor : motors) input.insert(input.end(), motor.begin(), motor.end());
     for (const double value : external) append_float(input, value);
+    const auto sample = imu.value_or(std::array<double, 6>{0, 0, readings[5], 0, 0, 1});
+    for (const double value : sample) append_float(input, value);
     input.insert(input.end(), packets.begin(), packets.end());
     size_t offset = 0;
     while (offset < input.size()) {
@@ -484,17 +487,20 @@ private:
     posix_spawn_file_actions_adddup2(&actions, master_fd, master_fd);
     std::vector<std::string> environment;
     for (char **p = environ; *p != nullptr; ++p) {
-      if (std::strncmp(*p, "MCB_UART_FD=", 12) != 0) {
+      if (std::strncmp(*p, "MCB_UART_FD=", 12) != 0 &&
+          std::strncmp(*p, "MCB_BOARD_ELF=", 14) != 0) {
         environment.emplace_back(*p);
       }
     }
     environment.push_back("MCB_UART_FD=" + std::to_string(master_fd));
+    if (!adapter_.empty()) environment.push_back("MCB_BOARD_ELF=" + binary_);
     std::vector<char *> envp;
     for (auto &entry : environment) {
       envp.push_back(entry.data());
     }
     envp.push_back(nullptr);
-    char *argv[] = {binary_.data(), nullptr};
+    auto executable = adapter_.empty() ? binary_ : adapter_;
+    char *argv[] = {executable.data(), nullptr};
     posix_spawnattr_t attributes;
     posix_spawnattr_init(&attributes);
     sigset_t defaults;
@@ -504,7 +510,7 @@ private:
     // Parent destruction closes stdin; group SIGINT must not kill a tick mid-read.
     posix_spawnattr_setpgroup(&attributes, 0);
     posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP);
-    const int error = posix_spawn(&pid_, binary_.c_str(), &actions, &attributes,
+    const int error = posix_spawn(&pid_, executable.c_str(), &actions, &attributes,
                                   argv, envp.data());
     posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
@@ -521,11 +527,11 @@ private:
     output_fd_ = out[0];
   }
 
-  std::vector<uint8_t> read(size_t count) {
+  std::vector<uint8_t> read(size_t count, int timeout_seconds = 5) {
     std::vector<uint8_t> data(count);
     size_t offset = 0;
     const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
     while (offset < count) {
       const auto remaining = deadline - std::chrono::steady_clock::now();
       const auto timeout =
@@ -596,7 +602,7 @@ private:
     close_fd(output_fd_);
   }
 
-  std::string binary_;
+  std::string binary_, adapter_;
   uint32_t mode_ = 0, time_ms_ = 0;
   double start_x_ = 0.0, start_y_ = 0.0;
   pid_t pid_ = -1;
