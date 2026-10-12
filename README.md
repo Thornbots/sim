@@ -1190,7 +1190,8 @@ head follows each.
 
 Motor-path validation: [2026-10-11 report](docs/mcb-motor-plant-2026-10-11.md).
 Raw aim/localization isolation and current combat limits:
-[controlled comparison and three-repeat results](docs/aim-localization-coupling-2026-10-11.md).
+[controlled comparison and three-repeat results](docs/aim-localization-coupling-2026-10-11.md),
+[follow-up frame/timing and repeatability investigation](docs/aim-followup-2026-10-12.md).
 
 `e2e.launch.py` defaults to `lockstep:=true`. The gz `LockstepGate` holds
 in `PostUpdate` at each 5 ms MCB acknowledgment deadline. The gz MCB system publishes
@@ -1237,7 +1238,7 @@ ros2 launch sim mcb.launch.py
 ```
 
 Use `drive:=simple` for the firmware's waypoint route or `drive:=auto` for
-NAV_GOAL; the default `stop` parks the robot. Foxglove serves on :8765, and
+NAV_GOAL; the default `stop` commands zero drivetrain current. Foxglove serves on :8765, and
 gz/rviz open where a display is available. This launch uses the actual MCB
 and bridge without an opponent; the `e2e.launch.py` stages score it.
 
@@ -1273,6 +1274,13 @@ estimated per-wheel traction; wheel speeds assume rolling without slip.
 Flywheel, indexer and odometry-motor rotors have estimated inertia and load;
 they have no mesh in gz. This validates control against a motor plant, not
 measured tire, ESC, gearbox or launcher behaviour.
+
+Zero current is not a parking brake: the frictionless wheel contacts allow
+chassis motion under gimbal reaction and existing momentum. `mcb_parked`
+records truth displacement in `parking.jsonl` and rejects any cell moving
+more than 0.10 m from its first scored position. This is a stationary-bench
+acceptance limit, not a calibrated tire parameter. Friction/braking-model
+calibration remains open; see the [follow-up measurements](docs/aim-followup-2026-10-12.md).
 
 `/mcb_emulator/motors` publishes `sensor_msgs/JointState` at 100 Hz, stamped
 with the physics sample time. Names identify CAN bus and hexadecimal motor
@@ -1422,6 +1430,16 @@ the barrel off the aim. Fused navigation error is diagnostic; raw `odom`
 remains the aim frame.
 `shots.jsonl` includes route, localization, head-TF and aim errors at fire
 time. `route.jsonl` captures those diagnostics even when no shots fire.
+`navigation_error_m` compares local `nav_odom->root` with field truth;
+`localization_error_m` includes the global `map->nav_odom` correction.
+The first metric measures field alignment of dead reckoning, not globally
+localized navigation accuracy. These reference frames coincide only at
+initialization. Logged xy positions, map correction and lookup errors allow
+frame composition and missing stamped transforms to be checked directly.
+Pose scoring retries an unavailable transform at the original capture stamp
+for at most one simulated second. `pose_score_delay_s` records the delay;
+terminal gaps retain null errors and the lookup exception. No latest TF is
+substituted, and failed native checks remain failures.
 A route and localization diagnostic pass means nodes and clock remained live,
 every route segment completed within 0.40 m p95, stamped navigation data
 existed, and a low hit rate named a measured failing hop. `mcb_drive` also

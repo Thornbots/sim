@@ -304,6 +304,7 @@ Json Scorer::pose_errors(double t) {
   Json out = {
       {"chassis_tilt_deg",
        180 / cb::kPi * std::acos(std::clamp(ours->root(2, 2), -1., 1.))}};
+  out["truth_xy"] = {ours->root(0, 3), ours->root(1, 3)};
   if (match_start)
     out["segment"] =
         match_scenario::sample_match(t - *match_start, stage).segment;
@@ -361,8 +362,10 @@ Json Scorer::pose_errors(double t) {
     out["localization_error_m"] =
         std::hypot(tr.translation.x - ours->root(0, 3),
                    tr.translation.y - ours->root(1, 3));
-  } catch (const tf2::TransformException &) {
+    out["localization_xy"] = {tr.translation.x, tr.translation.y};
+  } catch (const tf2::TransformException & error) {
     out["localization_error_m"] = nullptr;
+    out["localization_tf_error"] = error.what();
   }
   try {
     const auto tr = tf.lookupTransform(
@@ -370,8 +373,21 @@ Json Scorer::pose_errors(double t) {
         rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
     out["navigation_error_m"] = std::hypot(
         tr.translation.x - ours->root(0, 3), tr.translation.y - ours->root(1, 3));
-  } catch (const tf2::TransformException &) {
+    out["navigation_xy"] = {tr.translation.x, tr.translation.y};
+  } catch (const tf2::TransformException & error) {
     out["navigation_error_m"] = nullptr;
+    out["navigation_tf_error"] = error.what();
+  }
+  try {
+    const auto map = tf.lookupTransform(
+        "map", "nav_odom",
+        rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
+    out["map_navigation_xy"] = {map.translation.x, map.translation.y};
+    out["map_navigation_yaw_rad"] = std::atan2(
+        2 * (map.rotation.w * map.rotation.z + map.rotation.x * map.rotation.y),
+        1 - 2 * (map.rotation.y * map.rotation.y + map.rotation.z * map.rotation.z));
+  } catch (const tf2::TransformException &) {
+    out["map_navigation_xy"] = nullptr;
   }
   return out;
 }
@@ -545,6 +561,15 @@ void Scorer::fire_tick() {
       ref_keep.push_back(t);
     else {
       auto out = pose_errors(t);
+      // EKF + raw-pose pairing can arrive after the first scoring callback.
+      // Retry the capture stamp; terminal gaps remain visible after one second.
+      if (now - t < 1.0 &&
+          (out.value("navigation_error_m", Json(nullptr)).is_null() ||
+           out.value("localization_error_m", Json(nullptr)).is_null())) {
+        ref_keep.push_back(t);
+        continue;
+      }
+      out["pose_score_delay_s"] = now - t;
       out["t"] = t;
       route_records.push_back(out);
     }

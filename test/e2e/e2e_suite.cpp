@@ -33,7 +33,8 @@ public:
   void SetUp() override {
     try {
       for (const auto &f :
-           {"shots.jsonl", "scores.jsonl", "states.jsonl", "poses.jsonl"})
+           {"shots.jsonl", "scores.jsonl", "states.jsonl", "poses.jsonl",
+            "parking.jsonl"})
         cb::truncate(cb::options.log_dir + "/" + f);
       control = std::make_shared<sim::SimTimeNode>("e2e_stack");
       scorer = std::make_shared<ee::Scorer>(
@@ -220,6 +221,20 @@ TEST_P(E2ESuite, MCB) {
       }
     std::cout << ee::state_summary(s->states) << '\n';
     environment->record_score(c.name, duration);
+    ASSERT_FALSE(s->route_records.empty()) << "No chassis truth samples";
+    const auto start = s->route_records.front().at("truth_xy");
+    double chassis_displacement = 0;
+    for (const auto &r : s->route_records) {
+      const auto xy = r.at("truth_xy");
+      chassis_displacement = std::max(chassis_displacement, std::hypot(
+          xy[0].get<double>() - start[0].get<double>(),
+          xy[1].get<double>() - start[1].get<double>()));
+    }
+    cb::append_json(cb::options.log_dir + "/parking.jsonl",
+                    {{"cell", c.name},
+                     {"chassis_max_displacement_m", chassis_displacement}});
+    EXPECT_LE(chassis_displacement, .1)
+        << c.name << ": chassis moved during a parked-shooter cell";
     const auto &mcb = s->shots.at("mcb");
     int hit = 0;
     for (const auto &r : mcb)

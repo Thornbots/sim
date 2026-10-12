@@ -137,11 +137,13 @@ These localization p95 values come directly from native `segments.json`/`match.j
 | after r2 | 0/2.00661e-09 | 0.710 | 5.670 |
 | after r3 | 0/2.01516e-09 | 0.891 | 6.800 |
 
-Across all nine final runs, raw aim/MCB disagreement stayed below 2.03e-9 m while the last sampled navigation RELOCALIZE TX count was 27–872 per run. The fresh baseline maximum disagreement was 0.163 m in drive and 0.254 m in match. Navigation truth error still reached 1.734 m p95 in final parked repeat 3.
+Across all nine final runs, raw aim/MCB disagreement stayed below 2.03e-9 m while the last sampled navigation RELOCALIZE TX count was 27–872 per run. The fresh baseline maximum disagreement was 0.163 m in drive and 0.254 m in match. Global localization truth error still reached 1.734 m p95 in final parked repeat 3.
 
 The final code keeps raw `odom->root` independent of either navigation transform. Navigation alignment uses raw pose interpolated at the fused stamp. Firmware unit tests verify arbitrary RELOCALIZE fixes affect only navigation, preserve raw POSE/held aim, and allow subsequent pod displacement. The current 25-byte POSE and 15-byte CV_TARGET layouts remain unchanged, with no fallback.
 
 `mcb_drive` now requires at least one native hit in the full scored route; a measured diagnosis cannot make zero hits pass. After repeat 2 scored zero hits and failed both the native assertion and log checker, directly exercising this rule. Per-segment diagnostic criteria remain. `mcb_match` retains its existing diagnostic criterion and zero-friendly-intersection assertion. That match criterion is still weaker than calibrated combat accuracy.
+
+Follow-up investigation: [navigation metrics, timing and repeated validation](aim-followup-2026-10-12.md).
 
 ## Review-fix rerun
 
