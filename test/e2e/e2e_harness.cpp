@@ -266,7 +266,7 @@ void Scorer::spin_for(double seconds) {
         if (!rclcpp::ok())
           throw std::runtime_error("E2E ROS context stopped during scoring");
         spin_once();
-      });
+      }, cv_bench::options.backend == "renode" ? 120 : 20);
 }
 void Scorer::reset() {
   pending_.clear();

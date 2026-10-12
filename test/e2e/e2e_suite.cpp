@@ -56,7 +56,7 @@ public:
                 "ros2", "launch", "sim", "e2e.launch.py", "run_tests:=false",
                 "headless:=" +
                     std::string(cb::options.headless ? "true" : "false"),
-                "stage:=" + cb::options.stage, "target_speed:=0.0",
+                "stage:=" + cb::options.stage, "backend:=" + cb::options.backend, "target_speed:=0.0",
                 "target_spin_hz:=0.0", "real_time_factor:=" + cb::options.rtf,
                 "lockstep:=" + std::string(cb::options.lockstep ? "true" : "false"),
                 "firmware_fixes:=" + std::string(cb::options.no_firmware_fixes
@@ -72,7 +72,7 @@ public:
                         "E2E stack exited during bring-up; see stack.log");
                   return predicate();
                 },
-                timeout, description))
+                cb::options.backend == "renode" ? std::max(timeout, 600.0) : timeout, description))
           throw std::runtime_error("E2E bring-up failed: " + description +
                                    "; see stack.log");
       };

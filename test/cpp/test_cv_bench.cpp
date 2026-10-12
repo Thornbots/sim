@@ -338,6 +338,14 @@ TEST(E2EClock, StoppedClockFailsPromptly) {
   EXPECT_GT(wall, 5);
   EXPECT_LT(wall, 5.2);
 }
+TEST(E2EClock, BoardBudgetAllowsInstructionExecutionButStillRejectsStalls) {
+  double sim = 0, wall = 0;
+  sim::e2e::score_window(3, [&] { return sim; }, [&] { return wall; },
+    [&] { wall += .1; sim += .002; }, 120);
+  EXPECT_GT(wall, 60);
+  EXPECT_THROW(sim::e2e::score_window(3, [&] { return sim; }, [&] { return wall; },
+    [&] { wall += .1; }, 120), std::runtime_error);
+}
 TEST(E2EClock, BackwardsClockFails) {
   double clock = 1, wall = 0;
   EXPECT_THROW(sim::e2e::score_window(

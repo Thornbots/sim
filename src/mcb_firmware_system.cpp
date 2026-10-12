@@ -3,6 +3,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <ament_index_cpp/get_package_prefix.hpp>
 #include <gz/plugin/Register.hh>
 #include <gz/sim/Link.hh>
 #include <gz/sim/Model.hh>
@@ -72,9 +73,13 @@ public:
     executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(executor_options);
     executor_->add_node(node_);
     pty_ = std::make_unique<mcb_firmware::PtyLink>(sdf->Get<std::string>("device_link", "/tmp/mcb_emulator_pty").first);
+    const auto backend = sdf->Get<std::string>("backend", "hosted").first;
+    if (backend != "hosted" && backend != "renode") throw std::runtime_error("Unknown MCB backend: " + backend);
+    const auto adapter = backend == "renode" ?
+        ament_index_cpp::get_package_prefix("sim") + "/lib/sim/mcb_type_c" : "";
     firmware_ = std::make_unique<mcb_firmware::Firmware>(pty_->master(),
         sdf->Get<std::string>("firmware_binary", "").first, drive_,
-        sdf->Get<bool>("auto_fire", true).first);
+        sdf->Get<bool>("auto_fire", true).first, adapter);
     RCLCPP_INFO(node_->get_logger(), "MCB physical motor system: %s, drive=%s",
                 firmware_->binary().c_str(), drive_.c_str());
   }

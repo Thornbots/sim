@@ -16,6 +16,25 @@ constexpr double kPitchRatio = 3.0;
 using Feedback = std::array<std::array<uint8_t, 8>, 10>;
 using Commands = std::array<int16_t, 10>;
 
+struct ProjectileExit {
+  // Sentry's estimated 36:1 indexer gearbox and eight chambers.
+  static constexpr double kShaftTurnsPerBall = 36.0 / 8;
+  int previous = 0;
+  double turns = 0;
+  uint32_t exited = 0;
+  uint32_t update(const std::array<uint8_t, 8> &feedback) {
+    const int encoder = static_cast<int>(feedback[0]) << 8 | feedback[1];
+    const int delta = (encoder - previous + 12288) % 8192 - 4096;
+    previous = encoder;
+    // The index motor is inverted; reverse/unjam movement does not add shots.
+    turns -= delta / 8192.0;
+    const auto total = static_cast<uint32_t>(std::max(0.0, std::floor(turns / kShaftTurnsPerBall)));
+    const auto count = total > exited ? total - exited : 0;
+    exited = std::max(exited, total);
+    return count;
+  }
+};
+
 inline std::array<uint8_t, 8> packet(double angle, double speed, double current) {
   const double turn = angle / (2 * kPi);
   const auto encoder = static_cast<uint16_t>((turn - std::floor(turn)) * 8192);

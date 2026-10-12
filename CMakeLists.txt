@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.8)
 project(sim)
 
+set(SIM_RENODE_ROOT "" CACHE PATH "Renode 1.17.0 portable installation with client library")
+
 # C++ runtime, suites and offline tools; Python supplies ROS launch glue.
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -68,6 +70,29 @@ target_compile_features(mcb_protocol PUBLIC cxx_std_17)
 target_include_directories(mcb_protocol PUBLIC include)
 install(TARGETS mcb_protocol
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+
+if(SIM_RENODE_ROOT)
+  find_package(Threads REQUIRED)
+  add_library(mcb_renode_api STATIC IMPORTED)
+  set_target_properties(mcb_renode_api PROPERTIES
+    IMPORTED_LOCATION "${SIM_RENODE_ROOT}/client-build/librenode_api.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${SIM_RENODE_ROOT}/tools/external_control_client/include")
+  add_executable(mcb_type_c src/mcb_type_c.cpp src/process.cpp)
+  target_compile_features(mcb_type_c PUBLIC cxx_std_17)
+  target_compile_definitions(mcb_type_c PRIVATE SIM_RENODE_ROOT="${SIM_RENODE_ROOT}")
+  target_include_directories(mcb_type_c PRIVATE include)
+  target_link_libraries(mcb_type_c mcb_protocol mcb_renode_api Threads::Threads util ${CMAKE_DL_LIBS})
+  ament_target_dependencies(mcb_type_c ament_index_cpp)
+  install(TARGETS mcb_type_c DESTINATION lib/${PROJECT_NAME})
+  add_executable(mcb_renode_connection_suite test/mcb/mcb_renode_connection_suite.cpp src/process.cpp)
+  target_compile_features(mcb_renode_connection_suite PUBLIC cxx_std_17)
+  target_compile_definitions(mcb_renode_connection_suite PRIVATE
+    SIM_RENODE_ROOT="${SIM_RENODE_ROOT}" SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  target_include_directories(mcb_renode_connection_suite PRIVATE include)
+  target_link_libraries(mcb_renode_connection_suite mcb_protocol mcb_renode_api Threads::Threads util
+    ${CMAKE_DL_LIBS} GTest::gtest)
+  install(TARGETS mcb_renode_connection_suite DESTINATION lib/${PROJECT_NAME})
+endif()
 
 add_library(combat src/combat.cpp)
 target_compile_features(combat PUBLIC cxx_std_17)
@@ -248,11 +273,13 @@ install(TARGETS opponent_mover LIBRARY DESTINATION lib)
 add_library(mcb_firmware_system SHARED src/mcb_firmware_system.cpp)
 add_executable(mcb_ready src/mcb_ready.cpp)
 target_compile_features(mcb_ready PUBLIC cxx_std_17)
+target_include_directories(mcb_ready PRIVATE include)
+target_link_libraries(mcb_ready mcb_protocol)
 install(TARGETS mcb_ready DESTINATION lib/${PROJECT_NAME})
 target_compile_features(mcb_firmware_system PUBLIC cxx_std_17)
 target_include_directories(mcb_firmware_system PRIVATE include)
 target_link_libraries(mcb_firmware_system mcb_protocol util gz-sim::core gz-plugin::register)
-ament_target_dependencies(mcb_firmware_system rclcpp rcl_interfaces geometry_msgs std_msgs sensor_msgs)
+ament_target_dependencies(mcb_firmware_system rclcpp rcl_interfaces geometry_msgs std_msgs sensor_msgs ament_index_cpp)
 add_executable(mcb_physics_suite test/mcb/mcb_physics_suite.cpp)
 target_compile_features(mcb_physics_suite PUBLIC cxx_std_17)
 target_link_libraries(mcb_physics_suite suite_support mcb_protocol util GTest::gtest)
@@ -284,7 +311,7 @@ install(TARGETS lockstep_suite DESTINATION lib/${PROJECT_NAME})
 
 ament_python_install_package(${PROJECT_NAME})
 
-install(DIRECTORY launch urdf meshes world rviz foxglove DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch urdf meshes world rviz foxglove renode DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)

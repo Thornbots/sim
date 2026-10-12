@@ -10,6 +10,7 @@
   <xacro:arg name="mcb_physics" default="false"/>
   <xacro:arg name="mcb_drive" default="stop"/>
   <xacro:arg name="firmware_binary" default=""/>
+  <xacro:arg name="mcb_backend" default="hosted"/>
   <xacro:arg name="mcb_game_stage" default="4"/>
   <xacro:arg name="mcb_device_link" default="/tmp/mcb_emulator_pty"/>
   <xacro:arg name="mcb_auto_fire" default="true"/>
@@ -205,6 +206,7 @@
       <plugin filename="mcb_firmware_system" name="sim::McbFirmwareSystem">
         <drive>$(arg mcb_drive)</drive>
         <firmware_binary>$(arg firmware_binary)</firmware_binary>
+        <backend>$(arg mcb_backend)</backend>
         <game_stage>$(arg mcb_game_stage)</game_stage>
         <device_link>$(arg mcb_device_link)</device_link>
         <auto_fire>$(arg mcb_auto_fire)</auto_fire>

@@ -1,0 +1,42 @@
+// Copyright 2026 Thornbots. SPDX-License-Identifier: Apache-2.0
+using "platforms/cpus/stm32f4.repl"
+nvic:
+    systickFrequency: 21000000
+    FilterCcrDiv0Write: false
+sram:
+    size: 0x20000
+ccm: Memory.MappedMemory @ sysbus 0x10000000
+    size: 0x10000
+backupRam: Memory.MappedMemory @ sysbus 0x40024000
+    size: 0x1000
+usart6: UART.STM32_UART @ sysbus <0x40011400, +0x100>
+    -> nvic@71
+dwt: Miscellaneous.DWT @ sysbus 0xE0001000
+    frequency: 168000000
+bmi088: Sensors.TypeCBmi088 @ spi1
+gpioPortA:
+    4 -> bmi088@0
+gpioPortB:
+    0 -> bmi088@1 | timer1@02 | timer3@02 | timer8@01
+adc1: Analog.STM32_ADC @ sysbus 0x40012000
+    IRQ -> nvic@18
+usart1:
+    frequency: 84000000
+usart3:
+    frequency: 42000000
+usart6:
+    frequency: 84000000
+pods: Sensors.TypeCPods @ i2c2 0x55
+encoder: Sensors.TypeCEncoder @ i2c2 0x06
+host: Sensors.TypeCHost @ sysbus 0xF0000000
+    jetson: usart1
+    referee: usart6
+    dbus: usart3
+    pods: pods
+    imu: bmi088
+    encoder: encoder
+motors1: CAN.TypeCMotors @ sysbus 0xF0001000
+motors2: CAN.TypeCMotors @ sysbus 0xF0001100
+
+i2c2:
+    I2CReadCount: 16

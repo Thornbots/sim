@@ -59,10 +59,13 @@ MCB_PTY = '/tmp/mcb_emulator_pty'
 
 def _sim(context):
     config = context.launch_configurations
+    if config['backend'] == 'renode' and config['stage'] in DRIVING:
+        raise RuntimeError('Renode driving stages require firmware auto-drive integration')
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
     spawn = ({'x': '4.625', 'y': '0.0', 'yaw': str(math.pi)}
-             if config['stage'] in DRIVING else {})
+             if config['stage'] in DRIVING else
+             {'yaw': str(math.pi)} if config['backend'] == 'renode' else {})
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
@@ -71,6 +74,7 @@ def _sim(context):
                           'mcb_physics': 'true',
                           'mcb_drive': 'external' if config['stage'] in DRIVING else 'stop',
                           'firmware_binary': config['firmware_binary'],
+                          'mcb_backend': config['backend'],
                           'mcb_game_stage': '3' if config['stage'] == 'mcb_match' else '4',
                           'real_time_factor': config['real_time_factor'],
                           'lockstep': config['lockstep'], **spawn}.items())]
@@ -82,7 +86,8 @@ def _is_true(context, name):
 
 def _tests(context):
     config = context.launch_configurations
-    cmd = ['ros2', 'run', 'sim', 'e2e_suite', '--stage', config['stage']]
+    cmd = ['ros2', 'run', 'sim', 'e2e_suite', '--stage', config['stage'],
+           '--backend', config['backend']]
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
                      ('real_time_factor', '--real-time-factor'),
                      ('duration', '--e2e-duration'), ('log_dir', '--log-dir')):
@@ -129,7 +134,9 @@ def generate_launch_description():
             'use_sim_time': True,
             'target_speed': ParameterValue(LaunchConfiguration('target_speed'), value_type=float),
             'spin_hz': ParameterValue(LaunchConfiguration('target_spin_hz'), value_type=float),
-            'origin_yaw': SPAWN_YAW,  # sim.launch.py's spawn heading: the path stays in front
+            'origin_yaw': ParameterValue(PythonExpression([
+                str(math.pi), " if '", LaunchConfiguration('backend'),
+                "' == 'renode' else ", str(SPAWN_YAW)]), value_type=float),
             **parked_paths['lateral'],
         }])
     # The path the opponent's OpponentMover system rides, into gz.
@@ -171,7 +178,9 @@ def generate_launch_description():
         package='sim', executable='match_driver', name='match_driver', output='screen',
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
     # The bridge opens the pty once, so it starts after the emulator makes it.
-    uart_ready = Node(package='sim', executable='mcb_ready', arguments=[MCB_PTY], output='screen')
+    uart_ready = Node(package='sim', executable='mcb_ready', arguments=[MCB_PTY,
+        PythonExpression(["'600' if '", LaunchConfiguration('backend'), "' == 'renode' else '30'"])],
+        output='screen')
     uart_start = RegisterEventHandler(OnProcessExit(
         target_action=uart_ready,
         on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
@@ -215,6 +224,7 @@ def generate_launch_description():
                               description='Deprecated: the native MCB runs its checked-out code'),
         DeclareLaunchArgument('firmware_binary', default_value='',
                               description='Hosted MCB executable; empty uses the firmware build'),
+        DeclareLaunchArgument('backend', default_value='hosted', choices=['hosted', 'renode']),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('speeds', default_value='',

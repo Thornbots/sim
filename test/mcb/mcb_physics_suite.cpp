@@ -15,6 +15,8 @@
 class McbPhysics : public testing::Test {
 protected:
   void SetUp() override {
+    const char *backend = std::getenv("SIM_MCB_BACKEND");
+    renode_ = backend && std::string(backend) == "renode";
     path_ = "/tmp/mcb_physics_" + std::to_string(getpid());
     std::ofstream(path_ + ".sdf") <<
       "<sdf version='1.9'><world name='mcb_physics'><gravity>0 0 0</gravity>"
@@ -29,7 +31,8 @@ protected:
       "<joint name='headpitch' type='revolute'><parent>head</parent><child>head_pitch</child><axis><xyz>0 1 0</xyz>"
       "<limit><lower>-0.6</lower><upper>0.6</upper></limit></axis></joint>"
       "<plugin filename='" SIM_MCB_SYSTEM "' name='sim::McbFirmwareSystem'><device_link>" << path_ <<
-      "</device_link></plugin></model></world></sdf>";
+      "</device_link><backend>" << (renode_ ? "renode" : "hosted") <<
+      "</backend></plugin></model></world></sdf>";
     node_ = std::make_shared<rclcpp::Node>("mcb_physics_test");
     feedback_ = node_->create_subscription<sensor_msgs::msg::JointState>("/mcb_emulator/motors", 10,
       [this](sensor_msgs::msg::JointState::ConstSharedPtr msg) { motors_ = *msg; });
@@ -40,6 +43,15 @@ protected:
   }
   void TearDown() override {
     if (fd_ >= 0) close(fd_);
+    EXPECT_EQ(parser_.errors().crc8, 0u);
+    EXPECT_EQ(parser_.errors().crc16, 0u);
+    if (renode_) {
+      EXPECT_GT(poses_, 0u);
+      EXPECT_GT(refs_, 0u);
+      std::cout << "board UART POSE=" << poses_ << " REF_SYS=" << refs_
+                << " CRC8=" << parser_.errors().crc8 << " CRC16=" << parser_.errors().crc16
+                << std::endl;
+    }
     if (server_) {
       server_->stop();
       EXPECT_EQ(server_->read_log().find("MCB firmware exited"), std::string::npos) << server_->read_log();
@@ -49,7 +61,7 @@ protected:
     std::filesystem::remove(path_ + ".sdf");
   }
   template<typename Predicate> bool wait(Predicate pred) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(renode_ ? 600 : 15);
     while (std::chrono::steady_clock::now() < deadline) {
       rclcpp::spin_some(node_);
       if (pred()) return true;
@@ -62,21 +74,45 @@ protected:
     const auto packet = sim::mcb_protocol::frame(sim::mcb_protocol::CvTarget{
       static_cast<float>(4.625 - 3 * std::cos(yaw)), static_cast<float>(-3 * std::sin(yaw)), 0.2F, 100, 0});
     const double begin = rclcpp::Time(motors_.header.stamp).seconds();
+    double last_sent = begin - 0.02;
     double max_speed = 0;
     ASSERT_TRUE(wait([&] {
-      const auto sent = write(fd_, packet.data(), packet.size());
-      EXPECT_EQ(sent, static_cast<ssize_t>(packet.size()));
+      const double stamp = rclcpp::Time(motors_.header.stamp).seconds();
+      if (stamp >= last_sent + 0.02) {
+        const auto sent = write(fd_, packet.data(), packet.size());
+        EXPECT_EQ(sent, static_cast<ssize_t>(packet.size()));
+        last_sent = stamp;
+      }
+      std::array<uint8_t, 4096> bytes{};
+      const auto received = read(fd_, bytes.data(), bytes.size());
+      if (received > 0) {
+        for (const auto &frame : parser_.feed(bytes.data(), received)) {
+          if (frame.msg_type == sim::mcb_protocol::kPose) ++poses_;
+          if (frame.msg_type == sim::mcb_protocol::kRefSys) ++refs_;
+        }
+      }
       max_speed = std::max(max_speed, std::abs(motors_.velocity[0]));
+      // Recover the GM6020 pitch command (V) from the plant's current and back-EMF.
+      max_pitch_volts_ = std::max(max_pitch_volts_, std::abs(
+          motors_.effort[1] / 0.741 * 8.705 + 0.716 * motors_.velocity[1]));
       return rclcpp::Time(motors_.header.stamp).seconds() >= begin + 3;
     }));
     EXPECT_GT(max_speed, 1.0);
+    // CAN2 pitch commands arrive and respect the sentry's 10 V pitch clamp.
+    EXPECT_GT(max_pitch_volts_, 0.1);
+    EXPECT_LT(max_pitch_volts_, 10.01);
     EXPECT_NEAR(motors_.position[0] / sim::mcb_motor::kYawRatio, yaw, 0.03);
     EXPECT_LT(std::abs(motors_.velocity[0] / sim::mcb_motor::kYawRatio), 0.05);
     std::cout << "native CAN/gz yaw target=" << yaw << " measured=" <<
-      motors_.position[0] / sim::mcb_motor::kYawRatio << " peak shaft rad/s=" << max_speed << std::endl;
+      motors_.position[0] / sim::mcb_motor::kYawRatio << " peak shaft rad/s=" << max_speed
+      << " peak pitch V=" << max_pitch_volts_ << std::endl;
   }
   std::string path_;
   int fd_ = -1;
+  bool renode_ = false;
+  sim::mcb_protocol::DJISerial parser_;
+  unsigned poses_ = 0, refs_ = 0;
+  double max_pitch_volts_ = 0;
   rclcpp::Node::SharedPtr node_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr feedback_;
   sensor_msgs::msg::JointState motors_;
