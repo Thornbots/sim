@@ -33,7 +33,17 @@ remain at [the owner](../README.md#driving-and-combat-diagnostics-mcb_drive).
   UART remained CRC-clean. Approach displacement 4.655 m, p95 speed 1.772 m/s;
   p95 spin 12.527 rad/s. Six of 35 physical shots hit (17.1%); no approach shots.
   Localization p95 was 0.104 m in approach and 0.112 m in spin. The diagnostic
-  was measured aim error. Board match and parked acceptance remain pending.
+  was measured aim error. Parked acceptance remains pending.
+
+- Clean board match (`/tmp/dexec_90319.log`,
+  `/tmp/track_i_auto_match_clean_20261012`) passed without intervention and the
+  log checker accepted it: 974.486 wall seconds (211.1 bring-up, 762.6 scored,
+  0.7 teardown), 35.100 simulated seconds, 7,009 holds and zero timeouts.
+  Forty physical shots yielded eleven enemy hits (27.5%), with zero friendly
+  intersections. Approach displacement 4.684 m, p95 speed 1.769 m/s; p95 spin
+  12.524 rad/s. No approach shots fired. All robots reached center, combat HP
+  changed, and the firmware referee/team checks passed. Localization p95 was
+  0.100 m in approach and 0.087 m in spin; the diagnostic was measured aim error.
 
 ## Firmware review
 
