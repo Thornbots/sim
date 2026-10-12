@@ -129,7 +129,6 @@ int main() {
     std::array<double, 10> readings{};
     board.sensors(readings);
     board.feedback(plant.feedback(readings, 0, 0, 0, 0));
-    board.remote(false);
     sim::mcb_firmware::Referee referee;
     referee.game_stage = 2;
     sim::mcb_protocol::DJISerial parser;
@@ -143,6 +142,7 @@ int main() {
           initial = sim::mcb_protocol::unpack<sim::mcb_protocol::Pose>(frame.payload);
       }
     }
+    board.remote(false);
     board.motors();
     if (!initial || board.frames() == 0 || parser.errors().crc8 || parser.errors().crc16)
       throw std::runtime_error("Board failed calibration/UART/CAN bring-up; see " + emulator.directory().string());

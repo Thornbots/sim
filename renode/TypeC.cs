@@ -153,10 +153,11 @@ namespace Antmicro.Renode.Peripherals.CAN
         }
         public long Size => 0x100;
         public void Reset() { Array.Clear(registers, 0, registers.Length); slot = 0; frames = 0; feedbackFrames = 0; timer.Reset(); }
-        public byte ReadByte(long offset) { return offset < 0x90 ? registers[offset] :
+        public byte ReadByte(long offset) { return offset >= 0x98 ? (byte)0 : offset < 0x90 ? registers[offset] :
             (byte)(ReadDoubleWord(offset & ~3L) >> (int)(8 * (offset & 3))); }
         public void WriteByte(long offset, byte value) { if(offset <= 0x40) registers[offset] = value; }
-        public uint ReadDoubleWord(long offset) { return offset == 0x90 ? frames : offset == 0x94 ? feedbackFrames : BitConverter.ToUInt32(registers, (int)offset); }
+        public uint ReadDoubleWord(long offset) { return offset >= 0x98 ? 0U : offset == 0x90 ? frames : offset == 0x94 ? feedbackFrames :
+            offset >= 0x90 ? 0U : BitConverter.ToUInt32(registers, (int)offset); }
         public void WriteDoubleWord(long offset, uint value)
         {
             var data = BitConverter.GetBytes(value);
