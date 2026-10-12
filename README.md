@@ -1287,8 +1287,8 @@ can supply an arbitrary initial gyro angle directly, which the board cannot.
 auto-drive stage integration lands.
 
 The Jetson PTY transports actual USART1 bytes. Referee packets enter USART6,
-and DBUS packets enter USART3 (remote absent during the power-on guard,
-then centred sticks; right UP selects auto-drive, MID parks). `auto_fire:=false`
+and DBUS packets enter USART3 (remote absent through the power-on guard and
+stationary calibration so firmware samples its yaw home, then centred sticks; right UP selects auto-drive, MID parks). `auto_fire:=false`
 selects left MID and also disables firmware auto-aim, as with the hosted fixture.
 `renode/TypeC.cs` models BMI088 SPI registers/chip selects, Pico I²C pod
 readings and the MT6701 absolute encoder. The current IMU model assumes the

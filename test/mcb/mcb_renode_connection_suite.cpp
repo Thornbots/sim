@@ -35,6 +35,10 @@ TEST(RenodeConnection, ReconnectsPreservePeripheralState) {
   {
     sim::type_c::Board board(port);
     EXPECT_EQ(board.read_register(0x4000661c), 1U) << "CAN2 reset must preserve CAN1 filters";
+    EXPECT_EQ(board.read_register(0xf00010fc), 0U);
+    std::array<uint8_t, 8> reserved{};
+    board.read(0xf0001094, reserved.data(), reserved.size());
+    EXPECT_EQ(reserved, (std::array<uint8_t, 8>{}));
     const std::array<uint8_t, 8> expected{1, 2, 3, 4, 5, 6, 7, 8};
     board.write(0xf0001010, expected.data(), expected.size());
     for (int request = 0; request < 24000; ++request) {
