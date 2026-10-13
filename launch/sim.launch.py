@@ -43,7 +43,7 @@ from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit, OnProcessStart, OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
-    Command, LaunchConfiguration, PathJoinSubstitution)
+    Command, LaunchConfiguration, PathJoinSubstitution, PythonExpression)
 from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
@@ -121,6 +121,8 @@ def generate_launch_description():
         description='Spawn heading, rad CCW; the default faces across the field (-y)')
     # Windows default off where no display opens; watch in Foxglove there.
     windows = 'true' if display_error() is None else 'false'
+    gz_gui_config_arg = DeclareLaunchArgument(
+        'gz_gui_config', default_value='', description='Optional gz GUI configuration path')
     gui_arg = DeclareLaunchArgument(
         'gui', default_value=windows,
         description='Set to false to run gz sim headless (server only)'
@@ -355,7 +357,9 @@ def generate_launch_description():
             on_exit=[IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(PathJoinSubstitution(
                     [FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])),
-                launch_arguments={'gz_args': '-g'}.items(),
+                launch_arguments={'gz_args': ['-g', PythonExpression([
+                    "' --gui-config '", " + '", LaunchConfiguration('gz_gui_config'),
+                    "' if '", LaunchConfiguration('gz_gui_config'), "' else ''"])]}.items(),
             )],
         ),
         condition=IfCondition(LaunchConfiguration('gui')),
@@ -683,6 +687,8 @@ def generate_launch_description():
         name='rviz2',
         output='screen',
         arguments=['-d', LaunchConfiguration('rviz_config')],
+        additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': os.path.join(
+            get_package_share_directory('thornbots_pkg'), 'config', 'fastdds_udp_only.xml')},
         parameters=[{'use_sim_time': True}],
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
@@ -711,6 +717,7 @@ def generate_launch_description():
         z_arg,
         yaw_arg,
         gui_arg,
+        gz_gui_config_arg,
         rviz_arg,
         foxglove_arg,
         rviz_config_arg,

@@ -526,6 +526,53 @@ publishes `/dji_serial_bridge/pose` the way the Type-C board does. It runs no
 `/sim/raw_odom` and `/sim/raw_joint_states` are ground truth that real hardware
 doesn't have; only sim and its tests should read them.
 
+## Record an E2E demo
+
+[Mac recording evidence](docs/e2e-video-2026-10-13.md).
+
+The E2E GUI uses scene-only gz views and robot-following RViz views:
+[a parked close-up](rviz/e2e-parked.rviz) and [a driving/match view](rviz/e2e.rviz). They show robot, TF, lidar, map, tracked armor,
+cyan aim point/ray and scored MCB shot traces. The GUI-only `e2e_map_view`
+fetches the initial map through the read-only map service and mirrors updates
+to `/sim/e2e/map` once per wall second, so a missed initial DDS sample does
+not leave RViz empty. The map viewer and RViz use the existing thornbots UDP
+profile to avoid depending on shared-memory delivery of the large map. Green denotes an enemy hit and
+red a miss. Traces appear after the scorer resolves the shot; they show the
+historical ballistic path, not animated ammunition. Parked/drive endpoints use
+scored flight range; match endpoints use the resolved first-impact time.
+The aim ray connects the current muzzle TF to the held aim point. The
+[chassis-yaw wire limitation](../ros2_dji_serial_bridge/UART_PROTOCOL.md#proposed-pose-chassis-yaw)
+applies to RViz body orientation; gz shows physical chassis spin.
+
+In a ROS container terminal with a 1920x1080 X11 desktop, install the optional
+recording tools (`ffmpeg`, `wmctrl`, `python3-pil`, `python3-numpy`, `rclpy`).
+Build the selected firmware backend first as in [MCB emulator](#mcb-emulator).
+Use an idle ROS domain, a separate gz partition and a fresh output directory.
+Then run from the workspace root:
+
+```sh
+python3 src/sim/tools/record_e2e.py capture mcb_parked /tmp/demo/parked
+python3 src/sim/tools/record_e2e.py render /tmp/demo/parked /tmp/parked.mp4
+```
+
+Replace the stage with `mcb_drive` or `mcb_match`. Capture defaults to the
+explicit hosted fixture; `--backend renode` selects the normal board ELF.
+Parked capture defaults to lateral speeds 0/1 m/s with 35 scored seconds per
+cell. `--speeds`, `--paths`, `--duration` and `--chase-settle-s` choose the
+recorded cells/settings without changing the tests' scoring gates.
+
+RViz and gz share one desktop and capture stream. The tool caps simulation at
+RTF 0.25, records 20 wall-time frames/s and saves `/clock` against wall time.
+Rendering crops the window chrome and enlarges the gz centre crop
+(`--gz-zoom 1` keeps the full arena), then resamples the panes at 30 frames per
+sim second: playback is 1x
+sim time even when the actual RTF varies. The default scored telemetry window trims
+bring-up and gaps between parked cells; `--start`/`--end` override it in sim seconds. Captions use absolute
+sim time and resolved MCB hits/shots (`scored_at` in `shots.jsonl`), not fire
+requests or ghost shots. Output is 1080p H.264/YUV420 MP4, with a JSON sidecar.
+A failed test/log check retains raw capture/logs but cannot be rendered as a
+passing demo.
+
 ## Notes
 
 These notes explain why the code looks the way it does, so the in-code
