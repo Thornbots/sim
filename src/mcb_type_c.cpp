@@ -125,7 +125,11 @@ int main() {
     Emulator emulator(elf);
     auto &board = emulator.board();
     // The board deliberately requires an absent remote during its power-on guard.
+    const auto boot_start = std::chrono::steady_clock::now();
     board.advance(3500000);
+    std::cerr << "Type C power-on guard completed in " <<
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_start).count()
+        << " wall seconds\n";
     sim::mcb_motor::Plant plant;
     std::array<double, 10> readings{};
     board.sensors(readings);

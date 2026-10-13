@@ -1,10 +1,13 @@
 # Aim accuracy model investigation, 2026-10-12
 
-This investigation records historical model/timing phases and completed hosted
-repeat profiles. Artifacts are in
-`/home/blaise/workspaces/isaac_ros-jazzy/test-aim-accuracy-2026-10-12/`.
-The earlier phases below are single-run historical observations; the final
-no-lead and nightly comparisons are recorded under the three-repeat section.
+This investigation records historical model/timing phases and hosted/board
+repeat profiles. Earlier artifacts are in
+`/home/blaise/workspaces/isaac_ros-jazzy/test-aim-accuracy-2026-10-12/`; the
+spinning and board continuation uses
+`/home/blaise/workspaces/isaac_ros-jazzy/test-aim-spin-2026-10-12/`.
+The early phases are single-run observations. The no-lead/chase comparison is
+historical; the current profile and acceptance evidence are in the
+[spinning and board section](#spinning-correction-and-board-comparison).
 
 ## Historical phase results
 
@@ -481,8 +484,8 @@ nightly and treatment. The 2-second coordinator timeout, 5-second clock-stall
 guard, 1 ms physics step and rejection of any lockstep timeout are unchanged.
 The archived nightly launch receives only this execution-control patch; its
 firmware, localization, aiming, physical model and native scorer remain nightly.
-The outer runner allows enough wall time for the existing native board budget;
-it cannot turn a native timeout into a pass.
+The outer runner permits the native board execution budget; it cannot turn a
+native timeout into a pass.
 
 The first extra container lacked `arm-none-eabi-objcopy`; its zero-shot
 bring-up failure is preserved and rejected. Subsequent extra starts exposed a
@@ -506,6 +509,131 @@ refuses a second live stack. No hardware or Mac Track I work is involved.
 The board native scorer remains that build's scorer, as in the earlier hosted
 comparison; these complete-stack comparisons do not isolate the aiming policy
 from the earlier chamber-exit/model corrections.
+
+### Fresh board repeats
+
+All three Type C board drive repeats pass native checks with zero lockstep
+timeouts. They use the unchanged ARM ELFs and full firmware IMU path. Repeats
+1/2 run in the original domains; repeat 3 uses the `extra-safe` directories.
+The rejected installation probes are preserved separately and contribute no
+accuracy denominator.
+
+| Board stage | Nightly hits r1 / r2 / r3 | Gated hits r1 / r2 / r3 | Nightly → gated pooled % |
+| --- | --- | --- | --- |
+| Drive | 2/35 / 2/35 / 6/35 | 20/32 / 27/31 / 30/31 | 9.5 → 81.9 |
+
+| Board drive profile | Global localization p95 m r1 / r2 / r3 | Local navigation p95 m r1 / r2 / r3 | RELOCALIZE sends r1 / r2 / r3 |
+| --- | --- | --- | --- |
+| Nightly | .107 / .117 / .270 | not logged | 1 / 0 / 14 |
+| Gated | .114 / .134 / .262 | .111 / .134 / .281 | 4 / 2 / 6 |
+
+The nightly r2 zero is its last cumulative DIAG count (a lower bound); other
+counts have exact per-send verbose IDs. The baseline navigation field is absent
+from its schema, not evidence of missing transforms. All 506 route samples in
+each completed drive have numeric global localization diagnostics, and all
+candidate navigation samples are numeric. Four simultaneous match startups (both profiles, repeats 2/3) exceeded the
+unchanged 600-second opponent-spawn wait before scoring. Their checkers reject
+the bench and their zero-shot files are excluded. Startup cancellation left
+owned Renode/adapter children outside the launch group; those were cleaned
+explicitly. A solo nightly replacement also fails before scoring, so concurrency alone
+does not explain the failure. Successful board logs reach peripheral
+initialization about five minutes after reset; the solo failure takes about
+eight minutes, leaving too little of the 600-second wall allowance for
+calibration. At diagnosis the host is on battery power at approximately 2 GHz,
+with no container CPU quota; the clock observation is a plausible contributor,
+not a controlled power-policy experiment.
+
+The interrupted archlinux work proposed increasing stationary startup waits
+to 1800 wall seconds. That uncommitted change was not adopted on the Mac mini:
+the native boot, UART readiness and scene bring-up limits remain 600 seconds.
+The `board-boot` retries do not establish acceptance: nightly r2 failed its
+localization wait and the candidate logs had no final verdict. They remain
+rejected or incomplete diagnostics, outside the accuracy denominators.
+
+### Independent package merge assessment
+
+Package PR merges alone leave workspace gitlinks pinned, so they do not change
+the running nightly workspace. An independent gitlink/deployment update needs
+a separate compatibility assessment:
+
+- Bridge #8 changes the incoming POSE header to `odom` and logging; wire layout,
+  coordinates and stamps remain identical. Nightly's PoseTranslator ignores
+  that incoming label and assigns its configured frame. Its bridge-only nightly
+  drive/match screen passes (0/35 and 1/40; .194/.385 m localization p95).
+  The old native drive check permits zero hits, so this proves execution/frame
+  compatibility rather than combat improvement. Bridge can merge/deploy ahead;
+  raw/navigation semantics still require coordinated firmware/Jetson deployment.
+- Localization #6 is compatible with the canonical nightly thornbots auto
+  launch, which explicitly passes `odom_frame:=odom`. The adapter, EKF,
+  passthrough and map backend all receive that override. Its standalone default
+  is now `nav_odom` and depends on the new thornbots correction chain; deploy
+  that default with the matching thornbots change, not as an independent bump.
+
+The initial localization-only screen scored drive 0/11 and match 6/40 with
+localization p95 1.961/.182 m; this outlier remains recorded. Three subsequent
+paired canonical-launch repeats keep the old firmware, tracker, simulator and
+scorer fixed, selecting only the localization package overlay:
+
+| Profile / stage | Hits r1 / r2 / r3 | Localization p95 m r1 / r2 / r3 | Native result |
+| --- | --- | --- | --- |
+| Nightly drive | 1/35 / 0/34 / 2/35 | .185 / .135 / .342 | all pass |
+| Localization-only drive | 0/35 / 0/35 / 20/35 | .166 / .202 / .780 | all pass |
+| Nightly match | 10/40 / 11/40 / 2/40 | .109 / .252 / .103 | all pass |
+| Localization-only match | 2/40 / 12/40 / unscored | .252 / .126 / unavailable | r3 fails startup |
+
+Localization-only match r3 lost map_server's lifecycle configure response and
+never obtained `map->root`. Its checker rejects the bench, and it contributes
+neither hits nor shots. All successful paired runs have numeric global
+localization diagnostics; navigation error is absent from the old schema and
+must not be called a missing-transform failure. These noisy scores do not
+establish a localization-induced aim regression, nor successful independent
+startup in every repeat. An additional domain-17 match comparison passes for both profiles: nightly
+0/40 with .092 m localization p95; localization-only 8/40 with 1.075 m p95.
+The latter sends 25 RELOCALIZE corrections versus one for nightly. The earlier
+failed startup remains in the acceptance record. Independent deployment is
+frame-compatible through the explicit old-frame override, but the measured
+localization tails and standalone default do not support an unqualified
+independent workspace pin bump; keep it with the coordinated frame rollout.
+
+### Mac mini startup continuation, 2026-10-13
+
+The suspended laptop handoff was inspected read-only over SSH after archlinux
+returned. All six aim branches already matched their origin tips; the spin
+policy was pushed. Uncommitted investigation, CHANGELOG and ROADMAP updates
+were retained, including the completed board drive repeats and independent
+package screens above. The proposed 1800-second allowance was rejected. No
+remote checkout, container, build, test, commit or push was changed or run.
+
+The Mac uses isolated `aim-accuracy/src` and `aim-nightly/src` worktrees under
+`/Users/blaise/ros2_ws/`, leaving the original `src` checkout untouched.
+Candidate sources are thornbots `7a1ae66`, bridge `e5a9b4d`, localization
+`4617056` and sim `2be03d2` plus the startup diagnostic; firmware `1ca7b75`
+adds the startup correction. Nightly keeps the earlier comparison's package
+revisions, with only the 5 ms board look-ahead launch patch. Hosted and board
+runs have separate containers, ROS domains 31/32/34/35 and Gazebo partitions.
+Mac artifacts are in `aim-accuracy/results/` and `aim-nightly/results/`;
+copied laptop artifacts and patches are in `aim-accuracy/archlinux-handoff/`.
+
+The firmware's three-second power-on guard used `modm::delay_ms`, repeatedly
+polling the emulated DWT register. It now waits on the already initialized
+SysTick clock with `WFI` between interrupts. This executes the same minimum
+three-second wait without a simulator hook, forced firmware state or changed
+CPU frequency. The subsequent remote-disconnected guard and 4000-sample IMU
+calibration remain unchanged. The adapter logs wall time for its unchanged
+3.5-second virtual startup advance. UART, boot and scene startup guards stay
+at 600 seconds; scored windows and lockstep/stall deadlines are unchanged.
+
+Three fresh Type C probes completed full calibration and valid UART/CAN in
+102.4, 116.4 and 115.7 wall seconds. Their startup-advance wall times were
+11.5, 13.2 and 12.9 seconds, versus 109.5 seconds in the initial polling-ELF
+board drive and 151.9 seconds in a separate polling-ELF probe. The latter
+completed its full boot in 248.5 seconds. These are host-performance
+measurements, not physical-robot timing calibration. The polling ELF is
+preserved in `results/boot-controls/`; each probe's log and result JSON remain
+alongside it. ARM GCC 13 builds, 35 firmware pure tests and five hosted
+regressions passed. The Mac ROS checks passed 379 cases with zero failures or
+errors and the existing nine cppcheck skips. Fresh scored repeats are recorded
+separately when their native runner and checker both finish.
 
 ## Remaining evidence gaps
 
@@ -535,10 +663,11 @@ The preceding no-lead/chase acceptance status is historical and is superseded
 by the spinning correction and board comparison above. Those powered-holding
 repeats established chassis stability within the 3 cm bound; spinning accuracy
 was still open at that point.
-Bridge #8 and sentry_localization #6 are ready as reviewed package layers,
-subject to coordinated deployment. Firmware #89, thornbots #13, sim #16 and
-workspace #40 remain blocked for the combined accuracy acceptance: the
-spinning floor fails and the board backend has no fresh accuracy comparison.
+Bridge #8 and sentry_localization #6 can merge as package layers; independent
+workspace deployment has the compatibility limits recorded above. Hosted
+spinning now clears every cell floor. Firmware #89, thornbots #13, sim #16 and
+workspace #40 await the completed board match comparison for combined
+accuracy acceptance.
 Every PR remains a draft. Repository quality and actionlint passed in all
 six repositories without baseline growth. The final-source ROS checks passed
 all 19 sim, 8 thornbots and 9 bridge suites.
