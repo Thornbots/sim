@@ -607,7 +607,7 @@ remote checkout, container, build, test, commit or push was changed or run.
 The Mac uses isolated `aim-accuracy/src` and `aim-nightly/src` worktrees under
 `/Users/blaise/ros2_ws/`, leaving the original `src` checkout untouched.
 Candidate sources are thornbots `7a1ae66`, bridge `e5a9b4d`, localization
-`4617056` and sim `2be03d2` plus the startup diagnostic; firmware `1ca7b75`
+`4617056` and sim `f94fc58`; firmware `1ca7b75`
 adds the startup correction. Nightly keeps the earlier comparison's package
 revisions, with only the 5 ms board look-ahead launch patch. Hosted and board
 runs have separate containers, ROS domains 31/32/34/35 and Gazebo partitions.
@@ -635,6 +635,110 @@ regressions passed. The Mac ROS checks passed 379 cases with zero failures or
 errors and the existing nine cppcheck skips. Fresh scored repeats are recorded
 separately when their native runner and checker both finish.
 
+The immutable candidate board ELF SHA-256 is
+`5943a3823e6498bdcd0018868d382de463439f23c1e9cf02cb710eefc0c3f052`;
+its hosted ELF is
+`6380381363a5ba091dfa5273eca7956eddb368f2df1175a3ea40bd9b48628120`.
+Nightly board/hosted hashes are
+`cd44e5d825a6659a725edd90124162be721fc387517165337c70315aa3b9b5ef` and
+`9b0a1df835553b000b1575b1bf7734e86d1ba931ad9f242c76c28964fc03e511`.
+The source/control manifest is `results/source-controls.json`; selected run
+paths, statuses and counts are `results/selected-repeats.json`, and campaign
+`results.tsv` files retain every attempted repeat. Nightly workspace `b32fc13`
+pins sim `7156ab2`, thornbots `7b3032a`, localization `af45710`, bridge
+`3a1220c` and firmware `e98d548`. Its only source patch gives board execution
+the same 5 ms look-ahead as the candidate, leaving hosted defaults untouched.
+
+### Fresh Mac hosted repeats, 2026-10-13
+
+These comparisons use three repeats per stage on the mini with the same
+fixture controls as the preceding gated profile: zero residual hosted lead,
+94 ms indexing calibration, alignment gating and the unchanged firmware
+rate filter. `chase_margin_s=.025` is retained in the launch controls but
+is inactive when `chase_settle_s=-1` selects alignment gating. Nightly uses
+its source defaults. The table pools native hits over shots;
+parked/moving/spinning use the scored cell snapshots, drive uses `hit`, and
+match uses `enemy_hit`. All 15 selected candidate runs pass both the native
+runner and log checker, have zero lockstep timeouts, and clear each applicable
+cell floor. The minimum selected spinning cell is 84.6%, above its 10% floor.
+
+| Hosted stage | Nightly hits/shots | Nightly observed hit % | Aim hits/shots | Aim hit % |
+| --- | ---: | ---: | ---: | ---: |
+| Parked | 450/1457 | 30.9 | 1097/1283 | 85.5 |
+| Drive | 3/105 | 2.9 | 87/93 | 93.5 |
+| Match | 9/118 | 7.6 | 60/110 | 54.5 |
+| Moving | 49/363 | 13.5 | 289/363 | 79.6 |
+| Spinning | 63/365 | 17.3 | 333/343 | 97.1 |
+
+Candidate per-repeat hits/shots are parked 372/430, 360/427, 365/426;
+drive 31/32, 28/32, 28/29; match 20/36, 20/36, 20/38; moving 100/120,
+96/122, 93/121; spinning 118/118, 114/120, 101/105.
+Nightly per-repeat observations are parked 160/486, 146/487, 144/484;
+drive 0/35, 0/35, 3/35; match 2/39, 3/40, 4/39; moving 16/120,
+25/122, 8/121; spinning 61/121, 2/121, 0/123.
+
+Nightly drive and match pass their native checks. All nightly parked and moving
+repeats fail accuracy floors; parked repeats 2/3 additionally hit a glibc
+assertion during teardown after scoring. Nightly spinning repeats 2 and its
+first clock-valid replacement fail cell floors. Their observations remain
+reported as failed diagnostics, not accepted accuracy passes. Select the first
+three clock-valid attempts: nightly spinning 1/2/4 and candidate spinning
+1/4/5. Candidate spinning 2/3 and nightly spinning 3 have nonzero lockstep
+timeouts and are excluded. Extra nightly spinning 5 records 50/122 with a
+lateral floor failure; it is not substituted for an earlier floor failure.
+All attempts, including failures, remain in the result tables.
+
+The fresh mini results improve every stage's observed pooled hit rate over
+nightly. The historical laptop 100% spinning repeats remain separate evidence;
+the mini's fresh result is 97.1%. Synthetic detections and estimated dynamics
+still limit the conclusion; these repeats do not establish robot accuracy or
+formal statistical noninferiority.
+
+### Fresh Mac board repeats, 2026-10-13
+
+Run both profiles through the Type C firmware ELF, gz 1 ms physics, real UART
+bridge and unchanged native runner/checker. The selected candidate drive
+repeats are 2/5/6; match repeats are 2/3/4. Nightly drive repeats are 1/2/4;
+match repeats are 1/2/3. Each selection uses three native-accepted runs with
+zero lockstep timeouts. Candidate drive repeat 1 is a valid old-polling ELF
+control (21/31), retained separately rather than pooled with the corrected
+firmware. The paired board controls use the same 5 ms look-ahead and source
+defaults for aim/filter settings.
+
+| Board stage | Nightly hits/shots | Nightly hit % | Aim hits/shots | Aim hit % |
+| --- | ---: | ---: | ---: | ---: |
+| Drive | 32/105 | 30.5 | 80/94 | 85.1 |
+| Match | 28/118 | 23.7 | 60/111 | 54.1 |
+
+Per-repeat drive hits/shots are nightly 5/35, 9/35, 18/35 and candidate
+23/31, 28/31, 29/32. Match repeats are nightly 15/39, 6/39, 7/40 and
+candidate 20/36, 20/38, 20/37. Candidate drive setup times are
+158.8, 109.8 and 101.6 seconds; match setup times are 118.8,
+110.4 and 111.6 seconds. These complete starts stay under the
+unchanged 600-second startup limit; no phase bypass or threshold relaxation
+was used.
+
+Candidate drive 3, extra drive 4 and match 1 are rejected for 1, 2 and 2
+lockstep timeouts respectively. Nightly drive 3's final log records 3 timeouts
+and is rejected. Earlier hosted/board concurrency was reduced before the
+replacement attempts; this does not establish the cause of every timeout.
+The aborted extra drive also left an owned launch group, which was explicitly
+removed before proceeding. All failed attempts remain diagnostic artifacts.
+The native checker permits some shutdown notes: nightly match 3 records
+parameter_bridge exit -11 and drive 4 records exit 255. Candidate match 4
+also records parameter_bridge and coordinator exit 255 after scoring. Their runner/checker statuses are 0/0; these notes are retained
+rather than described as clean individual node exits.
+
+Both board stages improve pooled hits over nightly. Native completion is
+still diagnostic tier: match has no calibrated hit floor, and target/head
+attitude and localization tails remain visible in segment diagnostics.
+All requested hosted and board comparisons are complete. The five owned
+containers and dependency image were removed after saving logs and verifying
+no active runtime processes. The owned SSH socket forward was removed.
+Colima remains running for the unrelated Jazzy and E2E containers; neither
+was stopped or restarted. The original checkout remains untouched, and no
+physical robot run was performed.
+
 ## Remaining evidence gaps
 
 In the identity-aware covariance run, state center error medians were 114 mm
@@ -659,28 +763,28 @@ horizon and ballistic assumptions; a missed shot can still fall back to
 `opponent_0`. `aim_off_panel_m` remains a legacy lead/impact diagnostic and
 should not be interpreted as direct tracker-center error.
 
-The preceding no-lead/chase acceptance status is historical and is superseded
-by the spinning correction and board comparison above. Those powered-holding
-repeats established chassis stability within the 3 cm bound; spinning accuracy
-was still open at that point.
-Bridge #8 and sentry_localization #6 can merge as package layers; independent
-workspace deployment has the compatibility limits recorded above. Hosted
-spinning now clears every cell floor. Firmware #89, thornbots #13, sim #16 and
-workspace #40 await the completed board match comparison for combined
-accuracy acceptance.
-Every PR remains a draft. Repository quality and actionlint passed in all
-six repositories without baseline growth. The final-source ROS checks passed
-all 19 sim, 8 thornbots and 9 bridge suites.
-The combined colcon result is 377 cases, zero failures/errors and nine skipped
-bridge cppcheck file cases: ament reports cppcheck 2.13 performance issues.
-This existing tool skip is not a skipped runtime or emulator test.
-The final Renode reconnect regression passed (1/1); this exercises peripheral
-connection behavior, not board combat accuracy. GitHub's firmware hosted/UART
-job also passed for `c674b1e`; ARM matrix and ROS jobs are draft-skipped, with
-local board builds and ROS results reported above.
-Those earlier runs left no owned launch trees, and their Jazzy container was
-stopped. The spinning/board continuation uses separate owned containers and
-records its final cleanup with the new results.
+The preceding no-lead/chase scores are historical. The fresh mini comparisons
+above supersede the hosted acceptance status: all selected candidate native
+cells pass, spinning is recovered, and every hosted stage improves over the
+observed nightly scores. The earlier powered-holding repeats establish chassis
+stability within the 3 cm bound. The board drive/match comparison is recorded
+separately; it does not replace the still-open board parked-cell sweep or add a
+calibrated match accuracy floor.
+
+Bridge #8 can merge ahead under nightly's canonical launch. Localization #6
+is also package-compatible there; keep its workspace pin and standalone
+`nav_odom` deployment coordinated because of the frame and localization limits
+above. All six PRs remain drafts. Robot acceptance, realistic detection error,
+and calibrated board combat floors remain open.
+
+Repository quality and actionlint pass in all six repositories without baseline
+growth. The fresh mini ROS checks pass 19 sim, 8 thornbots and 9 bridge suites:
+379 cases, zero errors/failures and nine existing cppcheck skips. Firmware ARM
+GCC 13 and hosted GCC 14 builds pass, as do 35 pure and five hosted regressions.
+The on-demand Type C physics test passes both yaw directions with valid UART
+and clean teardown. GitHub quality/policy and firmware hosted/UART checks pass;
+ROS, ARM and robot-image jobs remain draft-skipped. Local results supply the
+reported runtime validation, not a claim that those CI jobs ran.
 
 ## Artifacts
 
