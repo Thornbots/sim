@@ -376,8 +376,16 @@ workspace #40 remain blocked for the combined accuracy acceptance: the
 spinning floor fails and the board backend has no fresh accuracy comparison.
 Every PR remains a draft. Repository quality and actionlint passed in all
 six repositories without baseline growth. The final-source ROS checks passed
-all 19 sim, 8 thornbots and 9 bridge suites. No owned launch trees remained
-after the runs; the owned Jazzy container is stopped after final checks.
+all 19 sim, 8 thornbots and 9 bridge suites.
+The combined colcon result is 377 cases, zero failures/errors and nine skipped
+bridge cppcheck file cases: ament reports cppcheck 2.13 performance issues.
+This existing tool skip is not a skipped runtime or emulator test.
+The final Renode reconnect regression passed (1/1); this exercises peripheral
+connection behavior, not board combat accuracy. GitHub's firmware hosted/UART
+job also passed for `c674b1e`; ARM matrix and ROS jobs are draft-skipped, with
+local board builds and ROS results reported above.
+No owned launch trees remained after the runs; the owned Jazzy container is
+stopped after final checks.
 
 ## Artifacts
 
