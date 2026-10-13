@@ -344,6 +344,169 @@ motion, so powered holding cannot explain away the localization variation.
 No covariance policy or acceptance threshold was relaxed for these repeats.
 Detection stand-ins do not validate YOLO, occlusion or real camera timing.
 
+## Spinning correction and board comparison
+
+Artifacts for this continuation are in
+`/home/blaise/workspaces/isaac_ros-jazzy/test-aim-spin-2026-10-12/`.
+`spin-source.json` records source bases, patches, ELF hashes and execution
+controls. Firmware is unchanged from `c674b1e`; the same immutable rate-filtered
+ELF is used throughout the treatment runs.
+
+### Spinning policy ablations
+
+All screens use the three 20-second stationary-target, 1 Hz cells, with fresh
+stacks. The unfiltered ELF retains raw holding and 94 ms indexing, isolating
+the rate filter. Lead/window controls are explicit launch arguments. Failed
+screens remain failed; pooled percentages do not replace each cell's 10% floor.
+
+| Screen | Lateral / radial / diagonal hits | Total | Yaw following error median / p95, deg | Native result |
+| --- | --- | ---: | ---: | --- |
+| Previous filtered chase, zero residual lead, 25 ms windows (three repeats) | 0/41 in every cell/repeat | 0/369 | 10.085 / 11.024 | all fail |
+| Filtered chase, 25 ms residual lead | 0/41 / 15/41 / 8/40 | 23/122 (18.9%) | 4.452 / 9.341 | lateral fails |
+| Unfiltered chase, zero residual lead, 25 ms windows | 0/41 / 0/41 / 0/40 | 0/122 | 8.798 / 10.864 | all fail |
+| Filtered alignment gating, zero residual lead | 41/41 / 37/37 / 35/35 | 113/113 (100%) | .024 / .083 | all pass |
+
+Removing the filter does not recover spinning. Additional chase lead reduces
+following error but moves the impact prediction: aim-to-nearest-panel p95 is
+.338 m in that screen. Alignment gating holds the center-to-shooter line and
+times exit to a facing panel, avoiding recurring yaw jumps. Its nearest-panel
+error is .014 m median / .039 m p95. Detections and valid tracks remain present;
+the change addresses the measured chase/actuator interaction rather than
+masking tracker loss. The gated drive/match screens passed at 30/32 (93.8%)
+and 20/37 (54.1%). These screens select a policy; the fresh repeats establish
+its repeatability.
+
+`chase_settle_s=-1` now selects alignment gating by default in the robot node,
+full launch and both E2E backends. Nonspinning panel lead/hysteresis is unchanged;
+chasing remains opt-in with a nonnegative settling time. The 25 ms setpoint-rate
+filter and indexing calibration remain unchanged. A regression checks both spin
+directions at 1 Hz: yaw stays steady and every allowed delay meets the predicted
+alignment at the 94 ms exit horizon.
+
+### Fresh hosted repeats
+
+The unchanged filtered firmware and alignment-gated planner use zero hosted
+residual lead and the 94 ms indexing estimate. Moving cells use 2 m/s with no
+target spin; spinning cells use a stationary 1 Hz target. Each special sweep
+covers lateral, radial and diagonal trajectories. Every fresh native cell
+floor and checker passed.
+
+| Stage | Nightly hit % r1 / r2 / r3 | Alignment gating hits r1 / r2 / r3 | Gated hit % r1 / r2 / r3 | Pooled nightly → gated % |
+| --- | --- | --- | --- | --- |
+| Parked | 37.9 / 43.5 / 42.5 | 355/425 / 361/428 / 370/431 | 83.5 / 84.3 / 85.8 | 41.3 → 84.6 |
+| Drive | 5.7 / 0 / 5.7 | 31/32 / 31/32 / 31/32 | 96.9 / 96.9 / 96.9 | 3.8 → 96.9 |
+| Match | 15.4 / 7.5 / 12.8 | 20/34 / 20/37 / 20/37 | 58.8 / 54.1 / 54.1 | 11.9 → 55.6 |
+| Moving | 16.4 / 26.0 / 39.3 | 89/122 / 76/123 / 91/122 | 73.0 / 61.8 / 74.6 | 27.2 → 69.8 |
+| Spinning | 8.2 / 9.1 / 0 | 99/99 / 122/122 / 122/122 | 100 / 100 / 100 | 5.8 → 100 |
+
+| Stage | Global localization p95 m r1 / r2 / r3 | Local navigation p95 m r1 / r2 / r3 | RELOCALIZE sends r1 / r2 / r3 | Maximum parked displacement mm r1 / r2 / r3 |
+| --- | --- | --- | --- | --- |
+| Parked | .274 / .345 / .285 | .276 / .348 / .295 | 9 / 13 / 12 | 3.550 / .962 / 3.544 |
+| Drive | .230 / .323 / .289 | .331 / .390 / .274 | 5 / 5 / 5 | N/A |
+| Match | .139 / .108 / .178 | .107 / .056 / .111 | 2 / 1 / 2 | N/A |
+| Moving | .498 / .289 / .361 | .494 / .290 / .356 | 9 / 5 / 6 | .533 / .599 / .591 |
+| Spinning | .084 / .330 / unavailable | .084 / .328 / .321 | 1 / 6 / 6 | .497 / .405 / .482 |
+
+Spinning r3 has 1,198 missing global-transform samples: map_server's lifecycle
+configure response timed out, AMCL was never activated, and `map` was absent.
+Its local navigation transforms are present in every sample, and all 122
+physical shots hit. This matches the existing
+[lifecycle-startup failure](mcb-auto-drive-2026-10-12.md#evidence-and-acceptance-status); missing
+localization values are excluded from percentiles and explicitly unavailable,
+not zero error. The native combat check passes without establishing successful
+global localization startup. This accuracy change does not repair that race.
+
+Fresh drive/match physical-shot diagnostics retain detection and valid track
+on all 96/108 scored exits. Drive yaw-following error median/p95 is .457/.726
+degrees; match is .392/1.099 degrees. Nearest predicted panel error median/p95
+is .018/.059 m drive and .015/.147 m match. Detection-age p95 is 16/13 ms;
+tracker-age p95 is 47/46 ms. These are modeled impact-goal diagnostics, subject
+to the target-association limitations below, not hardware calibration. Remaining
+match misses persist despite fresh detections and locks; the spin yaw-following
+failure is no longer the dominant source.
+
+The hosted match denominator also includes firing at a defeated robot.
+Across the three fresh matches, 97/108 shots intersect an eligible enemy panel;
+37 of those occur after `opponent_0` has zero HP and the referee correctly
+refuses another hit. The remaining 11 strike hull (4) or field (7). Native
+`enemy_hit` stays 60/108 (55.6%); this report does not replace that acceptance
+metric with the 89.8% geometric diagnostic. Every match kills `opponent_0`,
+with zero friendly intersections. Continuing to select its visible panels is
+an outstanding target-eligibility behavior, rather than 37 prediction misses.
+Board candidate match r1 similarly has 31/36 eligible enemy-panel intersections,
+including 11 after defeat; native hits remain 20/36. No death-state filtering
+or referee/scorer relaxation is part of this spinning fix.
+
+The original fresh moving sweep is below the previous filtered chase profile's
+75.6% pooled score. Its state history never enters spin mode: replaying the
+3/2 rad/s hysteresis gives zero spin-mode samples for both three-run sets.
+Nonspinning `plan_shot` returns before reading the spin fire policy; an added
+regression verifies identical aim, delay and held panel for radial, lateral
+and diagonal velocities. Additional alternating paired controls keep firmware,
+filter, scene and all parameters fixed except `chase_settle_s` (-1 versus .025).
+Their full results below retain the lower original sweep rather than replacing it.
+
+### Moving policy controls
+
+Six paired sweeps alternate order: gate/chase on odd repeats, chase/gate on
+even repeats. All 12 native sweeps clear every 10% cell floor.
+
+| Repeat | Gated hits (%) | Chase hits (%) |
+| --- | --- | --- |
+| 1 | 91/121 (75.2) | 98/122 (80.3) |
+| 2 | 90/122 (73.8) | 100/123 (81.3) |
+| 3 | 90/123 (73.2) | 88/122 (72.1) |
+| 4 | 91/121 (75.2) | 91/121 (75.2) |
+| 5 | 102/122 (83.6) | 99/122 (81.1) |
+| 6 | 87/121 (71.9) | 102/123 (82.9) |
+| Pooled | 551/730 (75.5) | 578/733 (78.9) |
+
+The observed gated/chase difference is -3.4 percentage points pooled; paired
+run differences range from -11.0 to +2.5 points. Neither profile enters spin
+mode in the logged state history, so the changed spin branch cannot explain
+these moving differences. The original gated 69.8% and earlier chase 75.6%
+remain in the record. Repeats support substantial bench variability, not a
+claim of identical measured scores or a formal noninferiority result. All
+moving measurements remain well above nightly's 27.2% pooled baseline.
+
+### Board execution controls
+
+The initial pristine-nightly screen reproduced the earlier failure: the
+coordinator repeatedly missed a 50 ms look-ahead hold under its 2-second wall
+deadline. The run was stopped after irreversible lockstep failures; its checker
+reports `BENCH NOT TRUSTWORTHY` and its shots are not accuracy evidence.
+
+The board comparison uses a 5 ms look-ahead, one firmware batch, on both
+nightly and treatment. The 2-second coordinator timeout, 5-second clock-stall
+guard, 1 ms physics step and rejection of any lockstep timeout are unchanged.
+The archived nightly launch receives only this execution-control patch; its
+firmware, localization, aiming, physical model and native scorer remain nightly.
+The outer runner allows enough wall time for the existing native board budget;
+it cannot turn a native timeout into a pass.
+
+The first extra container lacked `arm-none-eabi-objcopy`; its zero-shot
+bring-up failure is preserved and rejected. Subsequent extra starts exposed a
+separate fixture-install bug: a writable `/tmp/renode-1.17.0` matches Renode's
+[stale temporary-directory cleanup](https://github.com/renode/renode-infrastructure/blob/066a7f13c052215632d469c995c89aea37c573b1/src/Emulator/Main/Utilities/TemporaryFilesManager.cs#L110),
+which recursively deletes non-live `renode-*` directories. The missing runtime
+DLL was present in the verified archive, then deleted from the install. Earlier
+root-owned installs masked the issue by denying deletion. The installer default
+and maintained example now use `/tmp/mcb-renode-1.17.0`. Running the revised
+installer as the ordinary container user, compiling both Type C models and
+exiting retains the runtime DLL and succeeds. Extra repeats use the identical
+prepared runtime under `/opt/mcb-renode`, selected with `MCB_RENODE_ROOT`;
+no Renode CPU frequency, model or firmware RAM is changed. These pre-scoring
+failures are not counted as accuracy repeats.
+
+Nightly and treatment run in separate owned containers with ROS domains 13/14
+and distinct Gazebo partitions. Extra third repeats use domains 15/16 in a
+fourth owned container and the hosted container after its checks finish.
+Hosted validation uses domain 1; the final independent-package retry uses 17. Each container
+refuses a second live stack. No hardware or Mac Track I work is involved.
+The board native scorer remains that build's scorer, as in the earlier hosted
+comparison; these complete-stack comparisons do not isolate the aiming policy
+from the earlier chamber-exit/model corrections.
+
 ## Remaining evidence gaps
 
 In the identity-aware covariance run, state center error medians were 114 mm
@@ -368,8 +531,10 @@ horizon and ballistic assumptions; a missed shot can still fall back to
 `opponent_0`. `aim_off_panel_m` remains a legacy lead/impact diagnostic and
 should not be interpreted as direct tracker-center error.
 
-The final powered-holding repeats establish chassis stability within the
-3 cm bound. Spinning accuracy and parked navigation variability remain open.
+The preceding no-lead/chase acceptance status is historical and is superseded
+by the spinning correction and board comparison above. Those powered-holding
+repeats established chassis stability within the 3 cm bound; spinning accuracy
+was still open at that point.
 Bridge #8 and sentry_localization #6 are ready as reviewed package layers,
 subject to coordinated deployment. Firmware #89, thornbots #13, sim #16 and
 workspace #40 remain blocked for the combined accuracy acceptance: the
@@ -384,8 +549,9 @@ The final Renode reconnect regression passed (1/1); this exercises peripheral
 connection behavior, not board combat accuracy. GitHub's firmware hosted/UART
 job also passed for `c674b1e`; ARM matrix and ROS jobs are draft-skipped, with
 local board builds and ROS results reported above.
-No owned launch trees remained after the runs; the owned Jazzy container is
-stopped after final checks.
+Those earlier runs left no owned launch trees, and their Jazzy container was
+stopped. The spinning/board continuation uses separate owned containers and
+records its final cleanup with the new results.
 
 ## Artifacts
 

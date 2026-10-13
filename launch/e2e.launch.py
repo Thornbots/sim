@@ -199,9 +199,13 @@ def generate_launch_description():
         on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
             EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
     common = [path_bridge, opponent_driver, uart_start, uart_ready]
+    # One board batch ahead avoids outrunning the wall deadline during learning.
     coordinator = Node(
         package='sim', executable='lockstep_coordinator', output='screen',
         parameters=[{'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
+                     'learn_margin_s': ParameterValue(PythonExpression([
+                         "'0.005' if '", LaunchConfiguration('backend'),
+                         "' == 'renode' else '0.05'"]), value_type=float),
                      'mcb_batch.phase_s': 0.0, 'mcb_batch.acks': ['/mcb_emulator/tick']}],
         condition=IfCondition(LaunchConfiguration('lockstep')))
 
@@ -246,8 +250,7 @@ def generate_launch_description():
                                           'empty = the harness default'),
         DeclareLaunchArgument('firmware_latency_s', default_value='0.094',
                               description='Decision-to-exit firing delay estimate in seconds'),
-        DeclareLaunchArgument('chase_settle_s', default_value=PythonExpression([
-            "'0.025' if '", LaunchConfiguration('backend'), "' == 'hosted' else '0.0'"])),
+        DeclareLaunchArgument('chase_settle_s', default_value='-1.0'),
         DeclareLaunchArgument('chase_margin_s', default_value=PythonExpression([
             "'0.025' if '", LaunchConfiguration('backend'), "' == 'hosted' else '0.0'"])),
         DeclareLaunchArgument('gimbal_lag_s', default_value=PythonExpression([

@@ -1278,10 +1278,10 @@ need new controller models before this firmware could use its hardware paths.
 Build in the Linux ROS container with ARM GCC 13, GCC 14, CMake and SCons:
 
 ```sh
-src/sim/tools/install_renode.sh /tmp/renode-1.17.0
+src/sim/tools/install_renode.sh /tmp/mcb-renode-1.17.0
 (cd src/firmware/MCBV3/MCB-project && scons build robot=sentry profile=release -j4)
 colcon build --packages-select sim --symlink-install --cmake-args \
-  -DSIM_RENODE_ROOT=/tmp/renode-1.17.0/renode_1.17.0-portable
+  -DSIM_RENODE_ROOT=/tmp/mcb-renode-1.17.0/renode_1.17.0-portable
 ros2 launch sim mcb.launch.py backend:=renode drive:=stop
 SIM_MCB_BACKEND=renode ros2 run sim mcb_physics_suite
 ros2 run sim mcb_renode_connection_suite
@@ -1290,8 +1290,9 @@ ros2 run sim e2e_suite --backend renode --stage mcb_parked \
 ```
 
 `SIM_RENODE_ROOT` enables the adapter at build time; `MCB_RENODE_ROOT` can
-override the portable installation at runtime. `firmware_binary` selects the
-board ELF with this backend. Startup waits up to 600 wall seconds for a valid
+override the portable installation at runtime. Keep the install outside
+`/tmp/renode-*`, which Renode owns for temporary-directory cleanup.
+`firmware_binary` selects the board ELF with this backend. Startup waits up to 600 wall seconds for a valid
 board POSE after calibration; gz physics starts after that stationary boot.
 The board's boot clock therefore leads sim time by the calibration interval.
 Per-run extracted flash, platform, script and Renode log remain in the printed
@@ -1337,6 +1338,12 @@ counts alone do not prove firmware reception.
 The E2E harness allows 120 wall seconds per scored sim second for this backend,
 versus 20 for hosted execution. Its five-wall-second clock-stall guard and
 lockstep timeout rejection remain active; a slow emulator is not a passed test.
+Board lockstep learns a hold one firmware batch ahead, rather than using the
+hosted look-ahead. A long simulated look-ahead can exceed the coordinator's
+wall deadline on a slow board emulator; reducing that startup distance keeps
+the deadline and timeout rejection intact. The
+[accuracy investigation](docs/aim-accuracy-2026-10-12.md#board-execution-controls)
+records the controlled nightly/treatment settings.
 `mcb_renode_connection_suite` exercises reconnects without booting firmware and
 checks that peripheral state survives; it is built when `SIM_RENODE_ROOT` is set.
 
@@ -1404,7 +1411,9 @@ moving more than 0.03 m. Only the hosted direct-sensor fixture delays gyro
 yaw/rate by eight 1 ms ticks to match the firmware predictor; the board path
 runs the full IMU filter, which owns sample age. CAN feedback stays current.
 The hosted E2E profile uses zero residual yaw lag after setpoint-rate
-filtering, a 94 ms indexing delay, and 25 ms settling/margin windows. These
+filtering and a 94 ms indexing delay. Spinning uses alignment gating on the
+steady center-to-shooter line; chasing each rotating panel is opt-in through
+nonnegative `chase_settle_s` (the previous fixture used 25 ms windows). These
 are model calibrations; board gimbal timing remains uncalibrated.
 Calibration and rejected treatments are recorded in the
 [accuracy investigation](docs/aim-accuracy-2026-10-12.md), hosted
