@@ -88,6 +88,7 @@ Offsets urdf_offsets() {
 Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     : SimTimeNode("e2e_scorer"), stage(stage_), log_path(logpath),
       tf(get_clock()), offsets_(urdf_offsets()), listener_(tf, this, false) {
+  visual_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/markers", 10);
   subscribe<diagnostic_msgs::msg::DiagnosticStatus>(
       "/sim/lockstep/status", rclcpp::QoS(1).reliable().transient_local(),
       [this](const auto &m) {
@@ -122,6 +123,34 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       "/cv/target", rclcpp::SensorDataQoS(), [this](const auto &m) {
         double t = stamp_s(m.header.stamp);
         target_stamp = t;
+        if (visual_pub_->get_subscription_count()) {
+          visualization_msgs::msg::Marker point;
+          point.header = m.header;
+          point.ns = "aim"; point.id = 0;
+          point.type = visualization_msgs::msg::Marker::SPHERE;
+          point.pose.orientation.w = 1.;
+          point.pose.position.x = m.x; point.pose.position.y = m.y; point.pose.position.z = m.z;
+          point.scale.x = point.scale.y = point.scale.z = .09;
+          point.color.g = point.color.b = point.color.a = 1.;
+          point.lifetime.nanosec = 200000000;
+          visualization_msgs::msg::MarkerArray markers;
+          markers.markers.push_back(point);
+          try {
+            auto muzzle = tf.lookupTransform(point.header.frame_id, "muzzle", tf2::TimePointZero);
+            auto ray = point;
+            ray.header.stamp = get_clock()->now();
+            ray.ns = "aim_ray"; ray.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            ray.pose.position = geometry_msgs::msg::Point{};
+            ray.scale.x = .015;
+            geometry_msgs::msg::Point origin;
+            origin.x = muzzle.transform.translation.x;
+            origin.y = muzzle.transform.translation.y;
+            origin.z = muzzle.transform.translation.z;
+            ray.points = {origin, point.pose.position};
+            markers.markers.push_back(ray);
+          } catch (const tf2::TransformException &) {}
+          visual_pub_->publish(markers);
+        }
         aims_.push_back({t, {m.x, m.y, m.z}});
         while (aims_.front().first < t - 3)
           aims_.pop_front();
@@ -665,6 +694,8 @@ void Scorer::fire_tick() {
       auto out = judge(e.second);
       if (out) {
         (*out)["kind"] = e.first;
+        (*out)["scored_at"] = now;
+        visualize_shot(e.first, *out);
         shots[e.first].push_back(*out);
         cb::append_json(log_path, *out);
       }
@@ -703,11 +734,50 @@ void Scorer::fire_tick() {
       hp[p.first] = p.second;
     shot["hp"] = hp;
     shot["kind"] = e.first;
+    shot["scored_at"] = now;
+    visualize_shot(e.first, shot);
     shots[e.first].push_back(shot);
     cb::append_json(log_path, shot);
   }
   if (driving())
     sync_referee();
+}
+void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
+  if (kind != "mcb" || !visual_pub_->get_subscription_count()) return;
+  const double launch = shot.at("t").get<double>();
+  auto pose = histories.at("sentry")->at(launch);
+  auto world = world_T_odom(launch);
+  if (!pose || !pose->head || !world) return;
+  const Matrix muzzle = *pose->head * offsets_.muzzle;
+  const Vec origin = muzzle.block<3, 1>(0, 3);
+  const Vec velocity = combat::kMuzzleSpeed * muzzle.block<3, 1>(0, 0) +
+      muzzle_velocity("sentry", launch);
+  const double flight = std::max(.01, shot.contains("impact_t") ?
+      shot.at("impact_t").get<double>() - launch :
+      shot.value("range_m", 4.) / combat::kMuzzleSpeed);
+  using Marker = visualization_msgs::msg::Marker;
+  Marker line;
+  line.header.frame_id = "odom"; line.header.stamp = rclcpp::Time(static_cast<int64_t>(launch * 1e9), RCL_ROS_TIME);
+  line.ns = "scored_shot"; line.id = visual_id_++ % 64;
+  line.type = Marker::LINE_STRIP; line.pose.orientation.w = 1.;
+  line.scale.x = .025; line.color.a = 1.;
+  const bool hit = shot.value("enemy_hit", shot.value("hit", false));
+  line.color.g = hit ? 1.F : .2F; line.color.r = hit ? .15F : 1.F;
+  line.lifetime.nanosec = 750000000;
+  for (int i = 0; i <= 24; ++i) {
+    const double t = flight * i / 24.;
+    const Vec p = transform(world->inverse(), origin + t * velocity - Vec{0, 0, 4.903325*t*t});
+    geometry_msgs::msg::Point point;
+    point.x = p.x(); point.y = p.y(); point.z = p.z();
+    line.points.push_back(point);
+  }
+  auto impact = line;
+  impact.ns = "scored_endpoint"; impact.type = Marker::SPHERE;
+  impact.pose.position = line.points.back(); impact.points.clear();
+  impact.scale.x = impact.scale.y = impact.scale.z = hit ? .13 : .07;
+  visualization_msgs::msg::MarkerArray markers;
+  markers.markers = {line, impact};
+  visual_pub_->publish(markers);
 }
 void Scorer::sync_referee() {
   double elapsed = now_s() - match_start.value_or(now_s());

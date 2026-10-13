@@ -100,6 +100,9 @@ private:
   std::optional<Json> judge_match(const std::string &kind, double t);
   void judge_state(const dji_serial_bridge::msg::TargetState &m);
   void fire_tick();
+  void visualize_shot(const std::string &kind, const Json &shot);
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr visual_pub_;
+  int visual_id_ = 0;
   void sync_referee();
 };
 double hit_rate(const std::vector<Json> &shots);

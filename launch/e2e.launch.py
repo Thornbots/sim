@@ -64,10 +64,14 @@ def _sim(context):
     spawn = ({'x': '4.625', 'y': '0.0', 'yaw': str(math.pi)}
              if config['stage'] in DRIVING else
              {'yaw': str(math.pi)} if config['backend'] == 'renode' else {})
+    view = 'e2e-parked' if config['stage'] == 'mcb_parked' else 'e2e'
+    share = get_package_share_directory('sim')
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
         launch_arguments={'gui': gui, 'rviz': gui, 'foxglove': config['foxglove'],
+                          'rviz_config': os.path.join(share, 'rviz', view + '.rviz'),
+                          'gz_gui_config': os.path.join(share, 'rviz', view + '-gz.config'),
                           'camera': 'false', 'pose_emulator': 'false',
                           'mcb_physics': 'true',
                           'mcb_drive': 'stop',
@@ -214,6 +218,14 @@ def generate_launch_description():
         if stage not in STAGES:
             raise RuntimeError(f"stage must be one of {', '.join(STAGES)}, not '{stage}'")
         extras = []
+        if not _is_true(context, 'headless') and display_error() is None:
+            extras.append(Node(package='sim', executable='target_state_markers',
+                               parameters=[{'use_sim_time': True}]))
+            extras.append(Node(package='sim', executable='e2e_map_view',
+                               additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': os.path.join(
+                                   get_package_share_directory('thornbots_pkg'), 'config',
+                                   'fastdds_udp_only.xml')},
+                               parameters=[{'use_sim_time': True}]))
         opponents = [OPPONENT]
         if stage == 'mcb_match':
             opponents += ['opponent_1', 'ally_0']
