@@ -32,6 +32,7 @@
 #include <optional>
 #include <std_msgs/msg/header.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 namespace sim::e2e {
