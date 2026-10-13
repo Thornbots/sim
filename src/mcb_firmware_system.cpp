@@ -17,6 +17,7 @@
 #include <std_msgs/msg/header.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "sim/mcb_firmware.hpp"
+#include "sim/mcb_sensors.hpp"
 
 namespace sim {
 class McbFirmwareSystem : public gz::sim::System,
@@ -59,7 +60,7 @@ public:
     }
     for (const auto &entry : std::vector<std::pair<std::string, bool>>{
              {"restoration_zone", false}, {"exchange_zone", false},
-             {"central_buff_zone", false}, {"shooter_power", true}}) {
+             {"central_buff_zone", false}, {"shooter_power", true}, {"chassis_power", true}}) {
       node_->declare_parameter<bool>(entry.first, entry.second);
       referee_.apply(node_->get_parameter(entry.first));
     }
@@ -94,6 +95,7 @@ public:
     shots_ = node_->create_publisher<std_msgs::msg::Header>("~/shot", 100);
     ticks_ = node_->create_publisher<std_msgs::msg::Header>("~/tick", 100);
     motors_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/motors", 10);
+    setpoints_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/gimbal_setpoint", 100);
     command_ = node_->create_subscription<geometry_msgs::msg::Twist>("/cmd_vel", 10,
       [this](geometry_msgs::msg::Twist::ConstSharedPtr msg) {
         external_ = {-msg->linear.y, msg->linear.x, msg->angular.z};
@@ -154,6 +156,11 @@ public:
     const double yaw = head_pose->Rot().Yaw() - heading;
     readings[4] = std::atan2(std::sin(yaw), std::cos(yaw));
     readings[5] = gyro.Z();
+    if (backend_ == "hosted") {
+      const auto delayed = imu_.sample(readings[4], readings[5]);
+      readings[4] = delayed[0];
+      readings[5] = delayed[1];
+    }
     const auto body_velocity = pos->Rot().RotateVectorReverse(*vel);
     const auto feedback = plant_.feedback(readings, body_velocity.X(), body_velocity.Y(), rate->Z(), dt);
     if (current_time_ - command_time_ > 0.1) external_ = {};
@@ -175,6 +182,15 @@ public:
     tick.stamp = rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count());
     ticks_->publish(tick);
     if (firmware_->time_ms() % 10 == 0) {
+      if (backend_ == "hosted") {
+        sensor_msgs::msg::JointState setpoint;
+        setpoint.header = tick;
+        setpoint.header.frame_id = "odom";
+        setpoint.name = {"desired_head_yaw_field", "desired_head_pitch"};
+        setpoint.position = {output.yaw + (referee_.robot_id > 100 ? mcb_firmware::kPi : 0),
+                             output.pitch};
+        setpoints_->publish(setpoint);
+      }
       sensor_msgs::msg::JointState motors;
       motors.header = tick;
       motors.name = {"can1/207", "can2/205", "can2/206", "can1/205", "can2/203",
@@ -186,7 +202,8 @@ public:
       }
       motors_->publish(motors);
     }
-    for ([[maybe_unused]] auto shot : output.shots) {
+    const auto exits = projectiles_.update(feedback[2]);
+    for (uint32_t shot = 0; shot < exits; ++shot) {
       tick.frame_id = "muzzle";
       shots_->publish(tick);
     }
@@ -198,6 +215,8 @@ private:
   gz::sim::Entity yaw_ = gz::sim::kNullEntity, pitch_ = gz::sim::kNullEntity;
   mcb_firmware::Referee referee_;
   mcb_motor::Plant plant_;
+  mcb_motor::ProjectileExit projectiles_;
+  McbImuDelay imu_;
   std::array<double, 3> external_{};
   double current_time_ = 0, command_time_ = 0;
   std::string drive_, backend_;
@@ -208,7 +227,7 @@ private:
   std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameters_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr shots_, ticks_;
-  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motors_;
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motors_, setpoints_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr command_;
   std::unique_ptr<mcb_firmware::PtyLink> pty_;
   std::unique_ptr<mcb_firmware::Firmware> firmware_;

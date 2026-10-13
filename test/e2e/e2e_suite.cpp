@@ -33,7 +33,8 @@ public:
   void SetUp() override {
     try {
       for (const auto &f :
-           {"shots.jsonl", "scores.jsonl", "states.jsonl", "poses.jsonl"})
+           {"shots.jsonl", "scores.jsonl", "states.jsonl", "poses.jsonl",
+            "parking.jsonl"})
         cb::truncate(cb::options.log_dir + "/" + f);
       control = std::make_shared<sim::SimTimeNode>("e2e_stack");
       scorer = std::make_shared<ee::Scorer>(
@@ -57,6 +58,13 @@ public:
                 "headless:=" +
                     std::string(cb::options.headless ? "true" : "false"),
                 "stage:=" + cb::options.stage, "backend:=" + cb::options.backend, "target_speed:=0.0",
+                "pose_latency_s:=" + cb::number(cb::options.pose_latency_s),
+                "firmware_latency_s:=" + cb::number(cb::options.firmware_latency_s.value_or(.094)),
+                "gimbal_lag_s:=" + cb::number(cb::options.gimbal_lag_s.value_or(
+                    cb::options.backend == "hosted" ? 0.0 : .05)),
+                "chase_settle_s:=" + cb::number(cb::options.chase_settle_s.value_or(-1.0)),
+                "chase_margin_s:=" + cb::number(cb::options.chase_margin_s.value_or(
+                    cb::options.backend == "hosted" ? .025 : 0.0)),
                 "target_spin_hz:=0.0", "real_time_factor:=" + cb::options.rtf,
                 "lockstep:=" + std::string(cb::options.lockstep ? "true" : "false"),
                 "firmware_fixes:=" + std::string(cb::options.no_firmware_fixes
@@ -220,6 +228,20 @@ TEST_P(E2ESuite, MCB) {
       }
     std::cout << ee::state_summary(s->states) << '\n';
     environment->record_score(c.name, duration);
+    ASSERT_FALSE(s->route_records.empty()) << "No chassis truth samples";
+    const auto start = s->route_records.front().at("truth_xy");
+    double chassis_displacement = 0;
+    for (const auto &r : s->route_records) {
+      const auto xy = r.at("truth_xy");
+      chassis_displacement = std::max(chassis_displacement, std::hypot(
+          xy[0].get<double>() - start[0].get<double>(),
+          xy[1].get<double>() - start[1].get<double>()));
+    }
+    cb::append_json(cb::options.log_dir + "/parking.jsonl",
+                    {{"cell", c.name},
+                     {"chassis_max_displacement_m", chassis_displacement}});
+    EXPECT_LE(chassis_displacement, .03)
+        << c.name << ": chassis moved during a parked-shooter cell";
     const auto &mcb = s->shots.at("mcb");
     int hit = 0;
     for (const auto &r : mcb)
@@ -244,6 +266,8 @@ TEST_P(E2ESuite, MCB) {
   cb::truncate(cb::options.log_dir + "/route.jsonl");
   for (const auto &r : s->route_records)
     cb::append_json(cb::options.log_dir + "/route.jsonl", r);
+  for (const auto &r : s->states)
+    cb::append_json(cb::options.log_dir + "/states.jsonl", r);
   if (cb::options.stage == "mcb_drive") {
     environment->record_score(c.name, sim::match_scenario::match_duration());
   }
@@ -343,6 +367,9 @@ TEST_P(E2ESuite, MCB) {
         << summaries.dump(2) << '\n';
     ASSERT_FALSE(actual.empty())
         << "firmware fired no shots on spawn-to-center route";
+    EXPECT_GT(std::count_if(actual.begin(), actual.end(), [](const auto & shot) {
+        return shot["hit"].template get<bool>();
+      }), 0) << "mcb_drive scored zero hits; a diagnosis cannot satisfy combat acceptance";
     return;
   }
   cb::Json hp = cb::Json::object(), counts = cb::Json::object();

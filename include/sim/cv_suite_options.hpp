@@ -23,6 +23,10 @@
 #include <set>
 namespace sim::cv_bench {
 struct Options {
+  double pose_latency_s = 0;
+  std::optional<double> gimbal_lag_s;
+  std::optional<double> firmware_latency_s;
+  std::optional<double> chase_settle_s, chase_margin_s;
   std::vector<double> speeds{.5, 1, 2, 4};
   std::vector<std::string> paths{"lateral", "radial", "diagonal"};
   std::string layout = "both", path = "lateral", log_dir, stage = "mcb_parked",
@@ -88,6 +92,16 @@ inline void parse_options(int &argc, char **argv) {
       options.model_yaw_jitter_rad = std::stod(value());
     else if (arg == "--panel-switch-margin-rad")
       options.panel_switch_margin_rad = std::stod(value());
+    else if (arg == "--gimbal-lag-s")
+      options.gimbal_lag_s = std::stod(value());
+    else if (arg == "--firmware-latency-s")
+      options.firmware_latency_s = std::stod(value());
+    else if (arg == "--chase-settle-s")
+      options.chase_settle_s = std::stod(value());
+    else if (arg == "--chase-margin-s")
+      options.chase_margin_s = std::stod(value());
+    else if (arg == "--pose-latency-s")
+      options.pose_latency_s = std::stod(value());
     else if (arg == "--shot-duration" || arg == "--e2e-duration")
       options.duration = std::stod(value());
     else if (arg == "--panel-layout")

@@ -156,9 +156,10 @@ def generate_launch_description():
                               description='sim speed cap; 0 = as fast as it runs'),
         DeclareLaunchArgument('backend', default_value='amcl',
                               choices=['slam', 'mapping', 'amcl', 'none'],
-                              description='who owns map->odom (drift suite)'),
+                              description='who owns map->nav_odom (drift suite)'),
         DeclareLaunchArgument('use_rf2o', default_value='true',
-                              description='fuse rf2o into odom->root (drift suite)'),
+                              description='fuse rf2o into nav_odom->root navigation '
+                                          'pose (drift suite)'),
         DeclareLaunchArgument('scenario', default_value='',
                               description='one drift scenario; empty = all'),
         DeclareLaunchArgument('speed', default_value='',

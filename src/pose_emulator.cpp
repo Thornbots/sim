@@ -242,6 +242,7 @@ class PoseEmulator : public rclcpp::Node {
 
     dji_serial_bridge::msg::RobotPose pose;
     pose.header.stamp = msg.header.stamp;
+    pose.header.frame_id = "odom";
     pose.x = x;
     pose.y = y;
     pose.vel_x = vel_x;

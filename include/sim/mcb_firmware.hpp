@@ -118,7 +118,7 @@ struct Referee {
   int64_t current_hp = 400, max_hp = 400, hurt_armor_id = 0;
   bool restoration_zone = false, exchange_zone = false,
        central_buff_zone = false;
-  bool shooter_power = true;
+  bool shooter_power = true, chassis_power = true;
 
   template <typename Parameter> void apply(const Parameter &p) {
     const auto &n = p.get_name();
@@ -142,6 +142,8 @@ struct Referee {
       exchange_zone = p.as_bool();
     } else if (n == "central_buff_zone") {
       central_buff_zone = p.as_bool();
+    } else if (n == "chassis_power") {
+      chassis_power = p.as_bool();
     } else if (n == "shooter_power") {
       shooter_power = p.as_bool();
     }
@@ -165,7 +167,8 @@ inline std::vector<uint8_t> referee_frames(const Referee &ref) {
                            int64_t{1000}, int64_t{240}}) {
     append_u16(robot, referee_u16(value));
   }
-  robot.push_back(3 | static_cast<uint8_t>(ref.shooter_power) << 2);
+  robot.push_back(1 | static_cast<uint8_t>(ref.chassis_power) << 1 |
+                  static_cast<uint8_t>(ref.shooter_power) << 2);
   frame(0x0201, robot);
   std::vector<uint8_t> power;
   append_u16(power, 24000);
@@ -272,6 +275,7 @@ private:
 };
 
 struct GzHardware {
+  // Boot-relative pod input stays raw; firmware alone owns navigation corrections.
   bool ready = false, seen_odom = false, seen_joints = false;
   double chassis_yaw = 0.0, chassis_rate = 0.0;
   std::array<double, 2> pos{}, vel{}, yaw_joint{}, pitch_joint{};

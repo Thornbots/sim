@@ -13,8 +13,8 @@
 # limitations under the License.
 
 """Gazebo hardware fixture, compiled sentry firmware, and the real UART bridge."""
-import os
 import math
+import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -67,7 +67,8 @@ def stack(context):
 def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('firmware_binary', default_value='',
-                              description='MCB executable or board ELF; default is the selected backend release build'),
+                              description='MCB executable or board ELF; default is the '
+                                          'selected backend release build'),
         DeclareLaunchArgument('backend', default_value='renode', choices=['hosted', 'renode']),
         DeclareLaunchArgument('device_link', default_value='/tmp/mcb_emulator_pty'),
         DeclareLaunchArgument('drive', default_value='stop', choices=['stop', 'simple', 'auto']),

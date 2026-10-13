@@ -141,6 +141,7 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
   ASSERT_TRUE(wait([&] { return !poses.empty() && !refs.empty(); }));
   EXPECT_NEAR(poses.back().x, firmware.start_x(),
               std::abs(firmware.start_x()) * 1e-6);
+  EXPECT_EQ(poses.back().header.frame_id, "odom");
   EXPECT_TRUE(refs.back().is_on_blue_team);
   EXPECT_EQ(refs.back().robot_id, 7);
   dji_serial_bridge::msg::CVTarget target;
@@ -161,12 +162,14 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
   geometry_msgs::msg::PointStamped point;
   point.point.x = 1.25;
   point.point.y = -0.75;
+  point.header.frame_id = "nav_odom";
+  const auto pose_count = poses.size();
   EXPECT_TRUE(wait(
-      [&] {
-        return std::abs(poses.back().x - 1.25) <= 1.25e-6 &&
-               std::abs(poses.back().y + 0.75) <= 0.75e-6;
-      },
+      [&] { return poses.size() >= pose_count + 20; },
       [&] { reloc->publish(point); }));
+  EXPECT_NEAR(poses.back().x, firmware.start_x(), 1e-6);
+  EXPECT_NEAR(poses.back().y, firmware.start_y(), 1e-6);
+  EXPECT_NE(bridge.read_log().find("navigation fix:"), std::string::npos);
 }
 
 TEST(McbBridgePty, PacksAllCvFlagCombinationsThroughTheRealBridge) {

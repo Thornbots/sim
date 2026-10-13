@@ -1,7 +1,8 @@
 #!/bin/bash
 # Install the pinned emulator in an isolated directory inside Linux.
 set -euo pipefail
-DEST="${1:-/tmp/renode-1.17.0}"
+# Renode cleans /tmp/renode-* as stale per-process directories.
+DEST="${1:-/tmp/mcb-renode-1.17.0}"
 case "$(uname -m)" in
   aarch64) FILE=renode-1.17.0.linux-arm64-portable.tar.gz
     SHA=e9051578411441bfb47b77de0381cfba3badce03663367fab561472fd7807f1f ;;

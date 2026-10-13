@@ -424,8 +424,8 @@ std::unique_ptr<Stack> run_stack(bool noise,
   if (backend.empty()) {
     backend = options.backend;
   }
-  const std::string parent = backend == "none" ? "odom" : "map",
-                    child = backend == "none" ? "root" : "odom";
+  const std::string parent = backend == "none" ? "nav_odom" : "map",
+                    child = backend == "none" ? "root" : "nav_odom";
   std::filesystem::create_directories(kLogDir);
   auto stack = std::make_unique<Stack>();
   const auto helper_for = [&] {
@@ -963,11 +963,11 @@ void odom_stuck(Scenario &sc) {
     if (p_now) {
       samples.push_back(*p_now);
       const auto truth = truth_error(helper);
-      const auto odom = helper.transform("odom", "root", 0.0);
+      const auto odom = helper.transform("nav_odom", "root", 0.0);
       std::string detail =
           truth ? "  ground_truth_error=" + fixed(*truth) + " m" : "";
       if (odom && helper.truth) {
-        detail += "  odom->root=(" + fixed((*odom)[0], 3) + ", " +
+        detail += "  nav_odom->root=(" + fixed((*odom)[0], 3) + ", " +
                   fixed((*odom)[1], 3) + ")  truth=(" +
                   fixed((*helper.truth)[0]) + ", " + fixed((*helper.truth)[1]) +
                   ")  true_yaw=" + fixed(helper.truth_yaw * 180 / kPi, 2) +
@@ -1258,7 +1258,7 @@ TEST(EkfGroundTruth, BeatsRawOdometry) {
       odom_copy = odom;
     }
     try {
-      const auto tf = buffer.lookupTransform("odom", "root", tf2::TimePointZero,
+      const auto tf = buffer.lookupTransform("nav_odom", "root", tf2::TimePointZero,
                                              tf2::durationFromSec(0.5));
       if (truth_copy && odom_copy) {
         return std::array<Point, 3>{
@@ -1277,7 +1277,7 @@ TEST(EkfGroundTruth, BeatsRawOdometry) {
   ASSERT_TRUE(ready(sc, helper))
       << "FAIL: stack never reached a healthy /scan rate";
   ASSERT_TRUE(helper.wait_correction(45.0))
-      << "FAIL: odom->root never became available within 45s";
+      << "FAIL: nav_odom->root never became available within 45s";
   const auto end = Clock::now() + std::chrono::seconds(15);
   while (Clock::now() < end && !sample()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));

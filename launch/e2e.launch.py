@@ -15,7 +15,7 @@
 """
 Launch the MCB emulator integration suites and their camera-free Gazebo stacks.
 
-Every stage runs truth detections, the real CV stack, the hosted MCB firmware
+Every stage runs truth detections, the real CV stack, the selected MCB backend
 and the real UART bridge. mcb_parked scores 12 opponent cells with our robot
 parked; mcb_drive drives from spawn to center; mcb_match adds a 2v2 fight.
 Tests own their stack process group; run_tests:=false launches only the stack.
@@ -31,8 +31,8 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    ExecuteProcess,
     EmitEvent,
+    ExecuteProcess,
     IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
@@ -88,6 +88,11 @@ def _tests(context):
     cmd = ['ros2', 'run', 'sim', 'e2e_suite', '--stage', config['stage'],
            '--backend', config['backend']]
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
+                     ('pose_latency_s', '--pose-latency-s'),
+                     ('gimbal_lag_s', '--gimbal-lag-s'),
+                     ('firmware_latency_s', '--firmware-latency-s'),
+                     ('chase_settle_s', '--chase-settle-s'),
+                     ('chase_margin_s', '--chase-margin-s'),
                      ('real_time_factor', '--real-time-factor'),
                      ('duration', '--e2e-duration'), ('log_dir', '--log-dir')):
         if config[arg]:
@@ -168,6 +173,12 @@ def generate_launch_description():
         # Patrol stays on, as on the robot: patrol frames clear `fire`, and
         # it reacquires an opponent that starts out of view or is lost.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
+                          'pose_latency_s': LaunchConfiguration('pose_latency_s'),
+                          'gimbal_lag_s': LaunchConfiguration('gimbal_lag_s'),
+                          'firmware_latency_s': LaunchConfiguration('firmware_latency_s'),
+                          'chase_settle_s': LaunchConfiguration('chase_settle_s'),
+                          'chase_margin_s': LaunchConfiguration('chase_margin_s'),
+                          'v_muzzle': '24.0',
                           'use_rf2o': 'true', 'load_map': 'true', 'patrol_enabled': 'true',
                           'initial_x': PythonExpression([
                               "'4.625' if '", LaunchConfiguration('stage'),
@@ -177,17 +188,24 @@ def generate_launch_description():
         package='sim', executable='match_environment', name='match_environment', output='screen',
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
     # The bridge opens the pty once, so it starts after the emulator makes it.
-    uart_ready = Node(package='sim', executable='mcb_ready', arguments=[MCB_PTY,
-        PythonExpression(["'600' if '", LaunchConfiguration('backend'), "' == 'renode' else '30'"])],
+    uart_ready = Node(package='sim', executable='mcb_ready', arguments=[
+        MCB_PTY,
+        PythonExpression(["'600' if '", LaunchConfiguration('backend'),
+                          "' == 'renode' else '30'"]),
+    ],
         output='screen')
     uart_start = RegisterEventHandler(OnProcessExit(
         target_action=uart_ready,
         on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
             EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
     common = [path_bridge, opponent_driver, uart_start, uart_ready]
+    # One board batch ahead avoids outrunning the wall deadline during learning.
     coordinator = Node(
         package='sim', executable='lockstep_coordinator', output='screen',
         parameters=[{'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
+                     'learn_margin_s': ParameterValue(PythonExpression([
+                         "'0.005' if '", LaunchConfiguration('backend'),
+                         "' == 'renode' else '0.05'"]), value_type=float),
                      'mcb_batch.phase_s': 0.0, 'mcb_batch.acks': ['/mcb_emulator/tick']}],
         condition=IfCondition(LaunchConfiguration('lockstep')))
 
@@ -222,13 +240,25 @@ def generate_launch_description():
         DeclareLaunchArgument('firmware_fixes', default_value='true',
                               description='Deprecated: the native MCB runs its checked-out code'),
         DeclareLaunchArgument('firmware_binary', default_value='',
-                              description='MCB executable or board ELF; empty uses the selected backend release build'),
+                              description='MCB executable or board ELF; empty uses the '
+                                          'selected backend release build'),
         DeclareLaunchArgument('backend', default_value='renode', choices=['hosted', 'renode']),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('speeds', default_value='',
                               description="opponent speeds, m/s, 0 = stationary, e.g. '0 2'; "
                                           'empty = the harness default'),
+        DeclareLaunchArgument('firmware_latency_s', default_value='0.094',
+                              description='Decision-to-exit firing delay estimate in seconds'),
+        DeclareLaunchArgument('chase_settle_s', default_value='-1.0'),
+        DeclareLaunchArgument('chase_margin_s', default_value=PythonExpression([
+            "'0.025' if '", LaunchConfiguration('backend'), "' == 'hosted' else '0.0'"])),
+        DeclareLaunchArgument('gimbal_lag_s', default_value=PythonExpression([
+            "'0.0' if '", LaunchConfiguration('backend'), "' == 'hosted' else '0.05'"]),
+                              description='Hosted response calibration; board remains '
+                                          'uncalibrated'),
+        DeclareLaunchArgument('pose_latency_s', default_value='0.0',
+                              description='Capture-time pose transport calibration, seconds'),
         DeclareLaunchArgument('paths', default_value='',
                               description="target_driver paths, e.g. 'lateral radial'; "
                                           'empty = all three'),
