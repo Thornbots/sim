@@ -72,12 +72,12 @@ def cv_node(executable, package='thornbots_pkg', **params):
 
 def _aim_node(context, harness):
     cfg = context.launch_configurations
-    params = dict(cv_target_publish_rate_hz=harness.TEST_FIRE_HZ,
-                  tick_topic='/cv/target/tick', patrol_enabled=False,
-                  fire_rate_hz=harness.TEST_FIRE_HZ + 10.0,
-                  gimbal_lag_s=float(cfg['gimbal_lag_s']),
-                  chase_settle_s=float(cfg['chase_settle_s']),
-                  chase_margin_s=float(cfg['chase_margin_s']))
+    params = {'cv_target_publish_rate_hz': harness.TEST_FIRE_HZ,
+              'tick_topic': '/cv/target/tick', 'patrol_enabled': False,
+              'fire_rate_hz': harness.TEST_FIRE_HZ + 10.0,
+              'gimbal_lag_s': float(cfg['gimbal_lag_s']),
+              'chase_settle_s': float(cfg['chase_settle_s']),
+              'chase_margin_s': float(cfg['chase_margin_s'])}
     if cfg['panel_switch_margin_rad']:
         params['panel_switch_margin_rad'] = float(cfg['panel_switch_margin_rad'])
     return cv_node('point_to_cv_target', **params)
@@ -195,7 +195,7 @@ def generate_launch_description():
         DeclareLaunchArgument('chase_margin_s', default_value='0.0',
                               description="point_to_cv_target's chase_margin_s"),
         DeclareLaunchArgument('panel_switch_margin_rad', default_value='',
-                              description="optional point_to_cv_target panel switch margin"),
+                              description='optional point_to_cv_target panel switch margin'),
         DeclareLaunchArgument('target_yaw_deg', default_value='0',
                               description='target initial yaw in degrees'),
         DeclareLaunchArgument('target_spin_hz', default_value='',

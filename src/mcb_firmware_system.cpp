@@ -181,14 +181,16 @@ public:
     std_msgs::msg::Header tick;
     tick.stamp = rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count());
     ticks_->publish(tick);
-    if (backend_ == "hosted" && firmware_->time_ms() % 10 == 0) {
-      sensor_msgs::msg::JointState setpoint;
-      setpoint.header = tick;
-      setpoint.header.frame_id = "odom";
-      setpoint.name = {"desired_head_yaw_field", "desired_head_pitch"};
-      setpoint.position = {output.yaw + (referee_.robot_id > 100 ? mcb_firmware::kPi : 0),
-                           output.pitch};
-      setpoints_->publish(setpoint);
+    if (firmware_->time_ms() % 10 == 0) {
+      if (backend_ == "hosted") {
+        sensor_msgs::msg::JointState setpoint;
+        setpoint.header = tick;
+        setpoint.header.frame_id = "odom";
+        setpoint.name = {"desired_head_yaw_field", "desired_head_pitch"};
+        setpoint.position = {output.yaw + (referee_.robot_id > 100 ? mcb_firmware::kPi : 0),
+                             output.pitch};
+        setpoints_->publish(setpoint);
+      }
       sensor_msgs::msg::JointState motors;
       motors.header = tick;
       motors.name = {"can1/207", "can2/205", "can2/206", "can1/205", "can2/203",

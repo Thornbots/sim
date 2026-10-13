@@ -1395,21 +1395,26 @@ measured tire, ESC, gearbox or launcher behaviour.
 The plant adds passive wheel/roller resistance to the frictionless CAD contacts:
 `rolling_resistance=0.03` times each wheel's nominal normal load, smoothed
 through zero tangential speed. It dissipates motion without clamping chassis
-velocity or pose. The firmware parked command holds zero wheel velocity
-while chassis power is available in game; outside that state it writes zero
-current. The passive resistance alone did not hold a rapidly tracking chassis.
+velocity or pose. The sentry parked and centered manual commands hold a latched raw odometry
+position while chassis power is available in game; outside that state the stop
+command writes zero current. Navigation corrections cannot move the hold point. The passive resistance alone did not hold a rapidly tracking chassis.
 This coefficient is estimated, not a measured tire parameter. `mcb_parked`
 records maximum truth displacement in `parking.jsonl` and rejects cells
 moving more than 0.03 m. Only the hosted direct-sensor fixture delays gyro
 yaw/rate by eight 1 ms ticks to match the firmware predictor; the board path
 runs the full IMU filter, which owns sample age. CAN feedback stays current.
+The hosted E2E profile uses zero residual yaw lag after setpoint-rate
+filtering, a 94 ms indexing delay, and 25 ms settling/margin windows. These
+are model calibrations; board gimbal timing remains uncalibrated.
 Calibration and rejected treatments are recorded in the
-[accuracy investigation](docs/aim-accuracy-2026-10-12.md), a hosted
-pre-track-I source baseline rather than board accuracy evidence.
+[accuracy investigation](docs/aim-accuracy-2026-10-12.md), hosted
+fixture measurements rather than board accuracy evidence.
 
 `/mcb_emulator/shot` is the physical chamber-exit event inferred from CAN
 indexer motion, stamped at that physics sample on both backends. The native
-scorer launches at that stamp and adds no firing-delay estimate. Hosted
+scorer launches at that stamp and adds no firing-delay estimate. Flag-only
+diagnostics use the requested exit delay from CV_TARGET, without adding a
+second indexer-latency estimate. Hosted
 firmware request counters remain debug outputs, not physical shots.
 
 `/mcb_emulator/gimbal_setpoint` publishes hosted firmware desired field yaw and pitch

@@ -59,6 +59,13 @@ public:
                     std::string(cb::options.headless ? "true" : "false"),
                 "stage:=" + cb::options.stage, "backend:=" + cb::options.backend, "target_speed:=0.0",
                 "pose_latency_s:=" + cb::number(cb::options.pose_latency_s),
+                "firmware_latency_s:=" + cb::number(cb::options.firmware_latency_s.value_or(.094)),
+                "gimbal_lag_s:=" + cb::number(cb::options.gimbal_lag_s.value_or(
+                    cb::options.backend == "hosted" ? 0.0 : .05)),
+                "chase_settle_s:=" + cb::number(cb::options.chase_settle_s.value_or(
+                    cb::options.backend == "hosted" ? .025 : 0.0)),
+                "chase_margin_s:=" + cb::number(cb::options.chase_margin_s.value_or(
+                    cb::options.backend == "hosted" ? .025 : 0.0)),
                 "target_spin_hz:=0.0", "real_time_factor:=" + cb::options.rtf,
                 "lockstep:=" + std::string(cb::options.lockstep ? "true" : "false"),
                 "firmware_fixes:=" + std::string(cb::options.no_firmware_fixes

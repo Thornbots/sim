@@ -125,8 +125,12 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         aims_.push_back({t, {m.x, m.y, m.z}});
         while (aims_.front().first < t - 3)
           aims_.pop_front();
-        if (m.fire && scoring && t < score_until)
-          pending_.push_back({"flag", t + m.delay_ms / 1000. + .05});
+        if (m.fire && scoring && t < score_until) {
+          cb::append_json((std::filesystem::path(log_path).parent_path() /
+                           "fire_requests.jsonl").string(),
+                          {{"t", t}, {"delay_s", m.delay_ms / 1000.}});
+          pending_.push_back({"flag", t + m.delay_ms / 1000.});
+        }
       });
   subscribe<dji_serial_bridge::msg::RobotPose>(
       "/dji_serial_bridge/pose", rclcpp::SensorDataQoS(),
@@ -378,7 +382,9 @@ Json Scorer::pose_errors(double t) {
 }
 Json Scorer::aim_split(double launch, const Vec &origin, const Vec &direction,
                        int k, std::shared_ptr<PoseHistory> history) {
-  double t = launch - .05;
+  const double lag = cb::options.gimbal_lag_s.value_or(
+      cb::options.backend == "hosted" ? 0.0 : .05);
+  double t = launch - lag;
   auto world = world_T_odom(t);
   if (!world || aims_.empty())
     return Json::object();

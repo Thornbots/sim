@@ -156,8 +156,9 @@ TEST_F(McbFirmware, FireDelayAccountsForItsNativeIndexerLatency) {
   const auto result = run(200, wire::frame(wire::CvTarget{
       static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 150, wire::kCvTargetFlagFire}));
   ASSERT_FALSE(result.shots.empty());
-  EXPECT_GE(result.shots.front() - start, 70U);
-  EXPECT_LT(result.shots.front() - start, 80U);
+  // 150 ms requested exit minus the calibrated 94 ms chamber travel.
+  EXPECT_GE(result.shots.front() - start, 56U);
+  EXPECT_LT(result.shots.front() - start, 66U);
 }
 TEST_F(McbFirmware, PhysicalCanSpeedChangesFirmwareMotorOutputs) {
   firmware->set_mode(3);
@@ -307,4 +308,24 @@ TEST_F(McbFirmware, ParkedWheelControllerBrakesMotionAndHonorsRefereePower) {
   power = 0;
   for (int i = 0; i < 4; ++i) power += output.motors[6 + i] * plant.speed[6 + i];
   EXPECT_LT(power, 0);
+}
+
+TEST_F(McbFirmware, RawPositionHoldRejectsMotionButIgnoresNavigationCorrections) {
+  run(200);
+  const auto corrected = run(100, wire::frame(wire::Relocalize{1.25F, -.75F}));
+  EXPECT_NEAR(corrected.outputs.back().right, 0, 1e-6);
+  EXPECT_NEAR(corrected.outputs.back().forward, 0, 1e-6);
+  EXPECT_NEAR(corrected.outputs.back().spin, 0, 1e-6);
+  const auto displaced = run(100, {}, {0, .05});
+  EXPECT_LT(displaced.outputs.back().forward, 0);
+  const auto reanchored = run(100, {}, {0, 9.30});
+  EXPECT_NEAR(reanchored.outputs.back().right, 0, 1e-6);
+  EXPECT_NEAR(reanchored.outputs.back().forward, 0, 1e-6);
+}
+
+TEST_F(McbFirmware, ImmediateFireDuringFirstLatencyIntervalDoesNotWrapTimer) {
+  run(60);  // Arm the initial cooldown, still below the indexing latency.
+  const auto result = run(15, wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, .2F, 0, 1}));
+  EXPECT_FALSE(result.shots.empty());
 }

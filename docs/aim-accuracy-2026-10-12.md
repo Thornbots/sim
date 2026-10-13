@@ -1,11 +1,12 @@
 # Aim accuracy model investigation, 2026-10-12
 
-This investigation records the completed model and timing phases in
+This investigation records historical model/timing phases and completed hosted
+repeat profiles. Artifacts are in
 `/home/blaise/workspaces/isaac_ros-jazzy/test-aim-accuracy-2026-10-12/`.
-Each phase has one `r1` run per listed stage. The speed phase is in progress;
-the final three full-stage repeats remain pending.
+The earlier phases below are single-run historical observations; the final
+no-lead and nightly comparisons are recorded under the three-repeat section.
 
-## Phase results
+## Historical phase results
 
 Drive/match counts use native MCB shot records (`kind == "mcb"`); drive hits
 are panel hits and match hits are enemy hits. Parked brake cell totals use
@@ -207,6 +208,142 @@ Every completed drive/match route record had numeric localization, navigation an
 
 The native checker passed the remaining completed stage runs. “Pass” here means that stage’s native suite and log checker accepted that invocation; it does not mean all nine invocations passed. Failed brake runs remain in the score tables as diagnostics, not accepted accuracy results. Hit counts across repeats vary substantially, and r2 failed the speed 1 radial cell and r3 failed the speed 4 radial cell. These data show the powered-holding displacement change, but they do not establish repeatable moving-shot accuracy or a reliability floor.
 
+## Merged nightly no-lead profile, three repeats
+
+The no-lead profile sets residual `gimbal_lag_s=0`; projectile flight-time
+prediction remains enabled. It uses the filtered firmware 25 ms rate, a
+`chase_settle_s` of 25 ms, `chase_margin_s` of 25 ms, and 94 ms indexing. All
+runs used the hosted backend, with the merged Track I firmware auto-drive route.
+This is a controlled hosted comparison; it does not establish board-backend
+accuracy. The archived nightly baseline revisions were sim `7156ab2`,
+firmware `e98d548`, bridge `3a1220c`, thornbots `7b3032a`, sentry `af45710`,
+and root `3b81631`; the later root docs-only merge `b32fc13` is separate.
+The candidate bases were firmware `111886e`, sim `53c7f70`, thornbots `3eecd35`,
+bridge `928c25b` and sentry `4617056`, plus the final-profile patches preserved
+in the artifact root. `final-profile-source.json` records base revisions,
+patch hashes and immutable run ELF hashes. The run firmware is
+`rate-hosted-MCB-project.elf`; final-source rebuild and test logs have the
+`profile-final-` prefix. All six branches contain their respective nightly
+heads; the workspace also merges the later roadmap cleanup.
+
+Drive and match report native MCB score records; parked stages report the
+native per-cell `scores.jsonl` snapshots. Percentages below pool only the three
+listed repeats as descriptive totals, not as an accepted reliability floor.
+The `rate-hosted-final` stages all passed their native checkers. Nightly main
+parked and the spinning variant failed the native accuracy floor; the other
+nightly main and candidate moving stages passed.
+
+| Hosted profile / stage | r1 | r2 | r3 | pooled |
+| --- | ---: | ---: | ---: | ---: |
+| no-lead `mcb_parked` | 283/482 (58.7%) | 279/481 (58.0%) | 304/484 (62.8%) | 866/1447 (59.8%) |
+| no-lead `mcb_drive` | 32/35 (91.4%) | 27/35 (77.1%) | 26/35 (74.3%) | 85/105 (81.0%) |
+| no-lead `mcb_match` | 20/40 (50.0%) | 20/40 (50.0%) | 20/39 (51.3%) | 60/119 (50.4%) |
+| nightly main `mcb_parked` | 183/483 (37.9%) | 210/483 (43.5%) | 207/487 (42.5%) | 600/1453 (41.3%) |
+| nightly main `mcb_drive` | 2/35 (5.7%) | 0/35 (0%) | 2/35 (5.7%) | 4/105 (3.8%) |
+| nightly main `mcb_match` | 6/39 (15.4%) | 3/40 (7.5%) | 5/39 (12.8%) | 14/118 (11.9%) |
+| no-lead moving parked (speed 2, zero spin) | 101/123 (82.1%) | 77/123 (62.6%) | 101/123 (82.1%) | 279/369 (75.6%) |
+| nightly moving parked (speed 2, zero spin) | 20/122 (16.4%) | 32/123 (26.0%) | 48/122 (39.3%) | 100/367 (27.2%) |
+| no-lead spinning parked (stationary, 1 Hz spin) | 0/123 (0%) | 0/123 (0%) | 0/123 (0%) | 0/369 (0%) |
+| nightly spinning parked (stationary, 1 Hz spin) | 10/122 (8.2%) | 11/121 (9.1%) | 0/122 (0%) | 21/365 (5.8%) |
+
+Each parked total is the sum of native cell score snapshots. The no-lead
+parked cells by speed band (stationary, speed 1, speed 2, speed 4) were
+r1 123/123, 68/119, 56/119, 36/121; r2 123/123, 57/119, 59/118, 40/121;
+and r3 122/122, 53/122, 68/119, 61/122. The no-lead spinning candidate
+failed because all three repeats scored zero hits in each of the stationary
+lateral, radial and diagonal 1 Hz spin cells, below the native 10% cell
+threshold. The launch's `target_spin_hz=0` is only bring-up configuration;
+the native cases set the moving-cell spin rate. These failures show that
+spinning accuracy remains unsolved, despite stable chassis motion.
+
+| Profile / stage | loc p95 m, r1/r2/r3 | nav p95 m, r1/r2/r3 | Missing loc/nav | RELOCALIZE TX, r1/r2/r3 | max chassis displacement |
+| --- | --- | --- | --- | --- | --- |
+| no-lead parked | 0.886 / 0.661 / 1.395 | 0.945 / 0.679 / 1.348 | 0 / 0 | 30 / 28 / 39 | 3.080 / 3.027 / 3.039 mm |
+| no-lead drive | 0.203 / 0.218 / 0.247 | 0.134 / 0.244 / 0.222 | 0 / 0 | 3 / 4 / 5 | — |
+| no-lead match | 0.149 / 0.086 / 0.111 | 0.094 / 0.043 / 0.061 | 0 / 0 | 1 / 0 / 1 | — |
+| nightly main parked | 0.802 / 0.896 / 1.955 | not logged | 0 / all rows | 39 / 32 / 49 | not logged |
+| nightly main drive | 0.309 / 0.138 / 0.335 | not logged | 0 / all rows | 4 / 7 / 5 | — |
+| nightly main match | 0.187 / 1.203 / 0.133 | not logged | 0 / all rows | 5 / 18 / 3 | — |
+| no-lead moving parked | 0.377 / 0.226 / 0.210 | 0.376 / 0.227 / 0.210 | 0 / 0 | 7 / 4 / 4 | 0.677 / 0.560 / 0.476 mm |
+| no-lead spinning parked | 0.193 / 0.088 / 0.244 | 0.194 / 0.087 / 0.244 | 0 / 0 | 3 / 1 / 4 | 0.709 / 0.672 / 0.732 mm |
+| nightly moving parked | 0.227 / 0.179 / 0.326 | not logged | 0 / all rows | 8 / 3 / 6 | not logged |
+| nightly spinning parked | 0.219 / 0.217 / 0.266 | not logged | 0 / all rows | 4 / 5 / 5 | not logged |
+
+For the final no-lead profile, all route records had numeric localization and
+navigation errors (zero nulls). Nightly logs have numeric localization but
+do not contain a navigation-error field; “not logged” is not a missing
+transform count. The nightly parked archives lack `truth_xy`/parking samples,
+so their chassis displacement cannot be recovered. Powered holding kept the
+no-lead full parked sweep within 3.081 mm maximum displacement, and the
+moving/spinning parked candidates within 0.733 mm. This confirms holding
+stability in these runs; it does not resolve spinning accuracy. The parked
+localization/navigation p95 variation across repeats also remains open.
+
+The spinning score failure is specific to target accuracy, not chassis
+motion or lockstep: all candidates stayed below 0.733 mm displacement, with
+no lockstep timeout. Native checker failure cells are visible in the archived
+logs; the nightly main parked failures were r1 `speed4-lateral` and
+`stationary-diagonal`, r2 `stationary-lateral` and `speed2-radial`, and r3
+`speed4-lateral`. Nightly moving r1 failed its radial/diagonal floors; r2/r3
+passed. Nightly spinning r1 failed lateral/radial, r2 failed lateral, and r3
+failed all three cells. No failed accuracy run is counted as evidence of a
+passing floor.
+
+Final-source checks passed: firmware pure logic 35, hosted regression 5,
+UART/emulator 89, ROS sim 19 suites, thornbots 8 suites, and bridge 9 suites.
+ARM GCC 13 board and GCC 14 hosted sentry builds passed. Hardware, SLLidar, `main`,
+Humble and Mac track-I checks were skipped. Board accuracy remains unavailable:
+local Renode timed out. Moving-accuracy acceptance remains open, and native
+failures mean the system is not ready to claim reliability. The historical
+pre-track-I phases above are separate from this post-merge hosted comparison.
+
+### Error chain and changes in the final profile
+
+The parked command now latches raw aim position rather than merely requesting
+zero wheel speed. Centered DBUS drive uses the same hold. A keyboard peek-release
+trigger previously scheduled beyblade at startup despite centered DBUS input;
+it now requires keyboard mode. Navigation fixes cannot move the hold point.
+The raw-start discontinuity reanchors the latch rather than driving toward the
+old team-start point. Emulator regressions exercise correction isolation,
+displacement recovery, startup spin and reanchor behavior.
+
+Absolute 40 Hz aim updates previously became one-control-tick yaw velocity
+impulses in the 1 kHz firmware controller. The 25 ms rate filter preserves the
+mean rate, wraps yaw and clears on a target handoff. Command/achieved-angle
+replay supported zero additional hosted yaw lead after this change. The wire
+delay now contains indexing latency plus alignment wait, and firmware clamps
+short requests to immediate indexing rather than unsigned subtraction.
+Chamber-exit replay measured 94 ms; the earlier 80 ms estimate left a 14 ms
+residual. Hardware indexing and board gimbal response remain unmeasured.
+
+These diagnostics pool all three final repeats. Each number is median / p95;
+they describe stages in the error chain and must not be added as independent
+error components. Shot geometry is sampled at chamber exit and modeled impact;
+state forecasts use their own logged horizon.
+
+| Diagnostic | Drive | Match | Moving parked | Spinning parked |
+| --- | ---: | ---: | ---: | ---: |
+| Detection present / valid tracker, shots | 105/105 / 105/105 | 119/119 / 119/119 | 369/369 / 369/369 | 369/369 / 369/369 |
+| Detection age, ms | 4 / 13 | 10 / 13 | 10 / 10 | 3 / 4 |
+| Tracker age, ms | 26 / 47 | 26 / 47 | 20 / 50 | 19 / 45 |
+| Aim to closest impact panel, m | .0522 / .1142 | .0400 / .1803 | .0518 / .1707 | .0616 / .1196 |
+| Command-to-achieved absolute yaw error, deg | 1.287 / 3.657 | .645 / 3.141 | .154 / .542 | 10.085 / 11.024 |
+| Command-to-achieved absolute pitch error, deg | .291 / 1.427 | .412 / 1.441 | .642 / .882 | .701 / .829 |
+| Head TF orientation error, deg | .690 / 2.852 | .450 / 2.157 | .220 / .818 | .973 / 2.049 |
+| Native impact miss distance, m | .0444 / .0939 | not emitted | .0301 / .1009 | .1453 / .2051 |
+| State center XY error, m | .0266 / .1299 | .0358 / .1560 | .0788 / .1281 | .0323 / .0712 |
+| State velocity error, m/s | .2122 / 1.1455 | .1464 / 1.3121 | .3497 / 1.1367 | .2110 / .4946 |
+| Constant-velocity forecast error, m | .0562 / .5852 | .0568 / .5396 | .1151 / .2856 | .0541 / .1200 |
+
+Spinning misses are reproducible with detections and locks intact: the large
+near-range yaw-following error is the leading measured actuator problem.
+It exceeds the panel's angular width at the roughly 1 m range; forecast tails
+and panel transitions also remain contributors. This profile has not solved
+that case. The parked navigation p95 spread persists despite millimetre chassis
+motion, so powered holding cannot explain away the localization variation.
+No covariance policy or acceptance threshold was relaxed for these repeats.
+Detection stand-ins do not validate YOLO, occlusion or real camera timing.
+
 ## Remaining evidence gaps
 
 In the identity-aware covariance run, state center error medians were 114 mm
@@ -231,9 +368,16 @@ horizon and ballistic assumptions; a missed shot can still fall back to
 `opponent_0`. `aim_off_panel_m` remains a legacy lead/impact diagnostic and
 should not be interpreted as direct tracker-center error.
 
-The three powered-holding repeats above establish chassis stability within
-the 3 cm bound. They do not establish reliable moving-target accuracy. Fresh
-comparisons with the merged nightly board route follow in a separate section.
+The final powered-holding repeats establish chassis stability within the
+3 cm bound. Spinning accuracy and parked navigation variability remain open.
+Bridge #8 and sentry_localization #6 are ready as reviewed package layers,
+subject to coordinated deployment. Firmware #89, thornbots #13, sim #16 and
+workspace #40 remain blocked for the combined accuracy acceptance: the
+spinning floor fails and the board backend has no fresh accuracy comparison.
+Every PR remains a draft. Repository quality and actionlint passed in all
+six repositories without baseline growth. The final-source ROS checks passed
+all 19 sim, 8 thornbots and 9 bridge suites. No owned launch trees remained
+after the runs; the owned Jazzy container is stopped after final checks.
 
 ## Artifacts
 
