@@ -167,3 +167,157 @@ drained at 15.1 s and compared exactly to r2 (all three record files).
 The installed adapter's two on-demand tests pass, including watermark
 withholding and missed-tick rejection. Registered checks report 466 tests,
 zero errors/failures and 95 skips across the five affected packages.
+
+## Stationary-lateral Mac gates
+
+Final scheduling sources: sim `314259a`, thornbots `8e56c1c`, bridge
+`ab33c10`, localization `810a69c`, rf2o `06a2562`; workspace `c7489da`.
+The hosted ELF remains the pinned firmware control. Scorer r5/r6/r9 supply
+the three accepted unthrottled repeats. The accepted RTF=1 repeat and CPU2
+run compare exactly to r5: **40 shots, 600 states and 200 poses** at zero
+tolerance. Every accepted run has 20/20 MCB hits, 20/20 flag hits, zero
+timeouts and zero latest-TF fallbacks. This closes this cell's Mac gates;
+it is not a full parked-stage or combat calibration.
+
+| Run | Wall / RTF | gz wait | MCB | Vision | Path | EKF | Scorer |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| r5 | 22.21 s / 0.93 | 14.64 s | .030 s | .405 s | .0247 s | .813 s | .209 s |
+| r6 | 28.34 s / 0.67 | 21.09 s | .0375 s | .393 s | .134 s | .488 s | .254 s |
+| r9 | 30.80 s / 0.96 | 14.80 s | .019 s | .401 s | .0209 s | .479 s | .206 s |
+| RTF=1 repeat | 33.90 s / 0.76 | 18.49 s | .0192 s | .407 s | .0433 s | .481 s | .346 s |
+| CPU2 | 36.75 s / 0.50 | 28.21 s | .111 s | .542 s | .297 s | .603 s | .267 s |
+
+Waits are cumulative chain-category totals, with gz largest in every run.
+CPU2 uses `taskset -c 0,1` on the entire launch, so Gazebo inherits the same
+restriction as its ROS peers. The container allowed CPUs 0–9; no different
+CPU pair was substituted. Live Gazebo `/proc` affinity was not sampled.
+The exact event window remains [4,14), and drain ends at 15.1 s.
+
+Rejected attempts remain part of this profile: r7 missed the 0.134 s EKF
+ACK and then failed the exact-update guard after the coordinator timed out;
+r8 and the first RTF=1 attempt missed the first 0.005 s MCB ACK. No wait
+budget changed. Their runner/checker exits are 1/1. Successful native
+checks still sometimes required SIGKILL at teardown; retained logs identify
+the affected process. All owned stacks were absent after native teardown.
+
+Fixed-scorer evidence is archived as `track-a-fixed-scorer-20261015.tar.gz`,
+SHA-256 `e925f54c2e7baf804c4721700fa9b84498c9032e5c44400ffc3d051f2f3c29bf`.
+Its manifest verifies 173 payload files; the host independently checked
+the archive hash. Earlier unsuccessful and pre-final treatments are included.
+
+## Default localization regression checks
+
+The optional profile remains off in these independent native runs. Both
+drift scenarios use slip 0.15 in the harness. Runner and native log checker
+exit 0 for all three, with no log errors; thresholds are unchanged.
+
+| Native check | Measurement | Wall / RTF |
+| --- | --- | --- |
+| scan_degraded | max before .2009 m (<.4), during .4658 m (<.5), after .2324 m (<.4) | 21.30 s / 2.34 |
+| drift_correction | map-to-nav_odom change .2138 m over 30 s (<.4) | 21.82 s / 2.29 |
+| EKF ground truth | 22 samples; fused mean .0434 m vs raw .1457 m, 70.2% improvement | 25.07 s / 2.40 |
+
+The EKF check uses its unchanged defaults (slip .05, drift standard deviation
+.00). Full native stdout, timing tables, generated sim/robot logs and checker
+exits are retained under `default-validation/` in the isolated workspace.
+
+## Full hosted parked sweep — rejected
+
+The first full hosted 12-cell sweep used paused startup and ordered localization,
+with 20 scored sim seconds per cell. It used ROS domain 73 and the unique
+`track-a-hosted-parked-lockstep-20261015` Gazebo partition. The runner and
+checker both exited 1 (R/C 1/1). Only the first three cells completed with
+usable scores: stationary lateral 40/40, speed 1 lateral 32/36 and speed 2
+lateral 31/36. The speed 4 lateral cell and the remaining eight cells are
+invalid; they ran after the simulator failure and provide no scores.
+
+The failure reached the outgoing relocalization path. `mcb_relay` sent
+`RELOCALIZE` at log time 1792101364.881118781; the bridge logged TX #1 at
+1792101364.883529169. The simulator-side UART transport then reported
+sequence 3157 with capture time 78.937 s, ready time 78.938475695 s and
+current sim time 78.939 s. Gazebo aborted on the late transmit. The E2E clock
+stalled, and the coordinator accumulated 22 lockstep timeouts during teardown.
+This confirms the outgoing relocalization transport still lacks its required
+consumption barrier; the attempt is not accepted as a gate or floor sample.
+
+The first three cells had no lockstep timeouts or latest-TF fallbacks. Tracker
+logs reported zero dropped detections in the observed windows before the
+crash. That does not validate the nine unfinished cells or justify tracker
+tuning; no tracker tuning or floor changes were made. The runner, checker,
+source manifest, outcome and raw logs remain in the container at
+`/tmp/track-a-uart-20261015/hosted-parked-lockstep-r1/`.
+
+## Rejected stationary attempts and relocalization barrier
+
+The retained r7/r8/first-RTF=1 logs predate prerequisite instrumentation.
+R7's initiating missing ACK is EKF logical tick .134 s; after the coordinator's
+two-second wait it fails the exact-tick guard, then raw POSE .141 s times out.
+Recorded raw odometry .131 s does not prove that the adapter's input queue,
+MCB consumed watermark and scan receipt were all available. In particular,
+the first .100 s scan initializes rf2o without needing an odometry bracket;
+the logs do not establish a scan-prior deadlock. That prerequisite remains
+unidentified in the original attempt.
+
+R8 and the first RTF=1 attempt lack the exact .005 s MCB ACK. The first UART
+packet follows timeout by 7–8 ms; this timing is a consequence of releasing
+the hold and does not establish the original cause. Startup checked node names
+but omitted the coordinator and endpoint matching. The new startup barrier
+requires the coordinator's MCB tick subscription to match before unpausing.
+New logs retain the first five MCB publications and reader counts, ACK
+counts/ages, and blocked EKF watermarks, queued inputs and scan receipts.
+No timeout budget or estimator gain changed.
+
+The relocalization fix pairs each logical EKF update receipt with its filtered
+capture and exact raw-input cutoff. The relay makes its decision at that
+logical tick, preserving the correction's future application stamp inside a
+simulator-only envelope. The bridge sends unchanged DJI bytes with decision
+time and acknowledges correction or no-correction before physics advances.
+MCB's consumed watermark already follows same-tick CV UART consumption, so
+coincident CV/relocalization ordering is preserved.
+
+| Development attempt | Native runner/checker | Result |
+| --- | --- | --- |
+| relocalize-stationary-r1 | 1/1 | Dedicated E2E relay lacked profile parameter; missing .034 s relocalization ACK and cascades; no scored output |
+| relocalize-stationary-r2 | 0/0 | After launch wiring fix: 20/20 MCB, 20/20 flag; zero timeouts; 22.07 s wall; max parking displacement .0000678 m |
+| relocalize-stationary-r3 | 1/1 | Overbroad readiness waited for EKF publisher at sim zero; unchanged 30 s startup timeout, no score or holds |
+| relocalize-stationary-r4 | 1/1 | Subscriber-side readiness passed, but MCB published 1–5 ms with zero readers; first received tick .006 s, missing .005 s ACK; score rejected |
+| relocalize-stationary-r5 | 0/0 | Both readiness signals before unpause; first five ticks each have one reader, first ACK .001 s; 20/20 MCB and 20/20 flag; zero timeouts |
+
+The startup check now waits only for the MCB tick endpoint. The installed EKF
+requires a positive clock before creating its update publisher. The two
+real-bridge tests check capture/application stamp separation, unchanged payload
+and no-correction ACKs; two adapter tests check carried output metadata and
+exact updates. Seven coordinator tests include real publisher matching.
+
+R4 reproduces the earlier first-tick failure mechanism with direct publisher
+evidence. Coordinator readiness at wall log time 1792102371.914 preceded
+unpause at 1792102372.054, yet all five initial MCB tick publications reported
+zero matched readers. Subscriber-side publisher discovery is insufficient.
+The next revision requires publisher-side `/mcb_emulator/tick_ready` as well
+as coordinator readiness, and services the MCB executor while paused.
+The initial build was interrupted when Docker status/helper calls and direct Colima
+SSH banner exchange became unresponsive before this revision could build;
+the reused VM/container were not restarted.
+
+After recovery, r5 validates the complete scored window with the publisher-side
+barrier: 15.1 sim seconds in 26.0 coordinator wall seconds, 4,529 holds,
+RTF .69 and zero timeouts. Maximum parking displacement is .0000678 m.
+The temporary .100 s EKF hold reports MCB watermark .099 s and then clears;
+no .134 s failure recurs in this attempt. It is one accepted cell, not the
+remaining repeatability gates or calibration. The old r7 prerequisite remains
+unproved rather than assigned a speculative cause.
+
+The host archive audit also corrected the earlier investigation's nightly
+match denominator: r1/r2/r3 contain 20/36, 20/36 and 20/38 actual MCB enemy
+hits, totaling **60/110 (54.5%)**. Each native run was accepted; separate flag
+records are excluded. The earlier history treatment remains 60/106 (56.6%).
+The three hosted drive controls remain 88/96 nightly versus 88/91 history.
+These are earlier profiles, not calibration or acceptance of this revision.
+
+The rejected full sweep, default localization regressions, development
+stationary r1–r4 and their scripts/test logs are archived in
+`track-a-relocalize-diagnostics-20261015.tar.gz`, SHA-256
+`8e7bd0601969d6fdbf503b12bf3a0c19f5371930ff0aafeb6aa14884f964c247`.
+All 94 payload hashes verified; the host independently checked the archive
+hash and listing. Docker and direct SSH recovered without a VM/container
+restart by this task; runtime validation resumed afterward.

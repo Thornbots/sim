@@ -21,6 +21,7 @@
 #include <lifecycle_msgs/msg/state.hpp>
 #include <lifecycle_msgs/srv/get_state.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/header.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -64,6 +65,14 @@ public:
       "lifecycle_nodes", std::vector<std::string>{"map_server", "amcl"});
     timeout_s_ = declare_parameter<double>("timeout_s", 30.0);
     world_ = declare_parameter<std::string>("world", "ARCC_Field_2026");
+    ready_topics_ = declare_parameter<std::vector<std::string>>(
+      "ready_topics", std::vector<std::string>{});
+    for (const auto & topic : ready_topics_) {
+      if (topic.empty()) {
+        throw std::invalid_argument("ready_topics entries cannot be empty");
+      }
+      pending_ready_topics_.insert(topic);
+    }
 
     if (required_nodes_.empty()) {
       throw std::invalid_argument("required_nodes must contain at least one node");
@@ -84,6 +93,13 @@ public:
       probe.name = name;
       probe.client = create_client<GetState>("/" + name + "/get_state");
       lifecycle_probes_.push_back(std::move(probe));
+    }
+    for (const auto & topic : pending_ready_topics_) {
+      ready_subs_.push_back(create_subscription<std_msgs::msg::Header>(
+          topic, rclcpp::QoS(1).reliable().transient_local(),
+          [this, topic](std_msgs::msg::Header::ConstSharedPtr) {
+            pending_ready_topics_.erase(topic);
+          }));
     }
 
     if (!std::getenv("GZ_IP")) {
@@ -187,6 +203,14 @@ private:
     if (failed_ || !all_lifecycle_active()) {
       return;
     }
+    if (!pending_ready_topics_.empty()) {
+      waiting_for_ = "readiness on";
+      for (const auto & topic : pending_ready_topics_) {
+        waiting_for_ += " " + topic;
+      }
+      return;
+    }
+    waiting_for_ = "world statistics and models at paused sim zero";
     verify_models_and_unpause();
   }
 
@@ -294,7 +318,10 @@ private:
 
   std::vector<std::string> required_nodes_;
   std::vector<std::string> models_;
+  std::vector<std::string> ready_topics_;
+  std::set<std::string> pending_ready_topics_;
   std::vector<LifecycleProbe> lifecycle_probes_;
+  std::vector<rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr> ready_subs_;
   double timeout_s_ = 30.0;
   std::string world_;
   std::chrono::steady_clock::time_point started_;

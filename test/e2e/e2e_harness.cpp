@@ -213,14 +213,21 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   subscribe<std_msgs::msg::Header>(
       "/cv/tracker/measurement", rclcpp::QoS(100),
       [this](const auto &m) { record_input("tracker_measurement", m); });
-  for (const auto &topic : {"/odom", "/localization/odom"}) {
+  for (const auto &topic : {"/odom", "/localization/odom", "/localization/ekf_input", "/scan_odom"}) {
     subscribe<nav_msgs::msg::Odometry>(topic, rclcpp::SensorDataQoS(),
         [this, topic](const auto &m) {
           record_input(topic, m.header,
                        {{"xy", {m.pose.pose.position.x, m.pose.pose.position.y}},
+                        {"velocity_xy", {m.twist.twist.linear.x, m.twist.twist.linear.y}},
+                        {"position_variance_xy", {m.pose.covariance[0], m.pose.covariance[7]}},
                         {"child_frame_id", m.child_frame_id}});
         });
   }
+  subscribe<diagnostic_msgs::msg::DiagnosticArray>("/sim/lockstep/scan_consumed", 100,
+      [this](const auto & m) {
+        record_input("scan_consumed", m.header,
+                     {{"result", m.status.size() == 1 ? m.status[0].message : "invalid"}});
+      });
   subscribe<std_msgs::msg::Header>("/mcb_emulator/shot", rclcpp::QoS(100),
                                    [this](const auto &m) {
                                      double t = stamp_s(m.stamp);

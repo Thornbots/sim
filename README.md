@@ -1280,7 +1280,10 @@ establish identical shot sequences or finish workspace T17.
 The experimental `paused_startup:=true` profile starts the world paused at
 sim zero and waits for the required node graph, active map/AMCL lifecycle
 states and spawned models before unpausing. A failed startup remains a failed
-acceptance attempt. This profile selects capture-stamped UART, zero-phase
+acceptance attempt. The coordinator's MCB tick subscription and the MCB's
+tick publisher must both report a matched peer before unpausing. EKF initialization
+requires the first positive clock, so its update publisher joins afterward.
+This profile selects capture-stamped UART, zero-phase
 detector captures, keyed noise and exact acknowledgments for opponent paths,
 tracker/aim state, raw-POSE TF availability and scorer input recording.
 Coordinator acknowledgment topics prefixed with `gz:` carry `gz.msgs.Time`;
@@ -1294,6 +1297,8 @@ The separate `lockstep_localization:=true` experiment requires paused startup
 and lockstep. It selects the owning package's
 [ordered-input filter adapter](../sentry_localization/README.md#testing),
 strict scan-time rf2o prerequisites and an EKF update acknowledgment chain.
+That chain includes the relay's captured-input decision and the bridge's
+relocalization UART send acknowledgment, including no-correction updates.
 Paused startup also fixes Gazebo's RNG seed, including lidar noise.
 All stages/backends still require the complete repeatability gates.
 The native harness uses exact 50 ms scorer acknowledgments in this profile.

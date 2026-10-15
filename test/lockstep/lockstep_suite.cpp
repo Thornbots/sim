@@ -45,6 +45,9 @@ protected:
         [this](diagnostic_msgs::msg::DiagnosticStatus::ConstSharedPtr msg) {
           for (const auto &v : msg->values) status_[v.key] = v.value;
         });
+    coordinator_ready_sub_ = node_->create_subscription<std_msgs::msg::Header>(
+        "/sim/lockstep/coordinator_ready", rclcpp::QoS(1).reliable().transient_local(),
+        [this](std_msgs::msg::Header::ConstSharedPtr) { coordinator_ready_ = true; });
     gz_ = std::make_unique<gz::transport::Node>();
     release_ = gz_->Advertise<gz::msgs::Time>("/sim/lockstep/release");
     gz_ack_ = gz_->Advertise<gz::msgs::Time>("/lockstep_test/gz_ack");
@@ -135,6 +138,8 @@ protected:
   }
   std::shared_ptr<rclcpp::Node> node_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ack_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr coordinator_ready_sub_;
+  bool coordinator_ready_ = false;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticStatus>::SharedPtr status_sub_;
   std::map<std::string, std::string> status_;
   std::atomic<int64_t> held_{-1}, clock_{-1};
@@ -148,6 +153,18 @@ protected:
   gz::transport::Node::Publisher release_;
   gz::transport::Node::Publisher gz_ack_;
 };
+
+TEST_F(Lockstep, CoordinatorReadinessWaitsForAckPublisherMatch) {
+  ack_.reset();
+  coordinator();
+  ASSERT_TRUE(wait([&] {
+    return coordinator_->read_log().find("lockstep: 1 chains, 1 acks") != std::string::npos;
+  })) << coordinator_->read_log();
+  EXPECT_FALSE(wait([&]() { return coordinator_ready_; }, 0.25));
+
+  ack_ = node_->create_publisher<std_msgs::msg::Header>("/lockstep_test/ack", 100);
+  ASSERT_TRUE(wait([&]() { return coordinator_ready_; }, 5.0)) << coordinator_->read_log();
+}
 
 TEST_F(Lockstep, HeldClockMatchesPhysicsAndAdvancesOnlyOnRelease) {
   start(false);

@@ -100,6 +100,8 @@ public:
     });
     shots_ = node_->create_publisher<std_msgs::msg::Header>("~/shot", 100);
     ticks_ = node_->create_publisher<std_msgs::msg::Header>("~/tick", 100);
+    tick_ready_ = node_->create_publisher<std_msgs::msg::Header>(
+      "~/tick_ready", rclcpp::QoS(1).reliable().transient_local());
     consumed_ticks_ = node_->create_publisher<std_msgs::msg::Header>("~/consumed_tick", 100);
     const auto aim_tick_topic = sdf->Get<std::string>("aim_tick_topic", "").first;
     if (!signals_.AddCallback([this](int) {stopping_ = true;}))
@@ -179,9 +181,18 @@ public:
   }
 
   void PreUpdate(const gz::sim::UpdateInfo &info, gz::sim::EntityComponentManager &ecm) override {
-    if (info.paused || stopping_) return;
+    if (stopping_) return;
     current_time_ = std::chrono::duration<double>(info.simTime).count();
     executor_->spin_some();
+    if (!tick_ready_sent_ && ticks_->get_subscription_count() > 0) {
+      std_msgs::msg::Header ready;
+      ready.stamp = rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        info.simTime).count(), RCL_ROS_TIME);
+      tick_ready_->publish(ready);
+      tick_ready_sent_ = true;
+      RCLCPP_INFO(node_->get_logger(), "MCB tick publisher matched; ready before physics");
+    }
+    if (info.paused) return;
     const int64_t stamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     if (uart_ && !uart_work([&] {uart_->before_tick(stamp_ns);})) return;
     if (uart_ && !raw_pose_ack_sub_) uart_->take_pose_stamps();
@@ -239,6 +250,12 @@ public:
     std_msgs::msg::Header tick;
     tick.stamp = rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count());
     ticks_->publish(tick);
+    if (++tick_publications_ <= 5) {
+      RCLCPP_INFO(node_->get_logger(), "MCB tick publication %zu: physics stamp %s ns, "
+        "matched readers %zu", tick_publications_,
+        std::to_string(rclcpp::Time(tick.stamp).nanoseconds()).c_str(),
+        ticks_->get_subscription_count());
+    }
     if (firmware_->time_ms() % 10 == 0) {
       if (backend_ == "hosted") {
         sensor_msgs::msg::JointState setpoint;
@@ -351,6 +368,9 @@ private:
   std::map<int64_t, bool> aim_ticks_;
   int64_t aim_period_ns_ = 25000000;
   size_t raw_pose_holds_ = 0, aim_holds_ = 0;
+  size_t tick_publications_ = 0;
+  bool tick_ready_sent_ = false;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr tick_ready_;
   double raw_pose_wait_s_ = 0, aim_wait_s_ = 0;
   std::unique_ptr<mcb_firmware::PtyLink> pty_;
   std::unique_ptr<mcb_firmware::Firmware> firmware_;

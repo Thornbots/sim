@@ -71,6 +71,7 @@ public:
       throw std::invalid_argument("lockstep needs positive step_s/max_wait_s and nonnegative margin");
     }
     start_held_ = declare_parameter("start_held", false);
+    startup_ack_topics_ = declare_parameter("startup_ack_topics", std::vector<std::string>{});
     for (const auto & name : declare_parameter("chains", std::vector<std::string>{})) {
       Chain c;
       c.name = name;
@@ -103,6 +104,8 @@ public:
     }
     status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticStatus>(
       "/sim/lockstep/status", rclcpp::QoS(1).reliable().transient_local());
+    coordinator_ready_pub_ = create_publisher<std_msgs::msg::Header>(
+      "/sim/lockstep/coordinator_ready", rclcpp::QoS(1).reliable().transient_local());
     release_pub_ = gz_.Advertise<gz::msgs::Time>(
       declare_parameter("release_topic", std::string("/sim/lockstep/release")));
     gz_.Subscribe(declare_parameter("held_topic", std::string("/sim/lockstep/held")),
@@ -112,8 +115,16 @@ public:
     gz_.Subscribe(declare_parameter("clock_topic", std::string("/clock")),
       &LockstepCoordinator::OnClock, this);
     report_timer_ = create_wall_timer(std::chrono::seconds(1), [this] {report(false);});
+    ready_timer_ = create_wall_timer(
+      std::chrono::milliseconds(100), [this] {publish_ready_if_matched();});
     wall_start_ = last_log_ = std::chrono::steady_clock::now();
     subscribe();
+    for (const auto & topic : startup_ack_topics_) {
+      if (std::none_of(acks_.begin(), acks_.end(), [&](const auto & ack) {
+          return ack->topic == topic && ack->sub;
+        }))
+      {throw std::invalid_argument("startup ack must name a configured ROS ack: " + topic);}
+    }
     thread_ = std::thread([this] {run();});
     RCLCPP_INFO(get_logger(), "lockstep: %zu chains, %zu acks", chains_.size(), acks_.size());
   }
@@ -135,6 +146,8 @@ private:
   {
     std::string topic;
     int64_t newest_ns = kNever;
+    size_t received_count = 0;
+    std::chrono::steady_clock::time_point first_received, last_received;
     std::set<int64_t> stamps;
     rclcpp::SubscriptionBase::SharedPtr sub;
   };
@@ -194,10 +207,34 @@ private:
   void on_ack(Ack & a, int64_t ns)
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    const auto received = std::chrono::steady_clock::now();
+    if (a.received_count == 0) {
+      a.first_received = received;
+      RCLCPP_INFO(get_logger(), "lockstep: first ack on %s at %.3f s",
+        a.topic.c_str(), ns * 1e-9);
+    }
+    a.last_received = received;
+    ++a.received_count;
     a.newest_ns = std::max(a.newest_ns, ns);
     a.stamps.insert(ns);
     if (a.stamps.size() > kMaxAckStamps) {a.stamps.erase(a.stamps.begin());}
     cv_.notify_all();
+  }
+
+  void publish_ready_if_matched()
+  {
+    if (ready_published_) {return;}
+    const bool all_matched = std::all_of(acks_.begin(), acks_.end(), [this](const auto & ack) {
+        if (!startup_ack_topics_.empty() && std::find(startup_ack_topics_.begin(),
+            startup_ack_topics_.end(), ack->topic) == startup_ack_topics_.end()) {return true;}
+        return !ack->sub || ack->sub->get_publisher_count() > 0;
+      });
+    if (!all_matched) {return;}
+    std_msgs::msg::Header ready;
+    ready.stamp = now();
+    coordinator_ready_pub_->publish(ready);
+    ready_published_ = true;
+    RCLCPP_INFO(get_logger(), "lockstep: ROS ack publishers matched; coordinator ready");
   }
 
   void OnHeld(const gz::msgs::Time & msg)
@@ -310,10 +347,31 @@ private:
           ++c.timeouts;
           std::string missing;
           for (size_t i : c.acks) {
-            if (acks_[i]->stamps.count(logical_tick) == 0) {missing += " " + acks_[i]->topic;}
+            const auto & ack = *acks_[i];
+            if (ack.stamps.count(logical_tick) == 0) {
+              const auto now = std::chrono::steady_clock::now();
+              const auto first_age = ack.received_count == 0 ? -1.0 :
+                std::chrono::duration<double>(now - ack.first_received).count();
+              const auto last_age = ack.received_count == 0 ? -1.0 :
+                std::chrono::duration<double>(now - ack.last_received).count();
+              std::ostringstream detail;
+              detail.precision(3);
+              detail << " " << ack.topic << "{required=" << logical_tick * 1e-9
+                     << " newest=";
+              if (ack.newest_ns == kNever) {detail << "none";}
+              else {detail << ack.newest_ns * 1e-9;}
+              detail << " count=" << ack.received_count << " first_age_s=";
+              if (first_age < 0) {detail << "n/a";}
+              else {detail << first_age;}
+              detail << " last_age_s=";
+              if (last_age < 0) {detail << "n/a";}
+              else {detail << last_age;}
+              detail << "}";
+              missing += detail.str();
+            }
           }
           RCLCPP_ERROR(get_logger(), "lockstep timeout: %s logical stamp %.3f s, hold %.3f s, "
-            "delay %.3f s, no ack on%s", c.name.c_str(), logical_tick * 1e-9,
+            "delay %.3f s, missing ack details:%s", c.name.c_str(), logical_tick * 1e-9,
             tick * 1e-9, c.delay_ns * 1e-9, missing.c_str());
         }
         schedule(c, at);
@@ -367,11 +425,15 @@ private:
 
   gz::transport::Node::Publisher release_pub_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticStatus>::SharedPtr status_pub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr coordinator_ready_pub_;
   rclcpp::TimerBase::SharedPtr report_timer_;
+  rclcpp::TimerBase::SharedPtr ready_timer_;
   std::vector<std::shared_ptr<Ack>> acks_;
   std::vector<Chain> chains_;
+  std::vector<std::string> startup_ack_topics_;
   int64_t step_ns_ = 1000000, margin_ns_ = 50000000;
   bool start_held_ = false;
+  bool ready_published_ = false;
   std::chrono::duration<double> max_wait_{2.0};
   std::chrono::duration<double> log_period_{10.0};
   std::chrono::steady_clock::time_point wall_start_, last_log_;

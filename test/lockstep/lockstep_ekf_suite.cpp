@@ -103,6 +103,11 @@ protected:
       "/localization/odom", 100, [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
         filtered_.push_back(*msg);
       });
+    output_receipt_sub_ = node_->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+      "/sim/lockstep/ekf_output", 100,
+      [this](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr msg) {
+        output_receipts_.push_back(*msg);
+      });
   }
 
   void TearDown() override
@@ -182,6 +187,8 @@ protected:
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr consumed_pub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr input_ack_sub_, update_ack_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr filtered_sub_;
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr output_receipt_sub_;
+  std::vector<diagnostic_msgs::msg::DiagnosticArray> output_receipts_;
   std::vector<int64_t> input_acks_, update_acks_;
   std::vector<nav_msgs::msg::Odometry> filtered_;
   std::unique_ptr<sim::LaunchTree> filter_;
@@ -224,11 +231,22 @@ TEST_F(LockstepEkfSuite, RequiresConsumedWatermarkAndUsesCapturedInputs)
   std_msgs::msg::Header consumed;
   consumed.stamp = stamp(kTick);
   consumed_pub_->publish(consumed);
-  ASSERT_TRUE(spin_until([&] {return !update_acks_.empty() && !filtered_.empty();}, 5s))
+  ASSERT_TRUE(spin_until([&] {
+    return !update_acks_.empty() && !filtered_.empty() && !output_receipts_.empty();
+  }, 5s))
     << filter_->read_log();
   EXPECT_EQ(update_acks_.size(), 1u);
   EXPECT_EQ(update_acks_.front(), kTick);
   EXPECT_EQ(rclcpp::Time(filtered_.back().header.stamp).nanoseconds(), 21 * kMillisecond);
+  const auto & output = output_receipts_.back();
+  EXPECT_EQ(rclcpp::Time(output.header.stamp).nanoseconds(), kTick);
+  ASSERT_EQ(output.status.size(), 1u);
+  EXPECT_EQ(output.status[0].message, "published");
+  ASSERT_EQ(output.status[0].values.size(), 2u);
+  EXPECT_EQ(output.status[0].values[0].key, "output_stamp_ns");
+  EXPECT_EQ(output.status[0].values[0].value, std::to_string(21 * kMillisecond));
+  EXPECT_EQ(output.status[0].values[1].key, "raw_stamp_ns");
+  EXPECT_EQ(output.status[0].values[1].value, std::to_string(21 * kMillisecond));
   EXPECT_TRUE(filter_->alive()) << filter_->read_log();
 }
 

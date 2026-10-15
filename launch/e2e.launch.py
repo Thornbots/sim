@@ -199,7 +199,8 @@ def generate_launch_description():
                      'baudrate': 115200}])
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
-        parameters=[{'use_sim_time': True}])
+        parameters=[{'use_sim_time': True,
+                     'lockstep_inputs': LaunchConfiguration('lockstep_localization')}])
 
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -313,6 +314,7 @@ def generate_launch_description():
                 package='sim', executable='lockstep_coordinator', output='screen',
                 parameters=[{
                     'start_held': True,
+                    'startup_ack_topics': ['/mcb_emulator/tick'],
                     'chains': ['mcb_batch', 'vision', 'target_path'],
                     'mcb_batch.period_s': 0.005,
                     'mcb_batch.acks': ['/mcb_emulator/tick'],
@@ -325,7 +327,7 @@ def generate_launch_description():
                                          for name in opponents],
                     **({'chains': ['mcb_batch', 'vision', 'target_path', 'ekf', 'scorer'],
                         'ekf.period_s': 1.0 / 30.0,
-                        'ekf.acks': ['/sim/lockstep/ekf'],
+                        'ekf.acks': ['/sim/lockstep/ekf', '/sim/lockstep/relocalize_uart'],
                         'scorer.period_s': 0.05,
                         'scorer.acks': ['/sim/lockstep/scorer']}
                        if _is_true(context, 'lockstep_localization') else {}),
@@ -335,8 +337,14 @@ def generate_launch_description():
                         'robot_state_publisher', 'lidar_self_filter', 'mcb_emulator',
                         'dji_serial_bridge', 'mcb_relay', 'ekf_filter_node',
                         'rf2o_laser_odometry', 'map_server', 'amcl']
+            if _is_true(context, 'lockstep'):
+                required.append('lockstep_coordinator')
             startup = Node(package='sim', executable='e2e_startup', output='screen',
                            parameters=[{'required_nodes': required,
+                                        'ready_topics': [
+                                            '/sim/lockstep/coordinator_ready',
+                                            '/mcb_emulator/tick_ready']
+                                            if _is_true(context, 'lockstep') else [],
                                         'models': ['sentry'] + opponents,
                                         'timeout_s': 600.0 if context.launch_configurations[
                                             'backend'] == 'renode' else 30.0}])

@@ -47,7 +47,7 @@ per-cell score snapshots, rather than later impact completions in JSONL.
 | Stage | Selected repeats | Hits / shots | Pooled hit rate |
 | --- | --- | ---: | ---: |
 | Drive | r1 / r2 / r4 | 28/32 + 31/32 + 29/32 = 88/96 | 91.7% |
-| Match | r1 / r2 / r3 | 20/36 + 20/36 + 20/36 = 60/108 | 55.6% |
+| Match | r1 / r2 / r3 | 20/36 + 20/36 + 20/38 = 60/110 | 54.5% |
 | Parked, one 12-cell sweep | r2 | 362/428 | 84.6% |
 
 All selected runs pass the native runner and checker with zero lockstep
@@ -133,7 +133,7 @@ complete clock/consumption barrier is still missing.
 | Hosted stage | Native hits / shots by repeat | Pooled | Pinned nightly |
 | --- | --- | ---: | ---: |
 | Drive | 30/30, 31/31, 27/30 | 88/91 (96.7%) | 88/96 (91.7%) |
-| Match | 20/36, 20/34, 20/36 | 60/106 (56.6%) | 60/108 (55.6%) |
+| Match | 20/36, 20/34, 20/36 | 60/106 (56.6%) | 60/110 (54.5%) |
 
 All six repeats pass runner/checker with zero lockstep timeouts and
 zero latest-TF fallbacks. Localization/displacement diagnostics remain in the
