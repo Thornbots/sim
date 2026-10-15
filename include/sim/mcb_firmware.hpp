@@ -405,23 +405,27 @@ public:
   };
 
   Output step(int64_t cycles, const std::array<double, 10> &readings,
-              const Referee &ref) {
+              const Referee &ref,
+              const std::vector<uint8_t> &referee_packets = {}) {
     mcb_motor::Plant fixture;
-    return step(cycles, readings, ref, fixture.feedback(readings, 0, 0, 0, 0));
+    return step(cycles, readings, ref, fixture.feedback(readings, 0, 0, 0, 0),
+                {}, {}, referee_packets);
   }
 
   Output step(int64_t cycles, const std::array<double, 10> &readings,
               const Referee &ref, const mcb_motor::Feedback &motors,
               const std::array<double, 3> &external = {},
-              const std::optional<std::array<double, 6>> &imu = {}) {
+              const std::optional<std::array<double, 6>> &imu = {},
+              const std::vector<uint8_t> &referee_packets = {}) {
     if (cycles < 1 || cycles > 100) {
       throw std::invalid_argument(
           "MCB hardware ticks must contain 1..100 cycles");
     }
-    const auto packets =
-        time_ms_ == 0 || time_ms_ / 100 != (time_ms_ + cycles) / 100
-            ? referee_frames(ref)
-            : std::vector<uint8_t>{};
+    const auto packets = referee_packets.empty()
+                             ? (time_ms_ == 0 || time_ms_ / 100 != (time_ms_ + cycles) / 100
+                                    ? referee_frames(ref)
+                                    : std::vector<uint8_t>{})
+                             : referee_packets;
     std::vector<uint8_t> input;
     append_u32(input, static_cast<uint32_t>(cycles));
     for (double value : readings) {

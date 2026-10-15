@@ -53,7 +53,8 @@ protected:
     link.reset();
   }
   Run run(int ms, const std::vector<uint8_t> &frame = {},
-          const std::array<double, 10> &readings = {}, int step_ms = 5) {
+          const std::array<double, 10> &readings = {}, int step_ms = 5,
+          const std::vector<uint8_t> &referee_packets = {}) {
     wire::DJISerial parser;
     Run result;
     for (int tick = 0; tick < ms; tick += step_ms) {
@@ -61,7 +62,9 @@ protected:
         EXPECT_EQ(write(link->slave(), frame.data(), frame.size()),
                   static_cast<ssize_t>(frame.size()));
       }
-      const auto output = firmware->step(step_ms, readings, ref);
+      const auto output = firmware->step(
+          step_ms, readings, ref,
+          tick == 0 ? referee_packets : std::vector<uint8_t>{});
       result.shots.insert(result.shots.end(), output.shots.begin(),
                           output.shots.end());
       result.outputs.push_back(output);
@@ -249,6 +252,37 @@ TEST_F(McbFirmware, ReportsHitAngleRelativeToChassisHeading) {
   refs = messages<wire::RefSys>(run(100, {}, right_hit));
   ASSERT_FALSE(refs.empty());
   EXPECT_FLOAT_EQ(refs.back().delta_angle_got_hit_in, 123.0F);
+}
+TEST_F(McbFirmware, LatchesLatestHitUntilRefSysAndConsumesIt) {
+  run(100);  // Seed HP before injecting damage between periodic reports.
+
+  run(30, {}, {}, 5);
+  const std::array<double, 10> first_hit{0, 0, 0, 0, 0.45, 0, 0.05};
+  ref.current_hp = 380;
+  ref.hurt_armor_id = 1;
+  auto event = run(5, {}, first_hit, 5, hw::referee_frames(ref));
+  EXPECT_TRUE(messages<wire::RefSys>(event).empty());
+
+  // Several 1 ms control cycles clear the instantaneous hit flag before report.
+  run(25, {}, first_hit, 5);
+
+  const std::array<double, 10> latest_hit{0, 0, 0, 0, 0.8, 0, 0.05};
+  ref.current_hp = 360;
+  ref.hurt_armor_id = 3;
+  event = run(5, {}, latest_hit, 5, hw::referee_frames(ref));
+  EXPECT_TRUE(messages<wire::RefSys>(event).empty());
+
+  // Chassis heading changes from 0.75 to 0.80 rad before the 200 ms report.
+  const std::array<double, 10> report_heading{0, 0, 0, 0, 0.85, 0, 0.05};
+  const auto report = run(40, {}, report_heading, 5);
+  const auto refs = messages<wire::RefSys>(report);
+  ASSERT_FALSE(refs.empty());
+  EXPECT_NEAR(refs.back().delta_angle_got_hit_in,
+              -hw::kPi / 2 - 0.05, 1e-5);
+
+  const auto consumed = messages<wire::RefSys>(run(100, {}, report_heading));
+  ASSERT_FALSE(consumed.empty());
+  EXPECT_FLOAT_EQ(consumed.back().delta_angle_got_hit_in, 123.0F);
 }
 TEST_F(McbFirmware, StageBlocksFire) {
   ref.game_stage = 0;
