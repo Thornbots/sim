@@ -411,7 +411,7 @@ cv_dropout_probability:=0.03  # per-sample detection drop, placeholder
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
 
-`e2e.launch.py` is the match test (`../E2E_PLAN.md`). Every stage runs the
+`e2e.launch.py` is the match test (`../docs/E2E_PLAN.md`). Every stage runs the
 MCB emulator: the compiled sentry firmware (see Notes "MCB emulator") on a
 pty, with `dji_serial_bridge` and `mcb_relay` on the other end, the real CV
 chain from `target_selector` to `point_to_cv_target`, and no camera:
@@ -832,7 +832,7 @@ The suite runs them in this order.
    unmapped boxes across its -x, +y and +x edges at 1.0, 2.0 and 0.5
    m/s. It scores like `drift_correction`, on `kMaxDelta`, and logs
    each sample's `map->root` error against `/sim/raw_odom`. It also fails if
-   `actor_driver` dies mid-loop. Under `slam`, ROADMAP.md T3 also wants the
+   `actor_driver` dies mid-loop. Under `slam`, ../docs/ROADMAP.md T3 also wants the
    actors' cells checked in `/map` at the end; that check isn't built yet.
    Under `none` it scores ground-truth error, like `drift_correction`.
 6. `real_accel` drives the `drift_correction` square with every leg ramped

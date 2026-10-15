@@ -19,7 +19,7 @@ Every stage runs truth detections, the real CV stack, the selected MCB backend
 and the real UART bridge. mcb_parked scores 12 opponent cells with our robot
 parked; mcb_drive drives from spawn to center; mcb_match adds a 2v2 fight.
 Tests own their stack process group; run_tests:=false launches only the stack.
-See README.md for design rationale and ../E2E_PLAN.md for acceptance criteria.
+See README.md for design rationale and ../../docs/E2E_PLAN.md for acceptance criteria.
 """
 import json
 import math

@@ -37,8 +37,8 @@ Keep approach firing disabled until all routes reach center.
 
 ## Open
 
-- Current failures and repeatability work: [ROADMAP status](../ROADMAP.md#where-we-actually-are),
-  [match track](../ROADMAP.md#a-the-match-test), [tracker track](../ROADMAP.md#g-estimation-accuracy).
+- Current failures and repeatability work: [ROADMAP status](../docs/ROADMAP.md#where-we-actually-are),
+  [match track](../docs/ROADMAP.md#a-the-match-test), [tracker track](../docs/ROADMAP.md#g-estimation-accuracy).
   Repeat accuracy changes three times; reject lockstep timeouts.
 - Driving/match passes establish diagnostic completion; combat accuracy needs
   repeated calibrated floors: [drive](README.md#driving-and-combat-diagnostics-mcb_drive),
@@ -55,5 +55,5 @@ Keep approach firing disabled until all routes reach center.
   stalls `/clock`; only the `sim.launch.py` robot obeys VelocityControl.
 - Changes shared with `target_driver`, `cv_target_emulator`, `cv_head_aim` or
   `pose_emulator` may also need `src/bench_world.cpp`; it has its own lockstep implementation.
-- Lidar/CAD and carried-map/zone gaps: [track J](../ROADMAP.md#j-lidar-and-camera),
-  [track H](../ROADMAP.md#h-slam-at-amcls-level), [URDF export](README.md#toolssimplify_urdfcpp-and-urdfsentry_v2).
+- Lidar/CAD and carried-map/zone gaps: [track J](../docs/ROADMAP.md#j-lidar-and-camera),
+  [track H](../docs/ROADMAP.md#h-slam-at-amcls-level), [URDF export](README.md#toolssimplify_urdfcpp-and-urdfsentry_v2).
