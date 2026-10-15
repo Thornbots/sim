@@ -177,6 +177,7 @@ def generate_launch_description():
         # Patrol stays on, as on the robot: patrol frames clear `fire`, and
         # it reacquires an opponent that starts out of view or is lost.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
+                          'allow_latest_tf': 'false',
                           'pose_latency_s': LaunchConfiguration('pose_latency_s'),
                           'gimbal_lag_s': LaunchConfiguration('gimbal_lag_s'),
                           'firmware_latency_s': LaunchConfiguration('firmware_latency_s'),

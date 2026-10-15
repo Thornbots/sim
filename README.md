@@ -311,6 +311,17 @@ ros2 run sim check_bench_log /tmp/localization_drift_tests/*.log  # drift and EK
 It prints the result and the timing table, and exits 1 when a node crashed
 mid-run, a GUI couldn't open or a wait gave up.
 
+`ros2 run sim combat_repeats RUN_DIR...` audits repeat artifacts and prints
+native counts, input-age diagnostics, navigation nulls and accepted pools.
+Each directory needs an `outcome.json` with `profile` (`nightly` or `branch`),
+`backend`, `stage`, `workspace`, integer `runner_exit` and `checker_exit`;
+include `pins` to distinguish source/control manifests. Keep `launch.log` and
+`checker.log` even for failed starts. Successful runs also need `stack.log`,
+`shots.jsonl` and `scores.jsonl`. Failed starts and lockstep timeouts remain
+visible outside accepted pools; different pins and duplicate paths cannot
+be pooled. Printed worst-run-minus-ten-point floors are proposals, pending
+the [lockstep acceptance gates](../E2E_LOCKSTEP_PLAN.md#order-and-done-when).
+
 rf2o's match grades (`/scan_odom/quality`), for setting
 `sentry_localization/config/rf2o.yaml`: record beside a suite, then
 summarise.
@@ -1265,6 +1276,24 @@ This gates MCB acknowledgments, not the complete hit path: UART is not modeled
 in sim time, and the other
 CV/localization chains and wall-time bring-up remain asynchronous. It does not
 establish identical shot sequences or finish workspace T17.
+
+E2E disables the aimer's latest-TF fallback and requires its cumulative
+`/point_to_cv_target/latest_tf_fallbacks` counter to be present and zero.
+Unavailable stamped transforms withhold that aim. This closes the fallback
+escape, while the other consumption chains remain ungated. The
+[aimer](../thornbots_pkg/README.md#point_to_cv_target) owns the robot default.
+
+`inputs.jsonl` records each observed detection batch (empty batches included),
+tracker measurement acknowledgement, valid/invalid target state, raw MCB POSE,
+`/odom` and `/localization/odom` input. Rows carry capture stamp, arrival sim
+time, frame, cell and scoring state. Inspect gaps and invalid tracks alongside
+the shot-level detection/tracker ages and stamped `odom_disagreement_m` before
+tuning the tracker. Arrival order is diagnostic evidence, not a delivery
+acknowledgement or proof of deterministic consumption.
+
+`compare_runs RUN_A RUN_B` rejects absent or empty shot/state logs. An identical
+empty directory pair cannot satisfy the identical-shot gate; route/pose logs
+are compared when present in either run. Numeric tolerance defaults to zero.
 
 The on-demand transport test runs a small gz world in its own process group
 and checks the held clock, zero timer phase after a late first acknowledgment,

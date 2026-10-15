@@ -22,6 +22,7 @@
 #include <tinyxml2.h>
 namespace sim::e2e {
 void Scorer::check_lockstep() {
+  input_log_.flush();
   if (!cv_bench::options.lockstep)
     return;
   const double end = now_s();
@@ -39,8 +40,19 @@ void Scorer::check_lockstep() {
             << s.at("chain.mcb_batch.wait_s") << " s" << std::endl;
   if (std::stoll(s.at("timeouts")))
     throw std::runtime_error(s.at("timeouts") + " lockstep timeouts: invalid run");
+  if (!latest_tf_fallbacks_ || *latest_tf_fallbacks_ != 0)
+    throw std::runtime_error("lockstep: missing or nonzero aimer latest-TF fallback counter");
+  std::cout << "lockstep: 0 latest-TF fallbacks" << std::endl;
 }
 namespace cb = cv_bench;
+void Scorer::record_input(const std::string & source, const std_msgs::msg::Header & header,
+                          Json fields) {
+  fields.update({{"source", source}, {"cell", cell}, {"stamp_s", stamp_s(header.stamp)},
+                 {"arrival_sim_s", now_s()}, {"frame_id", header.frame_id},
+                 {"scoring", scoring}});
+  if (!(input_log_ << fields.dump() << '\n'))
+    throw std::runtime_error("cannot write E2E input ledger");
+}
 template <class Q, class P> Matrix iso(const Q &q, const P &p) {
   return combat::pose_matrix({p.x, p.y, p.z},
                              Eigen::Quaterniond(q.w, q.x, q.y, q.z));
@@ -88,7 +100,12 @@ Offsets urdf_offsets() {
 Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     : SimTimeNode("e2e_scorer"), stage(stage_), log_path(logpath),
       tf(get_clock()), offsets_(urdf_offsets()), listener_(tf, this, false) {
+  input_log_.open(std::filesystem::path(log_path).parent_path() / "inputs.jsonl", std::ios::app);
+  if (!input_log_) throw std::runtime_error("cannot open E2E input ledger");
   visual_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/markers", 10);
+  subscribe<std_msgs::msg::UInt64>(
+      "/point_to_cv_target/latest_tf_fallbacks", rclcpp::QoS(1).reliable().transient_local(),
+      [this](const auto &m) { latest_tf_fallbacks_ = m.data; });
   subscribe<diagnostic_msgs::msg::DiagnosticStatus>(
       "/sim/lockstep/status", rclcpp::QoS(1).reliable().transient_local(),
       [this](const auto &m) {
@@ -116,6 +133,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", rclcpp::QoS(10), [this](const auto &m) {
+        record_input("detections", m.header, {{"count", m.detections.size()}});
         if (!m.detections.empty()) detections_.push_back({stamp_s(m.header.stamp), m.detections.size()});
         while (detections_.size() > 300) detections_.pop_front();
       });
@@ -164,6 +182,8 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   subscribe<dji_serial_bridge::msg::RobotPose>(
       "/dji_serial_bridge/pose", rclcpp::SensorDataQoS(),
       [this](const auto &m) {
+        record_input("mcb_pose", m.header,
+                     {{"xy", {m.x, m.y}}, {"velocity_xy", {m.vel_x, m.vel_y}}});
         double t = stamp_s(m.header.stamp);
         mcb_poses_.push_back({t, {m.x, m.y, 0}});
         while (mcb_poses_.front().first < t - 3)
@@ -171,6 +191,9 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::TargetState>(
       "/cv/target_state", rclcpp::QoS(10), [this](const auto &m) {
+        record_input("target_state", m.header,
+                     {{"valid", m.valid}, {"track_id", m.robot_track_id},
+                      {"center", {m.center.x, m.center.y, m.center.z}}});
         state_validity_.push_back({stamp_s(m.header.stamp), m.valid});
         while (state_validity_.size() > 300) state_validity_.pop_front();
         if (m.valid) {
@@ -181,6 +204,17 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
             pending_states_.push_back(m);
         }
       });
+  subscribe<std_msgs::msg::Header>(
+      "/cv/tracker/measurement", rclcpp::QoS(100),
+      [this](const auto &m) { record_input("tracker_measurement", m); });
+  for (const auto &topic : {"/odom", "/localization/odom"}) {
+    subscribe<nav_msgs::msg::Odometry>(topic, rclcpp::SensorDataQoS(),
+        [this, topic](const auto &m) {
+          record_input(topic, m.header,
+                       {{"xy", {m.pose.pose.position.x, m.pose.pose.position.y}},
+                        {"child_frame_id", m.child_frame_id}});
+        });
+  }
   subscribe<std_msgs::msg::Header>("/mcb_emulator/shot", rclcpp::QoS(100),
                                    [this](const auto &m) {
                                      double t = stamp_s(m.stamp);

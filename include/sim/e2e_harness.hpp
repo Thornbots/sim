@@ -28,9 +28,11 @@
 #include <dji_serial_bridge/msg/target_state.hpp>
 #include <gz/transport/Node.hh>
 #include <deque>
+#include <fstream>
 #include <nav_msgs/msg/odometry.hpp>
 #include <optional>
 #include <std_msgs/msg/header.hpp>
+#include <std_msgs/msg/u_int64.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/buffer.h>
@@ -50,6 +52,7 @@ public:
   void spin_for(double seconds) override;
   void check_lockstep();
   std::string stage, log_path;
+  std::string cell;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
   std::map<std::string, std::vector<Json>> shots;
   std::vector<Json> states, route_records;
@@ -79,6 +82,8 @@ private:
   std::map<std::pair<std::string, double>, int> flight_steps_;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions_;
   std::map<std::string, std::string> lockstep_status_;
+  std::optional<uint64_t> latest_tf_fallbacks_;
+  std::ofstream input_log_;
   rclcpp::TimerBase::SharedPtr fire_timer_, pose_timer_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr referee_client_;
   std::optional<
@@ -105,6 +110,8 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr visual_pub_;
   int visual_id_ = 0;
   void sync_referee();
+  void record_input(const std::string & source, const std_msgs::msg::Header & header,
+                    Json fields = Json::object());
 };
 double hit_rate(const std::vector<Json> &shots);
 std::string state_summary(const std::vector<Json> &states);

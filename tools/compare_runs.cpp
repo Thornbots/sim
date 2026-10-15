@@ -82,19 +82,38 @@ int main(int argc, char **argv) {
     double tolerance = 0;
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
-      if (arg == "--tol" && i + 1 < argc) tolerance = std::stod(argv[++i]);
-      else runs.push_back(arg);
+      if (arg == "--tol" && i + 1 < argc) {
+        std::size_t parsed = 0;
+        const std::string value = argv[++i];
+        tolerance = std::stod(value, &parsed);
+        if (parsed != value.size() || !std::isfinite(tolerance) || tolerance < 0) {
+          throw std::invalid_argument("--tol must be a finite, nonnegative number");
+        }
+      } else {
+        runs.push_back(arg);
+      }
     }
     if (runs.size() != 2) { std::cerr << "usage: compare_runs RUN_A RUN_B [--tol NUMBER]\n"; return 2; }
     bool same = true;
     for (const std::string name : {"shots.jsonl", "states.jsonl", "poses.jsonl", "route.jsonl"}) {
       const auto pa = std::filesystem::path(runs[0]) / name, pb = std::filesystem::path(runs[1]) / name;
       const bool exists_a = std::filesystem::exists(pa), exists_b = std::filesystem::exists(pb);
+      const bool required = name == "shots.jsonl" || name == "states.jsonl";
+      if (required && (!exists_a || !exists_b)) {
+        std::cerr << name << ": required in both runs\n";
+        same = false;
+        continue;
+      }
       if (!exists_a && !exists_b) continue;
       if (!exists_a || !exists_b) {
         std::cout << name << ": only in run " << (exists_a ? 'A' : 'B') << '\n'; same = false; continue;
       }
       const auto a = sim::tools::json_lines(pa), b = sim::tools::json_lines(pb);
+      if (required && (a.empty() || b.empty())) {
+        std::cerr << name << ": required and nonempty in both runs\n";
+        same = false;
+        continue;
+      }
       bool different = false;
       for (std::size_t i = 0; i < std::min(a.size(), b.size()); ++i) {
         std::vector<Difference> diffs;
