@@ -100,6 +100,7 @@ public:
     });
     shots_ = node_->create_publisher<std_msgs::msg::Header>("~/shot", 100);
     ticks_ = node_->create_publisher<std_msgs::msg::Header>("~/tick", 100);
+    consumed_ticks_ = node_->create_publisher<std_msgs::msg::Header>("~/consumed_tick", 100);
     const auto aim_tick_topic = sdf->Get<std::string>("aim_tick_topic", "").first;
     if (!signals_.AddCallback([this](int) {stopping_ = true;}))
       throw std::runtime_error("MCB system could not register shutdown signal callback");
@@ -122,6 +123,13 @@ public:
         });
     }
     const auto scorer_pose_ack_topic = sdf->Get<std::string>("scorer_pose_ack_topic", "").first;
+    const auto ekf_input_ack_topic = sdf->Get<std::string>("ekf_input_ack_topic", "").first;
+    if (!ekf_input_ack_topic.empty()) {
+      ekf_input_ack_sub_ = node_->create_subscription<std_msgs::msg::Header>(ekf_input_ack_topic, 100,
+        [this](std_msgs::msg::Header::ConstSharedPtr ack) {
+          ekf_input_acks_.insert(rclcpp::Time(ack->stamp).nanoseconds());
+        });
+    }
     if (!scorer_pose_ack_topic.empty()) {
       scorer_pose_ack_sub_ = node_->create_subscription<std_msgs::msg::Header>(scorer_pose_ack_topic, 100,
         [this](std_msgs::msg::Header::ConstSharedPtr ack) {
@@ -268,7 +276,8 @@ public:
         const auto started = std::chrono::steady_clock::now();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (!raw_pose_acks_.count(capture) ||
-          (scorer_pose_ack_sub_ && !scorer_pose_acks_.count(capture))) {
+          (scorer_pose_ack_sub_ && !scorer_pose_acks_.count(capture)) ||
+          (ekf_input_ack_sub_ && !ekf_input_acks_.count(capture))) {
           if (stopping_) return;
           executor_->spin_some();
           if (std::chrono::steady_clock::now() >= deadline)
@@ -278,12 +287,18 @@ public:
         }
         raw_pose_acks_.erase(capture);
         scorer_pose_acks_.erase(capture);
+        ekf_input_acks_.erase(capture);
         ++raw_pose_holds_;
         raw_pose_wait_s_ += std::chrono::duration<double>(
           std::chrono::steady_clock::now() - started).count();
       }
     }
-    if (stamp <= 0 || stamp % aim_period_ns_ != 0) return;
+    std_msgs::msg::Header consumed;
+    consumed.stamp = rclcpp::Time(stamp, RCL_ROS_TIME);
+    if (stamp <= 0 || stamp % aim_period_ns_ != 0) {
+      consumed_ticks_->publish(consumed);
+      return;
+    }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     const auto started = std::chrono::steady_clock::now();
     for (;;) {
@@ -299,6 +314,7 @@ public:
     aim_ticks_.erase(aim_ticks_.begin(), aim_ticks_.upper_bound(stamp));
     ++aim_holds_;
     aim_wait_s_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    consumed_ticks_->publish(consumed);
   }
 
 private:
@@ -322,13 +338,16 @@ private:
   std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameters_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr shots_, ticks_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr consumed_ticks_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motors_, setpoints_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr command_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr aim_tick_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr raw_pose_ack_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr scorer_pose_ack_sub_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr ekf_input_ack_sub_;
   std::set<int64_t> raw_pose_acks_;
   std::set<int64_t> scorer_pose_acks_;
+  std::set<int64_t> ekf_input_acks_;
   std::map<int64_t, bool> aim_ticks_;
   int64_t aim_period_ns_ = 25000000;
   size_t raw_pose_holds_ = 0, aim_holds_ = 0;

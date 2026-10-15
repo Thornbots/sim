@@ -59,6 +59,9 @@ MCB_PTY = '/tmp/mcb_emulator_pty'
 
 def _sim(context):
     config = context.launch_configurations
+    if _is_true(context, 'lockstep_localization') and not (
+            _is_true(context, 'paused_startup') and _is_true(context, 'lockstep')):
+        raise RuntimeError('lockstep_localization requires paused_startup and lockstep')
     if _is_true(context, 'paused_startup') and not config['uart_socket']:
         config['uart_socket'] = f'/tmp/mcb_uart_{os.getpid()}.sock'
     windows = not _is_true(context, 'headless') and display_error() is None
@@ -83,6 +86,7 @@ def _sim(context):
                           'mcb_uart_socket': config['uart_socket'],
                           'mcb_baudrate': '115200',
                           'start_paused': config['paused_startup'],
+                          'random_seed': '2026' if _is_true(context, 'paused_startup') else '',
                           'mcb_aim_tick_topic': '/sim/lockstep/aim_tick'
                           if _is_true(context, 'paused_startup') else '',
                           'mcb_aim_period_s': '0.025',
@@ -90,6 +94,8 @@ def _sim(context):
                           if _is_true(context, 'paused_startup') else '',
                           'mcb_scorer_pose_ack_topic': '/sim/lockstep/scorer_pose'
                           if _is_true(context, 'paused_startup') else '',
+                          'mcb_ekf_input_ack_topic': '/sim/lockstep/ekf_input'
+                          if _is_true(context, 'lockstep_localization') else '',
                           'mcb_game_stage': '4',
                           'real_time_factor': config['real_time_factor'],
                           'lockstep': config['lockstep'], **spawn}.items())]
@@ -122,6 +128,8 @@ def _tests(context):
     cmd += config['pytest_args'].split()
     tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen',
                            additional_env={'MCB_SIM_UART_SOCKET': config['uart_socket'],
+                                           'MCB_LOCKSTEP_LOCALIZATION':
+                                               config['lockstep_localization'],
                                            'MCB_PAUSED_STARTUP': config['paused_startup']})
     done = RegisterEventHandler(OnProcessExit(
         target_action=tests,
@@ -219,6 +227,7 @@ def generate_launch_description():
                               "'/sim/lockstep/tracker_consumed' if '",
                               LaunchConfiguration('paused_startup'), "' == 'true' else ''"]),
                           'tracker_state_at_capture': LaunchConfiguration('paused_startup'),
+                          'lockstep_inputs': LaunchConfiguration('lockstep_localization'),
                           'aim_state_hold_s': PythonExpression([
                               "'0.014' if '", LaunchConfiguration('paused_startup'),
                               "' == 'true' else '0.0'"]),
@@ -314,6 +323,12 @@ def generate_launch_description():
                     'target_path.period_s': 0.01 if stage in DRIVING else 1.0 / 60.0,
                     'target_path.acks': [f'gz:/model/{name}/path_received'
                                          for name in opponents],
+                    **({'chains': ['mcb_batch', 'vision', 'target_path', 'ekf', 'scorer'],
+                        'ekf.period_s': 1.0 / 30.0,
+                        'ekf.acks': ['/sim/lockstep/ekf'],
+                        'scorer.period_s': 0.05,
+                        'scorer.acks': ['/sim/lockstep/scorer']}
+                       if _is_true(context, 'lockstep_localization') else {}),
                 }], condition=IfCondition(LaunchConfiguration('lockstep')))
             required = ['detector_standin', 'target_selector', 'target_tracker',
                         'point_to_cv_target', 'pose_translator', 'odom_tf_broadcaster',
@@ -338,6 +353,8 @@ def generate_launch_description():
         DeclareLaunchArgument('stage', default_value='mcb_parked',
                               description='mcb_parked: 12 opponent cells, robot parked; '
                                           'mcb_drive: spawn to center; mcb_match: 2v2'),
+        DeclareLaunchArgument('lockstep_localization',
+                              default_value=os.environ.get('MCB_LOCKSTEP_LOCALIZATION', 'false')),
         DeclareLaunchArgument('firmware_fixes', default_value='true',
                               description='Deprecated: the native MCB runs its checked-out code'),
         DeclareLaunchArgument('firmware_binary', default_value='',

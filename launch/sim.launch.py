@@ -299,7 +299,9 @@ def generate_launch_description():
         launch_arguments={
             'gz_args': [world, PythonExpression([
                 "' -s' if '", LaunchConfiguration('start_paused'),
-                "' == 'true' else ' -r -s'"])],
+                "' == 'true' else ' -r -s'"]), PythonExpression([
+                    "' --seed ' + '", LaunchConfiguration('random_seed'),
+                    "' if '", LaunchConfiguration('random_seed'), "' else ''"])],
         }.items(),
     )
 
@@ -341,6 +343,8 @@ def generate_launch_description():
                                   LaunchConfiguration('mcb_raw_pose_ack_topic'),
                                   ' mcb_scorer_pose_ack_topic:=',
                                   LaunchConfiguration('mcb_scorer_pose_ack_topic'),
+                                  ' mcb_ekf_input_ack_topic:=',
+                                  LaunchConfiguration('mcb_ekf_input_ack_topic'),
                                   ' mcb_auto_fire:=', LaunchConfiguration('mcb_auto_fire'),
                                   ' name:=', robot_name]),
             '-name', robot_name,
@@ -716,6 +720,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('mcb_physics', default_value='false'),
         DeclareLaunchArgument('start_paused', default_value='false', choices=['true', 'false']),
+        DeclareLaunchArgument('random_seed', default_value='',
+                              description='Gazebo RNG seed; empty retains Gazebo default'),
         DeclareLaunchArgument('mcb_drive', default_value='stop'),
         DeclareLaunchArgument('firmware_binary', default_value=''),
         DeclareLaunchArgument('mcb_backend', default_value='hosted', choices=['hosted', 'renode']),
@@ -727,6 +733,7 @@ def generate_launch_description():
         DeclareLaunchArgument('mcb_aim_period_s', default_value='0.025'),
         DeclareLaunchArgument('mcb_raw_pose_ack_topic', default_value=''),
         DeclareLaunchArgument('mcb_scorer_pose_ack_topic', default_value=''),
+        DeclareLaunchArgument('mcb_ekf_input_ack_topic', default_value=''),
         DeclareLaunchArgument('mcb_auto_fire', default_value='true'),
         world_arg,
         lockstep_arg,

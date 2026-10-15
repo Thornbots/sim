@@ -332,6 +332,13 @@ target_include_directories(sim_uart_bridge_suite PRIVATE include)
 target_link_libraries(sim_uart_bridge_suite mcb_protocol GTest::gtest)
 ament_target_dependencies(sim_uart_bridge_suite rclcpp dji_serial_bridge)
 install(TARGETS sim_uart_bridge_suite DESTINATION lib/${PROJECT_NAME})
+add_executable(lockstep_ekf_suite test/lockstep/lockstep_ekf_suite.cpp src/process.cpp)
+target_compile_features(lockstep_ekf_suite PUBLIC cxx_std_17)
+target_include_directories(lockstep_ekf_suite PRIVATE include)
+target_link_libraries(lockstep_ekf_suite GTest::gtest)
+ament_target_dependencies(lockstep_ekf_suite
+  ament_index_cpp diagnostic_msgs nav_msgs rclcpp rosgraph_msgs std_msgs)
+install(TARGETS lockstep_ekf_suite DESTINATION lib/${PROJECT_NAME})
 
 ament_python_install_package(${PROJECT_NAME})
 

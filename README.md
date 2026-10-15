@@ -1290,6 +1290,20 @@ delay, covering the 10 ms POSE cadence, approximately 3 ms serialization and
 1 ms physics quantization. These partial barriers still require the full
 [repeatability gates](../E2E_LOCKSTEP_PLAN.md#order-and-done-when) before floors.
 
+The separate `lockstep_localization:=true` experiment requires paused startup
+and lockstep. It selects the owning package's
+[ordered-input filter adapter](../sentry_localization/README.md#testing),
+strict scan-time rf2o prerequisites and an EKF update acknowledgment chain.
+Paused startup also fixes Gazebo's RNG seed, including lidar noise.
+All stages/backends still require the complete repeatability gates.
+The native harness uses exact 50 ms scorer acknowledgments in this profile.
+It holds the first parameter reset at 1 s, settles parked cells for 3 s,
+and admits events by carried stamp in the half-open scoring window. Parameter
+services run while the external target node can answer and the scorer keeps
+pumping raw-POSE acknowledgments. Finalization occurs on a later 100 ms
+boundary after the one-second pose-join retry; pending events must be empty.
+The score cutoff remains unrounded even for arbitrary requested durations.
+
 E2E disables the aimer's latest-TF fallback and requires its cumulative
 `/point_to_cv_target/latest_tf_fallbacks` counter to be present and zero.
 Unavailable stamped transforms withhold that aim. This closes the fallback

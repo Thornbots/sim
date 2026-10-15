@@ -19,6 +19,7 @@
   <xacro:arg name="mcb_aim_period_s" default="0.025"/>
   <xacro:arg name="mcb_raw_pose_ack_topic" default=""/>
   <xacro:arg name="mcb_scorer_pose_ack_topic" default=""/>
+  <xacro:arg name="mcb_ekf_input_ack_topic" default=""/>
   <xacro:arg name="mcb_auto_fire" default="true"/>
   <!-- The gz model name, so each copy's plugin topics are its own. -->
   <xacro:arg name="name" default="sentry"/>
@@ -222,6 +223,7 @@
         <aim_period_s>$(arg mcb_aim_period_s)</aim_period_s>
         <raw_pose_ack_topic>$(arg mcb_raw_pose_ack_topic)</raw_pose_ack_topic>
         <scorer_pose_ack_topic>$(arg mcb_scorer_pose_ack_topic)</scorer_pose_ack_topic>
+        <ekf_input_ack_topic>$(arg mcb_ekf_input_ack_topic)</ekf_input_ack_topic>
         <auto_fire>$(arg mcb_auto_fire)</auto_fire>
       </plugin>
     </xacro:if>

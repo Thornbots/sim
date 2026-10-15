@@ -18,6 +18,7 @@
 #include "sim/process.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <tinyxml2.h>
 namespace sim::e2e {
@@ -101,6 +102,8 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     : SimTimeNode("e2e_scorer"), stage(stage_), log_path(logpath),
       tf(get_clock()), offsets_(urdf_offsets()), listener_(tf, this, false) {
   input_log_.open(std::filesystem::path(log_path).parent_path() / "inputs.jsonl", std::ios::app);
+  const char * fixed = std::getenv("MCB_LOCKSTEP_LOCALIZATION");
+  fixed_schedule_ = fixed && std::string(fixed) == "true";
   if (!input_log_) throw std::runtime_error("cannot open E2E input ledger");
   visual_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/markers", 10);
   subscribe<std_msgs::msg::UInt64>(
@@ -173,7 +176,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         aims_.push_back({t, {m.x, m.y, m.z}});
         while (aims_.front().first < t - 3)
           aims_.pop_front();
-        if (m.fire && scoring && t < score_until) {
+        if (m.fire && scoring && t >= score_from && t < score_until) {
           cb::append_json((std::filesystem::path(log_path).parent_path() /
                            "fire_requests.jsonl").string(),
                           {{"t", t}, {"delay_s", m.delay_ms / 1000.}});
@@ -202,7 +205,8 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           state_history_.push_back(m);
           while (state_history_.size() > 300) state_history_.pop_front();
           state_stamp = stamp_s(m.header.stamp);
-          if (scoring)
+          if (scoring && stamp_s(m.header.stamp) >= score_from &&
+            stamp_s(m.header.stamp) < score_until)
             pending_states_.push_back(m);
         }
       });
@@ -220,15 +224,23 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   subscribe<std_msgs::msg::Header>("/mcb_emulator/shot", rclcpp::QoS(100),
                                    [this](const auto &m) {
                                      double t = stamp_s(m.stamp);
-                                     if (scoring && t < score_until)
+                                     if (scoring && t >= score_from && t < score_until)
                                        pending_.push_back({"mcb", t});
                                    });
-  pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
-      if (scoring)
-        pending_poses_.push_back(now_s());
-    });
-  fire_timer_ =
-      create_timer(std::chrono::milliseconds(100), [this]() { fire_tick(); });
+  if (fixed_schedule_) {
+    scorer_ack_pub_ = create_publisher<std_msgs::msg::Header>("/sim/lockstep/scorer", 100);
+    subscribe<std_msgs::msg::Header>("/sim/lockstep/ekf", 100, [this](const auto & m) {
+        ekf_ack_stamps_.insert(rclcpp::Time(m.stamp).nanoseconds());
+        if (ekf_ack_stamps_.size() > 1000)
+          throw std::runtime_error("lockstep timeout: scorer EKF acknowledgement overflow");
+      });
+    pose_timer_ = create_wall_timer(std::chrono::milliseconds(1), [this] {fixed_tick();});
+  } else {
+    pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
+        if (scoring) pending_poses_.push_back(now_s());
+      });
+    fire_timer_ = create_timer(std::chrono::milliseconds(100), [this]() { fire_tick(); });
+  }
   if (stage == "mcb_match") {
     for (const auto &name : {"opponent_0", "opponent_1", "ally_0"}) {
       shots[name] = {};
@@ -236,7 +248,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           std::string("/sim/match/") + name + "/shot", rclcpp::QoS(100),
           [this, name](const auto &m) {
             double t = stamp_s(m.stamp);
-            if (scoring && t < score_until)
+            if (scoring && t >= score_from && t < score_until)
               pending_.push_back({name, t + .05});
           });
     }
@@ -303,7 +315,65 @@ void Scorer::reset() {
   route_records.clear();
   pending_poses_.clear();
   score_until = INFINITY;
+  score_from = fixed_schedule_ ? now_s() : -INFINITY;
   flight_steps_.clear();
+}
+void Scorer::await_boundary() {
+  if (!fixed_schedule_) throw std::logic_error("cell boundary requires fixed schedule");
+  const auto remaining = boundary_ns_ - get_clock()->now().nanoseconds();
+  if (remaining < 0) throw std::runtime_error("lockstep timeout: cell boundary already passed");
+  auto previous = get_clock()->now().nanoseconds();
+  auto progressed = std::chrono::steady_clock::now();
+  const double timeout = std::max(30.0, remaining * 1e-9 *
+      (cv_bench::options.backend == "renode" ? 120 : 20));
+  if (!wait_until([&] {
+      const auto current = get_clock()->now().nanoseconds();
+      const auto wall = std::chrono::steady_clock::now();
+      if (current < previous) throw std::runtime_error("E2E clock moved backwards during scoring");
+      if (current > previous) progressed = wall;
+      if (wall - progressed > std::chrono::seconds(5))
+        throw std::runtime_error("E2E clock stalled for five wall seconds");
+      previous = current;
+      return blocked_ns_ == boundary_ns_;
+    }, timeout, "exact cell boundary"))
+    throw std::runtime_error("lockstep timeout: missing cell boundary");
+}
+void Scorer::release_boundary(double next_s) {
+  const auto next = static_cast<int64_t>(std::llround(next_s * 1e9));
+  if (blocked_ns_ != boundary_ns_ || next <= boundary_ns_ || next % 50000000 != 0)
+    throw std::invalid_argument("cell boundary must advance on a 50 ms scorer tick");
+  boundary_ns_ = next;
+  blocked_ns_ = -1;
+  fixed_tick();
+}
+void Scorer::fixed_tick() {
+  const int64_t tick = scorer_index_ * 50000000;
+  const auto current = get_clock()->now().nanoseconds();
+  if (current < tick) return;
+  if (current > tick) throw std::runtime_error("lockstep timeout: scorer missed exact tick");
+  if (tick == boundary_ns_) {blocked_ns_ = tick; return;}
+  const auto ekf_logical = tick / 33333333 * 33333333;
+  const auto ekf_due = (ekf_logical + 999999) / 1000000 * 1000000;
+  if (!ekf_ack_stamps_.count(ekf_due)) return;
+  ekf_ack_stamps_.erase(ekf_ack_stamps_.begin(), ekf_ack_stamps_.lower_bound(ekf_due));
+  const double seconds = tick * 1e-9;
+  if (scoring && seconds >= score_from && seconds < score_until)
+    pending_poses_.push_back(seconds);
+  if (tick % 100000000 == 0) fire_tick();
+  std_msgs::msg::Header ack;
+  ack.stamp = rclcpp::Time(tick, RCL_ROS_TIME);
+  scorer_ack_pub_->publish(ack);
+  ++scorer_index_;
+}
+void Scorer::drain_to_boundary() {
+  // Keep the exact event cutoff, then finish the one-second pose-join retry
+  // on a later 100 ms fire tick before holding for finalization.
+  const auto cutoff = static_cast<int64_t>(std::llround(score_until * 1e9));
+  const auto drain = (cutoff + 1100000000 + 99999999) / 100000000 * 100000000;
+  release_boundary(drain * 1e-9);
+  await_boundary();
+  if (!pending_.empty() || !pending_states_.empty() || !pending_poses_.empty())
+    throw std::runtime_error("lockstep timeout: scorer did not drain captured events");
 }
 std::optional<Matrix> Scorer::world_T_odom(double t) {
   auto ours = histories.at("sentry")->at(t);
