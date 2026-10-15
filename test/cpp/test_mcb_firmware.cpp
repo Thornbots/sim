@@ -272,17 +272,45 @@ TEST_F(McbFirmware, LatchesLatestHitUntilRefSysAndConsumesIt) {
   event = run(5, {}, latest_hit, 5, hw::referee_frames(ref));
   EXPECT_TRUE(messages<wire::RefSys>(event).empty());
 
-  // Chassis heading changes from 0.75 to 0.80 rad before the 200 ms report.
-  const std::array<double, 10> report_heading{0, 0, 0, 0, 0.85, 0, 0.05};
+  // Head and encoder both move: chassis heading changes from 0.75 to 0.79 rad.
+  const std::array<double, 10> report_heading{0, 0, 0, 0, 0.85, 0, 0.06};
   const auto report = run(40, {}, report_heading, 5);
   const auto refs = messages<wire::RefSys>(report);
   ASSERT_FALSE(refs.empty());
   EXPECT_NEAR(refs.back().delta_angle_got_hit_in,
-              -hw::kPi / 2 - 0.05, 1e-5);
+              -hw::kPi / 2 - 0.04, 2e-5);
 
   const auto consumed = messages<wire::RefSys>(run(100, {}, report_heading));
   ASSERT_FALSE(consumed.empty());
   EXPECT_FLOAT_EQ(consumed.back().delta_angle_got_hit_in, 123.0F);
+}
+TEST_F(McbFirmware, ClearingTurnToHitFlagCancelsActiveHitTurn) {
+  run(200);
+  const auto target_x = static_cast<float>(-firmware->start_x() + 3);
+  const auto patrol = wire::kCvTargetFlagPatrol |
+                      wire::kCvTargetFlagTurnToHit;
+  const auto initial_target = wire::frame(
+      wire::CvTarget{target_x, 1, 0.2F, 0, patrol});
+  const std::array<double, 10> hit_readings{0, 0, 0, 0, 0.45, 0, 0.05};
+  const auto aimed = run(100, initial_target, hit_readings);
+  EXPECT_NEAR(aimed.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+
+  ref.current_hp = 380;
+  ref.hurt_armor_id = 1;
+  const auto hit_turn = run(5, {}, hit_readings, 5, hw::referee_frames(ref));
+  ASSERT_FALSE(hit_turn.outputs.empty());
+  const double hit_yaw = 0.4 + hw::kPi / 2;
+  const double encoder_quantum = 2 * hw::kPi / 8192 / sim::mcb_motor::kYawRatio;
+  EXPECT_NEAR(hit_turn.outputs.back().yaw, hit_yaw, encoder_quantum);
+  EXPECT_TRUE(hit_turn.shots.empty());
+
+  const auto clear_target = wire::frame(
+      wire::CvTarget{target_x, 1, 0.2F, 0, 0});
+  const auto resumed_aim = run(5, clear_target, hit_readings);
+  ASSERT_FALSE(resumed_aim.outputs.empty());
+  EXPECT_NEAR(resumed_aim.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+  EXPECT_GT(std::abs(hw::wrap(resumed_aim.outputs.back().yaw - hit_yaw)), 1.0);
+  EXPECT_TRUE(resumed_aim.shots.empty());
 }
 TEST_F(McbFirmware, StageBlocksFire) {
   ref.game_stage = 0;
