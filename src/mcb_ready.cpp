@@ -1,10 +1,11 @@
 // Copyright 2026 Thornbots. SPDX-License-Identifier: Apache-2.0
-// Exits 0 once the MCB PTY carries a CRC-valid POSE.
-// Usage: mcb_ready <pty> [wall_timeout_s=30]
+// Exits 0 for a CRC-valid PTY POSE, or an existing simulator socket listener.
+// Usage: mcb_ready <path> [wall_timeout_s=30] [--socket]
 #include <chrono>
 #include <iostream>
 #include <thread>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include "sim/mcb_protocol.hpp"
 #include <unistd.h>
 int main(int argc, char **argv) {
@@ -13,7 +14,14 @@ int main(int argc, char **argv) {
       std::chrono::seconds(argc > 2 ? std::stoi(argv[2]) : 30);
   sim::mcb_protocol::DJISerial parser;
   int fd = -1;
+  const bool socket_mode = argc > 3 && std::string(argv[3]) == "--socket";
   while (std::chrono::steady_clock::now() < deadline) {
+    if (socket_mode) {
+      struct stat status{};
+      if (stat(argv[1], &status) == 0 && S_ISSOCK(status.st_mode)) return 0;
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      continue;
+    }
     if (fd < 0) fd = open(argv[1], O_RDONLY | O_NOCTTY | O_NONBLOCK);
     if (fd >= 0) {
       uint8_t bytes[1024];

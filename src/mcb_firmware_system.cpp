@@ -18,6 +18,7 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "sim/mcb_firmware.hpp"
 #include "sim/mcb_sensors.hpp"
+#include "sim/mcb_sim_uart.hpp"
 
 namespace sim {
 class McbFirmwareSystem : public gz::sim::System,
@@ -105,20 +106,27 @@ public:
     executor_options.context = context_;
     executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(executor_options);
     executor_->add_node(node_);
-    pty_ = std::make_unique<mcb_firmware::PtyLink>(sdf->Get<std::string>("device_link", "/tmp/mcb_emulator_pty").first);
+    const auto uart_path = sdf->Get<std::string>("uart_socket", "").first;
+    if (uart_path.empty()) {
+      pty_ = std::make_unique<mcb_firmware::PtyLink>(sdf->Get<std::string>("device_link", "/tmp/mcb_emulator_pty").first);
+    } else {
+      uart_ = std::make_unique<McbSimUart>(uart_path, sdf->Get<int>("baudrate", 115200).first);
+    }
     const auto backend = sdf->Get<std::string>("backend", "hosted").first;
     if (backend != "hosted" && backend != "renode") throw std::runtime_error("Unknown MCB backend: " + backend);
     const auto adapter = backend == "renode" ?
         ament_index_cpp::get_package_prefix("sim") + "/lib/sim/mcb_type_c" : "";
-    firmware_ = std::make_unique<mcb_firmware::Firmware>(pty_->master(),
+    firmware_ = std::make_unique<mcb_firmware::Firmware>(uart_ ? uart_->firmware_fd() : pty_->master(),
         sdf->Get<std::string>("firmware_binary", "").first, drive_,
         sdf->Get<bool>("auto_fire", true).first, adapter);
+    if (uart_) uart_->child_started();
     RCLCPP_INFO(node_->get_logger(), "MCB physical motor system: %s, drive=%s",
                 firmware_->binary().c_str(), drive_.c_str());
   }
 
   ~McbFirmwareSystem() override {
     firmware_.reset();
+    uart_.reset();
     pty_.reset();
     executor_.reset();
     if (context_) context_->shutdown("MCB physics system destroyed");
@@ -128,6 +136,8 @@ public:
     if (info.paused) return;
     current_time_ = std::chrono::duration<double>(info.simTime).count();
     executor_->spin_some();
+    const int64_t stamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
+    if (uart_) uart_->before_tick(stamp_ns);
     const auto pos = body_.WorldPose(ecm);
     const auto vel = body_.WorldLinearVelocity(ecm);
     const auto rate = body_.WorldAngularVelocity(ecm);
@@ -169,6 +179,7 @@ public:
     const std::array<double, 6> imu{gyro.X(), gyro.Y(), gyro.Z(),
                                   acceleration.X(), acceleration.Y(), acceleration.Z()};
     const auto output = firmware_->step(1, readings, referee_, feedback, external_, imu);
+    if (uart_) uart_->after_tick(stamp_ns);
     plant_.commands = output.motors;
     const auto effort = plant_.gimbal_effort(yv->Data()[0], pv->Data()[0]);
     for (const auto &pair : {std::make_pair(yaw_, effort[0]), std::make_pair(pitch_, effort[1])}) {
@@ -231,6 +242,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr command_;
   std::unique_ptr<mcb_firmware::PtyLink> pty_;
   std::unique_ptr<mcb_firmware::Firmware> firmware_;
+  std::unique_ptr<McbSimUart> uart_;
 };
 }  // namespace sim
 GZ_ADD_PLUGIN(::sim::McbFirmwareSystem, gz::sim::System,

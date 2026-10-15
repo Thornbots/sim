@@ -78,6 +78,8 @@ def _sim(context):
                           'mcb_auto_fire': 'false' if config['stage'] in DRIVING else 'true',
                           'firmware_binary': config['firmware_binary'],
                           'mcb_backend': config['backend'],
+                          'mcb_uart_socket': config['uart_socket'],
+                          'mcb_baudrate': '115200',
                           'mcb_game_stage': '4',
                           'real_time_factor': config['real_time_factor'],
                           'lockstep': config['lockstep'], **spawn}.items())]
@@ -108,7 +110,8 @@ def _tests(context):
     if not _is_true(context, 'lockstep'):
         cmd.append('--no-lockstep')
     cmd += config['pytest_args'].split()
-    tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen')
+    tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen',
+                           additional_env={'MCB_SIM_UART_SOCKET': config['uart_socket']})
     done = RegisterEventHandler(OnProcessExit(
         target_action=tests,
         on_exit=lambda event, context: finish_suite(event, context, 'e2e')))
@@ -166,7 +169,9 @@ def generate_launch_description():
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
-        parameters=[{'use_sim_time': True, 'device': MCB_PTY, 'debug_log': False}])
+        parameters=[{'use_sim_time': True, 'device': MCB_PTY, 'debug_log': False,
+                     'sim_uart_socket': LaunchConfiguration('uart_socket'),
+                     'baudrate': 115200}])
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
         parameters=[{'use_sim_time': True}])
@@ -192,18 +197,20 @@ def generate_launch_description():
     match_environment = Node(
         package='sim', executable='match_environment', name='match_environment', output='screen',
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
-    # The bridge opens the pty once, so it starts after the emulator makes it.
-    uart_ready = Node(package='sim', executable='mcb_ready', arguments=[
-        MCB_PTY,
-        PythonExpression(["'600' if '", LaunchConfiguration('backend'),
-                          "' == 'renode' else '30'"]),
-    ],
-        output='screen')
-    uart_start = RegisterEventHandler(OnProcessExit(
-        target_action=uart_ready,
-        on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
-            EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
-    common = [path_bridge, opponent_driver, uart_start, uart_ready]
+
+    def uart_stack(context):
+        config = context.launch_configurations
+        socket_path = config['uart_socket']
+        ready = Node(package='sim', executable='mcb_ready', arguments=[
+            socket_path or MCB_PTY, '600' if config['backend'] == 'renode' else '30',
+            '--socket' if socket_path else '--pty'], output='screen')
+        start = RegisterEventHandler(OnProcessExit(
+            target_action=ready,
+            on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
+                EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
+        return [start, ready]
+
+    common = [path_bridge, opponent_driver, OpaqueFunction(function=uart_stack)]
     # One board batch ahead avoids outrunning the wall deadline during learning.
     coordinator = Node(
         package='sim', executable='lockstep_coordinator', output='screen',
@@ -256,6 +263,9 @@ def generate_launch_description():
                               description='MCB executable or board ELF; empty uses the '
                                           'selected backend release build'),
         DeclareLaunchArgument('backend', default_value='renode', choices=['hosted', 'renode']),
+        DeclareLaunchArgument('uart_socket',
+                              default_value=os.environ.get('MCB_SIM_UART_SOCKET', ''),
+                              description='Experimental sim-time UART socket; empty uses PTY'),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('speeds', default_value='',

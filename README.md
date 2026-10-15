@@ -1272,8 +1272,8 @@ The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.
 `lockstep:=false` retains the ungated control run.
 
-This gates MCB acknowledgments, not the complete hit path: UART is not modeled
-in sim time, and the other
+This gates MCB acknowledgments, not the complete hit path: default UART delivery
+and the other
 CV/localization chains and wall-time bring-up remain asynchronous. It does not
 establish identical shot sequences or finish workspace T17.
 
@@ -1462,6 +1462,30 @@ The UART bridge starts after `mcb_ready` observes a CRC-valid POSE on the PTY.
 It waits 30 wall seconds for hosted execution or 600 for Renode boot.
 The former ROS timer adapter
 is removed; `mcb.launch.py` uses this same physics path.
+
+##### Sim-time UART fixture
+
+An explicit E2E `uart_socket:=/tmp/unique-owned-name.sock` selects a socketpair
+for the firmware and a private Unix sequenced-packet connection to the bridge.
+The plugin schedules ten bits per byte at the explicitly shared 115200 baud,
+serializes queued frames in both directions and delivers firmware input bytes
+only at their sim-time deadlines. The bridge receives a complete unchanged DJI
+frame only after its final byte is due, preserves its carried capture stamp,
+then acknowledges parser dispatch. That acknowledgement does not prove
+downstream ROS consumption. The private envelope belongs to the
+[bridge interface](../ros2_dji_serial_bridge/README.md#parameters).
+
+Use a fresh socket path; the listener refuses existing paths and removes only
+its own socket. Empty `uart_socket` retains the PTY fixture. The socket mode
+rejects an outgoing frame that arrives after its modeled deadline, rather than
+shifting delivery into a later cycle. It remains opt-in while the aimer/relay
+and other consumption barriers are unfinished. The first whole-stack attempt
+was rejected for that late-delivery condition; see the
+[investigation](docs/track-a-uart-2026-10-15.md).
+
+Pure timeline/transport tests are registered with colcon. The on-demand
+`ros2 run sim sim_uart_bridge_suite` checks capture-stamped publication through
+the real bridge, including endpoint matching before the single-frame check.
 
 The motor plant in `include/sim/mcb_motor.hpp` returns DJI 8-byte encoder,
 signed shaft-RPM, current and temperature feedback for all ten motors. The

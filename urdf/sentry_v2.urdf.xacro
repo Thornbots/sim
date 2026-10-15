@@ -13,6 +13,8 @@
   <xacro:arg name="mcb_backend" default="hosted"/>
   <xacro:arg name="mcb_game_stage" default="4"/>
   <xacro:arg name="mcb_device_link" default="/tmp/mcb_emulator_pty"/>
+  <xacro:arg name="mcb_uart_socket" default=""/>
+  <xacro:arg name="mcb_baudrate" default="115200"/>
   <xacro:arg name="mcb_auto_fire" default="true"/>
   <!-- The gz model name, so each copy's plugin topics are its own. -->
   <xacro:arg name="name" default="sentry"/>
@@ -209,6 +211,8 @@
         <backend>$(arg mcb_backend)</backend>
         <game_stage>$(arg mcb_game_stage)</game_stage>
         <device_link>$(arg mcb_device_link)</device_link>
+        <uart_socket>$(arg mcb_uart_socket)</uart_socket>
+        <baudrate>$(arg mcb_baudrate)</baudrate>
         <auto_fire>$(arg mcb_auto_fire)</auto_fire>
       </plugin>
     </xacro:if>
