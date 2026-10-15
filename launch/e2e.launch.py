@@ -337,14 +337,13 @@ def generate_launch_description():
                         'robot_state_publisher', 'lidar_self_filter', 'mcb_emulator',
                         'dji_serial_bridge', 'mcb_relay', 'ekf_filter_node',
                         'rf2o_laser_odometry', 'map_server', 'amcl']
+            ready_topics = []
             if _is_true(context, 'lockstep'):
                 required.append('lockstep_coordinator')
+                ready_topics = ['/sim/lockstep/coordinator_ready', '/mcb_emulator/tick_ready']
             startup = Node(package='sim', executable='e2e_startup', output='screen',
                            parameters=[{'required_nodes': required,
-                                        'ready_topics': [
-                                            '/sim/lockstep/coordinator_ready',
-                                            '/mcb_emulator/tick_ready']
-                                            if _is_true(context, 'lockstep') else [],
+                                        'ready_topics': ready_topics,
                                         'models': ['sentry'] + opponents,
                                         'timeout_s': 600.0 if context.launch_configurations[
                                             'backend'] == 'renode' else 30.0}])
