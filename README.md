@@ -177,6 +177,13 @@ quarter turn), spin rate, radius and height per pair. `blackout:=true` drops eve
 undo it (`tracker_camera_latency_s:=0` to leave it undone).
 `shooter_speed:=1.0`, `target_path:=`, `speeds:=` and `panel_layout:=` work
 as on the aiming bench, and `process_noise_accel:=` sets the tracker's.
+`process_noise_radius:=`, `panel_radius_m:=` and `radius_prior_std:=` override
+the tracker's radius noise, initial radius and radius prior standard deviation;
+empty values use the node defaults declared in `target_tracker.cpp`.
+`log_innovations:=true` opts into the tracker's innovation diagnostics.
+The [G.1 investigation](docs/cv-estimation-g1-2026-10-15.md#matched-radius-and-prior-trials)
+records the radius/prior screens and their full-matrix failures; no tuning
+default or estimation limit is changed by that checkpoint.
 `chassis_spin:=9` spins our chassis (rad/s, CCW, the firmware's rate) under
 the head, which holds world yaw as the MCB's IMU loop does;
 `yaw_bearing_damping:=` (N m s/rad, default 0, unmeasured) lets the spin drag
