@@ -84,6 +84,7 @@ private:
   std::map<std::string, std::string> lockstep_status_;
   std::optional<uint64_t> latest_tf_fallbacks_;
   std::ofstream input_log_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr raw_pose_ack_pub_;
   rclcpp::TimerBase::SharedPtr fire_timer_, pose_timer_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr referee_client_;
   std::optional<

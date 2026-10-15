@@ -21,6 +21,7 @@
 // robot spawned (2026-09-29). see README.md for design rationale
 
 #include <gz/msgs/odometry.pb.h>
+#include <gz/msgs/time.pb.h>
 
 #include <chrono>
 #include <cmath>
@@ -52,8 +53,13 @@ public:
     model_ = gz::sim::Model(entity);
     const std::string topic = sdf->Get<std::string>(
       "topic", "/model/" + model_.Name(ecm) + "/path").first;
+    const std::string path_ack_topic = sdf->Get<std::string>("path_ack_topic", "").first;
     z_ = sdf->Get<double>("z", 0.0).first;
     stale_s_ = sdf->Get<double>("stale_s", 0.1).first;
+    if (!path_ack_topic.empty()) {
+      path_ack_pub_ = node_.Advertise<gz::msgs::Time>(path_ack_topic);
+      path_ack_enabled_ = true;
+    }
     node_.Subscribe(topic, &OpponentMover::OnPath, this);
   }
 
@@ -93,15 +99,20 @@ public:
 private:
   void OnPath(const gz::msgs::Odometry & msg)
   {
-    std::lock_guard<std::mutex> lock(mutex_);
-    path_ = msg;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      path_ = msg;
+    }
+    if (path_ack_enabled_) {path_ack_pub_.Publish(msg.header().stamp());}
   }
 
   gz::sim::Model model_{gz::sim::kNullEntity};
   double z_ = 0.0, stale_s_ = 0.1;
-  gz::transport::Node node_;
+  bool path_ack_enabled_ = false;
+  gz::transport::Node::Publisher path_ack_pub_;
   std::mutex mutex_;  // gz-transport calls OnPath on its own thread
   std::optional<gz::msgs::Odometry> path_;
+  gz::transport::Node node_;
 };
 
 }  // namespace sim

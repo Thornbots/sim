@@ -31,10 +31,14 @@ class TargetDriver : public rclcpp::Node {
     frame_id_ = declare_parameter("frame_id", std::string("odom"));
     declare_parameter("max_accel", 6.0);
     declare_parameter("max_spin_accel", 20.0);
-    pub_ = create_publisher<nav_msgs::msg::Odometry>("/target/ground_truth_odom", 10);
+    const bool paused_startup = declare_parameter("paused_startup", false);
+    auto qos = rclcpp::QoS(10);
+    if (paused_startup) qos.transient_local();
+    pub_ = create_publisher<nav_msgs::msg::Odometry>("/target/ground_truth_odom", qos);
     timer_ = rclcpp::create_timer(
         this, get_clock(), std::chrono::duration<double>(1.0 / rate),
         std::bind(&TargetDriver::on_timer, this));
+    if (paused_startup) publish(0.0, 0.0);
     RCLCPP_INFO(get_logger(), "target_driver ready: speed=%.2f m/s, spin=%.2f Hz, frame_id=%s",
                 target_speed_, spin_hz_, frame_id_.c_str());
   }

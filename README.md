@@ -1277,6 +1277,19 @@ and the other
 CV/localization chains and wall-time bring-up remain asynchronous. It does not
 establish identical shot sequences or finish workspace T17.
 
+The experimental `paused_startup:=true` profile starts the world paused at
+sim zero and waits for the required node graph, active map/AMCL lifecycle
+states and spawned models before unpausing. A failed startup remains a failed
+acceptance attempt. This profile selects capture-stamped UART, zero-phase
+detector captures, keyed noise and exact acknowledgments for opponent paths,
+tracker/aim state, raw-POSE TF availability and scorer input recording.
+Coordinator acknowledgment topics prefixed with `gz:` carry `gz.msgs.Time`;
+other topics carry `std_msgs/Header`. Future stamps cannot acknowledge a
+missing earlier capture. Vision consumption has a fixed 14 ms eligibility
+delay, covering the 10 ms POSE cadence, approximately 3 ms serialization and
+1 ms physics quantization. These partial barriers still require the full
+[repeatability gates](../E2E_LOCKSTEP_PLAN.md#order-and-done-when) before floors.
+
 E2E disables the aimer's latest-TF fallback and requires its cumulative
 `/point_to_cv_target/latest_tf_fallbacks` counter to be present and zero.
 Unavailable stamped transforms withhold that aim. This closes the fallback

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <deque>
 #include <string>
+#include <set>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <poll.h>
@@ -38,6 +39,19 @@ public:
   McbSimUart &operator=(const McbSimUart &) = delete;
   int firmware_fd() const {return firmware_[1];}
   void child_started() {mcb_firmware::close_fd(firmware_[1]);}
+  void poll_input(int64_t now_ns) {accept_client(); receive(now_ns);}
+  bool received_cv(int64_t stamp_ns) const {return cv_stamps_.count(stamp_ns) != 0;}
+  std::vector<int64_t> take_pose_stamps() {
+    std::vector<int64_t> result;
+    result.swap(pose_stamps_);
+    return result;
+  }
+  void wait_input() {
+    if (client_ < 0) return;
+    pollfd pfd{client_, POLLIN, 0};
+    if (::poll(&pfd, 1, 1) < 0 && errno != EINTR)
+      mcb_firmware::system_error("poll simulator UART input");
+  }
 
   void before_tick(int64_t now_ns) {
     accept_client();
@@ -63,6 +77,8 @@ public:
         if (poll(&pfd, 1, 1) < 0 && errno != EINTR)
           mcb_firmware::system_error("poll simulator UART acknowledgement");
       }
+      if (frame.bytes.size() >= 7 && frame.bytes[5] == mcb_protocol::kPose &&
+        frame.bytes[6] == 0 && frame.capture_ns > 0) pose_stamps_.push_back(frame.capture_ns);
     }
   }
 
@@ -105,6 +121,11 @@ private:
           throw std::runtime_error("lockstep timeout: late simulator UART transmit seq=" +
             std::to_string(packet->sequence) + " capture_ns=" + std::to_string(packet->stamp_ns) +
             " ready_ns=" + std::to_string(frame.ready_ns) + " now_ns=" + std::to_string(now_ns));
+        if (packet->bytes.size() >= 7 && packet->bytes[5] == mcb_protocol::kCvTarget &&
+          packet->bytes[6] == 0) {
+          cv_stamps_.insert(packet->stamp_ns);
+          if (cv_stamps_.size() > 3000) cv_stamps_.erase(cv_stamps_.begin());
+        }
       }
     }
   }
@@ -120,5 +141,7 @@ private:
   uint64_t sequence_ = 0, acked_ = 0;
   UartTimeline rx_, tx_;
   std::vector<uint8_t> buffer_;
+  std::set<int64_t> cv_stamps_;
+  std::vector<int64_t> pose_stamps_;
 };
 }  // namespace sim

@@ -39,6 +39,9 @@ public:
       control = std::make_shared<sim::SimTimeNode>("e2e_stack");
       scorer = std::make_shared<ee::Scorer>(
           cb::options.stage, cb::options.log_dir + "/shots.jsonl");
+      control->set_pump([weak = std::weak_ptr<ee::Scorer>(scorer)] {
+        if (const auto scorer = weak.lock()) scorer->spin_some();
+      });
       timing::Phase phase("bringup");
       timing::set_sim_clock([this]() { return scorer->now_s(); });
       if (cb::options.stage != "mcb_parked") {

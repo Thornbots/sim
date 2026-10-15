@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 #include <rclcpp/rclcpp.hpp>
 #include <dji_serial_bridge/msg/robot_pose.hpp>
+#include <dji_serial_bridge/msg/cv_target.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -128,6 +129,27 @@ TEST(SimUartBridge, PublishesRawPoseWithCaptureStampAndValues) {
   EXPECT_FLOAT_EQ(pose.head_pitch, raw.head_pitch);
   EXPECT_FLOAT_EQ(pose.head_yaw, raw.head_yaw);
   EXPECT_EQ(pose.odom_status, raw.odom_status);
+
+  auto cv = node->create_publisher<dji_serial_bridge::msg::CVTarget>(
+    "/dji_serial_bridge/cv_target", rclcpp::SensorDataQoS());
+  const auto tx_matching_deadline = std::chrono::steady_clock::now() + 5s;
+  while (cv->get_subscription_count() == 0 &&
+    std::chrono::steady_clock::now() < tx_matching_deadline) {
+    rclcpp::spin_some(node);
+    std::this_thread::sleep_for(5ms);
+  }
+  ASSERT_GT(cv->get_subscription_count(), 0u);
+  dji_serial_bridge::msg::CVTarget target;
+  target.header.stamp = rclcpp::Time(capture_ns);
+  target.x = 3.0F;
+  target.fire = true;
+  cv->publish(target);
+  const auto tx_deadline = std::chrono::steady_clock::now() + 5s;
+  while (!uart.received_cv(capture_ns) && std::chrono::steady_clock::now() < tx_deadline) {
+    uart.poll_input(capture_ns);
+    uart.wait_input();
+  }
+  EXPECT_TRUE(uart.received_cv(capture_ns)) << bridge.read_log();
 
   EXPECT_TRUE(bridge.alive()) << bridge.read_log();
   bridge.stop();

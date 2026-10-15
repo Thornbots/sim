@@ -42,11 +42,12 @@ namespace
 {
 constexpr const char * kWorld = "/world/ARCC_Field_2026/";
 
-std::string xacro_opponent(const std::string & name)
+std::string xacro_opponent(const std::string & name, const std::string & path_ack_topic = "")
 {
   const std::string file = ament_index_cpp::get_package_share_directory("sim") +
     "/urdf/sentry_v2.urdf.xacro";
   const std::string name_arg = "name:=" + name;
+  const std::string path_ack_arg = "path_ack_topic:=" + path_ack_topic;
   int output[2];
   if (pipe(output) < 0) {throw std::runtime_error("could not open xacro output pipe");}
   const pid_t pid = fork();
@@ -60,7 +61,7 @@ std::string xacro_opponent(const std::string & name)
     if (dup2(output[1], STDOUT_FILENO) < 0) {_exit(127);}
     close(output[1]);
     execlp("xacro", "xacro", file.c_str(), "opponent:=true", name_arg.c_str(),
-      static_cast<char *>(nullptr));
+      path_ack_arg.c_str(), static_cast<char *>(nullptr));
     _exit(127);
   }
   close(output[1]);
@@ -90,10 +91,10 @@ void visit_elements(tinyxml2::XMLElement * element,
   }
 }
 
-std::string opponent_urdf(const std::string & name)
+std::string opponent_urdf(const std::string & name, const std::string & path_ack_topic = "")
 {
   tinyxml2::XMLDocument document;
-  const std::string xml = xacro_opponent(name);
+  const std::string xml = xacro_opponent(name, path_ack_topic);
   if (document.Parse(xml.c_str()) != tinyxml2::XML_SUCCESS || !document.RootElement()) {
     throw std::runtime_error("could not parse opponent URDF");
   }
@@ -144,11 +145,18 @@ public:
   {
     name_ = declare_parameter<std::string>("name", "opponent_0");
     z_ = declare_parameter("z", -0.0115);
-    odom_sub_ = create_subscription<nav_msgs::msg::Odometry>("/target/ground_truth_odom", 10,
+    paused_startup_ = declare_parameter("paused_startup", false);
+    auto qos = rclcpp::QoS(10);
+    if (paused_startup_) qos.transient_local();
+    odom_sub_ = create_subscription<nav_msgs::msg::Odometry>("/target/ground_truth_odom", qos,
       [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
         if (!start_) {start_.emplace(msg->pose.pose.position.x, msg->pose.pose.position.y);}
       });
-    timer_ = create_timer(std::chrono::duration<double>(0.5), [this]() {spawn();});
+    if (paused_startup_) {
+      timer_ = create_wall_timer(std::chrono::milliseconds(100), [this]() {spawn();});
+    } else {
+      timer_ = create_timer(std::chrono::duration<double>(0.5), [this]() {spawn();});
+    }
   }
 
 private:
@@ -181,7 +189,9 @@ private:
     auto names = model_names();
     if (names && !present(names)) {
       gz::msgs::EntityFactory request;
-      request.set_sdf(opponent_urdf(name_));
+      const std::string path_ack_topic = paused_startup_ ?
+        "/model/" + name_ + "/path_received" : "";
+      request.set_sdf(opponent_urdf(name_, path_ack_topic));
       request.set_name(name_);
       request.set_allow_renaming(false);
       request.mutable_pose()->mutable_position()->set_x(start_->first);
@@ -202,6 +212,7 @@ private:
 
   std::string name_;
   double z_;
+  bool paused_startup_ = false;
   std::optional<std::pair<double, double>> start_;
   std::unique_ptr<gz::transport::Node> gz_node_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;

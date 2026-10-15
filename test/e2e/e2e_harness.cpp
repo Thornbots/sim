@@ -125,6 +125,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   }
   shots["flag"] = {};
   shots["mcb"] = {};
+  raw_pose_ack_pub_ = create_publisher<std_msgs::msg::Header>("/sim/lockstep/scorer_pose", 100);
   subscribe<sensor_msgs::msg::JointState>(
       "/mcb_emulator/gimbal_setpoint", rclcpp::QoS(100), [this](const auto &m) {
         if (m.position.size() != 2) return;
@@ -188,6 +189,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         mcb_poses_.push_back({t, {m.x, m.y, 0}});
         while (mcb_poses_.front().first < t - 3)
           mcb_poses_.pop_front();
+        raw_pose_ack_pub_->publish(m.header);
       });
   subscribe<dji_serial_bridge::msg::TargetState>(
       "/cv/target_state", rclcpp::QoS(10), [this](const auto &m) {
