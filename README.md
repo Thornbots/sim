@@ -1238,6 +1238,12 @@ head follows each.
 
 ### MCB emulator
 
+T31 hit-angle and report-latching status, plus a separate parked E2E
+comparison and the hosted/Renode injected-hit physics checks:
+[T31 verification](docs/t31-hit-contract-2026-10-14.md). The #14 angle-common
+drive/match comparison is in the
+[Thornbots hit-permission report](../thornbots_pkg/docs/hit-permission-2026-10-15.md).
+
 Motor-path validation: [2026-10-11 report](docs/mcb-motor-plant-2026-10-11.md).
 Raw aim/localization isolation and combat limits:
 [controlled comparison and three-repeat results](docs/aim-localization-coupling-2026-10-11.md),
@@ -1693,4 +1699,5 @@ match pass criterion is unchanged. Accuracy floors, repeated-run
 spread and standalone-versus-sequence equivalence remain uncalibrated.
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn
 are not modeled. Hurt-panel feedback is supplied, but the firmware's
-`delta_angle_got_hit_in` response still needs separate verification.
+`delta_angle_got_hit_in` response has separate
+[hosted/Renode injected-hit verification](docs/t31-hit-contract-2026-10-14.md#targeted-validation).

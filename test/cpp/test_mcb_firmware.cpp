@@ -53,7 +53,8 @@ protected:
     link.reset();
   }
   Run run(int ms, const std::vector<uint8_t> &frame = {},
-          const std::array<double, 10> &readings = {}, int step_ms = 5) {
+          const std::array<double, 10> &readings = {}, int step_ms = 5,
+          const std::vector<uint8_t> &referee_packets = {}) {
     wire::DJISerial parser;
     Run result;
     for (int tick = 0; tick < ms; tick += step_ms) {
@@ -61,7 +62,9 @@ protected:
         EXPECT_EQ(write(link->slave(), frame.data(), frame.size()),
                   static_cast<ssize_t>(frame.size()));
       }
-      const auto output = firmware->step(step_ms, readings, ref);
+      const auto output = firmware->step(
+          step_ms, readings, ref,
+          tick == 0 ? referee_packets : std::vector<uint8_t>{});
       result.shots.insert(result.shots.end(), output.shots.begin(),
                           output.shots.end());
       result.outputs.push_back(output);
@@ -249,6 +252,65 @@ TEST_F(McbFirmware, ReportsHitAngleRelativeToChassisHeading) {
   refs = messages<wire::RefSys>(run(100, {}, right_hit));
   ASSERT_FALSE(refs.empty());
   EXPECT_FLOAT_EQ(refs.back().delta_angle_got_hit_in, 123.0F);
+}
+TEST_F(McbFirmware, LatchesLatestHitUntilRefSysAndConsumesIt) {
+  run(100);  // Seed HP before injecting damage between periodic reports.
+
+  run(30, {}, {}, 5);
+  const std::array<double, 10> first_hit{0, 0, 0, 0, 0.45, 0, 0.05};
+  ref.current_hp = 380;
+  ref.hurt_armor_id = 1;
+  auto event = run(5, {}, first_hit, 5, hw::referee_frames(ref));
+  EXPECT_TRUE(messages<wire::RefSys>(event).empty());
+
+  // Several 1 ms control cycles clear the instantaneous hit flag before report.
+  run(25, {}, first_hit, 5);
+
+  const std::array<double, 10> latest_hit{0, 0, 0, 0, 0.8, 0, 0.05};
+  ref.current_hp = 360;
+  ref.hurt_armor_id = 3;
+  event = run(5, {}, latest_hit, 5, hw::referee_frames(ref));
+  EXPECT_TRUE(messages<wire::RefSys>(event).empty());
+
+  // Head and encoder both move: chassis heading changes from 0.75 to 0.79 rad.
+  const std::array<double, 10> report_heading{0, 0, 0, 0, 0.85, 0, 0.06};
+  const auto report = run(40, {}, report_heading, 5);
+  const auto refs = messages<wire::RefSys>(report);
+  ASSERT_FALSE(refs.empty());
+  EXPECT_NEAR(refs.back().delta_angle_got_hit_in,
+              -hw::kPi / 2 - 0.04, 2e-5);
+
+  const auto consumed = messages<wire::RefSys>(run(100, {}, report_heading));
+  ASSERT_FALSE(consumed.empty());
+  EXPECT_FLOAT_EQ(consumed.back().delta_angle_got_hit_in, 123.0F);
+}
+TEST_F(McbFirmware, ClearingTurnToHitFlagCancelsActiveHitTurn) {
+  run(200);
+  const auto target_x = static_cast<float>(-firmware->start_x() + 3);
+  const auto patrol = wire::kCvTargetFlagPatrol |
+                      wire::kCvTargetFlagTurnToHit;
+  const auto initial_target = wire::frame(
+      wire::CvTarget{target_x, 1, 0.2F, 0, patrol});
+  const std::array<double, 10> hit_readings{0, 0, 0, 0, 0.45, 0, 0.05};
+  const auto aimed = run(100, initial_target, hit_readings);
+  EXPECT_NEAR(aimed.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+
+  ref.current_hp = 380;
+  ref.hurt_armor_id = 1;
+  const auto hit_turn = run(5, {}, hit_readings, 5, hw::referee_frames(ref));
+  ASSERT_FALSE(hit_turn.outputs.empty());
+  const double hit_yaw = 0.4 + hw::kPi / 2;
+  const double encoder_quantum = 2 * hw::kPi / 8192 / sim::mcb_motor::kYawRatio;
+  EXPECT_NEAR(hit_turn.outputs.back().yaw, hit_yaw, encoder_quantum);
+  EXPECT_TRUE(hit_turn.shots.empty());
+
+  const auto clear_target = wire::frame(
+      wire::CvTarget{target_x, 1, 0.2F, 0, 0});
+  const auto resumed_aim = run(5, clear_target, hit_readings);
+  ASSERT_FALSE(resumed_aim.outputs.empty());
+  EXPECT_NEAR(resumed_aim.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+  EXPECT_GT(std::abs(hw::wrap(resumed_aim.outputs.back().yaw - hit_yaw)), 1.0);
+  EXPECT_TRUE(resumed_aim.shots.empty());
 }
 TEST_F(McbFirmware, StageBlocksFire) {
   ref.game_stage = 0;
