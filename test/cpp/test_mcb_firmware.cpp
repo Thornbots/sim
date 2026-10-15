@@ -53,15 +53,15 @@ protected:
     link.reset();
   }
   Run run(int ms, const std::vector<uint8_t> &frame = {},
-          const std::array<double, 10> &readings = {}) {
+          const std::array<double, 10> &readings = {}, int step_ms = 5) {
     wire::DJISerial parser;
     Run result;
-    for (int tick = 0; tick < ms; tick += 5) {
+    for (int tick = 0; tick < ms; tick += step_ms) {
       if (!frame.empty() && tick % 100 == 0) {
         EXPECT_EQ(write(link->slave(), frame.data(), frame.size()),
                   static_cast<ssize_t>(frame.size()));
       }
-      const auto output = firmware->step(5, readings, ref);
+      const auto output = firmware->step(step_ms, readings, ref);
       result.shots.insert(result.shots.end(), output.shots.begin(),
                           output.shots.end());
       result.outputs.push_back(output);
@@ -220,6 +220,35 @@ TEST_F(McbFirmware, ForwardsDamageHp) {
   const auto refs = messages<wire::RefSys>(run(200));
   ASSERT_FALSE(refs.empty());
   EXPECT_EQ(refs.back().robot_hp, 380);
+}
+TEST_F(McbFirmware, ReportsHitAngleRelativeToChassisHeading) {
+  run(100);  // Establish the previous HP before delivering damage.
+
+  // The IMU sees head yaw (0.45 rad); the encoder sees 0.05 rad, leaving
+  // a nonzero chassis heading of 0.4 rad at the hit and REF_SYS sample.
+  const std::array<double, 10> left_hit{0, 0, 0, 0, 0.45, 0, 0.05};
+  ref.current_hp = 380;
+  ref.hurt_armor_id = 1;
+  // Include the REF_SYS tick immediately after the 100 ms referee update.
+  auto refs = messages<wire::RefSys>(run(101, {}, left_hit, 1));
+  ASSERT_FALSE(refs.empty());
+  EXPECT_NEAR(refs.back().delta_angle_got_hit_in, hw::kPi / 2, 1e-5);
+
+  refs = messages<wire::RefSys>(run(100, {}, left_hit));
+  ASSERT_FALSE(refs.empty());
+  EXPECT_FLOAT_EQ(refs.back().delta_angle_got_hit_in, 123.0F);
+
+  // Repeat on the right armor with a different nonzero head/chassis heading.
+  const std::array<double, 10> right_hit{0, 0, 0, 0, 0.61, 0, 0.06};
+  ref.current_hp = 360;
+  ref.hurt_armor_id = 3;
+  refs = messages<wire::RefSys>(run(100, {}, right_hit, 1));
+  ASSERT_FALSE(refs.empty());
+  EXPECT_NEAR(refs.back().delta_angle_got_hit_in, -hw::kPi / 2, 1e-5);
+
+  refs = messages<wire::RefSys>(run(100, {}, right_hit));
+  ASSERT_FALSE(refs.empty());
+  EXPECT_FLOAT_EQ(refs.back().delta_angle_got_hit_in, 123.0F);
 }
 TEST_F(McbFirmware, StageBlocksFire) {
   ref.game_stage = 0;
