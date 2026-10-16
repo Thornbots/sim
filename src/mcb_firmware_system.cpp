@@ -297,9 +297,19 @@ public:
           (ekf_input_ack_sub_ && !ekf_input_acks_.count(capture))) {
           if (stopping_) return;
           executor_->spin_some();
-          if (std::chrono::steady_clock::now() >= deadline)
+          if (std::chrono::steady_clock::now() >= deadline) {
+            const auto ack_state = [capture](const auto &sub, const auto &acks) {
+              if (!sub) return std::string("disabled, publishers=disabled");
+              return std::string(acks.count(capture) ? "present" : "missing") +
+                ", publishers=" + std::to_string(sub->get_publisher_count());
+            };
             throw std::runtime_error("lockstep timeout: raw pose/articulated TF at " +
-              std::to_string(capture));
+              std::to_string(capture) + " ns (raw_pose_tf=" +
+              ack_state(raw_pose_ack_sub_, raw_pose_acks_) + ", scorer_pose=" +
+              ack_state(scorer_pose_ack_sub_, scorer_pose_acks_) + ", ekf_input=" +
+              ack_state(ekf_input_ack_sub_, ekf_input_acks_) + ", physics_stamp=" +
+              std::to_string(stamp) + " ns)");
+          }
           uart_->wait_input();
         }
         raw_pose_acks_.erase(capture);

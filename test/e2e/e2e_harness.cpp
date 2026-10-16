@@ -228,6 +228,14 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         record_input("scan_consumed", m.header,
                      {{"result", m.status.size() == 1 ? m.status[0].message : "invalid"}});
       });
+  for (const auto &entry : std::vector<std::pair<std::string, std::string>>{
+           {"ack_raw_pose_tf", "/sim/lockstep/raw_pose_tf"},
+           {"ack_scorer_pose", "/sim/lockstep/scorer_pose"},
+           {"ack_ekf_input", "/sim/lockstep/ekf_input"},
+           {"ack_consumed_tick", "/mcb_emulator/consumed_tick"}}) {
+    subscribe<std_msgs::msg::Header>(entry.second, rclcpp::QoS(100),
+        [this, source = entry.first](const auto &m) {record_input(source, m);});
+  }
   subscribe<std_msgs::msg::Header>("/mcb_emulator/shot", rclcpp::QoS(100),
                                    [this](const auto &m) {
                                      double t = stamp_s(m.stamp);

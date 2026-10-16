@@ -321,3 +321,43 @@ stationary r1–r4 and their scripts/test logs are archived in
 All 94 payload hashes verified; the host independently checked the archive
 hash and listing. Docker and direct SSH recovered without a VM/container
 restart by this task; runtime validation resumed afterward.
+
+## Frozen-profile stationary Mac gates
+
+The frozen profile used workspace `ae73675`, sim `fd723d5`, thornbots
+`76c8340`, bridge `fcab257`, localization `a1fbc24`, and rf2o `06a2562`.
+The accepted stationary references are `relocalize-stationary-r5`,
+`final-stationary-r2`, `final-stationary-r3` (unthrottled, 3×), and
+`final-stationary-rtf1`. Each runner and native checker exited 0. Each scored
+20/20 MCB and 20/20 flag, recorded 40/40 shots, 600 state samples and 200 pose
+samples, and had zero lockstep timeouts or latest-TF fallbacks. The latter
+three runs compare exactly to r5 in all shot, state and pose fields.
+
+| Accepted reference | Coordinator wall / RTF | Gazebo wait |
+| --- | --- | --- |
+| relocalize-stationary-r5 | 26 s / .69 | — |
+| final-stationary-r2 | 28 s / .65 | 21.16 s |
+| final-stationary-r3 | 26 s / .69 | 20.35 s |
+| final-stationary-rtf1 | 27 s / .68 | 20.87 s |
+
+Gazebo was the longest component in `final-stationary-rtf1`. A separate
+`final-stationary-cpu2` whole-launch CPU restriction is rejected (runner and
+checker 1/1): its first raw-POSE-to-TF join at capture 11 ms timed out and logged
+`Invalid frame ID "odom"`; 30 subsequent lockstep timeouts preceded a Gazebo
+crash. This constrains the full ROS stack under that restriction, not Gazebo
+alone. The first Gazebo-only attempt, `final-stationary-gz-cpu2`, also failed
+at the 11 ms join and supplies no accepted score or valid affinity proof.
+
+The diagnostic revision distinguishes each missing raw-join ACK and records
+all ACK headers in the input ledger. Its `raw-join-gz-cpu2-r1` control passes
+runner/checker 0/0, scores 20/20 MCB and 20/20 flag, and compares exactly to
+r5: 40 shots, 600 states and 200 poses. Gazebo PID 137889 was measured on
+CPUs 0–1 both before unpause and during scoring; ROS peer affinity was not
+sampled. Total wall is 22.1 s, measured RTF .90, with zero timeouts/fallbacks.
+Raw callbacks at 11/21/31 ms each saw two ACK readers, and no TF wait exceeded
+250 ms. The earlier raw-join failures do not identify the missing consumer;
+their precise cause remains unproved. No timeout, QoS or gain changed.
+
+This closes the stationary-lateral Mac controls. Remaining cells/stages,
+board validation and calibration are still open; no earlier floor proposal
+is adopted by these results.
