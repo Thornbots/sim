@@ -553,35 +553,30 @@ std::unique_ptr<Stack> run_stack(bool noise,
   }
   {
     timing::Phase phase("bringup");
-    for (int attempt = 1; attempt <= 2; ++attempt) {
-      args["part"] = "robot";
-      ++robot_runs;
-      stack->robot = std::make_unique<sim::LaunchTree>(
-          "robot", launch_command(args),
-          std::string(kLogDir) + "/robot_" + std::to_string(robot_runs) + ".log");
-      const auto end = Clock::now() + std::chrono::seconds(30);
-      bool ready = false;
-      if (attempt == 1) {
-        while (Clock::now() < end) {
-          if (helper.root(0.0)) {
-            ready = true;
-            break;
-          }
-          helper.spin_wall(0.1);
-        }
-      }
-      if (attempt == 2 || ready) {
+    args["part"] = "robot";
+    ++robot_runs;
+    const auto log = std::string(kLogDir) + "/robot_" +
+                     std::to_string(robot_runs) + ".log";
+    stack->robot = std::make_unique<sim::LaunchTree>(
+        "robot", launch_command(args), log);
+    const auto end = Clock::now() + std::chrono::seconds(30);
+    while (Clock::now() < end) {
+      if (helper.root(0.0)) {
         stack->sim_log_start = sim_tree->read_log().size();
         return stack;
       }
-      std::cout << "[robot] " << parent
-                << "->root not up after 30s; restarting the robot stack once "
-                   "(bring-up race, see _wait_for_root_chain)"
-                << std::endl;
-      stack->robot.reset();
+      helper.spin_wall(0.1);
     }
+    const auto available = [&](const std::string &from, const std::string &to) {
+      return helper.transform(from, to, 0.0) ? "ready" : "missing";
+    };
+    throw std::runtime_error(
+        "localization startup failed after 30s: odom->root=" +
+        std::string(available("odom", "root")) + ", nav_odom->odom=" +
+        available("nav_odom", "odom") + ", map->nav_odom=" +
+        (backend == "none" ? "not requested" : available("map", "nav_odom")) +
+        "; see " + log);
   }
-  return stack;
 }
 bool ready(Scenario &sc, Helper &helper) {
   timing::Phase phase("bringup");
