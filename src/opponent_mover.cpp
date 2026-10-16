@@ -23,6 +23,8 @@
 #include <gz/msgs/odometry.pb.h>
 #include <gz/msgs/time.pb.h>
 
+#include "sim/step_inputs.hpp"
+
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -69,10 +71,16 @@ public:
     if (info.paused) {
       return;
     }
+    const int64_t physics = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      info.simTime).count();
     std::optional<gz::msgs::Odometry> path;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      path = path_;
+      if (path_ack_enabled_) {
+        path = path_inputs_.before(physics);
+      } else {
+        path = path_;
+      }
     }
     if (!path) {
       return;
@@ -113,7 +121,13 @@ private:
   {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      path_ = msg;
+      if (path_ack_enabled_) {
+        const int64_t capture = msg.header().stamp().sec() * 1000000000LL +
+          msg.header().stamp().nsec();
+        path_inputs_.push(capture, msg);
+      } else {
+        path_ = msg;
+      }
     }
     if (path_ack_enabled_) {path_ack_pub_.Publish(msg.header().stamp());}
   }
@@ -126,6 +140,7 @@ private:
   std::optional<int64_t> last_traced_path_;
   std::mutex mutex_;  // gz-transport calls OnPath on its own thread
   std::optional<gz::msgs::Odometry> path_;
+  sim::StepInputs<gz::msgs::Odometry> path_inputs_;
   gz::transport::Node node_;
 };
 

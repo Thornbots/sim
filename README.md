@@ -1330,6 +1330,14 @@ For paused parked runs, `path-applied.jsonl` records each newly selected path's
 and `physics_stamp_ns` in header metadata. This observes selection timing;
 it does not change path eligibility or satisfy a consumption barrier.
 
+In the acknowledged path fixture, a capture at T first becomes eligible in
+the physics step strictly after T. The mover retains the preceding command
+when a same-step or future command arrives early. Its queue receipt still
+acknowledges capture T while physics is held at T, so the following step can
+consume it without a circular wait. Parked cell resets also wait for the
+target driver's current-boundary publication before changing parameters.
+The normal unacknowledged mover keeps its latest-command behavior.
+
 `compare_runs RUN_A RUN_B` rejects absent or empty shot/state logs. An identical
 empty directory pair cannot satisfy the identical-shot gate; route/pose logs
 are compared when present in either run. Numeric tolerance defaults to zero.

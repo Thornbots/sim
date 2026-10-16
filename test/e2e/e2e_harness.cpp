@@ -172,6 +172,8 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   if (!driving()) {
     subscribe<nav_msgs::msg::Odometry>(
         "/target/ground_truth_odom", rclcpp::QoS(100), [this](const auto &m) {
+          target_path_stamps_.insert(rclcpp::Time(m.header.stamp).nanoseconds());
+          while (target_path_stamps_.size() > 100) target_path_stamps_.erase(target_path_stamps_.begin());
           const auto &p = m.pose.pose.position;
           const auto &q = m.pose.pose.orientation;
           const auto &v = m.twist.twist.linear;
@@ -391,7 +393,8 @@ void Scorer::await_boundary() {
       if (wall - progressed > std::chrono::seconds(5))
         throw std::runtime_error("E2E clock stalled for five wall seconds");
       previous = current;
-      return blocked_ns_ == boundary_ns_;
+      return blocked_ns_ == boundary_ns_ &&
+        (driving() || target_path_stamps_.count(boundary_ns_));
     }, timeout, "exact cell boundary"))
     throw std::runtime_error("lockstep timeout: missing cell boundary");
 }

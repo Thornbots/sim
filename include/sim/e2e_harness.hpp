@@ -95,6 +95,7 @@ private:
   bool fixed_schedule_ = false;
   int64_t scorer_index_ = 1, boundary_ns_ = 1000000000, blocked_ns_ = -1;
   std::set<int64_t> ekf_ack_stamps_;
+  std::set<int64_t> target_path_stamps_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr scorer_ack_pub_;
   void fixed_tick();
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr referee_client_;

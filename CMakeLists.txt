@@ -279,6 +279,7 @@ install(TARGETS detector_standin
 # A gz system on each opponent: moves it along its path every physics step.
 add_library(opponent_mover SHARED src/opponent_mover.cpp)
 target_compile_features(opponent_mover PUBLIC cxx_std_17)
+target_include_directories(opponent_mover PRIVATE include)
 target_link_libraries(opponent_mover
   gz-sim::core gz-plugin::register gz-transport::core gz-msgs::core)
 install(TARGETS opponent_mover LIBRARY DESTINATION lib)
@@ -355,6 +356,8 @@ if(BUILD_TESTING)
   target_include_directories(test_keyed_noise PRIVATE include)
   ament_add_gtest(test_uart_timeline test/lockstep/uart_timeline_suite.cpp)
   target_include_directories(test_uart_timeline PRIVATE include)
+  ament_add_gtest(test_step_inputs test/lockstep/step_inputs_suite.cpp)
+  target_include_directories(test_step_inputs PRIVATE include)
   ament_add_gtest(test_mcb_sim_uart test/lockstep/mcb_sim_uart_suite.cpp)
   target_include_directories(test_mcb_sim_uart PRIVATE include)
   target_link_libraries(test_mcb_sim_uart mcb_protocol)
