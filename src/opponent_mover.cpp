@@ -58,6 +58,7 @@ public:
     stale_s_ = sdf->Get<double>("stale_s", 0.1).first;
     if (!path_ack_topic.empty()) {
       path_ack_pub_ = node_.Advertise<gz::msgs::Time>(path_ack_topic);
+      path_trace_pub_ = node_.Advertise<gz::msgs::Odometry>(path_ack_topic + "/applied");
       path_ack_enabled_ = true;
     }
     node_.Subscribe(topic, &OpponentMover::OnPath, this);
@@ -80,6 +81,17 @@ public:
     const double dt = t - (path->header().stamp().sec() + path->header().stamp().nsec() * 1e-9);
     if (dt < -stale_s_ || dt > stale_s_) {
       return;
+    }
+    const int64_t capture = path->header().stamp().sec() * 1000000000LL +
+      path->header().stamp().nsec();
+    if (path_ack_enabled_ && last_traced_path_ != capture) {
+      auto trace = *path;
+      auto *step = trace.mutable_header()->add_data();
+      step->set_key("physics_stamp_ns");
+      step->add_value(std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        info.simTime).count()));
+      path_trace_pub_.Publish(trace);
+      last_traced_path_ = capture;
     }
     const auto & p = path->pose();
     const auto & v = path->twist();
@@ -110,6 +122,8 @@ private:
   double z_ = 0.0, stale_s_ = 0.1;
   bool path_ack_enabled_ = false;
   gz::transport::Node::Publisher path_ack_pub_;
+  gz::transport::Node::Publisher path_trace_pub_;
+  std::optional<int64_t> last_traced_path_;
   std::mutex mutex_;  // gz-transport calls OnPath on its own thread
   std::optional<gz::msgs::Odometry> path_;
   gz::transport::Node node_;

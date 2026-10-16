@@ -1315,13 +1315,20 @@ Unavailable stamped transforms withhold that aim. This closes the fallback
 escape, while the other consumption chains remain ungated. The
 [aimer](../thornbots_pkg/README.md#point_to_cv_target) owns the robot default.
 
-`inputs.jsonl` records each observed detection batch (empty batches included),
+`inputs.jsonl` records each observed detection batch, including panel geometry
+and empty batches, parked target path commands,
 tracker measurement acknowledgement, valid/invalid target state, raw MCB POSE,
 `/odom` and `/localization/odom` input. Rows carry capture stamp, arrival sim
 time, frame, cell and scoring state. Inspect gaps and invalid tracks alongside
 the shot-level detection/tracker ages and stamped `odom_disagreement_m` before
 tuning the tracker. Arrival order is diagnostic evidence, not a delivery
 acknowledgement or proof of deterministic consumption.
+
+For paused parked runs, `path-applied.jsonl` records each newly selected path's
+`capture_ns` and its first `physics_ns`. The optional gz diagnostic topic
+`/model/opponent_0/path_received/applied` carries the original odometry header
+and `physics_stamp_ns` in header metadata. This observes selection timing;
+it does not change path eligibility or satisfy a consumption barrier.
 
 `compare_runs RUN_A RUN_B` rejects absent or empty shot/state logs. An identical
 empty directory pair cannot satisfy the identical-shot gate; route/pose logs

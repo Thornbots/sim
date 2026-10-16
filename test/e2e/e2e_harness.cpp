@@ -19,7 +19,9 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstdio>
 #include <cstdlib>
+#include <gz/msgs/odometry.pb.h>
 #include <iomanip>
+#include <mutex>
 #include <tinyxml2.h>
 namespace sim::e2e {
 void Scorer::check_lockstep() {
@@ -105,6 +107,23 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   const char * fixed = std::getenv("MCB_LOCKSTEP_LOCALIZATION");
   fixed_schedule_ = fixed && std::string(fixed) == "true";
   if (!input_log_) throw std::runtime_error("cannot open E2E input ledger");
+  if (!driving()) {
+    auto trace = std::make_shared<std::ofstream>(
+      std::filesystem::path(log_path).parent_path() / "path-applied.jsonl");
+    auto mutex = std::make_shared<std::mutex>();
+    if (!*trace) throw std::runtime_error("cannot open path application ledger");
+    gz_.Subscribe<gz::msgs::Odometry>("/model/opponent_0/path_received/applied",
+      [trace, mutex](const auto &m) {
+        Json out = {{"capture_ns", m.header().stamp().sec() * 1000000000LL +
+                      m.header().stamp().nsec()}};
+        for (const auto &data : m.header().data())
+          if (data.key() == "physics_stamp_ns" && data.value_size() == 1)
+            out["physics_ns"] = std::stoll(data.value(0));
+        std::lock_guard<std::mutex> lock(*mutex);
+        if (!(*trace << out.dump() << '\n'))
+          throw std::runtime_error("cannot write path application ledger");
+      });
+  }
   visual_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/markers", 10);
   subscribe<std_msgs::msg::UInt64>(
       "/point_to_cv_target/latest_tf_fallbacks", rclcpp::QoS(1).reliable().transient_local(),
@@ -137,10 +156,33 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", rclcpp::QoS(10), [this](const auto &m) {
-        record_input("detections", m.header, {{"count", m.detections.size()}});
+        Json panels = Json::array();
+        for (const auto &d : m.detections) {
+          Json corners = Json::array();
+          for (const auto &p : d.corners) corners.push_back({p.x, p.y, p.z});
+          panels.push_back({{"center", {d.center.x, d.center.y, d.center.z}},
+                            {"corners", corners}, {"class_id", d.class_id},
+                            {"confidence", d.confidence}, {"depth_m", d.depth_m}});
+        }
+        record_input("detections", m.header,
+                     {{"count", m.detections.size()}, {"panels", panels}});
         if (!m.detections.empty()) detections_.push_back({stamp_s(m.header.stamp), m.detections.size()});
         while (detections_.size() > 300) detections_.pop_front();
       });
+  if (!driving()) {
+    subscribe<nav_msgs::msg::Odometry>(
+        "/target/ground_truth_odom", rclcpp::QoS(100), [this](const auto &m) {
+          const auto &p = m.pose.pose.position;
+          const auto &q = m.pose.pose.orientation;
+          const auto &v = m.twist.twist.linear;
+          const auto &w = m.twist.twist.angular;
+          record_input("target_path", m.header,
+                       {{"position", {p.x, p.y, p.z}},
+                        {"orientation", {q.x, q.y, q.z, q.w}},
+                        {"velocity", {v.x, v.y, v.z}},
+                        {"angular_velocity", {w.x, w.y, w.z}}});
+        });
+  }
   subscribe<dji_serial_bridge::msg::CVTarget>(
       "/cv/target", rclcpp::SensorDataQoS(), [this](const auto &m) {
         double t = stamp_s(m.header.stamp);
