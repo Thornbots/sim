@@ -43,8 +43,9 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "sim/combat.hpp"
 #include "sim/cv_head_aim_core.hpp"
+#include "sim/combat.hpp"
+#include "sim/keyed_noise.hpp"
 #include "sim/match_scenario.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "urdf/model.h"
@@ -97,98 +98,6 @@ Matrix4 pose_matrix(const gz::msgs::Pose &pose) {
       Eigen::Quaterniond(q.w(), q.x(), q.y(), q.z()));
 }
 
-// CPython Random's integer seeding, 53-bit random(), and cached Box-Muller
-// gauss().
-class PythonRandom {
-public:
-  explicit PythonRandom(int64_t seed) {
-    uint64_t magnitude = seed < 0 ? static_cast<uint64_t>(-(seed + 1)) + 1 : static_cast<uint64_t>(seed);
-    std::vector<uint32_t> key;
-    do {
-      key.push_back(static_cast<uint32_t>(magnitude));
-      magnitude >>= 32;
-    } while (magnitude);
-    init_by_array(key);
-  }
-
-  double gauss(double sigma) {
-    double z;
-    if (next_gauss_) {
-      z = *next_gauss_;
-      next_gauss_.reset();
-    } else {
-      const double angle = random() * (2.0 * M_PI);
-      const double radius = std::sqrt(-2.0 * std::log(1.0 - random()));
-      z = std::cos(angle) * radius;
-      next_gauss_ = std::sin(angle) * radius;
-    }
-    return z * sigma;
-  }
-
-private:
-  static constexpr size_t kN = 624;
-  static constexpr size_t kM = 397;
-
-  void init_by_array(const std::vector<uint32_t> &key) {
-    state_[0] = 19650218u;
-    for (size_t i = 1; i < kN; ++i) {
-      state_[i] = 1812433253u * (state_[i - 1] ^ (state_[i - 1] >> 30)) + i;
-    }
-    size_t i = 1, j = 0;
-    for (size_t k = std::max(kN, key.size()); k > 0; --k) {
-      state_[i] =
-          (state_[i] ^ ((state_[i - 1] ^ (state_[i - 1] >> 30)) * 1664525u)) +
-          key[j] + j;
-      if (++i >= kN) {
-        state_[0] = state_[kN - 1];
-        i = 1;
-      }
-      if (++j >= key.size()) {
-        j = 0;
-      }
-    }
-    for (size_t k = kN - 1; k > 0; --k) {
-      state_[i] = (state_[i] ^
-                   ((state_[i - 1] ^ (state_[i - 1] >> 30)) * 1566083941u)) -
-                  i;
-      if (++i >= kN) {
-        state_[0] = state_[kN - 1];
-        i = 1;
-      }
-    }
-    state_[0] = 0x80000000u;
-    index_ = kN;
-  }
-
-  uint32_t next_uint32() {
-    if (index_ >= kN) {
-      for (size_t i = 0; i < kN; ++i) {
-        const uint32_t y =
-            (state_[i] & 0x80000000u) | (state_[(i + 1) % kN] & 0x7fffffffu);
-        state_[i] =
-            state_[(i + kM) % kN] ^ (y >> 1) ^ ((y & 1u) ? 0x9908b0dfu : 0u);
-      }
-      index_ = 0;
-    }
-    uint32_t y = state_[index_++];
-    y ^= y >> 11;
-    y ^= (y << 7) & 0x9d2c5680u;
-    y ^= (y << 15) & 0xefc60000u;
-    y ^= y >> 18;
-    return y;
-  }
-
-  double random() {
-    const uint32_t a = next_uint32() >> 5;
-    const uint32_t b = next_uint32() >> 6;
-    return (a * 67108864.0 + b) / 9007199254740992.0;
-  }
-
-  std::array<uint32_t, kN> state_{};
-  size_t index_ = kN;
-  std::optional<double> next_gauss_;
-};
-
 std::vector<Matrix4> armor_offsets() {
   const std::string path = ament_index_cpp::get_package_share_directory("sim") +
                            "/urdf/sentry_v2.urdf.xacro";
@@ -226,9 +135,12 @@ std::vector<Matrix4> armor_offsets() {
 class MatchEnvironment : public rclcpp::Node {
 public:
   MatchEnvironment()
-      : Node("match_environment"), random_(declare_parameter("seed", 2026)) {
+      : Node("match_environment"), seed_(declare_parameter<int64_t>("seed", 2026)) {
     declare_parameter("active", false);
     stage_ = declare_parameter("stage", std::string("mcb_drive"));
+    const bool paused_startup = declare_parameter("paused_startup", false);
+    auto path_qos = rclcpp::QoS(10);
+    if (paused_startup) path_qos.transient_local();
     for (const auto &name : kRouteNames) {
       hp_[name] = 400;
     }
@@ -239,7 +151,7 @@ public:
             : std::vector<std::string>{"opponent_0"};
     for (const auto &name : path_names_) {
       path_pubs_[name] = create_publisher<nav_msgs::msg::Odometry>(
-          "/sim/match/" + name + "/path", 10);
+          "/sim/match/" + name + "/path", path_qos);
     }
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "/sim/raw_odom", 10,
@@ -255,6 +167,7 @@ public:
         });
     timer_ =
         create_timer(std::chrono::duration<double>(0.01), [this] { tick(); });
+    if (paused_startup) tick();
     RCLCPP_INFO(get_logger(), "spawn-to-center scenario: %.2f sim seconds",
                 match_duration(stage_));
   }
@@ -457,8 +370,10 @@ private:
           (root.inverse() * Eigen::Vector4d(aim.x(), aim.y(), aim.z(), 1.0))
               .head<3>();
       auto [yaw, pitch] = sim::cv_head_aim::solve_head_angles(relative);
-      yaw += random_.gauss(0.015);
-      pitch += random_.gauss(0.015);
+      yaw +=
+          sim::keyed_noise::normal(seed_, name, current.nanoseconds(), 0) * 0.015;
+      pitch +=
+          sim::keyed_noise::normal(seed_, name, current.nanoseconds(), 1) * 0.015;
       gz::msgs::Double yaw_message;
       yaw_message.set_data(yaw);
       head_commands_.at(name)[0].Publish(yaw_message);
@@ -479,7 +394,7 @@ private:
   }
 
   std::string stage_;
-  PythonRandom random_;
+  int64_t seed_;
   std::map<std::string, int> hp_;
   Vector2 world_velocity_ = Vector2::Zero();
   std::map<std::string, Truth> truth_;

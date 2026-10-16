@@ -23,12 +23,12 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -41,6 +41,7 @@
 #include <rclcpp_components/register_node_macro.hpp>
 #include <urdf/model.h>
 
+#include "sim/keyed_noise.hpp"
 #include "sim/panel_view.hpp"
 
 namespace sim
@@ -109,7 +110,7 @@ public:
     frame_id_ = declare_parameter("frame_id", "camera");
     depth_coeff_ = declare_parameter("noise_depth_range_coeff", 0.0);
     lateral_rad_ = declare_parameter("noise_lateral_rad", 0.0);
-    rng_.seed(declare_parameter("seed", 0));
+    seed_ = declare_parameter<int64_t>("seed", 0);
     // The URDF camera's: 640x480, horizontal_fov 1.5184, 0.1-10 m.
     const int w = declare_parameter("image_width", 640);
     const int h = declare_parameter("image_height", 480);
@@ -139,13 +140,30 @@ public:
 
     pub_ = create_publisher<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", 10);
+    zero_phase_ = declare_parameter("zero_phase", false);
+    const double rate = declare_parameter("rate_hz", 60.0);
+    if (!std::isfinite(rate) || rate <= 0.0 || (zero_phase_ && rate > 1000.0))
+      throw std::invalid_argument("detector rate must be positive and fit the physics step");
+    capture_period_ns_ = static_cast<int64_t>(1e9 / rate);
     // The D435's depth rate, on the sim clock.
     timer_ = create_timer(
-      std::chrono::duration<double>(1.0 / declare_parameter("rate_hz", 60.0)),
+      std::chrono::duration<double>(1.0 / rate),
       [this]() {
         std::lock_guard<std::mutex> lock(mutex_);
-        pending_.push_back(now());
+        const auto current = now();
+        if (zero_phase_) {
+          for (;;) {
+            const auto logical = capture_index_ * capture_period_ns_;
+            const auto capture = (logical + 999999) / 1000000 * 1000000;
+            if (capture > current.nanoseconds()) break;
+            pending_.emplace_back(capture, current.get_clock_type());
+            ++capture_index_;
+          }
+        } else {
+          pending_.push_back(current);
+        }
         if (pending_.size() > kMaxPending) {
+          if (zero_phase_) throw std::runtime_error("lockstep timeout: detector capture queue overflow");
           pending_.pop_front();
         }
         drain();
@@ -238,6 +256,8 @@ private:
       }
       if (at == At::kOk) {
         publish(stamp, ours, theirs);
+      } else if (zero_phase_) {
+        throw std::runtime_error("lockstep timeout: detector pose history passed capture");
       }
       pending_.pop_front();
     }
@@ -253,7 +273,9 @@ private:
     out.header.stamp = stamp;
     out.header.frame_id = frame_id_;
     for (size_t i = 0; i < theirs.size(); ++i) {
-      for (const auto & root_T_panel : root_T_panels_) {
+      for (size_t panel_index = 0; panel_index < root_T_panels_.size();
+           ++panel_index) {
+        const auto & root_T_panel = root_T_panels_[panel_index];
         const Eigen::Isometry3d camera_T_panel =
           camera_T_world * theirs[i].world_T_root * root_T_panel;
         const Eigen::Vector3d centre = camera_T_panel.translation();
@@ -262,7 +284,8 @@ private:
         {
           continue;
         }
-        const Eigen::Vector3d shift = ray_noise(centre);
+        const Eigen::Vector3d shift = ray_noise(
+          centre, opponents_[i], stamp.nanoseconds(), panel_index);
         dji_serial_bridge::msg::PanelDetection d;
         d.header = out.header;
         const auto corners = panel_corners(camera_T_panel, panel_w_, panel_h_);
@@ -280,7 +303,8 @@ private:
   }
 
   // A D435-shaped error: std depth_coeff * r^2 along the ray, lateral_rad * r across it.
-  Eigen::Vector3d ray_noise(const Eigen::Vector3d & p)
+  Eigen::Vector3d ray_noise(const Eigen::Vector3d & p, const std::string & robot,
+                            int64_t frame_stamp_ns, size_t panel_index)
   {
     const double r = p.norm();
     if (r <= 0.0 || (depth_coeff_ <= 0.0 && lateral_rad_ <= 0.0)) {
@@ -289,10 +313,13 @@ private:
     const Eigen::Vector3d along = p / r;
     const Eigen::Vector3d side = along.cross(Eigen::Vector3d::UnitZ()).normalized();
     const Eigen::Vector3d up = side.cross(along);
-    std::normal_distribution<double> n(0.0, 1.0);
-    const double depth = n(rng_);
-    const double horizontal = n(rng_);
-    const double vertical = n(rng_);
+    const uint64_t component = static_cast<uint64_t>(panel_index) * 3;
+    const double depth =
+      keyed_noise::normal(seed_, robot, frame_stamp_ns, component);
+    const double horizontal =
+      keyed_noise::normal(seed_, robot, frame_stamp_ns, component + 1);
+    const double vertical =
+      keyed_noise::normal(seed_, robot, frame_stamp_ns, component + 2);
     return along * (depth_coeff_ * r * r * depth) +
            (side * horizontal + up * vertical) * (lateral_rad_ * r);
   }
@@ -311,7 +338,9 @@ private:
   std::vector<int64_t> class_ids_;
   double half_angle_, score_, depth_coeff_, lateral_rad_, max_range_;
   Intrinsics k_;
-  std::mt19937 rng_;
+  int64_t seed_ = 0;
+  bool zero_phase_ = false;
+  int64_t capture_period_ns_ = 16666666, capture_index_ = 1;
   Eigen::Isometry3d head_pitch_T_camera_;
   std::vector<Eigen::Isometry3d> root_T_panels_;
   double panel_w_ = 0.0, panel_h_ = 0.0;

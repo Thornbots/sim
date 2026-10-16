@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <functional>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <rcl_interfaces/srv/set_parameters.hpp>
@@ -24,6 +25,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <utility>
 namespace sim {
 class SimTimeNode : public rclcpp::Node {
 public:
@@ -36,7 +38,13 @@ public:
     return stamp.sec + stamp.nanosec * 1e-9;
   }
   double now_s() { return get_clock()->now().seconds(); }
-  void spin_once() { executor_.spin_once(std::chrono::milliseconds(100)); }
+  void spin_some() {executor_.spin_some();}
+  void set_pump(std::function<void()> pump) {pump_ = std::move(pump);}
+  void spin_once() {
+    if (pump_) pump_();
+    executor_.spin_once(std::chrono::milliseconds(100));
+    if (pump_) pump_();
+  }
   bool wait_until(const std::function<bool()> &predicate, double timeout,
                   const std::string &description) {
     const auto end = std::chrono::steady_clock::now() +
@@ -82,15 +90,14 @@ public:
                   const std::vector<rclcpp::Parameter> &params) {
     auto client = create_client<rcl_interfaces::srv::SetParameters>(
         "/" + node + "/set_parameters");
-    if (!client->wait_for_service(std::chrono::seconds(10)))
+    if (!wait_until([&] {return client->service_is_ready();}, 10, node + " parameter service"))
       throw std::runtime_error("/" + node + "/set_parameters not available");
     auto req = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
     for (const auto &p : params)
       req->parameters.push_back(p.to_parameter_msg());
     auto future = client->async_send_request(req);
-    if (executor_.spin_until_future_complete(future,
-                                             std::chrono::seconds(10)) !=
-        rclcpp::FutureReturnCode::SUCCESS)
+    if (!wait_until([&] {return future.wait_for(std::chrono::seconds(0)) ==
+        std::future_status::ready;}, 10, node + " parameter response"))
       throw std::runtime_error(node + " parameter request timed out");
     const auto response = future.get();
     for (const auto &r : response->results)
@@ -99,6 +106,7 @@ public:
   }
 
 private:
+  std::function<void()> pump_;
   rclcpp::executors::SingleThreadedExecutor executor_;
 };
 } // namespace sim

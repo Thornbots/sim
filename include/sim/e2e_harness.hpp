@@ -28,9 +28,12 @@
 #include <dji_serial_bridge/msg/target_state.hpp>
 #include <gz/transport/Node.hh>
 #include <deque>
+#include <fstream>
 #include <nav_msgs/msg/odometry.hpp>
 #include <optional>
+#include <set>
 #include <std_msgs/msg/header.hpp>
+#include <std_msgs/msg/u_int64.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/buffer.h>
@@ -49,7 +52,12 @@ public:
   void reset();
   void spin_for(double seconds) override;
   void check_lockstep();
+  bool fixed_schedule() const {return fixed_schedule_;}
+  void await_boundary();
+  void release_boundary(double next_s);
+  void drain_to_boundary();
   std::string stage, log_path;
+  std::string cell;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
   std::map<std::string, std::vector<Json>> shots;
   std::vector<Json> states, route_records;
@@ -58,6 +66,7 @@ public:
   std::optional<double> center_time;
   bool scoring = false;
   double score_until = INFINITY;
+  double score_from = -INFINITY;
   std::unique_ptr<combat::Referee> referee;
   int hurt_armor_id = 0;
   bool driving() const { return stage != "mcb_parked"; }
@@ -79,7 +88,16 @@ private:
   std::map<std::pair<std::string, double>, int> flight_steps_;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions_;
   std::map<std::string, std::string> lockstep_status_;
+  std::optional<uint64_t> latest_tf_fallbacks_;
+  std::ofstream input_log_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr raw_pose_ack_pub_;
   rclcpp::TimerBase::SharedPtr fire_timer_, pose_timer_;
+  bool fixed_schedule_ = false;
+  int64_t scorer_index_ = 1, boundary_ns_ = 1000000000, blocked_ns_ = -1;
+  std::set<int64_t> ekf_ack_stamps_;
+  std::set<int64_t> target_path_stamps_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr scorer_ack_pub_;
+  void fixed_tick();
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr referee_client_;
   std::optional<
       rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedFuture>
@@ -105,6 +123,8 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr visual_pub_;
   int visual_id_ = 0;
   void sync_referee();
+  void record_input(const std::string & source, const std_msgs::msg::Header & header,
+                    Json fields = Json::object());
 };
 double hit_rate(const std::vector<Json> &shots);
 std::string state_summary(const std::vector<Json> &states);

@@ -2,6 +2,10 @@
 #include <array>
 #include <chrono>
 #include <memory>
+#include <map>
+#include <set>
+#include <atomic>
+#include <gz/common/SignalHandler.hh>
 #include <string>
 #include <ament_index_cpp/get_package_prefix.hpp>
 #include <gz/plugin/Register.hh>
@@ -18,11 +22,13 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "sim/mcb_firmware.hpp"
 #include "sim/mcb_sensors.hpp"
+#include "sim/mcb_sim_uart.hpp"
 
 namespace sim {
 class McbFirmwareSystem : public gz::sim::System,
                           public gz::sim::ISystemConfigure,
-                          public gz::sim::ISystemPreUpdate {
+                          public gz::sim::ISystemPreUpdate,
+                          public gz::sim::ISystemPostUpdate {
 public:
   void Configure(const gz::sim::Entity &entity,
                  const std::shared_ptr<const sdf::Element> &sdf,
@@ -94,6 +100,44 @@ public:
     });
     shots_ = node_->create_publisher<std_msgs::msg::Header>("~/shot", 100);
     ticks_ = node_->create_publisher<std_msgs::msg::Header>("~/tick", 100);
+    tick_ready_ = node_->create_publisher<std_msgs::msg::Header>(
+      "~/tick_ready", rclcpp::QoS(1).reliable().transient_local());
+    consumed_ticks_ = node_->create_publisher<std_msgs::msg::Header>("~/consumed_tick", 100);
+    const auto aim_tick_topic = sdf->Get<std::string>("aim_tick_topic", "").first;
+    if (!signals_.AddCallback([this](int) {stopping_ = true;}))
+      throw std::runtime_error("MCB system could not register shutdown signal callback");
+    if (!aim_tick_topic.empty()) {
+      aim_period_ns_ = static_cast<int64_t>(sdf->Get<double>("aim_period_s", 0.025).first * 1e9);
+      if (aim_period_ns_ <= 0 || aim_period_ns_ % 1000000 != 0)
+        throw std::invalid_argument("aim hold period must align to 1 ms physics steps");
+      aim_tick_sub_ = node_->create_subscription<std_msgs::msg::Header>(aim_tick_topic, 100,
+        [this](std_msgs::msg::Header::ConstSharedPtr tick) {
+          const auto stamp = rclcpp::Time(tick->stamp).nanoseconds();
+          if (!aim_ticks_.emplace(stamp, !tick->frame_id.empty()).second)
+            throw std::runtime_error("lockstep timeout: duplicate aimer tick");
+        });
+    }
+    const auto raw_pose_ack_topic = sdf->Get<std::string>("raw_pose_ack_topic", "").first;
+    if (!raw_pose_ack_topic.empty()) {
+      raw_pose_ack_sub_ = node_->create_subscription<std_msgs::msg::Header>(raw_pose_ack_topic, 100,
+        [this](std_msgs::msg::Header::ConstSharedPtr ack) {
+          raw_pose_acks_.insert(rclcpp::Time(ack->stamp).nanoseconds());
+        });
+    }
+    const auto scorer_pose_ack_topic = sdf->Get<std::string>("scorer_pose_ack_topic", "").first;
+    const auto ekf_input_ack_topic = sdf->Get<std::string>("ekf_input_ack_topic", "").first;
+    if (!ekf_input_ack_topic.empty()) {
+      ekf_input_ack_sub_ = node_->create_subscription<std_msgs::msg::Header>(ekf_input_ack_topic, 100,
+        [this](std_msgs::msg::Header::ConstSharedPtr ack) {
+          ekf_input_acks_.insert(rclcpp::Time(ack->stamp).nanoseconds());
+        });
+    }
+    if (!scorer_pose_ack_topic.empty()) {
+      scorer_pose_ack_sub_ = node_->create_subscription<std_msgs::msg::Header>(scorer_pose_ack_topic, 100,
+        [this](std_msgs::msg::Header::ConstSharedPtr ack) {
+          scorer_pose_acks_.insert(rclcpp::Time(ack->stamp).nanoseconds());
+        });
+    }
     motors_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/motors", 10);
     setpoints_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/gimbal_setpoint", 100);
     command_ = node_->create_subscription<geometry_msgs::msg::Twist>("/cmd_vel", 10,
@@ -105,29 +149,53 @@ public:
     executor_options.context = context_;
     executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(executor_options);
     executor_->add_node(node_);
-    pty_ = std::make_unique<mcb_firmware::PtyLink>(sdf->Get<std::string>("device_link", "/tmp/mcb_emulator_pty").first);
+    const auto uart_path = sdf->Get<std::string>("uart_socket", "").first;
+    if (uart_path.empty()) {
+      pty_ = std::make_unique<mcb_firmware::PtyLink>(sdf->Get<std::string>("device_link", "/tmp/mcb_emulator_pty").first);
+    } else {
+      uart_ = std::make_unique<McbSimUart>(uart_path, sdf->Get<int>("baudrate", 115200).first);
+    }
     const auto backend = sdf->Get<std::string>("backend", "hosted").first;
     if (backend != "hosted" && backend != "renode") throw std::runtime_error("Unknown MCB backend: " + backend);
     const auto adapter = backend == "renode" ?
         ament_index_cpp::get_package_prefix("sim") + "/lib/sim/mcb_type_c" : "";
-    firmware_ = std::make_unique<mcb_firmware::Firmware>(pty_->master(),
+    firmware_ = std::make_unique<mcb_firmware::Firmware>(uart_ ? uart_->firmware_fd() : pty_->master(),
         sdf->Get<std::string>("firmware_binary", "").first, drive_,
         sdf->Get<bool>("auto_fire", true).first, adapter);
+    if (uart_) uart_->child_started();
     RCLCPP_INFO(node_->get_logger(), "MCB physical motor system: %s, drive=%s",
                 firmware_->binary().c_str(), drive_.c_str());
   }
 
   ~McbFirmwareSystem() override {
+    if (node_ && aim_tick_sub_) {
+      RCLCPP_INFO(node_->get_logger(),
+        "MCB consumption (final): raw_pose %zu holds %.6f s; aimer_uart %zu holds %.6f s",
+        raw_pose_holds_, raw_pose_wait_s_, aim_holds_, aim_wait_s_);
+    }
     firmware_.reset();
+    uart_.reset();
     pty_.reset();
     executor_.reset();
     if (context_) context_->shutdown("MCB physics system destroyed");
   }
 
   void PreUpdate(const gz::sim::UpdateInfo &info, gz::sim::EntityComponentManager &ecm) override {
-    if (info.paused) return;
+    if (stopping_) return;
     current_time_ = std::chrono::duration<double>(info.simTime).count();
     executor_->spin_some();
+    if (!tick_ready_sent_ && ticks_->get_subscription_count() > 0) {
+      std_msgs::msg::Header ready;
+      ready.stamp = rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        info.simTime).count(), RCL_ROS_TIME);
+      tick_ready_->publish(ready);
+      tick_ready_sent_ = true;
+      RCLCPP_INFO(node_->get_logger(), "MCB tick publisher matched; ready before physics");
+    }
+    if (info.paused) return;
+    const int64_t stamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
+    if (uart_ && !uart_work([&] {uart_->before_tick(stamp_ns);})) return;
+    if (uart_ && !raw_pose_ack_sub_) uart_->take_pose_stamps();
     const auto pos = body_.WorldPose(ecm);
     const auto vel = body_.WorldLinearVelocity(ecm);
     const auto rate = body_.WorldAngularVelocity(ecm);
@@ -169,6 +237,7 @@ public:
     const std::array<double, 6> imu{gyro.X(), gyro.Y(), gyro.Z(),
                                   acceleration.X(), acceleration.Y(), acceleration.Z()};
     const auto output = firmware_->step(1, readings, referee_, feedback, external_, imu);
+    if (uart_ && !uart_work([&] {uart_->after_tick(stamp_ns);})) return;
     plant_.commands = output.motors;
     const auto effort = plant_.gimbal_effort(yv->Data()[0], pv->Data()[0]);
     for (const auto &pair : {std::make_pair(yaw_, effort[0]), std::make_pair(pitch_, effort[1])}) {
@@ -181,6 +250,12 @@ public:
     std_msgs::msg::Header tick;
     tick.stamp = rclcpp::Time(std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count());
     ticks_->publish(tick);
+    if (++tick_publications_ <= 5) {
+      RCLCPP_INFO(node_->get_logger(), "MCB tick publication %zu: physics stamp %s ns, "
+        "matched readers %zu", tick_publications_,
+        std::to_string(rclcpp::Time(tick.stamp).nanoseconds()).c_str(),
+        ticks_->get_subscription_count());
+    }
     if (firmware_->time_ms() % 10 == 0) {
       if (backend_ == "hosted") {
         sensor_msgs::msg::JointState setpoint;
@@ -209,7 +284,70 @@ public:
     }
   }
 
+  void PostUpdate(const gz::sim::UpdateInfo &info,
+                  const gz::sim::EntityComponentManager &) override {
+    if (info.paused || stopping_ || !uart_ || !aim_tick_sub_) return;
+    const int64_t stamp = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
+    if (raw_pose_ack_sub_) {
+      for (const auto capture : uart_->take_pose_stamps()) {
+        const auto started = std::chrono::steady_clock::now();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!raw_pose_acks_.count(capture) ||
+          (scorer_pose_ack_sub_ && !scorer_pose_acks_.count(capture)) ||
+          (ekf_input_ack_sub_ && !ekf_input_acks_.count(capture))) {
+          if (stopping_) return;
+          executor_->spin_some();
+          if (std::chrono::steady_clock::now() >= deadline) {
+            const auto ack_state = [capture](const auto &sub, const auto &acks) {
+              if (!sub) return std::string("disabled, publishers=disabled");
+              return std::string(acks.count(capture) ? "present" : "missing") +
+                ", publishers=" + std::to_string(sub->get_publisher_count());
+            };
+            throw std::runtime_error("lockstep timeout: raw pose/articulated TF at " +
+              std::to_string(capture) + " ns (raw_pose_tf=" +
+              ack_state(raw_pose_ack_sub_, raw_pose_acks_) + ", scorer_pose=" +
+              ack_state(scorer_pose_ack_sub_, scorer_pose_acks_) + ", ekf_input=" +
+              ack_state(ekf_input_ack_sub_, ekf_input_acks_) + ", physics_stamp=" +
+              std::to_string(stamp) + " ns)");
+          }
+          uart_->wait_input();
+        }
+        raw_pose_acks_.erase(capture);
+        scorer_pose_acks_.erase(capture);
+        ekf_input_acks_.erase(capture);
+        ++raw_pose_holds_;
+        raw_pose_wait_s_ += std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - started).count();
+      }
+    }
+    std_msgs::msg::Header consumed;
+    consumed.stamp = rclcpp::Time(stamp, RCL_ROS_TIME);
+    if (stamp <= 0 || stamp % aim_period_ns_ != 0) {
+      consumed_ticks_->publish(consumed);
+      return;
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto started = std::chrono::steady_clock::now();
+    for (;;) {
+      if (stopping_) return;
+      executor_->spin_some();
+      if (!uart_work([&] {uart_->poll_input(stamp);})) return;
+      const auto tick = aim_ticks_.find(stamp);
+      if (tick != aim_ticks_.end() && (!tick->second || uart_->received_cv(stamp))) break;
+      if (std::chrono::steady_clock::now() >= deadline)
+        throw std::runtime_error("lockstep timeout: aimer/relay/UART chain at " + std::to_string(stamp));
+      uart_->wait_input();
+    }
+    aim_ticks_.erase(aim_ticks_.begin(), aim_ticks_.upper_bound(stamp));
+    ++aim_holds_;
+    aim_wait_s_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    consumed_ticks_->publish(consumed);
+  }
+
 private:
+  template<typename Work> bool uart_work(Work work) {
+    try {work(); return !stopping_;} catch (...) {if (stopping_) return false; throw;}
+  }
   gz::sim::Link body_{gz::sim::kNullEntity};
   gz::sim::Link head_{gz::sim::kNullEntity};
   gz::sim::Entity yaw_ = gz::sim::kNullEntity, pitch_ = gz::sim::kNullEntity;
@@ -227,11 +365,29 @@ private:
   std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameters_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr shots_, ticks_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr consumed_ticks_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motors_, setpoints_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr command_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr aim_tick_sub_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr raw_pose_ack_sub_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr scorer_pose_ack_sub_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr ekf_input_ack_sub_;
+  std::set<int64_t> raw_pose_acks_;
+  std::set<int64_t> scorer_pose_acks_;
+  std::set<int64_t> ekf_input_acks_;
+  std::map<int64_t, bool> aim_ticks_;
+  int64_t aim_period_ns_ = 25000000;
+  size_t raw_pose_holds_ = 0, aim_holds_ = 0;
+  size_t tick_publications_ = 0;
+  bool tick_ready_sent_ = false;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr tick_ready_;
+  double raw_pose_wait_s_ = 0, aim_wait_s_ = 0;
   std::unique_ptr<mcb_firmware::PtyLink> pty_;
   std::unique_ptr<mcb_firmware::Firmware> firmware_;
+  std::unique_ptr<McbSimUart> uart_;
+  std::atomic<bool> stopping_{false};
+  gz::common::SignalHandler signals_;
 };
 }  // namespace sim
 GZ_ADD_PLUGIN(::sim::McbFirmwareSystem, gz::sim::System,
-              gz::sim::ISystemConfigure, gz::sim::ISystemPreUpdate)
+              gz::sim::ISystemConfigure, gz::sim::ISystemPreUpdate, gz::sim::ISystemPostUpdate)

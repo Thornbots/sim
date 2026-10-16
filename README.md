@@ -318,6 +318,17 @@ ros2 run sim check_bench_log /tmp/localization_drift_tests/*.log  # drift and EK
 It prints the result and the timing table, and exits 1 when a node crashed
 mid-run, a GUI couldn't open or a wait gave up.
 
+`ros2 run sim combat_repeats RUN_DIR...` audits repeat artifacts and prints
+native counts, input-age diagnostics, navigation nulls and accepted pools.
+Each directory needs an `outcome.json` with `profile` (`nightly` or `branch`),
+`backend`, `stage`, `workspace`, integer `runner_exit` and `checker_exit`;
+include `pins` to distinguish source/control manifests. Keep `launch.log` and
+`checker.log` even for failed starts. Successful runs also need `stack.log`,
+`shots.jsonl` and `scores.jsonl`. Failed starts and lockstep timeouts remain
+visible outside accepted pools; different pins and duplicate paths cannot
+be pooled. Printed worst-run-minus-ten-point floors are proposals, pending
+the [lockstep acceptance gates](../E2E_LOCKSTEP_PLAN.md#order-and-done-when).
+
 rf2o's match grades (`/scan_odom/quality`), for setting
 `sentry_localization/config/rf2o.yaml`: record beside a suite, then
 summarise.
@@ -1274,10 +1285,75 @@ The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.
 `lockstep:=false` retains the ungated control run.
 
-This gates MCB acknowledgments, not the complete hit path: UART is not modeled
-in sim time, and the other
+This gates MCB acknowledgments, not the complete hit path: default UART delivery
+and the other
 CV/localization chains and wall-time bring-up remain asynchronous. It does not
 establish identical shot sequences or finish workspace T17.
+
+The experimental `paused_startup:=true` profile starts the world paused at
+sim zero and waits for the required node graph, active map/AMCL lifecycle
+states and spawned models before unpausing. A failed startup remains a failed
+acceptance attempt. The coordinator's MCB tick subscription and the MCB's
+tick publisher must both report a matched peer before unpausing. EKF initialization
+requires the first positive clock, so its update publisher joins afterward.
+This profile selects capture-stamped UART, zero-phase
+detector captures, keyed noise and exact acknowledgments for opponent paths,
+tracker/aim state, raw-POSE TF availability and scorer input recording.
+Coordinator acknowledgment topics prefixed with `gz:` carry `gz.msgs.Time`;
+other topics carry `std_msgs/Header`. Future stamps cannot acknowledge a
+missing earlier capture. Vision consumption has a fixed 14 ms eligibility
+delay, covering the 10 ms POSE cadence, approximately 3 ms serialization and
+1 ms physics quantization. These partial barriers still require the full
+[repeatability gates](../E2E_LOCKSTEP_PLAN.md#order-and-done-when) before floors.
+
+The separate `lockstep_localization:=true` experiment requires paused startup
+and lockstep. It selects the owning package's
+[ordered-input filter adapter](../sentry_localization/README.md#testing),
+strict scan-time rf2o prerequisites and an EKF update acknowledgment chain.
+That chain includes the relay's captured-input decision and the bridge's
+relocalization UART send acknowledgment, including no-correction updates.
+Paused startup also fixes Gazebo's RNG seed, including lidar noise.
+All stages/backends still require the complete repeatability gates.
+The native harness uses exact 50 ms scorer acknowledgments in this profile.
+It holds the first parameter reset at 1 s, settles parked cells for 3 s,
+and admits events by carried stamp in the half-open scoring window. Parameter
+services run while the external target node can answer and the scorer keeps
+pumping raw-POSE acknowledgments. Finalization occurs on a later 100 ms
+boundary after the one-second pose-join retry; pending events must be empty.
+The score cutoff remains unrounded even for arbitrary requested durations.
+
+E2E disables the aimer's latest-TF fallback and requires its cumulative
+`/point_to_cv_target/latest_tf_fallbacks` counter to be present and zero.
+Unavailable stamped transforms withhold that aim. This closes the fallback
+escape, while the other consumption chains remain ungated. The
+[aimer](../thornbots_pkg/README.md#point_to_cv_target) owns the robot default.
+
+`inputs.jsonl` records each observed detection batch, including panel geometry
+and empty batches, parked target path commands,
+tracker measurement acknowledgement, valid/invalid target state, raw MCB POSE,
+`/odom` and `/localization/odom` input. Rows carry capture stamp, arrival sim
+time, frame, cell and scoring state. Inspect gaps and invalid tracks alongside
+the shot-level detection/tracker ages and stamped `odom_disagreement_m` before
+tuning the tracker. Arrival order is diagnostic evidence, not a delivery
+acknowledgement or proof of deterministic consumption.
+
+For paused parked runs, `path-applied.jsonl` records each newly selected path's
+`capture_ns` and its first `physics_ns`. The optional gz diagnostic topic
+`/model/opponent_0/path_received/applied` carries the original odometry header
+and `physics_stamp_ns` in header metadata. This observes selection timing;
+it does not change path eligibility or satisfy a consumption barrier.
+
+In the acknowledged path fixture, a capture at T first becomes eligible in
+the physics step strictly after T. The mover retains the preceding command
+when a same-step or future command arrives early. Its queue receipt still
+acknowledges capture T while physics is held at T, so the following step can
+consume it without a circular wait. Parked cell resets also wait for the
+target driver's current-boundary publication before changing parameters.
+The normal unacknowledged mover keeps its latest-command behavior.
+
+`compare_runs RUN_A RUN_B` rejects absent or empty shot/state logs. An identical
+empty directory pair cannot satisfy the identical-shot gate; route/pose logs
+are compared when present in either run. Numeric tolerance defaults to zero.
 
 The on-demand transport test runs a small gz world in its own process group
 and checks the held clock, zero timer phase after a late first acknowledgment,
@@ -1446,6 +1522,30 @@ The UART bridge starts after `mcb_ready` observes a CRC-valid POSE on the PTY.
 It waits 30 wall seconds for hosted execution or 600 for Renode boot.
 The former ROS timer adapter
 is removed; `mcb.launch.py` uses this same physics path.
+
+##### Sim-time UART fixture
+
+An explicit E2E `uart_socket:=/tmp/unique-owned-name.sock` selects a socketpair
+for the firmware and a private Unix sequenced-packet connection to the bridge.
+The plugin schedules ten bits per byte at the explicitly shared 115200 baud,
+serializes queued frames in both directions and delivers firmware input bytes
+only at their sim-time deadlines. The bridge receives a complete unchanged DJI
+frame only after its final byte is due, preserves its carried capture stamp,
+then acknowledges parser dispatch. That acknowledgement does not prove
+downstream ROS consumption. The private envelope belongs to the
+[bridge interface](../ros2_dji_serial_bridge/README.md#parameters).
+
+Use a fresh socket path; the listener refuses existing paths and removes only
+its own socket. Empty `uart_socket` retains the PTY fixture. The socket mode
+rejects an outgoing frame that arrives after its modeled deadline, rather than
+shifting delivery into a later cycle. It remains opt-in while the aimer/relay
+and other consumption barriers are unfinished. The first whole-stack attempt
+was rejected for that late-delivery condition; see the
+[investigation](docs/track-a-uart-2026-10-15.md).
+
+Pure timeline/transport tests are registered with colcon. The on-demand
+`ros2 run sim sim_uart_bridge_suite` checks capture-stamped publication through
+the real bridge, including endpoint matching before the single-frame check.
 
 The motor plant in `include/sim/mcb_motor.hpp` returns DJI 8-byte encoder,
 signed shaft-RPM, current and temperature feedback for all ten motors. The

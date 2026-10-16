@@ -34,11 +34,14 @@ public:
     try {
       for (const auto &f :
            {"shots.jsonl", "scores.jsonl", "states.jsonl", "poses.jsonl",
-            "parking.jsonl"})
+            "parking.jsonl", "inputs.jsonl"})
         cb::truncate(cb::options.log_dir + "/" + f);
       control = std::make_shared<sim::SimTimeNode>("e2e_stack");
       scorer = std::make_shared<ee::Scorer>(
           cb::options.stage, cb::options.log_dir + "/shots.jsonl");
+      control->set_pump([weak = std::weak_ptr<ee::Scorer>(scorer)] {
+        if (const auto scorer = weak.lock()) scorer->spin_some();
+      });
       timing::Phase phase("bringup");
       timing::set_sim_clock([this]() { return scorer->now_s(); });
       if (cb::options.stage != "mcb_parked") {
@@ -200,21 +203,37 @@ TEST_P(E2ESuite, MCB) {
           ? "test_mcb_drive_spawn_to_center"
           : "test_mcb_match_spawn_to_center_fight");
   auto s = environment->scorer;
+  s->cell = c.name;
   if (cb::options.stage == "mcb_parked") {
     double duration = cb::options.duration ? cb::options.duration : 20;
     std::cout << "\n=== " << c.name << ", spin " << std::fixed
               << std::setprecision(2) << c.spin << " Hz ===\n";
     {
       timing::Phase phase("reset");
+      if (s->fixed_schedule()) s->await_boundary();
       environment->set_target(c.speed, c.spin, c.path);
       s->scoring = false;
     }
     {
       timing::Phase phase("settle");
-      s->spin_for(3);
+      if (s->fixed_schedule()) {
+        const double score_start = s->now_s() + 3.0;
+        s->reset();
+        s->score_from = score_start;
+        s->score_until = score_start + duration;
+        s->release_boundary(score_start);
+        s->await_boundary();
+      } else {
+        s->spin_for(3);
+      }
     }
-    s->reset();
-    s->spin_for(duration + .5);
+    if (!s->fixed_schedule()) s->reset();
+    if (s->fixed_schedule()) {
+      s->score_until = s->now_s() + duration;
+      s->drain_to_boundary();
+    } else {
+      s->spin_for(duration + .5);
+    }
     s->scoring = false;
     s->check_nodes(environment->nodes);
     s->check_lockstep();
@@ -253,13 +272,18 @@ TEST_P(E2ESuite, MCB) {
     EXPECT_GE(ee::hit_rate(mcb), .1) << c.name;
     return;
   }
+  if (s->fixed_schedule()) s->await_boundary();
   s->reset();
   environment->control->set_params("match_environment",
                                    {rclcpp::Parameter("active", true)});
   s->match_start = s->now_s();
   double duration = sim::match_scenario::match_duration(cb::options.stage);
   s->score_until = *s->match_start + duration;
-  s->spin_for(duration + .5 + .05 + .1);
+  if (s->fixed_schedule()) {
+    s->drain_to_boundary();
+  } else {
+    s->spin_for(duration + .5 + .05 + .1);
+  }
   s->scoring = false;
   s->check_nodes(environment->nodes);
   s->check_lockstep();

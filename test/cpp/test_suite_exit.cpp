@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
+#include <vector>
 namespace {
 class SuiteExit : public testing::TestWithParam<int> {};
 TEST_P(SuiteExit, PropagatesChildResultThroughLaunchService) {
@@ -71,4 +72,65 @@ INSTANTIATE_TEST_SUITE_P(
         CheckCase{"user interrupted with ctrl-c\n[ERROR] [launch]: Caught exception in launch: missing world", true},
         CheckCase{"lockstep: /cv/target/state_ack timed out after 0.50 s wall",
                   true}));
+
+class CompareRuns : public testing::Test {
+protected:
+  void SetUp() override {
+    root_ = std::filesystem::temp_directory_path() /
+            ("sim_compare_runs_" + std::to_string(getpid()));
+    std::filesystem::remove_all(root_);
+    std::filesystem::create_directories(root_ / "a");
+    std::filesystem::create_directories(root_ / "b");
+  }
+  void TearDown() override { std::filesystem::remove_all(root_); }
+  void write(const std::string &run, const std::string &name,
+             const std::string &text) {
+    std::ofstream output(root_ / run / name);
+    ASSERT_TRUE(output) << "cannot create comparison fixture";
+    output << text;
+    ASSERT_TRUE(output.good()) << "cannot write comparison fixture";
+  }
+  void write_required(const std::string &shots_a = "{\"hit\":true}\n",
+                      const std::string &shots_b = "{\"hit\":true}\n") {
+    write("a", "shots.jsonl", shots_a);
+    write("b", "shots.jsonl", shots_b);
+    write("a", "states.jsonl", "{\"valid\":true}\n");
+    write("b", "states.jsonl", "{\"valid\":true}\n");
+  }
+  std::vector<std::string> command(const std::string &tol = "") const {
+    std::vector<std::string> args{SIM_COMPARE_RUNS, (root_ / "a").string(),
+                                  (root_ / "b").string()};
+    if (!tol.empty()) {
+      args.push_back("--tol");
+      args.push_back(tol);
+    }
+    return args;
+  }
+  std::filesystem::path root_;
+};
+
+TEST_F(CompareRuns, RejectsMissingRequiredEvidenceFromBothRuns) {
+  EXPECT_THROW(sim::capture(command()), std::runtime_error);
+}
+
+TEST_F(CompareRuns, RejectsEmptyRequiredEvidence) {
+  write_required("\n", "\n");
+  EXPECT_THROW(sim::capture(command()), std::runtime_error);
+}
+
+TEST_F(CompareRuns, AcceptsIdenticalNonemptyRequiredEvidence) {
+  write_required();
+  EXPECT_NO_THROW(sim::capture(command()));
+}
+
+TEST_F(CompareRuns, RejectsDifferentHits) {
+  write_required("{\"hit\":true}\n", "{\"hit\":false}\n");
+  EXPECT_THROW(sim::capture(command()), std::runtime_error);
+}
+
+TEST_F(CompareRuns, RejectsInvalidTolerance) {
+  write_required();
+  EXPECT_THROW(sim::capture(command("nan")), std::runtime_error);
+  EXPECT_THROW(sim::capture(command("-0.1")), std::runtime_error);
+}
 } // namespace
