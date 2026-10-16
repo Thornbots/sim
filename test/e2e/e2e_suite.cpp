@@ -80,9 +80,17 @@ public:
                         "E2E stack exited during bring-up; see stack.log");
                   return predicate();
                 },
-                cb::options.backend == "renode" ? std::max(timeout, 600.0) : timeout, description))
+                cb::options.backend == "renode" ? std::max(timeout, 600.0) : timeout, description)) {
+          std::string missing;
+          for (const auto &link : {std::pair{"odom", "root"},
+                                   std::pair{"nav_odom", "odom"},
+                                   std::pair{"map", "nav_odom"}}) {
+            if (!scorer->tf.canTransform(link.first, link.second, tf2::TimePointZero))
+              missing += "; missing " + std::string(link.first) + "->" + link.second;
+          }
           throw std::runtime_error("E2E bring-up failed: " + description +
-                                   "; see stack.log");
+                                   missing + "; see stack.log");
+        }
       };
       wait(
           [&]() {
