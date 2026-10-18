@@ -1302,7 +1302,9 @@ relocalization UART send acknowledgment, including no-correction updates.
 Paused startup also fixes Gazebo's RNG seed, including lidar noise.
 All stages/backends still require the complete repeatability gates.
 The native harness uses exact 50 ms scorer acknowledgments in this profile.
-It holds the first parameter reset at 1 s, settles parked cells for 3 s,
+It holds the first parked parameter reset at 1 s and driving/match activation
+at 2 s, allowing raw odometry to overlap AMCL's initially future-dated map TF.
+It settles parked cells for 3 s,
 and admits events by carried stamp in the half-open scoring window. Parameter
 services run while the external target node can answer and the scorer keeps
 pumping raw-POSE acknowledgments. Finalization occurs on a later 100 ms

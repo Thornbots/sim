@@ -1,7 +1,9 @@
 # Track A runtime and hosted parked result — 2026-10-16
 
-This note records isolated runtime provenance, two accepted full hosted
-parked runs and their comparison. It does not close T17 or select combat floors.
+This note records successive isolated profiles. The
+[orchestrator follow-up](#orchestrator-follow-up) supersedes the earlier
+closeout below; historical attempts remain evidence. T17 and combat floors
+are tracked separately from the deterministic-path proof.
 
 ## Runtime provenance
 
@@ -148,3 +150,129 @@ preceding archived acceptance records.
 - The owned benchmark container/network could not be removed through the
   unavailable daemon. They may remain in the stopped VM's storage; no other
   container or VM was stopped, restarted or deleted by this task.
+
+## Orchestrator follow-up
+
+Fresh worktrees were recreated from the pushed PR heads. The runtime source
+commit is sim `4ef58655d1e0dd347eed7577553dff937034092a`, pinned by workspace
+`ee94fb9bd92b69f660321d9c965b2c0dadcfc401`; later evidence-only commits do not
+change these measured sources. Artifacts are under
+`/Users/blaise/ros2_track_a_followup_artifacts_20261016/`.
+
+### Deterministic path proof
+
+The acknowledged opponent fixture queues captures and selects the newest
+capture strictly before the current 1 ms physics tick. Receiving the command
+still acknowledges queue insertion. Cell transitions additionally wait for
+the target driver's publication at the blocked boundary before resetting its
+parameters. This removes both same-tick path eligibility and the boundary
+publication/parameter race. The unacknowledged fixture keeps its defaults.
+Tracker settings, QoS, wait budgets and floors are unchanged.
+
+| Full hosted parked attempt | Native runner/checker | MCB hits/shots | Wall s | Result |
+| --- | --- | ---: | ---: | --- |
+| branch-parked-proof-r1 | 0/0 | 369/413 | 430.78 | 12/12 cells accepted |
+| branch-parked-proof-r2 | 1/1 | 0/0 | startup failure | rejected before scoring |
+| branch-parked-proof-r3 | 0/0 | 369/413 | 333.99 | 12/12 cells accepted; exact r1 match |
+| branch-parked-proof-r4 (2026-10-17) | 0/0 | 369/413 | 480.6 | 12/12 cells accepted; exact r1/r3 match |
+
+Native `compare_runs` exits zero for r1/r3: 835 shot records (including flag
+shots), 14,400 states and 4,800 poses are identical. The path-application logs
+are also byte-identical, each containing 17,411 captures, all first applied
+exactly 1,000,000 ns after capture. Both accepted runs have zero lockstep
+timeouts and zero latest-TF fallbacks despite different wall throughput.
+The two-full-sweep proof is closed. The third accepted sweep also has
+byte-identical shot, state, pose and path logs, giving three matching
+unthrottled full sweeps. This does not close the full-stage RTF/CPU controls
+or all T17 gates.
+R3's odometry parameter bridge exits -11 during teardown; the native checker
+accepts that shutdown note. Native acceptance is not a claim that every child
+process exited cleanly.
+
+Before any tracker tuning, the two accepted input streams were audited. Each
+contains 17,412 detection messages, 26,118 raw `/odom` and 26,118 EKF inputs,
+with carried stamps distinct from arrival simulation time. All 14,400 sampled
+scored states are scorer/tracker-valid, with zero maximum detection/tracker
+age. One invalid target-state input occurs in the stationary-radial scoring
+window without a sampled-state dropout. All 58 periodic tracker diagnostics
+report `dropped 0`; no lost-track, stale or target-timeout event is logged.
+This ledger records published messages, not internal acceptance decisions;
+sampled states do not exclude transitions between samples. The detailed
+`newartifacts/stamped-input-audit.{md,json}` preserves those limits. No tracker
+tuning was performed.
+
+| Identical payload | SHA-256, both runs |
+| --- | --- |
+| shots.jsonl | `9cce309bcfa52831d7d34f5e3026ae90b2b3d9588a46d98d7ef91ad8d46fbd70` |
+| states.jsonl | `2d5f5e82336297a9e22ca9f7423465fd3a34e562b19790d17709dce9d28cd6a3` |
+| poses.jsonl | `57253eb53c4c1cd067d68a7205bd1fd594f73ae8b2b7c220c1bd7b248341183e` |
+| path-applied.jsonl | `4b2feabd7d953d894b9ea5f40929e09ec29b491a1ef113781c9ff1cd863ea918` |
+
+### Retained startup rejection
+
+R2 unpaused correctly at simulation zero and its first five MCB ticks each
+had a reader. At physics 14 ms the input ledger contains the 11 ms MCB pose
+and scorer receipt, but no raw-pose TF or EKF-input receipt. The aimer reports
+both muzzle and camera joins missing because frame `odom` does not exist.
+The plugin then rejects `raw_pose_tf=missing`, `scorer_pose=present`,
+`ekf_input=missing`, each with one receipt publisher; 29 cascading coordinator
+timeouts follow. There are no scored cells. The gap is in the shared
+pose-to-odometry/TF chain; these logs do not distinguish missing input delivery
+from missing downstream output delivery and do not prove a DDS discovery cause.
+R3 is one inspected retry with unchanged binaries and budgets, not a repair
+of this intermittent startup failure. Original 134 ms EKF prerequisites also
+remain unproved.
+
+### Follow-up validation
+
+The sim build and 230 registered checks pass, zero errors/failures, 84 skips.
+Host Python 3.12 repository quality and actionlint pass. All 203 runtime source
+hashes match the branch manifest. The earlier default scan-degraded,
+drift-correction and EKF regressions remain prior-profile evidence at
+[their recorded pins](track-a-uart-2026-10-15.md#default-localization-regression-checks);
+they were not rerun or relabeled as current-nightly results.
+
+### Hosted pooled comparison
+
+The comparison uses current nightly workspace
+`63a245323520d5b257fc732c1627195474d11859`, not the earlier `5e1fd040`
+controls. Each run retains its source manifest, actual package prefixes,
+firmware hash, complete command, native exits, timing and raw inputs. Nightly's
+five packages and hosted firmware were rebuilt from these pins:
+
+| Source | Nightly control | Branch runtime |
+| --- | --- | --- |
+| sim | `b4be627f6c9d10bb264c5f386e569b7c08f82369` | `4ef58655d1e0dd347eed7577553dff937034092a` |
+| thornbots_pkg | `23db221064911b8d730710a368d5392d157bf931` | `2996f522a56c55266c227286ec9b0aa4e0220e9d` |
+| bridge | `3bdba2db51e7140299ed2ab67d98baea0466fbdb` | `fcab257749763245c7f536d6ba88e6be2a032163` |
+| localization | `955bfda27c5afc3e8cb1b2b3dfaa7f4d690f948c` | `a1fbc249fe772645e01cd10200f078b2430b016b` |
+| rf2o | `a2d858a5053790bc2add4edf2daa22d2097d0af5` | `06a2562dc50a474a409210d70c62432fccd5bd66` |
+| firmware | `ad13759007491ebfb666c5e8c93087882922d9c3` | `432216d7dfc9e6e4b82643b00de9c27fd3aee1cd` |
+
+The branch hosted ELF SHA-256 is
+`70feb397e468906360e12f65ce9f37bc3ccf3f60e53b8c3286bf77b416dbaaad`;
+nightly is `650ee666011542e7aaf411c485123398efa17db3d402ff9f708549b385678e49`.
+This is a pinned-stack comparison, including firmware differences, rather
+than a single-change attribution.
+
+### Driving startup boundary — 2026-10-17
+
+The first three strict-profile drive attempts and first three match attempts
+all rejected before scoring: the coordinator timed out at the initial 1 s
+scorer hold, then the scorer rejected the advancing clock as a missed exact
+tick. No failed attempt contributes to pooled accuracy. A separate TF/aim
+capture preserves this rejection with extra diagnostic subscribers.
+
+That capture directly shows nonoverlapping TF histories: `map->nav_odom`
+starts at 1.000 s, while `nav_odom->odom` and `odom->root` end at .991 s.
+AMCL's configured transform tolerance is 1 s. Fresh `/cv/target` messages
+start at .025 s, so missing aim publication does not explain this attempt.
+The initial scorer hold prevents the raw TF history from reaching the first
+map TF stamp, while setup waits for a localized `map->root` chain.
+
+Driving and match now activate at a fixed 2 s boundary; parked keeps its
+1 s reset. This allows TF overlap without changing AMCL, physics, wall-time
+budgets, firing rules or acceptance floors. It is a separate driving-startup
+fix from the parked path-timing fix. Parked evidence uses sim `4ef58655`;
+subsequent drive/match runs retain their new source manifest. The earlier
+intermittent 11 ms POSE/TF startup rejection remains unresolved.

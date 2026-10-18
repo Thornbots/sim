@@ -106,6 +106,8 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   input_log_.open(std::filesystem::path(log_path).parent_path() / "inputs.jsonl", std::ios::app);
   const char * fixed = std::getenv("MCB_LOCKSTEP_LOCALIZATION");
   fixed_schedule_ = fixed && std::string(fixed) == "true";
+  // AMCL future-dates its first map TF by 1 s; driving needs raw TF overlap.
+  if (driving()) boundary_ns_ = 2000000000;
   if (!input_log_) throw std::runtime_error("cannot open E2E input ledger");
   if (!driving()) {
     auto trace = std::make_shared<std::ofstream>(
