@@ -1307,8 +1307,8 @@ ros2 launch sim mcb.launch.py backend:=hosted
 
 Use `drive:=simple` for the firmware's waypoint route or, with
 `backend:=hosted`, `drive:=auto` for NAV_GOAL. The default `stop` parks the
-robot under centred manual drive. With main's firmware the keyboard peek
-release schedules beyblade at boot, so the parked chassis spins. Foxglove serves
+robot under centred manual drive, whose zero wheel-velocity setpoint brakes it
+while referee chassis power is on. Foxglove serves
 on :8765, and
 gz/rviz open where a display is available. This launch uses the actual MCB
 and bridge without an opponent; the `e2e.launch.py` stages score it.

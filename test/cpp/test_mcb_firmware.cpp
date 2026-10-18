@@ -383,7 +383,7 @@ TEST_P(McbPatrolFlag, StageGateStillBlocksFire) {
 }
 INSTANTIATE_TEST_SUITE_P(AllFlags, McbPatrolFlag, testing::Range<uint8_t>(0, 16));
 
-TEST_F(McbFirmware, ParkedWheelControllerBrakesMotion) {
+TEST_F(McbFirmware, ParkedWheelControllerBrakesMotionAndHonorsRefereePower) {
   sim::mcb_motor::Plant plant;
   const auto feedback = plant.feedback({}, 0, .3, 0, .001);
   hw::Firmware::Output output{};
@@ -391,11 +391,18 @@ TEST_F(McbFirmware, ParkedWheelControllerBrakesMotion) {
   double power = 0;
   for (int i = 0; i < 4; ++i) power += output.motors[6 + i] * plant.speed[6 + i];
   EXPECT_LT(power, 0) << "A parked powered chassis must brake wheel motion";
+  ref.chassis_power = false;
+  for (int i = 0; i < 21; ++i) output = firmware->step(5, {}, ref, feedback);
+  for (int i = 0; i < 4; ++i) EXPECT_EQ(output.motors[6 + i], 0);
+  ref.chassis_power = true;
+  for (int i = 0; i < 21; ++i) output = firmware->step(5, {}, ref, feedback);
+  power = 0;
+  for (int i = 0; i < 4; ++i) power += output.motors[6 + i] * plant.speed[6 + i];
+  EXPECT_LT(power, 0);
 }
 
 // Main's parked hold is a zero wheel-velocity setpoint with no latched pose,
-// so neither a navigation correction nor a displacement commands translation.
-// Spin is not checked: main's keyboard peek release schedules beyblade at boot.
+// so neither a navigation correction nor a displacement commands motion.
 TEST_F(McbFirmware, ParkedHoldHasNoPositionTarget) {
   run(200);
   const auto corrected = run(100, wire::frame(wire::Relocalize{1.25F, -.75F}));
@@ -403,6 +410,7 @@ TEST_F(McbFirmware, ParkedHoldHasNoPositionTarget) {
   for (const auto *result : {&corrected, &displaced}) {
     EXPECT_NEAR(result->outputs.back().right, 0, 1e-6);
     EXPECT_NEAR(result->outputs.back().forward, 0, 1e-6);
+    EXPECT_NEAR(result->outputs.back().spin, 0, 1e-6);
   }
 }
 
