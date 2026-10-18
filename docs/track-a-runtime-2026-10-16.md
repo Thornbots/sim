@@ -276,3 +276,78 @@ budgets, firing rules or acceptance floors. It is a separate driving-startup
 fix from the parked path-timing fix. Parked evidence uses sim `4ef58655`;
 subsequent drive/match runs retain their new source manifest. The earlier
 intermittent 11 ms POSE/TF startup rejection remains unresolved.
+
+### Final hosted pools — 2026-10-17
+
+Each row pools three native-accepted full stages. The parent independently
+verified source-manifest hashes, runner/checker exits and raw MCB shot counts.
+Drive/match use workspace `23a9bf919fb5ecc45777366a122496ec76b23cf7`,
+sim `cab6e94161714a94aa15856e3ff6ce7b72f4d965`; the other package/firmware
+pins above are unchanged. Parked retains its original `ee94fb9b` / `4ef58655`
+manifest. Runtime hashes differ only in the driving-startup harness change.
+The later documentation-only commits do not change measured runtime sources.
+
+| Backend / stage | Nightly hits/shots | Branch hits/shots | Change (pp) |
+| --- | ---: | ---: | ---: |
+| Hosted mcb_parked | 1090/1286 (84.76%) | 1107/1239 (89.35%) | +4.59 |
+| Hosted mcb_drive | 88/96 (91.67%) | 93/96 (96.88%) | +5.21 |
+| Hosted mcb_match | 60/109 (55.05%) | 60/114 (52.63%) | -2.41 |
+| Board parked/drive/match | unrun | unrun | — |
+
+**The per-stage no-regression gate fails for match.** Accepted match runs
+have 20 hits each on both profiles, but branch fires 38 shots per run versus
+nightly 37/36/36. This is a measured rate regression, not a claim about its
+cause. Different package and firmware pins prevent attributing it solely to
+the path or startup fix. No tracker settings changed.
+
+| Stage / profile | Accepted per-run hits/shots |
+| --- | --- |
+| mcb_parked / nightly | nightly-parked-r1: 370/430, nightly-parked-r2: 359/428, nightly-parked-r3: 361/428 |
+| mcb_parked / branch | branch-parked-proof-r1: 369/413, branch-parked-proof-r3: 369/413, branch-parked-proof-r4: 369/413 |
+| mcb_drive / nightly | nightly-drive-r1: 29/34, nightly-drive-r2: 30/31, nightly-drive-r3: 29/31 |
+| mcb_drive / branch | branch-drive-fixed-r1-retry1: 31/32, branch-drive-fixed-r2: 31/32, branch-drive-fixed-r3: 31/32 |
+| mcb_match / nightly | nightly-match-r1: 20/37, nightly-match-r2: 20/36, nightly-match-r3: 20/36 |
+| mcb_match / branch | branch-match-fixed-r1: 20/38, branch-match-fixed-r2: 20/38, branch-match-fixed-r3: 20/38 |
+
+All 18 accepted stages have native runner/checker 0/0 and zero coordinator
+timeouts. Branch accepted stages also report zero latest-TF fallbacks.
+The separate timing audit records suite RTF, final coordinator totals, longest
+held chain and shutdown errors for every accepted and rejected attempt.
+Gazebo is the longest held component in every accepted run.
+
+| Run | Suite wall s / RTF | Longest held chain |
+| --- | ---: | --- |
+| branch-drive-fixed-r1-retry1 | 35.2 / 0.90 | gz 28.45 s |
+| branch-drive-fixed-r2 | 34.1 / 0.93 | gz 27.48 s |
+| branch-drive-fixed-r3 | 36.0 / 0.89 | gz 28.14 s |
+| branch-match-fixed-r1 | 48.3 / 0.84 | gz 39.34 s |
+| branch-match-fixed-r2 | 52.3 / 0.81 | gz 40.12 s |
+| branch-match-fixed-r3 | 49.5 / 0.82 | gz 39.69 s |
+| branch-parked-proof-r1 | 430.1 / 0.68 | gz 388.51 s |
+| branch-parked-proof-r3 | 333.4 / 0.88 | gz 297.33 s |
+| branch-parked-proof-r4 | 479.4 / 0.61 | gz 433.02 s |
+| nightly-drive-r1 | 41.1 / 0.89 | gz 36.07 s |
+| nightly-drive-r2 | 43.3 / 0.85 | gz 38.64 s |
+| nightly-drive-r3 | 44.3 / 0.85 | gz 39.14 s |
+| nightly-match-r1 | 55.5 / 0.80 | gz 51.62 s |
+| nightly-match-r2 | 47.4 / 1.00 | gz 44.10 s |
+| nightly-match-r3 | 46.4 / 1.05 | gz 40.69 s |
+| nightly-parked-r1 | 328.5 / 0.92 | gz 322.85 s |
+| nightly-parked-r2 | 317.5 / 0.96 | gz 313.01 s |
+| nightly-parked-r3 | 305.6 / 1.00 | gz 300.68 s |
+
+Rejected startup evidence remains: parked proof r2 (missing first raw TF /
+EKF-input receipt); three initial drive attempts, three initial match attempts
+and the separately instrumented TF diagnostic (the 1 s boundary defect);
+fixed-drive r1 (map_server/AMCL lifecycle activation timed out at sim zero).
+None contributes to pooled accuracy. Child shutdown signal notes, including
+the parked bridge exit -11, remain in `newartifacts/timing-audit.{md,json}`.
+
+- Closed: deterministic path eligibility, three identical full unthrottled
+  hosted parked sweeps, and three accepted nightly/branch hosted samples per stage.
+- Open: full-stage RTF=1/CPU2 controls, board sweeps/controls, original EKF/raw-join
+  failure prerequisites, intermittent startup failures and the match rate regression.
+- Board repeats and combat-floor calibration were deferred to prioritize the
+  required hosted comparison. Full T17 is unmet, so no numeric floor or margin
+  is selected; existing floors are unchanged. Physical robot and Archlinux
+  runs remain excluded. Nothing was merged.
