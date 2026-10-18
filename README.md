@@ -346,6 +346,8 @@ Discovery peers, clock QoS and Gazebo timestamps are retained. The registered
 `test_clock_bridge` exercises real clock delivery to five fresh ROS contexts,
 checks continued advancement and teardown, and verifies the bridge maps no
 Fast DDS SHM ports. It needs no Gazebo world.
+The test explicitly uses normal bridge discovery: Jazzy's localhost-only RMW
+mode adds SHM transport after loading XML, even for a UDP-only profile.
 
 Rerun the drift suite whenever you tune `slam.yaml`, `amcl.yaml`, `ekf.yaml` or
 the noise model. `gtest_args:=` forwards native GTest options on the

@@ -57,7 +57,9 @@ TEST(ClockBridge, ServesLateJoiningClocksWithoutSharedMemoryPorts) {
   const std::string partition = "clock_bridge_test_" + std::to_string(getpid());
   ASSERT_EQ(setenv("GZ_PARTITION", partition.c_str(), 1), 0);
   const std::string logfile = "/tmp/" + partition + ".log";
+  // Jazzy localhost discovery adds SHM after XML; exercise the production profile.
   sim::LaunchTree bridge("clock", {"env", "ROS_DOMAIN_ID=89",
+      "ROS_LOCALHOST_ONLY=0", "ROS_AUTOMATIC_DISCOVERY_RANGE=SYSTEM_DEFAULT",
       "RMW_IMPLEMENTATION=rmw_fastrtps_cpp", "ros2", "launch", "sim",
       "clock_bridge.launch.py"}, logfile);
   ClockPublisher source;
