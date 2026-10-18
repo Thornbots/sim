@@ -49,6 +49,7 @@ from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 from sim.auto_explore import SPAWN_YAW
+from sim.clock_bridge import clock_bridge_node
 from sim.display import display_error
 
 
@@ -302,14 +303,7 @@ def generate_launch_description():
     )
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
-    clock_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name='clock_bridge',
-        output='screen',
-        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
-        parameters=[{'use_sim_time': True}],
-    )
+    clock_bridge = clock_bridge_node()
 
     # --- Spawn the robot into the running world.
     # NOTE: deliberately -string (raw URDF text), NOT -topic

@@ -339,6 +339,14 @@ run_tests:=false` when GTest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
 the measurements.
 
+`clock_bridge.launch.py` owns Gazebo-to-ROS time publication and is included by
+`sim.launch.py`. It uses the existing robot UDP-only DDS profile: a departed
+reader's Fast DDS shared-memory port must not block the global clock callback.
+Discovery peers, clock QoS and Gazebo timestamps are retained. The registered
+`test_clock_bridge` exercises real clock delivery to five fresh ROS contexts,
+checks continued advancement and teardown, and verifies the bridge maps no
+Fast DDS SHM ports. It needs no Gazebo world.
+
 Rerun the drift suite whenever you tune `slam.yaml`, `amcl.yaml`, `ekf.yaml` or
 the noise model. `gtest_args:=` forwards native GTest options on the
 localization launch. All suite launches retain `pytest_args:=` as a
