@@ -11,14 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <thread>
+#include <vector>
 #include <fcntl.h>
 #include <gtest/gtest.h>
+#include <rclcpp/parameter_client.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "sim/mcb_firmware.hpp"
@@ -95,14 +99,7 @@ protected:
         EXPECT_EQ(sent, static_cast<ssize_t>(packet.size()));
         last_sent = stamp;
       }
-      std::array<uint8_t, 4096> bytes{};
-      const auto received = read(fd_, bytes.data(), bytes.size());
-      if (received > 0) {
-        for (const auto &frame : parser_.feed(bytes.data(), received)) {
-          if (frame.msg_type == sim::mcb_protocol::kPose) ++poses_;
-          if (frame.msg_type == sim::mcb_protocol::kRefSys) ++refs_;
-        }
-      }
+      read_wire();
       max_speed = std::max(max_speed, std::abs(motors_.velocity[0]));
       // Recover the GM6020 pitch command (V) from the plant's current and back-EMF.
       max_pitch_volts_ = std::max(max_pitch_volts_, std::abs(
@@ -119,11 +116,30 @@ protected:
       motors_.position[0] / sim::mcb_motor::kYawRatio << " peak shaft rad/s=" << max_speed
       << " peak pitch V=" << max_pitch_volts_ << std::endl;
   }
+  void read_wire() {
+    std::array<uint8_t, 4096> bytes{};
+    const auto received = read(fd_, bytes.data(), bytes.size());
+    if (received <= 0) return;
+    for (const auto &frame : parser_.feed(bytes.data(), received)) {
+      if (frame.msg_type == sim::mcb_protocol::kPose) {
+        ++poses_;
+        pose_samples_.push_back(
+          sim::mcb_protocol::unpack<sim::mcb_protocol::Pose>(frame.payload));
+      }
+      if (frame.msg_type == sim::mcb_protocol::kRefSys) {
+        ++refs_;
+        ref_samples_.push_back(
+          sim::mcb_protocol::unpack<sim::mcb_protocol::RefSys>(frame.payload));
+      }
+    }
+  }
   std::string path_;
   int fd_ = -1;
   bool renode_ = false;
   sim::mcb_protocol::DJISerial parser_;
   unsigned poses_ = 0, refs_ = 0;
+  std::vector<sim::mcb_protocol::Pose> pose_samples_;
+  std::vector<sim::mcb_protocol::RefSys> ref_samples_;
   double max_pitch_volts_ = 0;
   rclcpp::Node::SharedPtr node_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr feedback_;
@@ -133,6 +149,73 @@ protected:
 TEST_F(McbPhysics, NativeCanControllerMovesInBothDirectionsAndStopsCleanly) {
   aim(0.6);
   aim(-0.5);
+  const double pi = std::acos(-1.0);
+
+  auto referee = std::make_shared<rclcpp::SyncParametersClient>(
+    node_, "/mcb_emulator");
+  ASSERT_TRUE(wait([&] { return referee->service_is_ready(); }));
+  const auto set_hit = [&](int hp, int armor) -> bool {
+    const auto results = referee->set_parameters({
+      rclcpp::Parameter("current_hp", static_cast<int64_t>(hp)),
+      rclcpp::Parameter("hurt_armor_id", static_cast<int64_t>(armor))});
+    if (results.size() != 2u) {
+      ADD_FAILURE() << "expected two parameter results, got " << results.size();
+      return false;
+    }
+    for (const auto &result : results) {
+      if (!result.successful) {
+        ADD_FAILURE() << result.reason;
+        return false;
+      }
+    }
+    return true;
+  };
+  const auto next_report = [&](size_t start, int hp) {
+    return wait([&] {
+      read_wire();
+      return std::any_of(ref_samples_.begin() + std::min(start, ref_samples_.size()),
+                         ref_samples_.end(), [hp](const auto &report) {
+        return report.robot_hp == hp;
+      });
+    });
+  };
+  const auto reported_hit = [&](size_t start, size_t pose_start, int hp, double angle) -> bool {
+    auto report = std::find_if(ref_samples_.begin() + std::min(start, ref_samples_.size()),
+                               ref_samples_.end(), [hp](const auto &sample) {
+      return sample.robot_hp == hp;
+    });
+    if (report == ref_samples_.end()) return false;
+    EXPECT_NEAR(report->delta_angle_got_hit_in, angle, 0.05);
+    if (pose_samples_.size() <= pose_start) return false;
+    EXPECT_NEAR(pose_samples_.back().head_yaw, pi - 0.5, 0.05);
+    return true;
+  };
+  const auto reported_clear = [&](size_t start, int hp) -> bool {
+    if (!next_report(start, hp)) return false;
+    const auto report = std::find_if(ref_samples_.begin() + std::min(start, ref_samples_.size()),
+                                     ref_samples_.end(), [hp](const auto &sample) {
+      return sample.robot_hp == hp;
+    });
+    if (report == ref_samples_.end()) return false;
+    EXPECT_EQ(report->delta_angle_got_hit_in, 123.0F);
+    return true;
+  };
+
+  size_t start = ref_samples_.size();
+  size_t pose_start = pose_samples_.size();
+  ASSERT_TRUE(set_hit(380, 1));
+  ASSERT_TRUE(next_report(start, 380));
+  ASSERT_TRUE(reported_hit(start, pose_start, 380, pi / 2));
+  start = ref_samples_.size();
+  ASSERT_TRUE(reported_clear(start, 380));
+
+  start = ref_samples_.size();
+  pose_start = pose_samples_.size();
+  ASSERT_TRUE(set_hit(360, 3));
+  ASSERT_TRUE(next_report(start, 360));
+  ASSERT_TRUE(reported_hit(start, pose_start, 360, -pi / 2));
+  start = ref_samples_.size();
+  ASSERT_TRUE(reported_clear(start, 360));
 }
 int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);

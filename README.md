@@ -177,6 +177,13 @@ quarter turn), spin rate, radius and height per pair. `blackout:=true` drops eve
 undo it (`tracker_camera_latency_s:=0` to leave it undone).
 `shooter_speed:=1.0`, `target_path:=`, `speeds:=` and `panel_layout:=` work
 as on the aiming bench, and `process_noise_accel:=` sets the tracker's.
+`process_noise_radius:=`, `panel_radius_m:=` and `radius_prior_std:=` override
+the tracker's radius noise, initial radius and radius prior standard deviation;
+empty values use the node defaults declared in `target_tracker.cpp`.
+`log_innovations:=true` opts into the tracker's innovation diagnostics.
+The [G.1 investigation](docs/cv-estimation-g1-2026-10-15.md#matched-radius-and-prior-trials)
+records the radius/prior screens and their full-matrix failures; no tuning
+default or estimation limit is changed by that checkpoint.
 `chassis_spin:=9` spins our chassis (rad/s, CCW, the firmware's rate) under
 the head, which holds world yaw as the MCB's IMU loop does;
 `yaw_bearing_damping:=` (N m s/rad, default 0, unmeasured) lets the spin drag
@@ -320,7 +327,7 @@ include `pins` to distinguish source/control manifests. Keep `launch.log` and
 `shots.jsonl` and `scores.jsonl`. Failed starts and lockstep timeouts remain
 visible outside accepted pools; different pins and duplicate paths cannot
 be pooled. Printed worst-run-minus-ten-point floors are proposals, pending
-the [lockstep acceptance gates](../E2E_LOCKSTEP_PLAN.md#order-and-done-when).
+the [lockstep acceptance gates](../docs/E2E_LOCKSTEP_PLAN.md#order-and-done-when).
 
 rf2o's match grades (`/scan_odom/quality`), for setting
 `sentry_localization/config/rf2o.yaml`: record beside a suite, then
@@ -422,7 +429,7 @@ cv_dropout_probability:=0.03  # per-sample detection drop, placeholder
 cv_publish_latency_s:=0.06    # placeholder, not measured
 ```
 
-`e2e.launch.py` is the match test (`../E2E_PLAN.md`). Every stage runs the
+`e2e.launch.py` is the match test (`../docs/E2E_PLAN.md`). Every stage runs the
 MCB emulator: the compiled sentry firmware (see Notes "MCB emulator") on a
 pty, with `dji_serial_bridge` and `mcb_relay` on the other end, the real CV
 chain from `target_selector` to `point_to_cv_target`, and no camera:
@@ -843,7 +850,7 @@ The suite runs them in this order.
    unmapped boxes across its -x, +y and +x edges at 1.0, 2.0 and 0.5
    m/s. It scores like `drift_correction`, on `kMaxDelta`, and logs
    each sample's `map->root` error against `/sim/raw_odom`. It also fails if
-   `actor_driver` dies mid-loop. Under `slam`, ROADMAP.md T3 also wants the
+   `actor_driver` dies mid-loop. Under `slam`, ../docs/ROADMAP.md T3 also wants the
    actors' cells checked in `/map` at the end; that check isn't built yet.
    Under `none` it scores ground-truth error, like `drift_correction`.
 6. `real_accel` drives the `drift_correction` square with every leg ramped
@@ -1249,6 +1256,12 @@ head follows each.
 
 ### MCB emulator
 
+T31 hit-angle and report-latching status, plus a separate parked E2E
+comparison and the hosted/Renode injected-hit physics checks:
+[T31 verification](docs/t31-hit-contract-2026-10-14.md). The #14 angle-common
+drive/match comparison is in the
+[Thornbots hit-permission report](../thornbots_pkg/docs/hit-permission-2026-10-15.md).
+
 Motor-path validation: [2026-10-11 report](docs/mcb-motor-plant-2026-10-11.md).
 Raw aim/localization isolation and combat limits:
 [controlled comparison and three-repeat results](docs/aim-localization-coupling-2026-10-11.md),
@@ -1291,7 +1304,7 @@ other topics carry `std_msgs/Header`. Future stamps cannot acknowledge a
 missing earlier capture. Vision consumption has a fixed 14 ms eligibility
 delay, covering the 10 ms POSE cadence, approximately 3 ms serialization and
 1 ms physics quantization. These partial barriers still require the full
-[repeatability gates](../E2E_LOCKSTEP_PLAN.md#order-and-done-when) before floors.
+[repeatability gates](../docs/E2E_LOCKSTEP_PLAN.md#order-and-done-when) before floors.
 
 The separate `lockstep_localization:=true` experiment requires paused startup
 and lockstep. It selects the owning package's
@@ -1795,4 +1808,5 @@ match pass criterion is unchanged. Accuracy floors, repeated-run
 spread and standalone-versus-sequence equivalence remain uncalibrated.
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn
 are not modeled. Hurt-panel feedback is supplied, but the firmware's
-`delta_angle_got_hit_in` response still needs separate verification.
+`delta_angle_got_hit_in` response has separate
+[hosted/Renode injected-hit verification](docs/t31-hit-contract-2026-10-14.md#targeted-validation).

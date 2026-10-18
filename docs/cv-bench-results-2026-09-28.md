@@ -3,7 +3,7 @@
 Historical results retained from the retired CV split plan. They rank changes,
 not field hit rates. Current commands and bench behavior are in the
 [simulation README](../README.md#run-the-tests); open accuracy work is in
-[ROADMAP track G](../../ROADMAP.md#g-estimation-accuracy).
+[ROADMAP track G](../../docs/ROADMAP.md#g-estimation-accuracy).
 
 - Aiming passed its per-cell floors with chase mode. The perfect-target
   aiming bench has no estimation noise; simulation detection noise was
