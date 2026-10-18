@@ -1,5 +1,9 @@
 # Track A runtime and hosted parked result — 2026-10-16
 
+Current status: [reconciled-stack checks, 2026-10-18](track-a-reconciled-2026-10-18.md).
+Their common-firmware comparison and run-level uncertainty analysis supersede
+the categorical match-regression conclusion in this historical record.
+
 This note records successive isolated profiles. The
 [orchestrator follow-up](#orchestrator-follow-up) supersedes the earlier
 closeout below; historical attempts remain evidence. T17 and combat floors
