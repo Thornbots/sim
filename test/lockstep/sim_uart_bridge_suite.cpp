@@ -142,6 +142,19 @@ TEST(SimUartBridge, PublishesRawPoseWithCaptureStampAndValues) {
     std::this_thread::sleep_for(5ms);
   }
   ASSERT_GT(cv->get_subscription_count(), 0u);
+  // Discovery can precede best-effort endpoint matching in either direction.
+  // Prove outgoing flow with a distinct stamp before the single-frame check.
+  dji_serial_bridge::msg::CVTarget warmup;
+  const int64_t warmup_stamp_ns = capture_ns - 1000000;
+  warmup.header.stamp = rclcpp::Time(warmup_stamp_ns);
+  const auto tx_flow_deadline = std::chrono::steady_clock::now() + 5s;
+  while (!uart.received_cv(warmup_stamp_ns) &&
+    std::chrono::steady_clock::now() < tx_flow_deadline) {
+    cv->publish(warmup);
+    uart.poll_input(warmup_stamp_ns);
+    uart.wait_input();
+  }
+  ASSERT_TRUE(uart.received_cv(warmup_stamp_ns)) << bridge.read_log();
   dji_serial_bridge::msg::CVTarget target;
   target.header.stamp = rclcpp::Time(capture_ns);
   target.x = 3.0F;
