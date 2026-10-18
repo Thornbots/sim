@@ -15,11 +15,13 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cstdint>
 #include <fstream>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <gz/msgs/clock.pb.h>
 #include <gz/transport/Node.hh>
 #include <gtest/gtest.h>
