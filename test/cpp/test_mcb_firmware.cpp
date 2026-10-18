@@ -401,17 +401,17 @@ TEST_F(McbFirmware, ParkedWheelControllerBrakesMotionAndHonorsRefereePower) {
   EXPECT_LT(power, 0);
 }
 
-TEST_F(McbFirmware, RawPositionHoldRejectsMotionButIgnoresNavigationCorrections) {
+// Main's parked hold is a zero wheel-velocity setpoint with no latched pose,
+// so neither a navigation correction nor a displacement commands motion.
+TEST_F(McbFirmware, ParkedHoldHasNoPositionTarget) {
   run(200);
   const auto corrected = run(100, wire::frame(wire::Relocalize{1.25F, -.75F}));
-  EXPECT_NEAR(corrected.outputs.back().right, 0, 1e-6);
-  EXPECT_NEAR(corrected.outputs.back().forward, 0, 1e-6);
-  EXPECT_NEAR(corrected.outputs.back().spin, 0, 1e-6);
   const auto displaced = run(100, {}, {0, .05});
-  EXPECT_LT(displaced.outputs.back().forward, 0);
-  const auto reanchored = run(100, {}, {0, 9.30});
-  EXPECT_NEAR(reanchored.outputs.back().right, 0, 1e-6);
-  EXPECT_NEAR(reanchored.outputs.back().forward, 0, 1e-6);
+  for (const auto *result : {&corrected, &displaced}) {
+    EXPECT_NEAR(result->outputs.back().right, 0, 1e-6);
+    EXPECT_NEAR(result->outputs.back().forward, 0, 1e-6);
+    EXPECT_NEAR(result->outputs.back().spin, 0, 1e-6);
+  }
 }
 
 TEST_F(McbFirmware, ImmediateFireDuringFirstLatencyIntervalDoesNotWrapTimer) {

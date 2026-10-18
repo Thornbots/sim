@@ -1307,7 +1307,8 @@ ros2 launch sim mcb.launch.py backend:=hosted
 
 Use `drive:=simple` for the firmware's waypoint route or, with
 `backend:=hosted`, `drive:=auto` for NAV_GOAL. The default `stop` parks the
-robot; firmware powered zero-velocity holding applies in game. Foxglove serves
+robot under centred manual drive, whose zero wheel-velocity setpoint brakes it
+while referee chassis power is on. Foxglove serves
 on :8765, and
 gz/rviz open where a display is available. This launch uses the actual MCB
 and bridge without an opponent; the `e2e.launch.py` stages score it.
@@ -1462,9 +1463,9 @@ measured tire, ESC, gearbox or launcher behaviour.
 The plant adds passive wheel/roller resistance to the frictionless CAD contacts:
 `rolling_resistance=0.03` times each wheel's nominal normal load, smoothed
 through zero tangential speed. It dissipates motion without clamping chassis
-velocity or pose. The sentry parked and centered manual commands hold a latched raw odometry
-position while chassis power is available in game; outside that state the stop
-command writes zero current. Navigation corrections cannot move the hold point. The passive resistance alone did not hold a rapidly tracking chassis.
+velocity or pose. Firmware parking is main's hold, confirmed on the robot: centred
+manual drive commands zero wheel velocity and the stop command writes zero
+current. Neither latches a position, so navigation corrections cannot move it.
 This coefficient is estimated, not a measured tire parameter. `mcb_parked`
 records maximum truth displacement in `parking.jsonl` and rejects cells
 moving more than 0.03 m. Only the hosted direct-sensor fixture delays gyro
