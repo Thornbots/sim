@@ -209,25 +209,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       teams.push_back(e);
     referee = std::make_unique<combat::Referee>(teams);
     std::string share = ament_index_cpp::get_package_share_directory("sim");
-    tinyxml2::XMLDocument doc;
-    doc.LoadFile((share + "/world/ARCC_Field_2026.sdf").c_str());
-    auto *model =
-        doc.RootElement()->FirstChildElement("world")->FirstChildElement(
-            "model");
-    auto *collision =
-        model->FirstChildElement("link")->FirstChildElement("collision");
-    std::array<double, 6> pose{{0, 0, 0, 0, 0, 0}};
-    std::istringstream input(model->FirstChildElement("pose")->GetText());
-    for (auto &v : pose)
-      input >> v;
-    auto field = combat::load_stl(share + "/world/composite_part_1.stl");
-    Vec offset = xyz(collision->FirstChildElement("pose")->GetText());
-    for (auto &tri : field)
-      for (auto &v : tri)
-        v += offset;
-    Matrix m =
-        combat::armor_offset({pose[0], pose[1], pose[2]}, {0, 0, pose[5]});
-    field = combat::transform_mesh(field, m);
+    auto field = combat::load_field(share);
     resolver_ = std::make_unique<combat::ShotResolver>(
         field,
         combat::load_stl(share + "/urdf/sentry_v2/meshes/collision/root.stl"),

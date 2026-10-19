@@ -603,12 +603,32 @@ comments can stay short. Each heading names a file.
 
 The gz world is the field frame (REP-105, (0, 0) at the field centre, x
 along the 12 m toward blue's base), as are `odom`, `map` and the saved maps.
-The field mesh is turned -90 deg in `ARCC_Field_2026.sdf` to get there
-(2026-10-04); before, the world's x ran across the field. Everything placed
-in world coordinates turned with it, so each suite drives the same physical
-paths: the robot spawns facing -y (`auto_explore.SPAWN_YAW`), the drift
-loop, actors and map-sweep grid are turned, and `target_driver`'s
-`origin_yaw` keeps the target path in front of the robot.
+`ARCC_Field_2026.sdf` uses the coarse Onshape export in
+`world/real_field_assmbly/meshes/`: `Field.stl` (8,530 triangles) and
+`CenterMarker.stl` (12 triangles), each for visual and collision geometry.
+The export is already in metres with its centre at XY zero. Both meshes use
+the URDF's z offset of -0.0133884 m and unit scale; a -90 deg model yaw
+maps mesh +y to world +x, preserving the blue-base direction. The marker top
+and main floor are at z = 0 (within 20 nm of STL float precision).
+The inner walls enclose 12 x 8 m; the outer bounds in world coordinates are
+x = ±6.168884 m, y = ±4.168884 m, z = -0.025..0.498612 m.
+
+The earlier mesh had larger outer bounds (12.61 x 8.73 m), taller geometry
+(1.41883 m before its z offset), and an approximately 8 cm lateral offset.
+These are export differences, not a reason to rescale the new 12 x 8 m
+interior. The coarse export does not establish precise RFID zone boundaries.
+The ROS 1 launch files alongside the export are provenance; gz loads the SDF.
+
+World-coordinate spawns, drift loops, actors and map-sweep grids keep their
+field-frame coordinates. The robot spawns facing -y (`auto_explore.SPAWN_YAW`),
+and `target_driver`'s `origin_yaw` keeps its path in front of the robot.
+Route-clearance tests and match shot occlusion read every field collision
+mesh and transform directly from the SDF through `combat::load_field`.
+The saved occupancy maps in `sentry_localization/map` predate this export;
+regenerate them before using AMCL against this geometry. Use mapping mode
+from a blank map for new-field SLAM validation (no pose graph ships).
+The [2026-10-19 integration measurements](docs/real-field-2026-10-19.md)
+compare the new export with nightly, including the known test failures.
 
 ### SAPIEN: tried, not adopted
 

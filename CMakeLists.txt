@@ -94,10 +94,10 @@ if(SIM_RENODE_ROOT)
   install(TARGETS mcb_renode_connection_suite DESTINATION lib/${PROJECT_NAME})
 endif()
 
-add_library(combat src/combat.cpp)
+add_library(combat src/combat.cpp src/field_geometry.cpp)
 target_compile_features(combat PUBLIC cxx_std_17)
 target_include_directories(combat PUBLIC include)
-target_link_libraries(combat Eigen3::Eigen)
+target_link_libraries(combat Eigen3::Eigen tinyxml2::tinyxml2)
 install(TARGETS combat
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 
