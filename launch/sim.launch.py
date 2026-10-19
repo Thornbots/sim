@@ -366,16 +366,22 @@ def generate_launch_description():
     )
 
     # --- Bridge the gpu_lidar sensor's /scan topic (defined in the model xacro)
-    # into ROS 2, remapped to scan_raw -- thornbots_pkg's lidar_self_filter node
-    # is the only thing that publishes the final /scan (see its docstring),
-    # for both sim and real hardware.
+    # into ROS 2. The sim adapter adds acquisition timing and normalizes
+    # invalid ranges before the shared hardware/sim lidar_self_filter.
     scan_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='scan_bridge',
         output='screen',
         arguments=['/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan'],
-        remappings=[('/scan', '/scan_raw')],
+        remappings=[('/scan', '/sim/scan')],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    lidar_scan = Node(
+        package='sim',
+        executable='lidar_scan',
+        output='screen',
         parameters=[{'use_sim_time': True}],
     )
 
@@ -747,6 +753,7 @@ def generate_launch_description():
         gz_sim,
         clock_bridge,
         scan_bridge,
+        lidar_scan,
         joint_state_bridge,
         odom_bridge,
         head_slider_relay,

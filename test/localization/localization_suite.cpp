@@ -137,7 +137,16 @@ public:
     command = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
     scan_sub = create_subscription<sensor_msgs::msg::LaserScan>(
         "/scan", 10,
-        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr) { ++scan_count; });
+        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr scan) {
+          ++scan_count;
+          check_scan(*scan);
+        });
+    raw_scan_sub = create_subscription<sensor_msgs::msg::LaserScan>(
+        "/scan_raw", 10,
+        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr scan) {
+          ++raw_scan_count;
+          check_scan(*scan);
+        });
     truth_sub = create_subscription<nav_msgs::msg::Odometry>(
         "/sim/raw_odom", 10,
         [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
@@ -166,7 +175,7 @@ public:
   tf2_ros::Buffer buffer;
   tf2_ros::TransformListener listener;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr command;
-  int scan_count = 0;
+  int scan_count = 0, raw_scan_count = 0, invalid_scans = 0;
   std::optional<Point> truth;
   double truth_yaw = 0.0;
   std::optional<double> head_yaw;
@@ -217,11 +226,11 @@ public:
     return false;
   }
   bool scans_flowing(int count = 10, double timeout = 60.0) {
-    scan_count = 0;
+    scan_count = raw_scan_count = invalid_scans = 0;
     const auto end = Clock::now() + std::chrono::duration<double>(timeout);
     while (Clock::now() < end) {
-      if (scan_count >= count) {
-        return true;
+      if (scan_count >= count && raw_scan_count >= count) {
+        return invalid_scans == 0;
       }
       spin_wall(0.1);
     }
@@ -363,7 +372,25 @@ public:
   }
 
 private:
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub;
+  void check_scan(const sensor_msgs::msg::LaserScan &scan) {
+    const bool valid = scan.ranges.size() == 720 &&
+        scan.intensities.size() == scan.ranges.size() &&
+        scan.header.frame_id == "lidar" &&
+        std::abs(scan.angle_min + M_PI) < 1e-6 &&
+        std::abs(scan.angle_max - M_PI) < 1e-6 &&
+        std::abs(scan.angle_increment - 2 * M_PI / 719) < 1e-7 &&
+        std::abs(scan.range_min - 0.05) < 1e-6 &&
+        std::abs(scan.range_max - 12.0) < 1e-6 &&
+        scan.scan_time > 0.08 && scan.scan_time < 0.10 &&
+        std::abs(scan.time_increment * 719 - scan.scan_time) < 1e-6 &&
+        std::all_of(scan.ranges.begin(), scan.ranges.end(), [&scan](float r) {
+          return r == INFINITY ||
+                 (std::isfinite(r) && r >= scan.range_min && r <= scan.range_max);
+        });
+    if (!valid && invalid_scans++ == 0)
+      RCLCPP_ERROR(get_logger(), "sim lidar scan format violates the A2M8 contract");
+  }
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub, raw_scan_sub;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr truth_sub;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub;
 };
@@ -586,10 +613,9 @@ std::unique_ptr<Stack> run_stack(bool noise,
 bool ready(Scenario &sc, Helper &helper) {
   timing::Phase phase("bringup");
   const bool ok = helper.scans_flowing();
-  sc.log(ok ? "stack ready: >= 10 /scan messages received"
-            : "stack NOT ready: fewer than 10 /scan messages received within "
-              "60.0s -- treating as an unhealthy/too-slow run, not a "
-              "correctness result");
+  sc.log(ok ? "stack ready: >= 10 valid A2M8 /scan and /scan_raw messages"
+            : "stack NOT ready: A2M8 format invalid or fewer than 10 scans "
+              "on both topics within 60.0s");
   if (!ok) {
     sc.result(
         false,
