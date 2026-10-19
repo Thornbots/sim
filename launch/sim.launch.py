@@ -51,6 +51,7 @@ from launch_ros.substitutions import FindPackageShare
 from sim.auto_explore import SPAWN_YAW
 from sim.clock_bridge import clock_bridge_node
 from sim.display import display_error
+from sim.mcb_link import default_mcb_link
 
 
 RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
@@ -700,7 +701,7 @@ def generate_launch_description():
         DeclareLaunchArgument('firmware_binary', default_value=''),
         DeclareLaunchArgument('mcb_backend', default_value='hosted', choices=['hosted', 'renode']),
         DeclareLaunchArgument('mcb_game_stage', default_value='4'),
-        DeclareLaunchArgument('mcb_device_link', default_value='/tmp/mcb_emulator_pty'),
+        DeclareLaunchArgument('mcb_device_link', default_value=default_mcb_link()),
         DeclareLaunchArgument('mcb_auto_fire', default_value='true'),
         world_arg,
         lockstep_arg,
