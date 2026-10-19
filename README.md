@@ -214,6 +214,10 @@ sim up fresh for every scenario instead, the old behaviour and the control when
 a verdict looks off. `spawn_yaw_deg:=5` turns the chassis that far off the spawn heading at every
 reset; the real robot drifts 1-5 deg. Both
 shut down when the tests finish, and Ctrl-C stops everything, stacks included.
+Each shared-sim robot startup gets one 30-second wait for its complete TF chain;
+a failure ends that case without restarting the robot. Startup diagnostics name
+the raw `odom->root`, navigation `nav_odom->odom` and backend `map->nav_odom`
+links separately. E2E bring-up failures also report which links are missing.
 
 The localization launch defaults to `real_time_factor:=0`, which lets gz run
 as fast as the machine allows, and so does the aiming bench. Every test times
@@ -334,6 +338,16 @@ its stack once for all its cases, through `shot_hit.launch.py
 run_tests:=false` when GTest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
 the measurements.
+
+`clock_bridge.launch.py` owns Gazebo-to-ROS time publication and is included by
+`sim.launch.py`. It uses the existing robot UDP-only DDS profile: a departed
+reader's Fast DDS shared-memory port must not block the global clock callback.
+Discovery peers, clock QoS and Gazebo timestamps are retained. The registered
+`test_clock_bridge` exercises real clock delivery to five fresh ROS contexts,
+checks continued advancement and teardown, and verifies the bridge maps no
+Fast DDS SHM ports. It needs no Gazebo world.
+The test explicitly uses normal bridge discovery: Jazzy's localhost-only RMW
+mode adds SHM transport after loading XML, even for a UDP-only profile.
 
 Rerun the drift suite whenever you tune `slam.yaml`, `amcl.yaml`, `ekf.yaml` or
 the noise model. `gtest_args:=` forwards native GTest options on the
