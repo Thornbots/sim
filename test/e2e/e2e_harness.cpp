@@ -18,10 +18,14 @@
 #include "sim/process.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstdio>
+#include <cstdlib>
+#include <gz/msgs/odometry.pb.h>
 #include <iomanip>
+#include <mutex>
 #include <tinyxml2.h>
 namespace sim::e2e {
 void Scorer::check_lockstep() {
+  input_log_.flush();
   if (!cv_bench::options.lockstep)
     return;
   const double end = now_s();
@@ -39,8 +43,19 @@ void Scorer::check_lockstep() {
             << s.at("chain.mcb_batch.wait_s") << " s" << std::endl;
   if (std::stoll(s.at("timeouts")))
     throw std::runtime_error(s.at("timeouts") + " lockstep timeouts: invalid run");
+  if (!latest_tf_fallbacks_ || *latest_tf_fallbacks_ != 0)
+    throw std::runtime_error("lockstep: missing or nonzero aimer latest-TF fallback counter");
+  std::cout << "lockstep: 0 latest-TF fallbacks" << std::endl;
 }
 namespace cb = cv_bench;
+void Scorer::record_input(const std::string & source, const std_msgs::msg::Header & header,
+                          Json fields) {
+  fields.update({{"source", source}, {"cell", cell}, {"stamp_s", stamp_s(header.stamp)},
+                 {"arrival_sim_s", now_s()}, {"frame_id", header.frame_id},
+                 {"scoring", scoring}});
+  if (!(input_log_ << fields.dump() << '\n'))
+    throw std::runtime_error("cannot write E2E input ledger");
+}
 template <class Q, class P> Matrix iso(const Q &q, const P &p) {
   return combat::pose_matrix({p.x, p.y, p.z},
                              Eigen::Quaterniond(q.w, q.x, q.y, q.z));
@@ -88,7 +103,33 @@ Offsets urdf_offsets() {
 Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     : SimTimeNode("e2e_scorer"), stage(stage_), log_path(logpath),
       tf(get_clock()), offsets_(urdf_offsets()), listener_(tf, this, false) {
+  input_log_.open(std::filesystem::path(log_path).parent_path() / "inputs.jsonl", std::ios::app);
+  const char * fixed = std::getenv("MCB_LOCKSTEP_LOCALIZATION");
+  fixed_schedule_ = fixed && std::string(fixed) == "true";
+  // AMCL future-dates its first map TF by 1 s; driving needs raw TF overlap.
+  if (driving()) boundary_ns_ = 2000000000;
+  if (!input_log_) throw std::runtime_error("cannot open E2E input ledger");
+  if (!driving()) {
+    auto trace = std::make_shared<std::ofstream>(
+      std::filesystem::path(log_path).parent_path() / "path-applied.jsonl");
+    auto mutex = std::make_shared<std::mutex>();
+    if (!*trace) throw std::runtime_error("cannot open path application ledger");
+    gz_.Subscribe<gz::msgs::Odometry>("/model/opponent_0/path_received/applied",
+      [trace, mutex](const auto &m) {
+        Json out = {{"capture_ns", m.header().stamp().sec() * 1000000000LL +
+                      m.header().stamp().nsec()}};
+        for (const auto &data : m.header().data())
+          if (data.key() == "physics_stamp_ns" && data.value_size() == 1)
+            out["physics_ns"] = std::stoll(data.value(0));
+        std::lock_guard<std::mutex> lock(*mutex);
+        if (!(*trace << out.dump() << '\n'))
+          throw std::runtime_error("cannot write path application ledger");
+      });
+  }
   visual_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/markers", 10);
+  subscribe<std_msgs::msg::UInt64>(
+      "/point_to_cv_target/latest_tf_fallbacks", rclcpp::QoS(1).reliable().transient_local(),
+      [this](const auto &m) { latest_tf_fallbacks_ = m.data; });
   subscribe<diagnostic_msgs::msg::DiagnosticStatus>(
       "/sim/lockstep/status", rclcpp::QoS(1).reliable().transient_local(),
       [this](const auto &m) {
@@ -108,6 +149,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   }
   shots["flag"] = {};
   shots["mcb"] = {};
+  raw_pose_ack_pub_ = create_publisher<std_msgs::msg::Header>("/sim/lockstep/scorer_pose", 100);
   subscribe<sensor_msgs::msg::JointState>(
       "/mcb_emulator/gimbal_setpoint", rclcpp::QoS(100), [this](const auto &m) {
         if (m.position.size() != 2) return;
@@ -116,9 +158,35 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", rclcpp::QoS(10), [this](const auto &m) {
+        Json panels = Json::array();
+        for (const auto &d : m.detections) {
+          Json corners = Json::array();
+          for (const auto &p : d.corners) corners.push_back({p.x, p.y, p.z});
+          panels.push_back({{"center", {d.center.x, d.center.y, d.center.z}},
+                            {"corners", corners}, {"class_id", d.class_id},
+                            {"confidence", d.confidence}, {"depth_m", d.depth_m}});
+        }
+        record_input("detections", m.header,
+                     {{"count", m.detections.size()}, {"panels", panels}});
         if (!m.detections.empty()) detections_.push_back({stamp_s(m.header.stamp), m.detections.size()});
         while (detections_.size() > 300) detections_.pop_front();
       });
+  if (!driving()) {
+    subscribe<nav_msgs::msg::Odometry>(
+        "/target/ground_truth_odom", rclcpp::QoS(100), [this](const auto &m) {
+          target_path_stamps_.insert(rclcpp::Time(m.header.stamp).nanoseconds());
+          while (target_path_stamps_.size() > 100) target_path_stamps_.erase(target_path_stamps_.begin());
+          const auto &p = m.pose.pose.position;
+          const auto &q = m.pose.pose.orientation;
+          const auto &v = m.twist.twist.linear;
+          const auto &w = m.twist.twist.angular;
+          record_input("target_path", m.header,
+                       {{"position", {p.x, p.y, p.z}},
+                        {"orientation", {q.x, q.y, q.z, q.w}},
+                        {"velocity", {v.x, v.y, v.z}},
+                        {"angular_velocity", {w.x, w.y, w.z}}});
+        });
+  }
   subscribe<dji_serial_bridge::msg::CVTarget>(
       "/cv/target", rclcpp::SensorDataQoS(), [this](const auto &m) {
         double t = stamp_s(m.header.stamp);
@@ -154,7 +222,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         aims_.push_back({t, {m.x, m.y, m.z}});
         while (aims_.front().first < t - 3)
           aims_.pop_front();
-        if (m.fire && scoring && t < score_until) {
+        if (m.fire && scoring && t >= score_from && t < score_until) {
           cb::append_json((std::filesystem::path(log_path).parent_path() /
                            "fire_requests.jsonl").string(),
                           {{"t", t}, {"delay_s", m.delay_ms / 1000.}});
@@ -164,35 +232,76 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   subscribe<dji_serial_bridge::msg::RobotPose>(
       "/dji_serial_bridge/pose", rclcpp::SensorDataQoS(),
       [this](const auto &m) {
+        record_input("mcb_pose", m.header,
+                     {{"xy", {m.x, m.y}}, {"velocity_xy", {m.vel_x, m.vel_y}}});
         double t = stamp_s(m.header.stamp);
         mcb_poses_.push_back({t, {m.x, m.y, 0}});
         while (mcb_poses_.front().first < t - 3)
           mcb_poses_.pop_front();
+        raw_pose_ack_pub_->publish(m.header);
       });
   subscribe<dji_serial_bridge::msg::TargetState>(
       "/cv/target_state", rclcpp::QoS(10), [this](const auto &m) {
+        record_input("target_state", m.header,
+                     {{"valid", m.valid}, {"track_id", m.robot_track_id},
+                      {"center", {m.center.x, m.center.y, m.center.z}}});
         state_validity_.push_back({stamp_s(m.header.stamp), m.valid});
         while (state_validity_.size() > 300) state_validity_.pop_front();
         if (m.valid) {
           state_history_.push_back(m);
           while (state_history_.size() > 300) state_history_.pop_front();
           state_stamp = stamp_s(m.header.stamp);
-          if (scoring)
+          if (scoring && stamp_s(m.header.stamp) >= score_from &&
+            stamp_s(m.header.stamp) < score_until)
             pending_states_.push_back(m);
         }
       });
+  subscribe<std_msgs::msg::Header>(
+      "/cv/tracker/measurement", rclcpp::QoS(100),
+      [this](const auto &m) { record_input("tracker_measurement", m); });
+  for (const auto &topic : {"/odom", "/localization/odom", "/localization/ekf_input", "/scan_odom"}) {
+    subscribe<nav_msgs::msg::Odometry>(topic, rclcpp::SensorDataQoS(),
+        [this, topic](const auto &m) {
+          record_input(topic, m.header,
+                       {{"xy", {m.pose.pose.position.x, m.pose.pose.position.y}},
+                        {"velocity_xy", {m.twist.twist.linear.x, m.twist.twist.linear.y}},
+                        {"position_variance_xy", {m.pose.covariance[0], m.pose.covariance[7]}},
+                        {"child_frame_id", m.child_frame_id}});
+        });
+  }
+  subscribe<diagnostic_msgs::msg::DiagnosticArray>("/sim/lockstep/scan_consumed", 100,
+      [this](const auto & m) {
+        record_input("scan_consumed", m.header,
+                     {{"result", m.status.size() == 1 ? m.status[0].message : "invalid"}});
+      });
+  for (const auto &entry : std::vector<std::pair<std::string, std::string>>{
+           {"ack_raw_pose_tf", "/sim/lockstep/raw_pose_tf"},
+           {"ack_scorer_pose", "/sim/lockstep/scorer_pose"},
+           {"ack_ekf_input", "/sim/lockstep/ekf_input"},
+           {"ack_consumed_tick", "/mcb_emulator/consumed_tick"}}) {
+    subscribe<std_msgs::msg::Header>(entry.second, rclcpp::QoS(100),
+        [this, source = entry.first](const auto &m) {record_input(source, m);});
+  }
   subscribe<std_msgs::msg::Header>("/mcb_emulator/shot", rclcpp::QoS(100),
                                    [this](const auto &m) {
                                      double t = stamp_s(m.stamp);
-                                     if (scoring && t < score_until)
+                                     if (scoring && t >= score_from && t < score_until)
                                        pending_.push_back({"mcb", t});
                                    });
-  pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
-      if (scoring)
-        pending_poses_.push_back(now_s());
-    });
-  fire_timer_ =
-      create_timer(std::chrono::milliseconds(100), [this]() { fire_tick(); });
+  if (fixed_schedule_) {
+    scorer_ack_pub_ = create_publisher<std_msgs::msg::Header>("/sim/lockstep/scorer", 100);
+    subscribe<std_msgs::msg::Header>("/sim/lockstep/ekf", 100, [this](const auto & m) {
+        ekf_ack_stamps_.insert(rclcpp::Time(m.stamp).nanoseconds());
+        if (ekf_ack_stamps_.size() > 1000)
+          throw std::runtime_error("lockstep timeout: scorer EKF acknowledgement overflow");
+      });
+    pose_timer_ = create_wall_timer(std::chrono::milliseconds(1), [this] {fixed_tick();});
+  } else {
+    pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
+        if (scoring) pending_poses_.push_back(now_s());
+      });
+    fire_timer_ = create_timer(std::chrono::milliseconds(100), [this]() { fire_tick(); });
+  }
   if (stage == "mcb_match") {
     for (const auto &name : {"opponent_0", "opponent_1", "ally_0"}) {
       shots[name] = {};
@@ -200,7 +309,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           std::string("/sim/match/") + name + "/shot", rclcpp::QoS(100),
           [this, name](const auto &m) {
             double t = stamp_s(m.stamp);
-            if (scoring && t < score_until)
+            if (scoring && t >= score_from && t < score_until)
               pending_.push_back({name, t + .05});
           });
     }
@@ -267,7 +376,66 @@ void Scorer::reset() {
   route_records.clear();
   pending_poses_.clear();
   score_until = INFINITY;
+  score_from = fixed_schedule_ ? now_s() : -INFINITY;
   flight_steps_.clear();
+}
+void Scorer::await_boundary() {
+  if (!fixed_schedule_) throw std::logic_error("cell boundary requires fixed schedule");
+  const auto remaining = boundary_ns_ - get_clock()->now().nanoseconds();
+  if (remaining < 0) throw std::runtime_error("lockstep timeout: cell boundary already passed");
+  auto previous = get_clock()->now().nanoseconds();
+  auto progressed = std::chrono::steady_clock::now();
+  const double timeout = std::max(30.0, remaining * 1e-9 *
+      (cv_bench::options.backend == "renode" ? 120 : 20));
+  if (!wait_until([&] {
+      const auto current = get_clock()->now().nanoseconds();
+      const auto wall = std::chrono::steady_clock::now();
+      if (current < previous) throw std::runtime_error("E2E clock moved backwards during scoring");
+      if (current > previous) progressed = wall;
+      if (wall - progressed > std::chrono::seconds(5))
+        throw std::runtime_error("E2E clock stalled for five wall seconds");
+      previous = current;
+      return blocked_ns_ == boundary_ns_ &&
+        (driving() || target_path_stamps_.count(boundary_ns_));
+    }, timeout, "exact cell boundary"))
+    throw std::runtime_error("lockstep timeout: missing cell boundary");
+}
+void Scorer::release_boundary(double next_s) {
+  const auto next = static_cast<int64_t>(std::llround(next_s * 1e9));
+  if (blocked_ns_ != boundary_ns_ || next <= boundary_ns_ || next % 50000000 != 0)
+    throw std::invalid_argument("cell boundary must advance on a 50 ms scorer tick");
+  boundary_ns_ = next;
+  blocked_ns_ = -1;
+  fixed_tick();
+}
+void Scorer::fixed_tick() {
+  const int64_t tick = scorer_index_ * 50000000;
+  const auto current = get_clock()->now().nanoseconds();
+  if (current < tick) return;
+  if (current > tick) throw std::runtime_error("lockstep timeout: scorer missed exact tick");
+  if (tick == boundary_ns_) {blocked_ns_ = tick; return;}
+  const auto ekf_logical = tick / 33333333 * 33333333;
+  const auto ekf_due = (ekf_logical + 999999) / 1000000 * 1000000;
+  if (!ekf_ack_stamps_.count(ekf_due)) return;
+  ekf_ack_stamps_.erase(ekf_ack_stamps_.begin(), ekf_ack_stamps_.lower_bound(ekf_due));
+  const double seconds = tick * 1e-9;
+  if (scoring && seconds >= score_from && seconds < score_until)
+    pending_poses_.push_back(seconds);
+  if (tick % 100000000 == 0) fire_tick();
+  std_msgs::msg::Header ack;
+  ack.stamp = rclcpp::Time(tick, RCL_ROS_TIME);
+  scorer_ack_pub_->publish(ack);
+  ++scorer_index_;
+}
+void Scorer::drain_to_boundary() {
+  // Keep the exact event cutoff, then finish the one-second pose-join retry
+  // on a later 100 ms fire tick before holding for finalization.
+  const auto cutoff = static_cast<int64_t>(std::llround(score_until * 1e9));
+  const auto drain = (cutoff + 1100000000 + 99999999) / 100000000 * 100000000;
+  release_boundary(drain * 1e-9);
+  await_boundary();
+  if (!pending_.empty() || !pending_states_.empty() || !pending_poses_.empty())
+    throw std::runtime_error("lockstep timeout: scorer did not drain captured events");
 }
 std::optional<Matrix> Scorer::world_T_odom(double t) {
   auto ours = histories.at("sentry")->at(t);

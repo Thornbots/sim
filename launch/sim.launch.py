@@ -298,7 +298,11 @@ def generate_launch_description():
             PathJoinSubstitution([FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])
         ),
         launch_arguments={
-            'gz_args': [world, ' -r -s'],  # -r: run, not paused; -s: server only
+            'gz_args': [world, PythonExpression([
+                "' -s' if '", LaunchConfiguration('start_paused'),
+                "' == 'true' else ' -r -s'"]), PythonExpression([
+                    "' --seed ' + '", LaunchConfiguration('random_seed'),
+                    "' if '", LaunchConfiguration('random_seed'), "' else ''"])],
         }.items(),
     )
 
@@ -324,6 +328,17 @@ def generate_launch_description():
                                   ' mcb_backend:=', LaunchConfiguration('mcb_backend'),
                                   ' mcb_game_stage:=', LaunchConfiguration('mcb_game_stage'),
                                   ' mcb_device_link:=', LaunchConfiguration('mcb_device_link'),
+                                  ' mcb_uart_socket:=', LaunchConfiguration('mcb_uart_socket'),
+                                  ' mcb_baudrate:=', LaunchConfiguration('mcb_baudrate'),
+                                  ' mcb_aim_tick_topic:=',
+                                  LaunchConfiguration('mcb_aim_tick_topic'),
+                                  ' mcb_aim_period_s:=', LaunchConfiguration('mcb_aim_period_s'),
+                                  ' mcb_raw_pose_ack_topic:=',
+                                  LaunchConfiguration('mcb_raw_pose_ack_topic'),
+                                  ' mcb_scorer_pose_ack_topic:=',
+                                  LaunchConfiguration('mcb_scorer_pose_ack_topic'),
+                                  ' mcb_ekf_input_ack_topic:=',
+                                  LaunchConfiguration('mcb_ekf_input_ack_topic'),
                                   ' mcb_auto_fire:=', LaunchConfiguration('mcb_auto_fire'),
                                   ' name:=', robot_name]),
             '-name', robot_name,
@@ -342,7 +357,9 @@ def generate_launch_description():
     delayed_spawn_robot = RegisterEventHandler(
         OnProcessStart(
             target_action=clock_bridge,
-            on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
+            on_start=[OpaqueFunction(function=lambda context: [spawn_robot]
+                      if context.launch_configurations['start_paused'] == 'true'
+                      else [TimerAction(period=2.0, actions=[spawn_robot])])],
         )
     )
     gz_gui = RegisterEventHandler(
@@ -696,11 +713,21 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('mcb_physics', default_value='false'),
+        DeclareLaunchArgument('start_paused', default_value='false', choices=['true', 'false']),
+        DeclareLaunchArgument('random_seed', default_value='',
+                              description='Gazebo RNG seed; empty retains Gazebo default'),
         DeclareLaunchArgument('mcb_drive', default_value='stop'),
         DeclareLaunchArgument('firmware_binary', default_value=''),
         DeclareLaunchArgument('mcb_backend', default_value='hosted', choices=['hosted', 'renode']),
         DeclareLaunchArgument('mcb_game_stage', default_value='4'),
         DeclareLaunchArgument('mcb_device_link', default_value='/tmp/mcb_emulator_pty'),
+        DeclareLaunchArgument('mcb_uart_socket', default_value=''),
+        DeclareLaunchArgument('mcb_baudrate', default_value='115200'),
+        DeclareLaunchArgument('mcb_aim_tick_topic', default_value=''),
+        DeclareLaunchArgument('mcb_aim_period_s', default_value='0.025'),
+        DeclareLaunchArgument('mcb_raw_pose_ack_topic', default_value=''),
+        DeclareLaunchArgument('mcb_scorer_pose_ack_topic', default_value=''),
+        DeclareLaunchArgument('mcb_ekf_input_ack_topic', default_value=''),
         DeclareLaunchArgument('mcb_auto_fire', default_value='true'),
         world_arg,
         lockstep_arg,

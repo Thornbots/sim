@@ -21,6 +21,9 @@
 // robot spawned (2026-09-29). see README.md for design rationale
 
 #include <gz/msgs/odometry.pb.h>
+#include <gz/msgs/time.pb.h>
+
+#include "sim/step_inputs.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -52,8 +55,14 @@ public:
     model_ = gz::sim::Model(entity);
     const std::string topic = sdf->Get<std::string>(
       "topic", "/model/" + model_.Name(ecm) + "/path").first;
+    const std::string path_ack_topic = sdf->Get<std::string>("path_ack_topic", "").first;
     z_ = sdf->Get<double>("z", 0.0).first;
     stale_s_ = sdf->Get<double>("stale_s", 0.1).first;
+    if (!path_ack_topic.empty()) {
+      path_ack_pub_ = node_.Advertise<gz::msgs::Time>(path_ack_topic);
+      path_trace_pub_ = node_.Advertise<gz::msgs::Odometry>(path_ack_topic + "/applied");
+      path_ack_enabled_ = true;
+    }
     node_.Subscribe(topic, &OpponentMover::OnPath, this);
   }
 
@@ -62,10 +71,16 @@ public:
     if (info.paused) {
       return;
     }
+    const int64_t physics = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      info.simTime).count();
     std::optional<gz::msgs::Odometry> path;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      path = path_;
+      if (path_ack_enabled_) {
+        path = path_inputs_.before(physics);
+      } else {
+        path = path_;
+      }
     }
     if (!path) {
       return;
@@ -74,6 +89,17 @@ public:
     const double dt = t - (path->header().stamp().sec() + path->header().stamp().nsec() * 1e-9);
     if (dt < -stale_s_ || dt > stale_s_) {
       return;
+    }
+    const int64_t capture = path->header().stamp().sec() * 1000000000LL +
+      path->header().stamp().nsec();
+    if (path_ack_enabled_ && last_traced_path_ != capture) {
+      auto trace = *path;
+      auto *step = trace.mutable_header()->add_data();
+      step->set_key("physics_stamp_ns");
+      step->add_value(std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        info.simTime).count()));
+      path_trace_pub_.Publish(trace);
+      last_traced_path_ = capture;
     }
     const auto & p = path->pose();
     const auto & v = path->twist();
@@ -93,15 +119,29 @@ public:
 private:
   void OnPath(const gz::msgs::Odometry & msg)
   {
-    std::lock_guard<std::mutex> lock(mutex_);
-    path_ = msg;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (path_ack_enabled_) {
+        const int64_t capture = msg.header().stamp().sec() * 1000000000LL +
+          msg.header().stamp().nsec();
+        path_inputs_.push(capture, msg);
+      } else {
+        path_ = msg;
+      }
+    }
+    if (path_ack_enabled_) {path_ack_pub_.Publish(msg.header().stamp());}
   }
 
   gz::sim::Model model_{gz::sim::kNullEntity};
   double z_ = 0.0, stale_s_ = 0.1;
-  gz::transport::Node node_;
+  bool path_ack_enabled_ = false;
+  gz::transport::Node::Publisher path_ack_pub_;
+  gz::transport::Node::Publisher path_trace_pub_;
+  std::optional<int64_t> last_traced_path_;
   std::mutex mutex_;  // gz-transport calls OnPath on its own thread
   std::optional<gz::msgs::Odometry> path_;
+  sim::StepInputs<gz::msgs::Odometry> path_inputs_;
+  gz::transport::Node node_;
 };
 
 }  // namespace sim
