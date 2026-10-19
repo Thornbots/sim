@@ -613,6 +613,8 @@ mesh and transform directly from the SDF through `combat::load_field`.
 The saved occupancy maps in `sentry_localization/map` predate this export;
 regenerate them before using AMCL against this geometry. Use mapping mode
 from a blank map for new-field SLAM validation (no pose graph ships).
+The [2026-10-19 integration measurements](docs/real-field-2026-10-19.md)
+compare the new export with nightly, including the known test failures.
 
 ### SAPIEN: tried, not adopted
 
