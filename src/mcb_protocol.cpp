@@ -159,6 +159,18 @@ std::vector<uint8_t> pack(const Ping & msg)
   return {msg.number};
 }
 
+std::vector<uint8_t> pack(const McbData & msg)
+{
+  if (msg.data.size() > kMcbDataMaxSize) {
+    throw std::length_error("MCB_DATA payload exceeds 48 data bytes");
+  }
+  std::vector<uint8_t> out;
+  out.reserve(msg.data.size() + 1);
+  out.push_back(msg.channel);
+  out.insert(out.end(), msg.data.begin(), msg.data.end());
+  return out;
+}
+
 template<> NavGoal unpack<NavGoal>(const std::vector<uint8_t> & data)
 {
   require_size(data, NavGoal::kSize);
@@ -197,6 +209,14 @@ template<> Ping unpack<Ping>(const std::vector<uint8_t> & data)
 {
   require_size(data, Ping::kSize);
   return {data[0]};
+}
+
+template<> McbData unpack<McbData>(const std::vector<uint8_t> & data)
+{
+  if (data.empty() || data.size() > kMcbDataMaxSize + 1) {
+    throw std::invalid_argument("MCB_DATA payload must contain a channel and at most 48 data bytes");
+  }
+  return {data[0], std::vector<uint8_t>(data.begin() + 1, data.end())};
 }
 
 std::vector<uint8_t> encode_frame(

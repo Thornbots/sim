@@ -58,6 +58,42 @@ TEST(McbProtocol, StructSizesAreTheFirmwares)
   EXPECT_EQ(wire::pack(wire::NavGoal{}).size(), wire::NavGoal::kSize);
   EXPECT_EQ(wire::pack(wire::Pose{}).size(), wire::Pose::kSize);
   EXPECT_EQ(wire::pack(wire::RefSys{}).size(), wire::RefSys::kSize);
+  EXPECT_EQ(wire::kMcbData, 6);
+}
+
+TEST(McbProtocol, McbDataAllowsEmptyAndMaximumOpaqueBytes)
+{
+  for (const auto & value : std::vector<wire::McbData>{
+      {0, {}}, {42, {0x00, 0xA5, 0xFF, 0x2A}},
+      {255, std::vector<uint8_t>(wire::kMcbDataMaxSize, 0xD3)}})
+  {
+    const auto payload = wire::pack(value);
+    ASSERT_EQ(payload.size(), value.data.size() + 1);
+    EXPECT_EQ(payload.front(), value.channel);
+    const auto decoded = wire::unpack<wire::McbData>(payload);
+    EXPECT_EQ(decoded.channel, value.channel);
+    EXPECT_EQ(decoded.data, value.data);
+    const auto frame = wire::frame(value);
+    wire::DJISerial parser;
+    const auto frames = parser.feed(frame);
+    ASSERT_EQ(frames.size(), 1U);
+    EXPECT_EQ(frames.front().msg_type, wire::kMcbData);
+    EXPECT_EQ(wire::unpack<wire::McbData>(frames.front().payload).data, value.data);
+    auto corrupt = frame;
+    corrupt.back() ^= 0x01;
+    wire::DJISerial crc_parser;
+    EXPECT_TRUE(crc_parser.feed(corrupt).empty());
+    EXPECT_EQ(crc_parser.errors().crc16, 1U);
+  }
+}
+
+TEST(McbProtocol, McbDataRejectsOversizeAndMalformedPayloads)
+{
+  EXPECT_THROW(wire::pack({1, std::vector<uint8_t>(wire::kMcbDataMaxSize + 1)}),
+    std::length_error);
+  EXPECT_THROW(wire::unpack<wire::McbData>({}), std::invalid_argument);
+  EXPECT_THROW(wire::unpack<wire::McbData>(
+      std::vector<uint8_t>(wire::kMcbDataMaxSize + 2)), std::invalid_argument);
 }
 
 TEST(McbProtocol, CrcTablesMatchTaproot)
