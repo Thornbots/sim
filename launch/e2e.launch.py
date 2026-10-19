@@ -167,7 +167,9 @@ def generate_launch_description():
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
-        parameters=[{'use_sim_time': True, 'device': LaunchConfiguration('mcb_device_link'), 'debug_log': False}])
+        parameters=[{'use_sim_time': True,
+                     'device': LaunchConfiguration('mcb_device_link'),
+                     'debug_log': False}])
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
         parameters=[{'use_sim_time': True}])

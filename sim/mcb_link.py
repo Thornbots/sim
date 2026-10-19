@@ -18,7 +18,8 @@ import re
 
 
 def default_mcb_link():
-    """Return /tmp/mcb_emulator_pty-<GZ_PARTITION>-<ROS_DOMAIN_ID>.
+    """
+    Return /tmp/mcb_emulator_pty-<GZ_PARTITION>-<ROS_DOMAIN_ID>.
 
     Stacks on different partitions/domains share /tmp, so a fixed path lets one
     stack steal another's UART. Pass `mcb_device_link` to override.
