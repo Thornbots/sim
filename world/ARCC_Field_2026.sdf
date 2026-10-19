@@ -40,13 +40,13 @@
            x along the field's 12 m toward blue's base (the mesh's +y). -->
       <pose>0 0 0 0 0 -1.5707963267948966</pose>
       <static>true</static>
-      <link name="composite_part_1">
-        <collision name="composite_part_1_collision">
-          <pose>-0.07993219999999999 -0.0015 -0.018 0 0 0</pose>
+      <link name="field">
+        <collision name="field_collision">
+          <pose>0 0 -0.0133884 0 0 0</pose>
           <geometry>
             <mesh>
               <scale>1 1 1</scale>
-              <uri>model://sim/world/composite_part_1.stl</uri>
+              <uri>model://sim/world/real_field_assmbly/meshes/Field.stl</uri>
             </mesh>
           </geometry>
           <surface>
@@ -65,17 +65,59 @@
             <bounce/>
           </surface>
         </collision>
-        <visual name="composite_part_1_visual">
-          <pose>-0.07993219999999999 -0.0015 -0.018 0 0 0</pose>
+        <visual name="field_visual">
+          <pose>0 0 -0.0133884 0 0 0</pose>
           <geometry>
             <mesh>
               <scale>1 1 1</scale>
-              <uri>model://sim/world/composite_part_1.stl</uri>
+              <uri>model://sim/world/real_field_assmbly/meshes/Field.stl</uri>
             </mesh>
           </geometry>
           <material>
             <diffuse>0.808824 0.808824 0.808824 1</diffuse>
             <ambient>0.808824 0.808824 0.808824 1</ambient>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+      <link name="center_marker">
+        <collision name="center_marker_collision">
+          <pose>0 0 -0.0133884 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <scale>1 1 1</scale>
+              <uri>model://sim/world/real_field_assmbly/meshes/CenterMarker.stl</uri>
+            </mesh>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>100</mu>
+                <mu2>50</mu2>
+              </ode>
+              <torsional>
+                <ode/>
+              </torsional>
+            </friction>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+          </surface>
+        </collision>
+        <visual name="center_marker_visual">
+          <pose>0 0 -0.0133884 0 0 0</pose>
+          <geometry>
+            <mesh>
+              <scale>1 1 1</scale>
+              <uri>model://sim/world/real_field_assmbly/meshes/CenterMarker.stl</uri>
+            </mesh>
+          </geometry>
+          <material>
+            <diffuse>0.498039 0.498039 0.498039 1</diffuse>
+            <ambient>0.498039 0.498039 0.498039 1</ambient>
           </material>
         </visual>
         <self_collide>0</self_collide>
