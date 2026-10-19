@@ -761,6 +761,8 @@ at the scan plane, and still needs checking against a real `/scan_raw` (see
 Both robot models match the sentry's RPLIDAR A2M8 with
 `angle_compensate:=true`: 720 fixed samples, inclusive -pi/+pi endpoints
 (2pi/719 = 0.5007 degrees), 11.2 Hz, 0.05–12 m and frame `lidar`.
+Keep the symmetric endpoints: rf2o derives bearings from the FOV around
+zero, ignoring `angle_min`; a 0–2pi grid would rotate its interpretation by pi.
 The Gazebo bridge feeds `/sim/scan`; sim's `lidar_scan` adapter supplies
 `/scan_raw`, then the shared `thornbots_pkg` self-filter publishes `/scan`.
 The adapter preserves the capture stamp, grid and intensities. It fills
