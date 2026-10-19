@@ -759,9 +759,9 @@ head's pose -- between 863 and 1613 of 3000 beams, reported as `-inf` because
 the self-hits land inside `range_min`. `lidar_self_filter` then blanked 1.0
 rad (126-183 deg), so up to 140 deg of the scan was being lost to something
 nothing in the stack knew about. A bare `gpu_lidar` at the same height in the
-same world returns all 3000 beams at 2.22-7.17 m, which is what the sentry's
-sensor now returns too. Both models have since dropped to the A2M8's 800
-beams.
+same world returned all 3000 beams at 2.22-7.17 m; the exclusion restored
+that coverage on the sentry too. Both models now use the measured
+angle-compensated A2M8 grid [below](#lidar-format-and-model-limits).
 
 Hardware is the reason to prefer it: the real RPLIDAR's scanning disk sits
 clear of the chassis, and only the head's own footprint blocks it.
@@ -769,6 +769,32 @@ clear of the chassis, and only the head's own footprint blocks it.
 the robot. Its sector (0.09-1.41 rad) now comes from slicing `sentry_v2`'s CAD
 at the scan plane, and still needs checking against a real `/scan_raw` (see
 `../thornbots_pkg/README.md`).
+
+### Lidar format and model limits
+
+Both robot models match the sentry's RPLIDAR A2M8 with
+`angle_compensate:=true`: 720 fixed samples, inclusive -pi/+pi endpoints
+(2pi/719 = 0.5007 degrees), 11.2 Hz, 0.05–12 m and frame `lidar`.
+Keep the symmetric endpoints: rf2o derives bearings from the FOV around
+zero, ignoring `angle_min`; a 0–2pi grid would rotate its interpretation by pi.
+The Gazebo bridge feeds `/sim/scan`; sim's `lidar_scan` adapter supplies
+`/scan_raw`, then the shared `thornbots_pkg` self-filter publishes `/scan`.
+The adapter preserves the capture stamp, grid and intensities. It fills
+`scan_time` from successive capture stamps (nominal 1/11.2 s at startup,
+a reset or a missed frame) and `time_increment = scan_time / (N-1)`, as the
+hardware driver does. Nonfinite and out-of-range returns become positive
+infinity; finite boundary returns remain valid. This deliberately follows
+the hardware missing-return convention, collapsing REP 117's distinct
+`-inf` (too close) and `NaN` (invalid) sentinels into `+inf`.
+
+Gazebo captures all rays at once: these timing fields describe nominal
+rotary acquisition, without rolling motion distortion or the real driver's
+roughly one-rotation delivery latency. Intensities are Gazebo values, not
+calibrated RPLIDAR quality. Gaussian noise remains constant 0.01 m rather
+than a measured range/material-dependent error model. Visual geometry and
+the shared head blind sector determine no-return coverage; the real field's
+38–44% infinity fraction includes material/geometry losses that Gazebo does
+not model. No random dropout is added to force that fraction.
 
 ### Localization drift suite
 
