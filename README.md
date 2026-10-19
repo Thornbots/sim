@@ -1125,8 +1125,8 @@ from every edge and always clear, across the -x, +y and +x edges.
 Moves go through `sim.launch.py`'s `set_pose_bridge`, gz's `set_pose` as a
 ROS `SetEntityPose` service, one async call per box per tick. The first
 version started a `gz service` process (Ruby) per call, and ticks lagged to
-~0.19 s of sim time. The default paths clear the ARCC26 map's walls by at
-least 0.4 m.
+~0.19 s of sim time. The default paths clear the real field's walls (the `ARCC_Field_2026`
+mesh, [world frame](#the-world-frame)) by at least 0.4 m.
 
 ### sim.launch.py: spawn_robot uses -string
 
