@@ -278,7 +278,7 @@ Integration executables are installed but are invoked only through launch.
 | --- | --- | --- |
 | unit | `cpp/test_cv_head_aim.cpp`, `cpp/test_mcb_protocol.cpp`, `cpp/test_combat.cpp`, `cpp/test_target_odometry.cpp`, `cpp/test_depth_mm.cpp`, `cpp/test_panel_view.cpp` | GTest |
 | unit | `cpp/test_cv_bench.cpp`, `cpp/test_suite_timing.cpp`, `cpp/test_match_routes.cpp`, `cpp/test_foxglove_layouts.cpp` | GTest |
-| unit | `cpp/test_mcb_firmware.cpp`, `cpp/test_mcb_bridge_pty.cpp` | hosted firmware; bridge test also needs ROS |
+| unit | `cpp/test_mcb_firmware.cpp`, `cpp/test_mcb_pty_link.cpp`, `cpp/test_mcb_bridge_pty.cpp` | hosted firmware; bridge test also needs ROS |
 | launch API | `cpp/test_suite_exit.cpp` | ROS launch, no simulation |
 | lint | `test_copyright.py`, `test_flake8.py`, `test_pep257.py` | Python + pytest |
 | integration | `localization/localization_suite.cpp` | gz-sim and a launch tree |
@@ -1463,6 +1463,10 @@ pose, twist and gimbal joints from the ECM, runs one firmware cycle per 1 ms
 physics step, then applies motor outputs as joint torques and a chassis wrench.
 `mcb_physics:=true` removes both JointPositionControllers and VelocityControl.
 The UART bridge starts after `mcb_ready` observes a CRC-valid POSE on the PTY.
+The PTY link defaults to `/tmp/mcb_emulator_pty-<GZ_PARTITION>-<ROS_DOMAIN_ID>`
+(`mcb_device_link:=` overrides), so concurrent stacks keep separate UARTs. The
+plugin refuses a link whose pty a live stack still owns and removes only a link
+that still names its own pty.
 It waits 30 wall seconds for hosted execution or 600 for Renode boot.
 The former ROS timer adapter
 is removed; `mcb.launch.py` uses this same physics path.
