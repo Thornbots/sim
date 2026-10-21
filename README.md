@@ -604,7 +604,7 @@ comments can stay short. Each heading names a file.
 The gz world is the field frame (REP-105, (0, 0) at the field centre, x
 along the 12 m toward blue's base), as are `odom`, `map` and the saved maps.
 `ARCC_Field_2026.sdf` uses the coarse Onshape export in
-`world/real_field_assmbly/meshes/`: `Field.stl` (8,530 triangles) and
+`world/real_field_assmbly/meshes/`: `Field.stl` (8,550 triangles) and
 `CenterMarker.stl` (12 triangles), each for visual and collision geometry.
 The export is already in metres with its centre at XY zero. Both meshes use
 the URDF's z offset of -0.0133884 m and unit scale; a -90 deg model yaw
@@ -624,11 +624,15 @@ field-frame coordinates. The robot spawns facing -y (`auto_explore.SPAWN_YAW`),
 and `target_driver`'s `origin_yaw` keeps its path in front of the robot.
 Route-clearance tests and match shot occlusion read every field collision
 mesh and transform directly from the SDF through `combat::load_field`.
-The saved occupancy maps in `sentry_localization/map` predate this export;
-regenerate them before using AMCL against this geometry. Use mapping mode
-from a blank map for new-field SLAM validation (no pose graph ships).
+The corrected 2026-10-20 export restores the 2 m bar at world x = -1..1 m,
+y = 2.98488..3.00393 m, with top z = 0.41 m; the earlier export omitted it
+above the 0.208162 m platform. Placement, floor and outer bounds are unchanged.
+For the canonical occupancy map derived from the corrected collision geometry
+at nominal lidar height, see [saved map](../sentry_localization/README.md#saved-map).
+Use mapping mode from a blank map for new-field SLAM validation (no pose graph ships).
 The [2026-10-19 integration measurements](docs/real-field-2026-10-19.md)
-compare the new export with nightly, including the known test failures.
+compare the earlier export with nightly, including the known test failures;
+they do not validate runtime behavior with the corrected export.
 
 ### SAPIEN: tried, not adopted
 
@@ -879,10 +883,11 @@ scenarios). `slam --use-rf2o` measured worse than plain `slam`; see
 The suite runs them in this order.
 
 1. `baseline` (noise off) asserts the correction TF settles and stays stable,
-   with no ERROR in any log. A steady ~0.1-0.15m offset is normal, because the
-   saved maps sit that far off the gz world (measured before both were turned
-   into the field frame, the same turn for each). A
-   growing offset would be a real problem.
+   with no ERROR in any log. Historical runs with the previous saved maps
+   showed a steady ~0.1-0.15m map-to-world offset (measured before both were
+   turned into the field frame, the same turn for each). That measurement
+   does not establish alignment for the current [saved map](../sentry_localization/README.md#saved-map).
+   A growing offset would be a real problem.
 2. `noise_correction` drives the 3m square under drift and jitter (slip 0.02,
    no jerks) for a fixed 30s (60s before 2026-07-27). The second half's samples
    must stay under 2x the first half's max. The window doesn't exit early, so

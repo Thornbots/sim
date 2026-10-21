@@ -25,7 +25,7 @@ constexpr double radius = 0.40, pi = 3.14159265358979323846;
 using Triangle = std::array<Eigen::Vector2d, 3>;
 TEST(FieldGeometry, CenteredMetresAndGroundLevel) {
   const auto field = sim::combat::load_field(SIM_SOURCE_DIR);
-  ASSERT_EQ(field.size(), 8542u);
+  ASSERT_EQ(field.size(), 8562u);
   Eigen::Vector3d low = Eigen::Vector3d::Constant(INFINITY), high = -low;
   for (const auto &triangle : field) {
     for (const auto &vertex : triangle) {
@@ -48,6 +48,13 @@ TEST(FieldGeometry, CenteredMetresAndGroundLevel) {
   const auto side = sim::combat::segment_mesh_hit({5.8, 3.9, 0.3}, {5.8, 4.1, 0.3}, field);
   ASSERT_TRUE(side.has_value());
   EXPECT_NEAR(*side, 0.5, 1e-6);
+}
+TEST(FieldGeometry, CorrectedBarIntersectsLidarPlane) {
+  const auto field = sim::combat::load_field(SIM_SOURCE_DIR);
+  const auto bar = sim::combat::segment_mesh_hit({0, 2.8, 0.3543931}, {0, 3.2, 0.3543931}, field);
+  ASSERT_TRUE(bar.has_value());
+  EXPECT_NEAR(2.8 + 0.4 * *bar, 2.98488, 1e-5);
+  EXPECT_FALSE(sim::combat::segment_mesh_hit({0, 2.8, 0.42}, {0, 3.2, 0.42}, field));
 }
 std::vector<Triangle> obstacles() {
   const auto field = sim::combat::load_field(SIM_SOURCE_DIR);
