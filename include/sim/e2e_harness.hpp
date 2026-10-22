@@ -27,6 +27,7 @@
 #include <dji_serial_bridge/msg/robot_pose.hpp>
 #include <dji_serial_bridge/msg/target_state.hpp>
 #include <gz/transport/Node.hh>
+#include <chrono>
 #include <deque>
 #include <nav_msgs/msg/odometry.hpp>
 #include <optional>
@@ -64,6 +65,7 @@ public:
   tf2_ros::Buffer tf;
 
 private:
+  friend class ScorerRefereeTest;
   Offsets offsets_;
   gz::transport::Node gz_;
   tf2_ros::TransformListener listener_;
@@ -82,8 +84,10 @@ private:
   rclcpp::TimerBase::SharedPtr fire_timer_, pose_timer_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr referee_client_;
   std::optional<
-      rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedFuture>
+      rclcpp::Client<rcl_interfaces::srv::SetParameters>::FutureAndRequestId>
       referee_future_;
+  std::chrono::steady_clock::time_point referee_sent_;
+  int referee_timeouts_ = 0;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
       referee_pub_;
   template <class Message, class Callback>
