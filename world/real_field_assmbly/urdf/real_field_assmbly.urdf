@@ -18,9 +18,9 @@
     </link>
     <link name="field">
         <inertial>
-            <mass value="9.62235" />
-            <origin xyz="-0.460994 6.03314e-08 0.137249" rpy="0 -0 0" />
-            <inertia ixx="126.567" ixy="-4.46871e-07" ixz="-0.415988" iyy="84.5946" iyz="-1.98974e-08" izz="210.739" />
+            <mass value="9.63797" />
+            <origin xyz="-0.4651 6.02336e-08 0.137359" rpy="0 -0 0" />
+            <inertia ixx="126.573" ixy="-4.49255e-07" ixz="-0.413312" iyy="84.695" iyz="-1.98336e-08" izz="210.845" />
         </inertial>
         <visual>
             <origin xyz="1.35762e-15 -1.9004e-15 -0.0133884" rpy="0 -0 0" />
