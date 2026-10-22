@@ -14,6 +14,7 @@
 
 #include "sim/cv_suite_options.hpp"
 #include "sim/e2e_harness.hpp"
+#include "sim/e2e_test_core.hpp"
 #include "sim/process.hpp"
 #include "sim/suite_timing.hpp"
 #include <gtest/gtest.h>
@@ -108,12 +109,11 @@ public:
               return true;
             },
             120, "all four robot truth streams");
-      if (scorer->driving())
-        wait(
-            [&]() {
-              return scorer->tf.canTransform("map", "root", tf2::TimePointZero);
-            },
-            30, "localized map->root chain");
+      wait(
+          [&]() {
+            return scorer->tf.canTransform("map", "root", tf2::TimePointZero);
+          },
+          30, "localized map->root chain");
       wait(
           [&]() {
             return scorer->target_stamp &&
@@ -245,9 +245,14 @@ TEST_P(E2ESuite, MCB) {
           xy[0].get<double>() - start[0].get<double>(),
           xy[1].get<double>() - start[1].get<double>()));
     }
+    const auto localization = ee::localization_accuracy(s->route_records);
     cb::append_json(cb::options.log_dir + "/parking.jsonl",
                     {{"cell", c.name},
+                     {"localization", localization},
                      {"chassis_max_displacement_m", chassis_displacement}});
+    EXPECT_TRUE(localization.at("passed").get<bool>())
+        << c.name << ": parked localization requires >=95% stamped TF coverage, "
+        << "p95 <=0.15 m and max <=0.20 m: " << localization.dump();
     EXPECT_LE(chassis_displacement, .03)
         << c.name << ": chassis moved during a parked-shooter cell";
     const auto &mcb = s->shots.at("mcb");

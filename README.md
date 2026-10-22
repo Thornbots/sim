@@ -493,7 +493,11 @@ stamped TF is reported as unavailable; latest TF is never substituted to
 calculate these errors. `ros2 run sim compare_runs LOG_DIR_A LOG_DIR_B`
 prints the first record where two runs' logs diverge.
 `poses.jsonl` samples head-TF and localization at 20 Hz even when tracking
-is lost and no shots fire. `real_time_factor` reaches the test-owned stack;
+is lost and no shots fire. Every parked cell requires at least 95% finite
+stamped map-localization samples, p95 error at most 0.15 m and maximum error
+at most 0.20 m against gz truth. `parking.jsonl` records coverage and errors
+alongside chassis displacement. Bring-up waits until `map->root` exists
+(not that it has converged) before any parked scoring. `real_time_factor` reaches the test-owned stack;
 use `real_time_factor:=1` for a paced control against the unthrottled default.
 The E2E wait checks clock progress: five wall seconds without progress fails,
 backward time fails, and a window has a budget of at least 30 wall seconds
