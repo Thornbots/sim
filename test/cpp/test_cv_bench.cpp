@@ -318,6 +318,30 @@ TEST(UrdfConstants, BenchPanels) {
                 radius, .001);
 }
 
+TEST(E2ELocalization, RejectsParkedDriftDespitePerfectShotScores) {
+  std::vector<cb::Json> records;
+  for (int i = 0; i < 100; ++i)
+    records.push_back({{"localization_error_m", .09 + .003 * i}});
+  EXPECT_FALSE(sim::e2e::localization_accuracy(records).at("passed").get<bool>());
+  for (auto &record : records)
+    record["localization_error_m"] = .04;
+  EXPECT_TRUE(sim::e2e::localization_accuracy(records).at("passed").get<bool>());
+  records.back()["localization_error_m"] = .20;
+  EXPECT_FALSE(sim::e2e::localization_accuracy(records).at("passed").get<bool>());
+}
+
+TEST(E2ELocalization, MissingOrInvalidTransformsCannotPass) {
+  EXPECT_FALSE(sim::e2e::localization_accuracy({}).at("passed").get<bool>());
+  std::vector<cb::Json> records(100, {{"localization_error_m", .04}});
+  for (int i = 0; i < 6; ++i)
+    records[i]["localization_error_m"] = nullptr;
+  EXPECT_FALSE(sim::e2e::localization_accuracy(records).at("passed").get<bool>());
+  records[5]["localization_error_m"] = .04;
+  EXPECT_TRUE(sim::e2e::localization_accuracy(records).at("passed").get<bool>());
+  records[5]["localization_error_m"] = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(sim::e2e::localization_accuracy(records).at("passed").get<bool>());
+}
+
 TEST(E2EClock, SlowClockCompletesWindow) {
   double sim = 1, wall = 0;
   sim::e2e::score_window(

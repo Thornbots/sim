@@ -15,8 +15,30 @@
 #ifndef SIM__E2E_TEST_CORE_HPP_
 #define SIM__E2E_TEST_CORE_HPP_
 #include "sim/cv_bench.hpp"
+#include <algorithm>
+#include <cmath>
 #include <functional>
+#include <limits>
+#include <vector>
 namespace sim::e2e {
+inline cv_bench::Json localization_accuracy(
+    const std::vector<cv_bench::Json> &records) {
+  std::vector<double> errors;
+  for (const auto &record : records) {
+    const auto error = record.value("localization_error_m", cv_bench::Json(nullptr));
+    if (error.is_number() && std::isfinite(error.get<double>()) && error.get<double>() >= 0)
+      errors.push_back(error.get<double>());
+  }
+  const double coverage = records.empty() ? 0. : static_cast<double>(errors.size()) / records.size();
+  const double p95 = cv_bench::percentile(errors, 95);
+  const double maximum = errors.empty() ? std::numeric_limits<double>::infinity()
+                                        : *std::max_element(errors.begin(), errors.end());
+  // Old-map Mac mini nightlies measured p95 0.046-0.085 m; scan odometry
+  // drifts uncorrected while parked, so 0.10/0.15 m leave that margin.
+  return {{"samples", records.size()}, {"available", errors.size()},
+          {"coverage", coverage}, {"p95_m", p95}, {"max_m", maximum},
+          {"passed", coverage >= .95 && p95 <= .10 && maximum <= .15}};
+}
 inline void score_window(double seconds, const std::function<double()> &sim_now,
                          const std::function<double()> &wall_now,
                          const std::function<void()> &spin_once,
