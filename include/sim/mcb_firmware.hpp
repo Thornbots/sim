@@ -213,11 +213,16 @@ public:
       }
       slave_name_ = name;
       // A link whose pty still exists belongs to a live stack: refuse it. A
-      // dangling link or a plain file is stale and replaced.
+      // dangling link, a plain file, or a link to the pty just opened here (a
+      // killed owner's pts number, reused) is stale and replaced.
       struct stat info{};
       if (lstat(link_.c_str(), &info) == 0) {
-        struct stat target{};
-        if (S_ISLNK(info.st_mode) && stat(link_.c_str(), &target) == 0) {
+        struct stat target{}, own{};
+        if (fstat(slave_, &own) < 0) {
+          system_error("fstat pty");
+        }
+        if (S_ISLNK(info.st_mode) && stat(link_.c_str(), &target) == 0 &&
+            target.st_rdev != own.st_rdev) {
           throw std::runtime_error("MCB pty link " + link_ + " is owned by a live stack; "
                                    "set a unique mcb_device_link per stack");
         }
