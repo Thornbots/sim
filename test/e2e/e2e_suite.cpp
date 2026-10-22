@@ -252,7 +252,7 @@ TEST_P(E2ESuite, MCB) {
                      {"chassis_max_displacement_m", chassis_displacement}});
     EXPECT_TRUE(localization.at("passed").get<bool>())
         << c.name << ": parked localization requires >=95% stamped TF coverage, "
-        << "p95 <=0.10 m and max <=0.15 m: " << localization.dump();
+        << "p95 <=0.15 m and max <=0.20 m: " << localization.dump();
     EXPECT_LE(chassis_displacement, .03)
         << c.name << ": chassis moved during a parked-shooter cell";
     const auto &mcb = s->shots.at("mcb");

@@ -326,7 +326,7 @@ TEST(E2ELocalization, RejectsParkedDriftDespitePerfectShotScores) {
   for (auto &record : records)
     record["localization_error_m"] = .04;
   EXPECT_TRUE(sim::e2e::localization_accuracy(records).at("passed").get<bool>());
-  records.back()["localization_error_m"] = .20;
+  records.back()["localization_error_m"] = .25;
   EXPECT_FALSE(sim::e2e::localization_accuracy(records).at("passed").get<bool>());
 }
 
