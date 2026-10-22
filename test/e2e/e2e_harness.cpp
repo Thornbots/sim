@@ -797,13 +797,26 @@ void Scorer::sync_referee() {
   referee_pub_->publish(msg);
   if (referee_future_) {
     if (referee_future_->wait_for(std::chrono::seconds(0)) !=
-        std::future_status::ready)
-      return;
-    const auto response = referee_future_->get();
-    for (const auto &r : response->results)
-      if (!r.successful)
-        throw std::runtime_error("MCB rejected match referee status");
-    referee_future_.reset();
+        std::future_status::ready) {
+      // Responses can be lost after parameters were applied. Retry current state.
+      if (std::chrono::steady_clock::now() - referee_sent_ <
+          std::chrono::seconds(2))
+        return;
+      referee_client_->remove_pending_request(*referee_future_);
+      referee_future_.reset();
+      if (++referee_timeouts_ >= 3)
+        throw std::runtime_error("MCB referee parameter response timed out 3 times");
+      RCLCPP_WARN(get_logger(),
+                  "MCB referee parameter response timed out; retrying current state (%d/3)",
+                  referee_timeouts_);
+    } else {
+      const auto response = referee_future_->get();
+      for (const auto &r : response->results)
+        if (!r.successful)
+          throw std::runtime_error("MCB rejected match referee status: " + r.reason);
+      referee_future_.reset();
+      referee_timeouts_ = 0;
+    }
   }
   if (!referee_client_->service_is_ready())
     return;
@@ -822,6 +835,7 @@ void Scorer::sync_referee() {
            rclcpp::Parameter("shooter_power", alive)})
     req->parameters.push_back(p.to_parameter_msg());
   referee_future_ = referee_client_->async_send_request(req);
+  referee_sent_ = std::chrono::steady_clock::now();
 }
 double hit_rate(const std::vector<Json> &shots) {
   int hits = 0;

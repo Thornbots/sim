@@ -283,6 +283,7 @@ Integration executables are installed but are invoked only through launch.
 | unit | `cpp/test_cv_head_aim.cpp`, `cpp/test_mcb_protocol.cpp`, `cpp/test_combat.cpp`, `cpp/test_target_odometry.cpp`, `cpp/test_depth_mm.cpp`, `cpp/test_panel_view.cpp` | GTest |
 | unit | `cpp/test_cv_bench.cpp`, `cpp/test_suite_timing.cpp`, `cpp/test_match_routes.cpp`, `cpp/test_foxglove_layouts.cpp` | GTest |
 | unit | `cpp/test_mcb_firmware.cpp`, `cpp/test_mcb_pty_link.cpp`, `cpp/test_mcb_bridge_pty.cpp` | hosted firmware; bridge test also needs ROS |
+| ROS service | `cpp/test_e2e_referee.cpp` | scorer retries and bounded failure with dropped replies; no simulation |
 | launch API | `cpp/test_suite_exit.cpp` | ROS launch, no simulation |
 | lint | `test_copyright.py`, `test_flake8.py`, `test_pep257.py` | Python + pytest |
 | integration | `localization/localization_suite.cpp` | gz-sim and a launch tree |

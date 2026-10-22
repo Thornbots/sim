@@ -373,6 +373,15 @@ if(BUILD_TESTING)
   ament_add_gtest(test_suite_node test/cpp/test_suite_node.cpp)
   target_include_directories(test_suite_node PRIVATE include)
   ament_target_dependencies(test_suite_node rclcpp rcl_interfaces)
+  ament_add_gtest(test_e2e_referee test/cpp/test_e2e_referee.cpp test/e2e/e2e_harness.cpp)
+  target_compile_features(test_e2e_referee PUBLIC cxx_std_17)
+  target_include_directories(test_e2e_referee PRIVATE include)
+  target_link_libraries(test_e2e_referee suite_support combat cv_head_aim_core pose_history
+    Eigen3::Eigen nlohmann_json::nlohmann_json tinyxml2::tinyxml2
+    gz-transport::core gz-msgs::core)
+  ament_target_dependencies(test_e2e_referee
+    rclcpp rcl_interfaces nav_msgs std_msgs visualization_msgs dji_serial_bridge
+    diagnostic_msgs tf2_ros ament_index_cpp)
   ament_add_gtest(test_clock_bridge test/cpp/test_clock_bridge.cpp TIMEOUT 90)
   target_link_libraries(test_clock_bridge suite_support gz-transport::core gz-msgs::core)
   ament_target_dependencies(test_clock_bridge rclcpp rosgraph_msgs)
