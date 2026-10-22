@@ -52,6 +52,28 @@ TEST_F(McbPtyLink, StaleLinkIsReplaced) {
   EXPECT_EQ(fs::read_symlink(path("uart")), link.slave_name());
 }
 
+// A SIGKILLed stack leaves its link, and the next stack's openpty() can get
+// the same pts number. Retry until the kernel reuses it; it hands out the
+// lowest free number, so another process grabbing it in between is rare.
+TEST_F(McbPtyLink, LinkToAReusedPtsIsReplaced) {
+  bool reused = false;
+  for (int attempt = 0; attempt < 20 && !reused; ++attempt) {
+    std::string dead;
+    {
+      PtyLink killed(path("probe"));
+      dead = killed.slave_name();
+    }
+    fs::create_symlink(dead, path("uart"));
+    PtyLink link(path("uart"));
+    EXPECT_EQ(fs::read_symlink(path("uart")), link.slave_name());
+    reused = link.slave_name() == dead;
+    if (!reused) {
+      fs::remove(path("uart"));
+    }
+  }
+  EXPECT_TRUE(reused) << "openpty never reused the dead pts number";
+}
+
 TEST_F(McbPtyLink, TeardownKeepsALinkItNoLongerOwns) {
   auto first = std::make_unique<PtyLink>(path("uart"));
   fs::remove(path("uart"));
