@@ -968,6 +968,36 @@ The suite runs them in this order.
    0.004-0.006 m with references (9 runs) and 0.003-0.011 m without (13).
    rf2o blends each match with the still wheel prior either way.
 
+`long_park_patrol` is an additional **opt-in** rf2o regression, leaving the
+standard ten scenarios unchanged. Run it in the container after building:
+
+```bash
+src/sim/tools/run_suite.sh drift scenario:=long_park_patrol use_rf2o:=true
+```
+
+It scores 180 simulated seconds parked with still wheel odometry
+(`odom_slip_ratio=1`, noise disabled), then a 1 cm/s, 4 s shove and 10 s
+settling interval. Throughout parking and the shove, a 0.3 m box crosses
+back and forth from x=-1.5 to +1.5 m at y=-2 m, at 0.5 m/s, and the head
+sweeps sinusoidally through +/-0.8 rad with a 12 s period. These are scripted
+match-patrol disturbances, not firmware execution or calibrated patrol rates.
+The box uses acknowledged gz pose updates and remains outside the chassis;
+the measured head joint must reach alternating +/-0.6 rad extremes at least
+20 times, and the box must cross between x<-0.5 and x>+0.5 at least 20 times.
+
+During parking, **every consecutive `/scan_odom` XY step must be <=0.005 m**
+and truth must remain within 0.005 m of its starting position. Maximum scan
+and localized displacement from the park origin must each stay <=0.03 m.
+At least 900
+finite, strictly increasing stamped samples must span >=179 s, with no
+gap >0.5 s and a fresh endpoint. After the shove, truth must move
+0.025-0.05 m; both `/scan_odom` and `parent->root` displacement **vectors**
+must miss truth by <0.01 m. Successful scan increments, zero failed quality
+grades during parking and the shove/settling interval, a fresh scan endpoint and clean
+stack logs are required. A 600 s wall deadline rejects stalled simulated
+time. `use_rf2o:=false` fails this scenario explicitly. The suite wrapper
+runs the native log checker; retain that output alongside the suite log.
+
 Two checks were removed. `jerk_stationary` (2026-07-23) re-verified a documented limit
 of the travel gate instead of testing recovery. A no-leak-before-motion check
 in `jerk_with_motion` (2026-07-26) failed for reasons unrelated to the

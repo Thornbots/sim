@@ -23,6 +23,7 @@
 #include "sim/gazebo_helpers.hpp"
 #include "sim/process.hpp"
 #include "sim/suite_timing.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
@@ -723,7 +724,7 @@ void noise_correction(Scenario &sc) {
           ", growth_ratio=" + fixed(growth, 2) +
           " (threshold 2.0), log_errors=" + std::to_string(errors.size()));
 }
-void spawn_box() {
+void spawn_box(double x = 0.0, double y = 0.0) {
   const std::string name = "unmapped_test_obstacle";
   const std::string sdf =
       "<sdf version=\"1.6\"><model name=\"" + name +
@@ -734,7 +735,7 @@ void spawn_box() {
       "0.8</size></box></geometry><material><ambient>0.1 0.1 0.8 "
       "1</ambient><diffuse>0.1 0.1 0.8 "
       "1</diffuse></material></visual></link></model></sdf>";
-  if (!sim::gazebo::spawn_model(name, sdf, 0.0, 0.0, 0.4)) {
+  if (!sim::gazebo::spawn_model(name, sdf, x, y, 0.4)) {
     throw std::runtime_error("spawning obstacle '" + name + "' failed");
   }
   spawned.push_back(name);
@@ -1227,6 +1228,182 @@ void parked_push(Scenario &sc) {
                 (scan_ok ? "true" : "false") + ", log_errors=" +
                 std::to_string(errors.size()));
 }
+// Exercise reference ageing with a live scan disturbance and head patrol,
+// then prove that a still wheel prior cannot hide a real shove.
+void long_park_patrol(Scenario &sc) {
+  if (!options.rf2o) {
+    sc.result(false, "long_park_patrol requires use_rf2o:=true");
+    return;
+  }
+  auto stack = run_stack(false, {rclcpp::Parameter("odom_slip_ratio", 1.0)});
+  auto &helper = *stack->helper;
+  if (!ready(sc, helper)) return;
+  std::optional<Pose> correction;
+  if (!correction_ready(sc, helper, correction)) return;
+  auto head = helper.create_publisher<std_msgs::msg::Float64>("/head_pan_cmd", 10);
+  struct ResetCommands {
+    Helper &helper;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr head;
+    ~ResetCommands() {
+      helper.command->publish(geometry_msgs::msg::Twist{});
+      head->publish(std_msgs::msg::Float64{});
+    }
+  } reset{helper, head};
+  spawn_box(-1.5, -2.0);
+  std::optional<Point> scan_pose, previous;
+  double first_stamp = 0.0, last_stamp = 0.0, latest_stamp = 0.0;
+  double max_gap = 0.0, max_step = 0.0;
+  int park_samples = 0, scan_matches = 0, failed_matches = 0;
+  bool parking = false, pushing = false, valid = true;
+  auto scan_odom = helper.create_subscription<nav_msgs::msg::Odometry>(
+      "/scan_odom", 100, [&](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
+        const Point p{msg->pose.pose.position.x, msg->pose.pose.position.y};
+        const double stamp = rclcpp::Time(msg->header.stamp).seconds();
+        valid = valid && std::isfinite(p[0]) && std::isfinite(p[1]) &&
+                std::isfinite(stamp);
+        if (parking) {
+          if (!previous) first_stamp = stamp;
+          if (previous) {
+            max_step = std::max(max_step, distance(*previous, p));
+            max_gap = std::max(max_gap, stamp - last_stamp);
+            valid = valid && stamp > last_stamp;
+          }
+          ++park_samples;
+          previous = p;
+          last_stamp = stamp;
+        }
+        scan_pose = p;
+        latest_stamp = stamp;
+      });
+  auto quality = helper.create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+      "/scan_odom/quality", 100,
+      [&](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr msg) {
+        if (!parking && !pushing) return;
+        for (const auto &status : msg->status) {
+          std::string tier, increment;
+          for (const auto &value : status.values) {
+            if (value.key == "tier") tier = value.value;
+            if (value.key == "increment") increment = value.value;
+          }
+          if (tier == "failed") ++failed_matches;
+          if ((tier == "good" || tier == "degraded") && increment == "scan")
+            ++scan_matches;
+        }
+      });
+  helper.spin_for(2.0);
+  if (!helper.truth || !scan_pose || !helper.head_yaw) {
+    sc.result(false, "missing truth, /scan_odom or head joint state");
+    return;
+  }
+  const Point parked_truth = *helper.truth;
+  const Point parked_scan = *scan_pose;
+  const auto parked_root = helper.root();
+  if (!parked_root) {
+    sc.result(false, "missing localization at park start");
+    return;
+  }
+  double max_truth_motion = 0.0, max_scan_drift = 0.0, max_root_drift = 0.0;
+  int head_extremes = 0, last_extreme = 0, crossings = 0, last_side = -1;
+  helper.reset_yaw_range();
+  parking = true;
+  const double start = helper.now_s();
+  const auto wall_end = Clock::now() + std::chrono::seconds(600);
+  const auto patrol = [&](double t) {
+    std_msgs::msg::Float64 command;
+    command.data = 0.8 * std::sin(2.0 * kPi * t / 12.0);
+    head->publish(command);
+    // Cross the forward scan at 2 m range, safely outside the chassis.
+    const double phase = std::fmod(t * 0.5, 6.0);
+    const double x = phase < 3.0 ? -1.5 + phase : 4.5 - phase;
+    if (!sim::gazebo::set_model_pose("unmapped_test_obstacle", x, -2.0, 0.4))
+      throw std::runtime_error("patrol obstacle set_pose failed");
+    const int side = x > 0.5 ? 1 : x < -0.5 ? -1 : 0;
+    if (side && side != last_side) {
+      ++crossings;
+      last_side = side;
+    }
+    const int extreme = *helper.head_yaw > 0.6    ? 1
+                        : *helper.head_yaw < -0.6 ? -1
+                                                  : 0;
+    if (extreme && extreme != last_extreme) {
+      ++head_extremes;
+      last_extreme = extreme;
+    }
+  };
+  while (helper.now_s() - start < 180.0) {
+    if (Clock::now() > wall_end)
+      throw std::runtime_error(
+          "long park failed to complete 180 simulated seconds in 600s wall");
+    patrol(helper.now_s() - start);
+    helper.command->publish(geometry_msgs::msg::Twist{});
+    helper.spin_for(0.1);
+    max_truth_motion =
+        std::max(max_truth_motion, distance(parked_truth, *helper.truth));
+    max_scan_drift = std::max(max_scan_drift, distance(parked_scan, *scan_pose));
+    const auto root = helper.root();
+    valid = valid && root.has_value();
+    if (root) max_root_drift = std::max(max_root_drift, distance(*parked_root, *root));
+  }
+  parking = false;
+  const double park_span = last_stamp - first_stamp;
+  valid = valid && helper.now_s() - latest_stamp <= 0.5;
+  const auto scan0 = scan_pose;
+  const auto root0 = helper.root();
+  const Point truth0 = *helper.truth;
+  pushing = true;
+  const double push_start = helper.now_s();
+  while (helper.now_s() - push_start < 14.0) {
+    if (Clock::now() > wall_end)
+      throw std::runtime_error("long park shove exceeded wall deadline");
+    patrol(helper.now_s() - start);
+    geometry_msgs::msg::Twist push;
+    if (helper.now_s() - push_start < 4.0) push.linear.x = 0.01;
+    helper.command->publish(push);
+    helper.spin_for(0.1);
+  }
+  pushing = false;
+  valid = valid && helper.now_s() - latest_stamp <= 0.5;
+  const auto root1 = helper.root();
+  if (!root0 || !root1 || !scan0 || !scan_pose) {
+    sc.result(false, "missing localization around the long-park shove");
+    return;
+  }
+  const Point truth_delta{(*helper.truth)[0] - truth0[0],
+                          (*helper.truth)[1] - truth0[1]};
+  const Point scan_delta{(*scan_pose)[0] - (*scan0)[0],
+                         (*scan_pose)[1] - (*scan0)[1]};
+  const Point root_delta{(*root1)[0] - (*root0)[0], (*root1)[1] - (*root0)[1]};
+  const double moved = distance(truth_delta, Point{});
+  const double scan_miss = distance(scan_delta, truth_delta);
+  const double root_miss = distance(root_delta, truth_delta);
+  sc.log("park: samples=" + std::to_string(park_samples) +
+         ", stamp span=" + fixed(park_span) + " s, max step=" + fixed(max_step, 6) +
+         " m, max stamp gap=" + fixed(max_gap) +
+         " s, truth motion=" + fixed(max_truth_motion) +
+         " m, scan/root drift=" + fixed(max_scan_drift) + "/" + fixed(max_root_drift) +
+         " m, obstacle crossings=" + std::to_string(crossings) +
+         ", alternating head extremes=" + std::to_string(head_extremes) +
+         ", " + helper.yaw_ranges());
+  sc.log("shove vectors: truth=(" + fixed(truth_delta[0]) + ", " +
+         fixed(truth_delta[1]) + "), scan=(" + fixed(scan_delta[0]) + ", " +
+         fixed(scan_delta[1]) + "), root=(" + fixed(root_delta[0]) + ", " +
+         fixed(root_delta[1]) + ")");
+  const auto errors = log_errors(stack->log_text());
+  sc.result(valid && park_samples >= 900 && park_span >= 179.0 &&
+                max_gap <= 0.5 && max_step <= 0.005 && max_truth_motion <= 0.005 &&
+                max_scan_drift <= 0.03 && max_root_drift <= 0.03 &&
+                crossings >= 20 && head_extremes >= 20 && moved > 0.025 &&
+                moved < 0.05 && scan_miss < 0.01 && root_miss < 0.01 &&
+                scan_matches > 0 && failed_matches == 0 && errors.empty(),
+            "180s park: step <=0.005m, truth motion <=0.005m, "
+            ">=900 samples, span >=179s, gap <=0.5s, scan/root drift <=0.03m; "
+            "shove miss scan=" + fixed(scan_miss) + " m, root=" + fixed(root_miss) +
+            " m (<0.01), moved=" + fixed(moved) +
+            " m (0.025-0.05), scan matches=" + std::to_string(scan_matches) +
+            ", failed=" + std::to_string(failed_matches) +
+            ", valid=" + (valid ? "true" : "false") +
+            ", log_errors=" + std::to_string(errors.size()));
+}
 Point leg_error(const Point &start, const Point &end, const Point &truth_start,
                 const Point &truth_end) {
   const double dx = end[0] - start[0], dy = end[1] - start[1],
@@ -1260,6 +1437,8 @@ TEST_P(DriftSuite, Scenario) {
       scan_degraded(sc);
     } else if (name == "parked_push") {
       parked_push(sc);
+    } else if (name == "long_park_patrol") {
+      long_park_patrol(sc);
     } else {
       cornering(sc,
                 name == "drift_correction_obstacle" ? "box"
@@ -1536,7 +1715,8 @@ void parse_options(int &argc, char **argv) {
   argc = write;
   if (!options.scenario.empty()) {
     if (std::find(scenario_names.begin(), scenario_names.end(),
-                  options.scenario) == scenario_names.end()) {
+                  options.scenario) == scenario_names.end() &&
+        options.scenario != "long_park_patrol") {
       throw std::invalid_argument("unknown --scenario: " + options.scenario);
     }
     scenario_names = {options.scenario};
