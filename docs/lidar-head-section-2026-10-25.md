@@ -33,11 +33,13 @@ The tests require pytest and xacro and launch no ROS or gz processes. The
 package-path substitution lets the real xacro wrapper expand on a host without
 a sourced ROS installation. Registered colcon tests include these checks.
 
-The opponent driver retains its existing faster collision-hull visuals and
-75% root-hull x/y scale. The measurement above uses the CAD visual meshes;
-full rendered opponents can include off-axis structures and hull inflation.
-The nominal 0.355 m plane is also not an exact mount calibration: the current
-URDF puts the lidar at root z=0.3450931 m before chassis settling, and the
-opponent mover places root at world z=-0.0115 m. Integration validation must
-check actual `/scan` returns; expanded masks alone do not prove Gazebo's
-URDF-to-SDF conversion and renderer behaviour.
+The opponent driver first drew every link from its collision hull. In the
+lidar plane the head and gun hulls measured 0.35-0.48 m and the 75%-scaled
+chassis hull 0.36 x 0.30 m, so moving opponents returned clusters 0.40-0.43 m
+wide and failed the tracker's 0.40 m gate on about half of all scans at 2 m.
+It now keeps the CAD `head` and `head_pitch` meshes (unclipped, lidar arm
+included: 0.16-0.33 m at z=0.355 m, up to 0.37 m at 0.335 m) and hides the
+chassis hull from the lidar. The CAD chassis has no geometry above 0.32 m.
+The lidar sits at root z=0.3450931 m in the URDF before chassis settling, and
+the opponent mover places root at world z=-0.0115 m, so the plane cuts
+opponents near local z 0.345 m.
