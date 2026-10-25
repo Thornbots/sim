@@ -177,8 +177,6 @@ def generate_launch_description():
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        # Patrol stays on, as on the robot: patrol frames clear `fire`, and
-        # it reacquires an opponent that starts out of view or is lost.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
                           'pose_latency_s': LaunchConfiguration('pose_latency_s'),
                           'gimbal_lag_s': LaunchConfiguration('gimbal_lag_s'),
@@ -186,7 +184,7 @@ def generate_launch_description():
                           'chase_settle_s': LaunchConfiguration('chase_settle_s'),
                           'chase_margin_s': LaunchConfiguration('chase_margin_s'),
                           'v_muzzle': '24.0',
-                          'use_rf2o': 'true', 'load_map': 'true', 'patrol_enabled': 'true',
+                          'use_rf2o': 'true', 'load_map': 'true',
                           'initial_x': PythonExpression([
                               "'4.625' if '", LaunchConfiguration('stage'),
                               "' in ", repr(DRIVING), " else '0.0'"])}.items())
