@@ -1161,7 +1161,30 @@ void parked_push(Scenario &sc) {
   if (!correction_ready(sc, helper, p)) {
     return;
   }
+  std::optional<Point> scan_pose;
+  bool pushing = false;
+  int scan_matches = 0, failed_matches = 0;
+  auto scan_odom = helper.create_subscription<nav_msgs::msg::Odometry>(
+      "/scan_odom", 50, [&](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
+        scan_pose = Point{msg->pose.pose.position.x, msg->pose.pose.position.y};
+      });
+  auto quality = helper.create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+      "/scan_odom/quality", 50,
+      [&](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr msg) {
+        if (!pushing) return;
+        for (const auto &status : msg->status) {
+          std::string tier, increment;
+          for (const auto &value : status.values) {
+            if (value.key == "tier") tier = value.value;
+            if (value.key == "increment") increment = value.value;
+          }
+          if (tier == "failed") ++failed_matches;
+          if ((tier == "good" || tier == "degraded") && increment == "scan") ++scan_matches;
+        }
+      });
   helper.spin_for(20.0);
+  const auto scan0 = scan_pose;
+  pushing = true;
   const auto root0 = helper.root();
   const auto truth0 = helper.truth;
   // Open loop: drive() stops within 3 cm of its target.
@@ -1174,6 +1197,8 @@ void parked_push(Scenario &sc) {
   }
   helper.command->publish(geometry_msgs::msg::Twist{});
   helper.spin_for(5.0);
+  pushing = false;
+  const auto scan1 = scan_pose;
   const auto root1 = helper.root();
   const auto truth1 = helper.truth;
   if (!root0 || !root1 || !truth0 || !truth1) {
@@ -1186,10 +1211,20 @@ void parked_push(Scenario &sc) {
   const double miss = distance(est, tru);
   sc.log("shove: truth moved (" + fixed(tru[0]) + ", " + fixed(tru[1]) +
          "), map->root moved (" + fixed(est[0]) + ", " + fixed(est[1]) + ")");
+  const Point scan_delta = scan0 && scan1
+      ? Point{(*scan1)[0] - (*scan0)[0], (*scan1)[1] - (*scan0)[1]}
+      : Point{NAN, NAN};
+  const double scan_miss = distance(scan_delta, tru);
+  const bool scan_ok = !options.rf2o ||
+      (scan0 && scan1 && scan_miss < 0.015 && scan_matches > 0 && failed_matches == 0);
+  sc.log("/scan_odom moved (" + fixed(scan_delta[0]) + ", " + fixed(scan_delta[1]) +
+         "), miss=" + fixed(scan_miss) + ", scan matches=" + std::to_string(scan_matches) +
+         ", failed=" + std::to_string(failed_matches));
   const auto errors = log_errors(stack->log_text());
-  sc.result(moved > 0.025 && moved < 0.05 && miss < 0.015 && errors.empty(),
+  sc.result(moved > 0.025 && moved < 0.05 && miss < 0.015 && scan_ok && errors.empty(),
             "truth moved " + fixed(moved) + " m (want 0.025-0.05), estimate missed by " +
-                fixed(miss) + " m (threshold 0.015), log_errors=" +
+                fixed(miss) + " m (threshold 0.015), scan_ok=" +
+                (scan_ok ? "true" : "false") + ", log_errors=" +
                 std::to_string(errors.size()));
 }
 Point leg_error(const Point &start, const Point &end, const Point &truth_start,

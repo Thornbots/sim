@@ -959,7 +959,9 @@ The suite runs them in this order.
    whatever the chassis does: a robot shoved with its wheels held. After 20 s
    parked it commands 1 cm/s for 4 s, then holds 5 s. It passes when truth
    moved 0.025-0.05 m and `parent->root` moved within 0.015 m of it.
-   It guards rf2o's
+   With rf2o enabled, `/scan_odom` must also track the displacement within
+   0.015 m and report successful scan increments with no failed grades during
+   the shove and settling interval. It guards rf2o's
    [reference scans](../rf2o_laser_odometry/README.md), which anchor a
    parked pose, against hiding motion under their drop distance.
    2026-10-25: truth moved 0.041 m; the estimate fell short by
