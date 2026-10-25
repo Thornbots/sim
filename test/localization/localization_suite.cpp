@@ -68,7 +68,7 @@ std::vector<std::string> scenario_names = {
     "drift_correction", "drift_correction_obstacle",
     "moving_obstacles", "real_accel",
     "jerk_with_motion", "odom_stuck",
-    "scan_degraded"};
+    "scan_degraded",    "parked_push"};
 std::array<Leg, 4> loop_legs() {
   const double s = options.speed, d = 3.0 / s;
   return {{{0.0, -s, d}, {s, 0.0, d}, {0.0, s, d}, {-s, 0.0, d}}};
@@ -1147,6 +1147,51 @@ Stats stats(const std::vector<double> &samples) {
   return {mean, std::sqrt(square / samples.size()),
           *std::max_element(samples.begin(), samples.end())};
 }
+// A parked robot shoved 4 cm with its wheels held (odom_slip_ratio 1: /odom
+// reads still): the map pose follows the shove. Guards rf2o's reference
+// scans, which anchor a parked pose, against hiding a shove. Either
+// way the still wheel prior reads it a little short (README).
+void parked_push(Scenario &sc) {
+  auto stack = run_stack(false, {rclcpp::Parameter("odom_slip_ratio", 1.0)});
+  auto &helper = *stack->helper;
+  if (!ready(sc, helper)) {
+    return;
+  }
+  std::optional<Pose> p;
+  if (!correction_ready(sc, helper, p)) {
+    return;
+  }
+  helper.spin_for(20.0);
+  const auto root0 = helper.root();
+  const auto truth0 = helper.truth;
+  // Open loop: drive() stops within 3 cm of its target.
+  geometry_msgs::msg::Twist push;
+  push.linear.x = 0.01;
+  const double end = helper.now_s() + 4.0;
+  while (helper.now_s() < end) {
+    helper.command->publish(push);
+    helper.spin_for(0.1);
+  }
+  helper.command->publish(geometry_msgs::msg::Twist{});
+  helper.spin_for(5.0);
+  const auto root1 = helper.root();
+  const auto truth1 = helper.truth;
+  if (!root0 || !root1 || !truth0 || !truth1) {
+    sc.result(false, "no map->root or ground truth around the shove");
+    return;
+  }
+  const Point est{(*root1)[0] - (*root0)[0], (*root1)[1] - (*root0)[1]};
+  const Point tru{(*truth1)[0] - (*truth0)[0], (*truth1)[1] - (*truth0)[1]};
+  const double moved = std::hypot(tru[0], tru[1]);
+  const double miss = distance(est, tru);
+  sc.log("shove: truth moved (" + fixed(tru[0]) + ", " + fixed(tru[1]) +
+         "), map->root moved (" + fixed(est[0]) + ", " + fixed(est[1]) + ")");
+  const auto errors = log_errors(stack->log_text());
+  sc.result(moved > 0.025 && moved < 0.05 && miss < 0.015 && errors.empty(),
+            "truth moved " + fixed(moved) + " m (want 0.025-0.05), estimate missed by " +
+                fixed(miss) + " m (threshold 0.015), log_errors=" +
+                std::to_string(errors.size()));
+}
 Point leg_error(const Point &start, const Point &end, const Point &truth_start,
                 const Point &truth_end) {
   const double dx = end[0] - start[0], dy = end[1] - start[1],
@@ -1178,6 +1223,8 @@ TEST_P(DriftSuite, Scenario) {
       odom_stuck(sc);
     } else if (name == "scan_degraded") {
       scan_degraded(sc);
+    } else if (name == "parked_push") {
+      parked_push(sc);
     } else {
       cornering(sc,
                 name == "drift_correction_obstacle" ? "box"
