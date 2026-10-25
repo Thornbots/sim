@@ -755,10 +755,19 @@ heading.
 ### Both robot models: the lidar does not scan its own model
 
 Both of sim's models, `urdf/sentry.urdf.xacro` and `urdf/sentry_v2.urdf.xacro`,
-do this. Every robot visual carries `visibility_flags=0xFFFFFFFE` against the
-`gpu_lidar`'s `visibility_mask=0x01`, so `(mask & flags) == 0` and the sensor
-renders none of the sentry. Nothing else in the world sets the flags, so the
-field keeps sdformat's default `0xFFFFFFFF` and stays visible.
+do this for our own model. Its visuals carry `visibility_flags=0xFFFFFFFE`
+against the `gpu_lidar`'s `visibility_mask=0x01`, so `(mask & flags) == 0` and
+the sensor renders none of the sentry. Copies generated with `opponent:=true`
+(including allies in match stages) carry `0xFFFFFFFF`, like the field, and
+remain visible to our lidar. Their collision/contact masks stay unchanged.
+The same flags apply after `opponent_driver` substitutes collision hulls for
+visual meshes; no lidar-only proxy is added.
+
+The [head-section measurement](docs/lidar-head-section-2026-10-25.md) supports
+a typical 0.23 m central head silhouette near the nominal 0.355 m scan plane.
+This is a CAD measurement, not a calibrated opponent return model: the
+rendered hulls, lidar arm, mount height and chassis settling still affect
+the actual scan.
 
 This was tried in July 2026, reverted as "all-or-nothing per visual", and is
 back because all-or-nothing turned out to be the right answer. Measured
