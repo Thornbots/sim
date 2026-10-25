@@ -23,7 +23,7 @@ Build first on a fresh container (see Build). Each test starts its own sim and
 `thornbots_pkg` stacks, so stop anything you already have running.
 
 The localization suite runs `amcl` with the EKF by default (`backend:=` picks
-another; `auto.launch.py`'s own default is now `mapping`). Its nine scenarios
+another; `auto.launch.py`'s own default is now `mapping`). Its ten scenarios
 are listed under Notes:
 
 ```bash
@@ -955,6 +955,18 @@ The suite runs them in this order.
    (0.4 m). Across four runs
    (2026-09-27) the blackout peaked at 0.398-0.432 m, failing three against
    0.4 m, while before and after stayed under 0.154 m.
+10. `parked_push` runs with `odom_slip_ratio` 1, so `/odom` reads still
+   whatever the chassis does: a robot shoved with its wheels held. After 20 s
+   parked it commands 1 cm/s for 4 s, then holds 5 s. It passes when truth
+   moved 0.025-0.05 m and `parent->root` moved within 0.015 m of it.
+   With rf2o enabled, `/scan_odom` must also track the displacement within
+   0.015 m and report successful scan increments with no failed grades during
+   the shove and settling interval. It guards rf2o's
+   [reference scans](../rf2o_laser_odometry/README.md), which anchor a
+   parked pose, against hiding motion under their drop distance.
+   2026-10-25: truth moved 0.041 m; the estimate fell short by
+   0.004-0.006 m with references (9 runs) and 0.003-0.011 m without (13).
+   rf2o blends each match with the still wheel prior either way.
 
 Two checks were removed. `jerk_stationary` (2026-07-23) re-verified a documented limit
 of the travel gate instead of testing recovery. A no-leak-before-motion check
