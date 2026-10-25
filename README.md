@@ -976,8 +976,11 @@ src/sim/tools/run_suite.sh drift scenario:=long_park_patrol use_rf2o:=true
 ```
 
 It scores 180 simulated seconds parked with still wheel odometry
-(`odom_slip_ratio=1`, noise disabled), then a 1 cm/s, 4 s shove and 10 s
-settling interval. Throughout parking and the shove, a 0.3 m box crosses
+(`odom_slip_ratio=1`, noise disabled), then a 3.5 cm/s shove for about
+1.143 s (the same commanded +X 4 cm displacement) and 10 s settling interval.
+The final shove tick is shortened to preserve that displacement. This stays
+below 4 cm/s to exercise slow motion while the wheel prior remains still.
+Throughout parking and the shove, a 0.3 m box crosses
 back and forth from x=-1.5 to +1.5 m at y=-2 m, at 0.5 m/s, and the head
 sweeps sinusoidally through +/-0.8 rad with a 12 s period. These are scripted
 match-patrol disturbances, not firmware execution or calibrated patrol rates.

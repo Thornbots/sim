@@ -1351,15 +1351,18 @@ void long_park_patrol(Scenario &sc) {
   const auto root0 = helper.root();
   const Point truth0 = *helper.truth;
   pushing = true;
+  const double push_speed = 0.035;
+  const double push_duration = 0.04 / push_speed;
   const double push_start = helper.now_s();
-  while (helper.now_s() - push_start < 14.0) {
+  while (helper.now_s() - push_start < push_duration + 10.0) {
     if (Clock::now() > wall_end)
       throw std::runtime_error("long park shove exceeded wall deadline");
     patrol(helper.now_s() - start);
     geometry_msgs::msg::Twist push;
-    if (helper.now_s() - push_start < 4.0) push.linear.x = 0.01;
+    const double push_remaining = push_duration - (helper.now_s() - push_start);
+    if (push_remaining > 0.0) push.linear.x = push_speed;
     helper.command->publish(push);
-    helper.spin_for(0.1);
+    helper.spin_for(push_remaining > 0.0 ? std::min(0.1, push_remaining) : 0.1);
   }
   pushing = false;
   valid = valid && helper.now_s() - latest_stamp <= 0.5;
