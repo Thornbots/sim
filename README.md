@@ -678,6 +678,12 @@ wheel bottoms are not coplanar, so the lowest exported wheel is only a
 clearance datum. `urdf/sentry_v2.yaml` and `simplify_urdf` describe the older
 high-resolution export below; they do **not** reproduce the active assets.
 
+The two odometry pods were omitted from the imported model; `wheel_0` through
+`wheel_3` remain drive wheels. See the [odometry pod table](../docs/investigations/sentry-cad-2026-10-26.md#odometry-pods)
+for source-part geometry, start-frame encoder axes and red/blue signs. The
+unknown motor-to-CAD yaw datum makes source-part/channel labels conditional.
+No pod links, joints, meshes or physics are added.
+
 #### Legacy high-resolution export
 
 The following records the previous model's source and simplification method.
