@@ -73,7 +73,7 @@ constexpr double kPitchLimit = 0.6;  // rad, URDF headpitch
 // The Small Armor Module's face (ARCC 2026's only size), from sentry_v2's CAD.
 constexpr double kPanelWidth = 0.135;  // along the ground
 constexpr double kPanelHeight = 0.125;
-const double kPanelNormalFromUp = 75.0 * M_PI / 180.0;  // S122 cant
+const double kPanelNormalFromUp = 75.0 * M_PI / 180.0;  // R27 S120; README armor rules comparison
 constexpr double kShooterCmdHz = 20.0;
 
 double wrap_pi(double a) {return std::atan2(std::sin(a), std::cos(a));}
