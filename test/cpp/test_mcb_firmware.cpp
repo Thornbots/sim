@@ -17,6 +17,66 @@
 namespace {
 namespace hw = sim::mcb_firmware;
 namespace wire = sim::mcb_protocol;
+TEST(McbDataLoad, RealFirmwarePreservesEveryTelemetrySlotUnderDataAndPingLoad) {
+  const char *path = std::getenv("MCB_FIRMWARE_BINARY");
+  if (!path || access(path, X_OK) != 0) {
+    GTEST_SKIP() << "set MCB_FIRMWARE_BINARY to the hosted firmware";
+  }
+  struct Environment {
+    std::optional<std::string> previous;
+    Environment() {
+      if (const char *value = std::getenv("MCB_DATA_TEST_LOAD")) previous = value;
+      setenv("MCB_DATA_TEST_LOAD", "1", 1);
+    }
+    ~Environment() {
+      if (previous) setenv("MCB_DATA_TEST_LOAD", previous->c_str(), 1);
+      else unsetenv("MCB_DATA_TEST_LOAD");
+    }
+  } environment;
+  hw::PtyLink link("/tmp/mcb_data_load_" + std::to_string(getpid()));
+  hw::Firmware firmware(link.master(), path, "stop", true);
+  fcntl(link.slave(), F_SETFL, fcntl(link.slave(), F_GETFL) | O_NONBLOCK);
+  wire::DJISerial parser;
+  hw::Referee ref;
+  size_t poses = 0, refs = 0, data = 0, reports = 0, pings = 0;
+  for (int tick = 0; tick <= 1000; ++tick) {
+    if (tick % 10 == 0) {
+      const auto ping = wire::frame(wire::Ping{42});
+      ASSERT_EQ(write(link.slave(), ping.data(), ping.size()),
+                static_cast<ssize_t>(ping.size()));
+    }
+    firmware.step(1, {}, ref);
+    uint8_t buffer[4096];
+    ssize_t count;
+    while ((count = read(link.slave(), buffer, sizeof(buffer))) > 0) {
+      for (const auto &frame : parser.feed(buffer, static_cast<size_t>(count))) {
+        if (frame.msg_type == wire::kPose) ++poses;
+        if (frame.msg_type == wire::kRefSys) ++refs;
+        if (frame.msg_type == wire::kPing) ++pings;
+        if (frame.msg_type == wire::kMcbData) {
+          const auto packet = wire::unpack<wire::McbData>(frame.payload);
+          if (packet.channel == 42) {
+            ++data;
+            EXPECT_EQ(packet.data, (std::vector<uint8_t>{0, 0xa5, 0xff, 0x2a}));
+          } else if (packet.channel == 255) {
+            ++reports;
+            EXPECT_EQ(packet.data.size(), 4U);
+          } else {
+            ADD_FAILURE() << "unexpected channel " << static_cast<int>(packet.channel);
+          }
+        }
+      }
+    }
+  }
+  EXPECT_EQ(poses, 90U);
+  EXPECT_EQ(refs, 10U);
+  EXPECT_GT(data, 0U);
+  EXPECT_GT(reports, 0U);
+  EXPECT_GT(pings, 0U);
+  EXPECT_EQ(parser.errors().crc8, 0U);
+  EXPECT_EQ(parser.errors().crc16, 0U);
+}
+
 class McbFirmware : public testing::Test {
 protected:
   std::unique_ptr<hw::PtyLink> link;

@@ -54,6 +54,9 @@
   <depend>diagnostic_msgs</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>rosbag2_cpp</test_depend>
+  <test_depend>rosbag2_storage</test_depend>
+  <test_depend>rosbag2_storage_mcap</test_depend>
   <test_depend>ament_cmake_pytest</test_depend>
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
