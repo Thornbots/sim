@@ -480,7 +480,10 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 and waits for a valid `/cv/target_state` before requesting the first cell
 (non-firing idle frames keep `/cv/target` fresh without one). Starting it at
 the launch's moving defaults left unscored motion dependent on wall-time
-bring-up speed.
+bring-up speed. The hosted parked fixture keeps its existing -y paths and
+sets the idle-look enemy zone in that same frame; the board fixture and
+both driving stages retain the field's -x enemy zone. This changes no path,
+spawn, control law or scoring gate.
 Each requested cell sets its speed/spin and settles for three sim seconds
 before scoring.
 
