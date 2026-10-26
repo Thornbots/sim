@@ -45,14 +45,11 @@ Keep approach firing disabled until all routes reach center.
   [match](README.md#four-robot-center-fight-mcb_match).
 - `odom_stuck` intentionally checks liveness, not recovered localization:
   [scenarios](README.md#scenarios). Never invert rf2o's warping to retune a regression.
-- No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
+- Scored-stage detection limits: [tests](README.md#run-the-tests).
 - [Board-stage verification](docs/mcb-auto-drive-2026-10-12.md); motor-plant limits live in
   [MCB emulator](README.md#mcb-emulator).
-  Noise, gimbal dynamics, suspension and spawn coordinates remain estimates;
-  [model limits](README.md#sentry_v2urdfxacro-motion-model).
-- gz quirks: `spawn_model` can report failure after a slow `sentry_v2` spawn
-  succeeds (check `model_names()`); spawning inside the colliding chassis
-  stalls `/clock`; only the `sim.launch.py` robot obeys VelocityControl.
+  [Model limits](README.md#sentry_v2urdfxacro-motion-model).
+- Check [gz spawn quirks](README.md#simlaunchpy-spawn_robot-uses--string) when diagnosing spawn/clock failures.
 - Changes shared with `target_driver`, `cv_target_emulator`, `cv_head_aim` or
   `pose_emulator` may also need `src/bench_world.cpp`; it has its own lockstep implementation.
 - Lidar/CAD and carried-map/zone gaps: [track J](../docs/ROADMAP.md#j-lidar-and-camera),

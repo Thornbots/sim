@@ -47,6 +47,7 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
+from sim.mcb_link import default_mcb_link
 from sim.suite_exit import finish_suite
 
 STAGES = ('mcb_parked', 'mcb_drive', 'mcb_match')
@@ -54,7 +55,6 @@ DRIVING = ('mcb_drive', 'mcb_match')
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
 OPPONENT_CLASS = 6  # red; we are blue
-MCB_PTY = '/tmp/mcb_emulator_pty'
 
 
 def _sim(context):
@@ -74,6 +74,7 @@ def _sim(context):
                           'gz_gui_config': os.path.join(share, 'rviz', view + '-gz.config'),
                           'camera': 'false', 'pose_emulator': 'false',
                           'mcb_physics': 'true',
+                          'mcb_device_link': config['mcb_device_link'],
                           'mcb_drive': 'stop',
                           'mcb_auto_fire': 'false' if config['stage'] in DRIVING else 'true',
                           'firmware_binary': config['firmware_binary'],
@@ -166,7 +167,9 @@ def generate_launch_description():
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
-        parameters=[{'use_sim_time': True, 'device': MCB_PTY, 'debug_log': False}])
+        parameters=[{'use_sim_time': True,
+                     'device': LaunchConfiguration('mcb_device_link'),
+                     'debug_log': False}])
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
         parameters=[{'use_sim_time': True}])
@@ -174,8 +177,6 @@ def generate_launch_description():
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        # Patrol stays on, as on the robot: patrol frames clear `fire`, and
-        # it reacquires an opponent that starts out of view or is lost.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
                           'pose_latency_s': LaunchConfiguration('pose_latency_s'),
                           'gimbal_lag_s': LaunchConfiguration('gimbal_lag_s'),
@@ -183,7 +184,7 @@ def generate_launch_description():
                           'chase_settle_s': LaunchConfiguration('chase_settle_s'),
                           'chase_margin_s': LaunchConfiguration('chase_margin_s'),
                           'v_muzzle': '24.0',
-                          'use_rf2o': 'true', 'load_map': 'true', 'patrol_enabled': 'true',
+                          'use_rf2o': 'true', 'load_map': 'true',
                           'initial_x': PythonExpression([
                               "'4.625' if '", LaunchConfiguration('stage'),
                               "' in ", repr(DRIVING), " else '0.0'"])}.items())
@@ -193,7 +194,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
     # The bridge opens the pty once, so it starts after the emulator makes it.
     uart_ready = Node(package='sim', executable='mcb_ready', arguments=[
-        MCB_PTY,
+        LaunchConfiguration('mcb_device_link'),
         PythonExpression(["'600' if '", LaunchConfiguration('backend'),
                           "' == 'renode' else '30'"]),
     ],
@@ -286,6 +287,8 @@ def generate_launch_description():
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('real_time_factor', default_value='0',
                               description='sim speed cap; 0 = as fast as it runs'),
+        DeclareLaunchArgument('mcb_device_link', default_value=default_mcb_link(),
+                              description='PTY link; unique per GZ_PARTITION/ROS_DOMAIN_ID'),
         DeclareLaunchArgument('lockstep', default_value='true',
                               description='hold gz at MCB batch deadlines until its tick arrives'),
         DeclareLaunchArgument('target_speed', default_value='2.0',

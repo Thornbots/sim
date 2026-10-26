@@ -18,6 +18,7 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -211,13 +212,28 @@ public:
         system_error("ttyname");
       }
       slave_name_ = name;
+      // A link whose pty still exists belongs to a live stack: refuse it. A
+      // dangling link, a plain file, or a link to the pty just opened here (a
+      // killed owner's pts number, reused) is stale and replaced.
       struct stat info{};
-      if (lstat(link_.c_str(), &info) == 0 && unlink(link_.c_str()) < 0) {
-        system_error("unlink pty link");
+      if (lstat(link_.c_str(), &info) == 0) {
+        struct stat target{}, own{};
+        if (fstat(slave_, &own) < 0) {
+          system_error("fstat pty");
+        }
+        if (S_ISLNK(info.st_mode) && stat(link_.c_str(), &target) == 0 &&
+            target.st_rdev != own.st_rdev) {
+          throw std::runtime_error("MCB pty link " + link_ + " is owned by a live stack; "
+                                   "set a unique mcb_device_link per stack");
+        }
+        if (unlink(link_.c_str()) < 0) {
+          system_error("unlink pty link");
+        }
       }
       if (symlink(slave_name_.c_str(), link_.c_str()) < 0) {
         system_error("symlink pty");
       }
+      linked_ = true;
     } catch (...) {
       close_fd(master_);
       close_fd(slave_);
@@ -226,9 +242,13 @@ public:
   }
 
   ~PtyLink() {
-    struct stat info{};
-    if (lstat(link_.c_str(), &info) == 0 && S_ISLNK(info.st_mode)) {
-      unlink(link_.c_str());
+    // Only remove the link while it still names this pty.
+    if (linked_) {
+      char target[PATH_MAX];
+      const auto length = readlink(link_.c_str(), target, sizeof(target) - 1);
+      if (length >= 0 && std::string(target, static_cast<size_t>(length)) == slave_name_) {
+        unlink(link_.c_str());
+      }
     }
     close_fd(master_);
     close_fd(slave_);
@@ -272,6 +292,7 @@ private:
   int master_ = -1, slave_ = -1;
   size_t dropped_ = 0;
   std::string link_, slave_name_;
+  bool linked_ = false;
 };
 
 struct GzHardware {

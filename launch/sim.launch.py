@@ -49,7 +49,9 @@ from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 from sim.auto_explore import SPAWN_YAW
+from sim.clock_bridge import clock_bridge_node
 from sim.display import display_error
+from sim.mcb_link import default_mcb_link
 
 
 RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
@@ -302,14 +304,7 @@ def generate_launch_description():
     )
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
-    clock_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name='clock_bridge',
-        output='screen',
-        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
-        parameters=[{'use_sim_time': True}],
-    )
+    clock_bridge = clock_bridge_node()
 
     # --- Spawn the robot into the running world.
     # NOTE: deliberately -string (raw URDF text), NOT -topic
@@ -366,16 +361,22 @@ def generate_launch_description():
     )
 
     # --- Bridge the gpu_lidar sensor's /scan topic (defined in the model xacro)
-    # into ROS 2, remapped to scan_raw -- thornbots_pkg's lidar_self_filter node
-    # is the only thing that publishes the final /scan (see its docstring),
-    # for both sim and real hardware.
+    # into ROS 2. The sim adapter adds acquisition timing and normalizes
+    # invalid ranges before the shared hardware/sim lidar_self_filter.
     scan_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='scan_bridge',
         output='screen',
         arguments=['/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan'],
-        remappings=[('/scan', '/scan_raw')],
+        remappings=[('/scan', '/sim/scan')],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    lidar_scan = Node(
+        package='sim',
+        executable='lidar_scan',
+        output='screen',
         parameters=[{'use_sim_time': True}],
     )
 
@@ -706,7 +707,7 @@ def generate_launch_description():
         DeclareLaunchArgument('firmware_binary', default_value=''),
         DeclareLaunchArgument('mcb_backend', default_value='hosted', choices=['hosted', 'renode']),
         DeclareLaunchArgument('mcb_game_stage', default_value='4'),
-        DeclareLaunchArgument('mcb_device_link', default_value='/tmp/mcb_emulator_pty'),
+        DeclareLaunchArgument('mcb_device_link', default_value=default_mcb_link()),
         DeclareLaunchArgument('mcb_auto_fire', default_value='true'),
         world_arg,
         lockstep_arg,
@@ -747,6 +748,7 @@ def generate_launch_description():
         gz_sim,
         clock_bridge,
         scan_bridge,
+        lidar_scan,
         joint_state_bridge,
         odom_bridge,
         head_slider_relay,

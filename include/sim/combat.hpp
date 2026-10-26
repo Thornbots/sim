@@ -47,6 +47,8 @@ Eigen::Matrix4d armor_offset(
   const Eigen::Vector3d & position, const Eigen::Vector3d & rpy);
 Mesh transform_mesh(const Mesh & mesh, const Eigen::Matrix4d & transform);
 Mesh load_stl(const std::filesystem::path & path);
+// Load field collisions in world coordinates from the installed sim share directory.
+Mesh load_field(const std::filesystem::path & share);
 std::optional<double> segment_mesh_hit(
   const Eigen::Vector3d & start, const Eigen::Vector3d & end, const Mesh & triangles);
 std::optional<double> segment_panel_hit(

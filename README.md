@@ -19,11 +19,13 @@ harnesses expect it; this is the workspace timestamp rule's standard-interface e
 
 ## Run the tests
 
+No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
+
 Build first on a fresh container (see Build). Each test starts its own sim and
 `thornbots_pkg` stacks, so stop anything you already have running.
 
 The localization suite runs `amcl` with the EKF by default (`backend:=` picks
-another; `auto.launch.py`'s own default is now `mapping`). Its nine scenarios
+another; `auto.launch.py`'s own default is now `mapping`). Its ten scenarios
 are listed under Notes:
 
 ```bash
@@ -184,8 +186,9 @@ empty values use the node defaults declared in `target_tracker.cpp`.
 The [G.1 investigation](docs/cv-estimation-g1-2026-10-15.md#matched-radius-and-prior-trials)
 records the radius/prior screens and their full-matrix failures; no tuning
 default or estimation limit is changed by that checkpoint.
-`chassis_spin:=9` spins our chassis (rad/s, CCW, the firmware's rate) under
-the head, which holds world yaw as the MCB's IMU loop does;
+`chassis_spin:=9` spins our chassis (rad/s, CCW) as a stand-in under
+the head; firmware sentry spin is clockwise. The head holds world yaw as
+the MCB's IMU loop does;
 `yaw_bearing_damping:=` (N m s/rad, default 0, unmeasured) lets the spin drag
 the head. A cell
 passes on liveness until `LIMITS` in `include/sim/estimation_limits_data.hpp` has
@@ -214,6 +217,10 @@ sim up fresh for every scenario instead, the old behaviour and the control when
 a verdict looks off. `spawn_yaw_deg:=5` turns the chassis that far off the spawn heading at every
 reset; the real robot drifts 1-5 deg. Both
 shut down when the tests finish, and Ctrl-C stops everything, stacks included.
+Each shared-sim robot startup gets one 30-second wait for its complete TF chain;
+a failure ends that case without restarting the robot. Startup diagnostics name
+the raw `odom->root`, navigation `nav_odom->odom` and backend `map->nav_odom`
+links separately. E2E bring-up failures also report which links are missing.
 
 The localization launch defaults to `real_time_factor:=0`, which lets gz run
 as fast as the machine allows, and so does the aiming bench. Every test times
@@ -230,7 +237,7 @@ the bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
 picks the moving cases. `headless:=true` drops the gz GUI and rviz from
 either. `--show-args` on either launch lists the rest.
 
-`tools/run_suite.sh drift|ekf|shot_hit|estimation [args]` wraps any of these
+`tools/run_suite.sh drift|ekf|shot_hit|estimation|mcb_parked|mcb_drive|mcb_match [args]` wraps any of these
 launches: it refuses to start over a running stack, tees the output to
 `/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.cpp` on it. It exits 0
 only when GTest passed and the checker trusts the run:
@@ -278,7 +285,8 @@ Integration executables are installed but are invoked only through launch.
 | --- | --- | --- |
 | unit | `cpp/test_cv_head_aim.cpp`, `cpp/test_mcb_protocol.cpp`, `cpp/test_combat.cpp`, `cpp/test_target_odometry.cpp`, `cpp/test_depth_mm.cpp`, `cpp/test_panel_view.cpp` | GTest |
 | unit | `cpp/test_cv_bench.cpp`, `cpp/test_suite_timing.cpp`, `cpp/test_match_routes.cpp`, `cpp/test_foxglove_layouts.cpp` | GTest |
-| unit | `cpp/test_mcb_firmware.cpp`, `cpp/test_mcb_bridge_pty.cpp` | hosted firmware; bridge test also needs ROS |
+| unit | `cpp/test_mcb_firmware.cpp`, `cpp/test_mcb_pty_link.cpp`, `cpp/test_mcb_bridge_pty.cpp` | hosted firmware; bridge test also needs ROS |
+| ROS service | `cpp/test_e2e_referee.cpp` | scorer retries and bounded failure with dropped replies; no simulation |
 | launch API | `cpp/test_suite_exit.cpp` | ROS launch, no simulation |
 | lint | `test_copyright.py`, `test_flake8.py`, `test_pep257.py` | Python + pytest |
 | integration | `localization/localization_suite.cpp` | gz-sim and a launch tree |
@@ -334,6 +342,16 @@ its stack once for all its cases, through `shot_hit.launch.py
 run_tests:=false` when GTest starts it. ROS topics are shared
 across every process on the machine, so a stack you left running will corrupt
 the measurements.
+
+`clock_bridge.launch.py` owns Gazebo-to-ROS time publication and is included by
+`sim.launch.py`. It uses the existing robot UDP-only DDS profile: a departed
+reader's Fast DDS shared-memory port must not block the global clock callback.
+Discovery peers, clock QoS and Gazebo timestamps are retained. The registered
+`test_clock_bridge` exercises real clock delivery to five fresh ROS contexts,
+checks continued advancement and teardown, and verifies the bridge maps no
+Fast DDS SHM ports. It needs no Gazebo world.
+The test explicitly uses normal bridge discovery: Jazzy's localhost-only RMW
+mode adds SHM transport after loading XML, even for a UDP-only profile.
 
 Rerun the drift suite whenever you tune `slam.yaml`, `amcl.yaml`, `ekf.yaml` or
 the noise model. `gtest_args:=` forwards native GTest options on the
@@ -424,10 +442,13 @@ pty, with `dji_serial_bridge` and `mcb_relay` on the other end, the real CV
 chain from `target_selector` to `point_to_cv_target`, and no camera:
 `detector_standin` feeds gz truth in place of YOLO and `roi_depth_node`.
 Shots are the ones the firmware fires, each falling under gravity since the
-firmware pitches up for it. `point_to_cv_target` patrols with no target, as
-on the robot, so it can sweep for an opponent that starts out of view or
-whose track was lost; patrol frames clear `fire`. Reacquisition and moving
-hit rates still vary (ROADMAP T17). The
+firmware pitches up for it. All three stages use the robot's no-patrol
+`point_to_cv_target` behavior: last-enemy and hit holds, then a look toward
+the enemy starting zone. Idle frames clear `fire` and keep hit turns permitted;
+firing requires a detection no more than 0.15 s old. The MCB fixture
+(`mcb.launch.py`) and both aiming benches (`shot_hit.launch.py` and
+`estimation.launch.py`) use `idle_direction=hold` for their controlled setups.
+Reacquisition and moving hit rates still vary (ROADMAP T17). The
 [2026-10-11 hosted-firmware run](docs/match-check-2026-10-11.md) records all
 cells/segments, checker verdicts and comparison with the previous status.
 
@@ -457,8 +478,9 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 
 `mcb_parked`'s test-owned stack brings up a parked, non-spinning opponent
 and waits for a valid `/cv/target_state` before requesting the first cell
-(patrol keeps `/cv/target` fresh without one). Starting it at the launch's
-moving defaults left unscored motion dependent on wall-time bring-up speed.
+(non-firing idle frames keep `/cv/target` fresh without one). Starting it at
+the launch's moving defaults left unscored motion dependent on wall-time
+bring-up speed.
 Each requested cell sets its speed/spin and settles for three sim seconds
 before scoring.
 
@@ -478,7 +500,11 @@ stamped TF is reported as unavailable; latest TF is never substituted to
 calculate these errors. `ros2 run sim compare_runs LOG_DIR_A LOG_DIR_B`
 prints the first record where two runs' logs diverge.
 `poses.jsonl` samples head-TF and localization at 20 Hz even when tracking
-is lost and no shots fire. `real_time_factor` reaches the test-owned stack;
+is lost and no shots fire. Every parked cell requires at least 95% finite
+stamped map-localization samples, p95 error at most 0.15 m and maximum error
+at most 0.20 m against gz truth. `parking.jsonl` records coverage and errors
+alongside chassis displacement. Bring-up waits until `map->root` exists
+(not that it has converged) before any parked scoring. `real_time_factor` reaches the test-owned stack;
 use `real_time_factor:=1` for a paced control against the unthrottled default.
 The E2E wait checks clock progress: five wall seconds without progress fails,
 backward time fails, and a window has a budget of at least 30 wall seconds
@@ -589,12 +615,36 @@ comments can stay short. Each heading names a file.
 
 The gz world is the field frame (REP-105, (0, 0) at the field centre, x
 along the 12 m toward blue's base), as are `odom`, `map` and the saved maps.
-The field mesh is turned -90 deg in `ARCC_Field_2026.sdf` to get there
-(2026-10-04); before, the world's x ran across the field. Everything placed
-in world coordinates turned with it, so each suite drives the same physical
-paths: the robot spawns facing -y (`auto_explore.SPAWN_YAW`), the drift
-loop, actors and map-sweep grid are turned, and `target_driver`'s
-`origin_yaw` keeps the target path in front of the robot.
+`ARCC_Field_2026.sdf` uses the coarse Onshape export in
+`world/real_field_assmbly/meshes/`: `Field.stl` (8,550 triangles) and
+`CenterMarker.stl` (12 triangles), each for visual and collision geometry.
+The export is already in metres with its centre at XY zero. Both meshes use
+the URDF's z offset of -0.0133884 m and unit scale; a -90 deg model yaw
+maps mesh +y to world +x, preserving the blue-base direction. The marker top
+and main floor are at z = 0 (within 20 nm of STL float precision).
+The inner walls enclose 12 x 8 m; the outer bounds in world coordinates are
+x = ±6.168884 m, y = ±4.168884 m, z = -0.025..0.498612 m.
+
+The earlier mesh had larger outer bounds (12.61 x 8.73 m), taller geometry
+(1.41883 m before its z offset), and an approximately 8 cm lateral offset.
+These are export differences, not a reason to rescale the new 12 x 8 m
+interior. The coarse export does not establish precise RFID zone boundaries.
+The ROS 1 launch files alongside the export are provenance; gz loads the SDF.
+
+World-coordinate spawns, drift loops, actors and map-sweep grids keep their
+field-frame coordinates. The robot spawns facing -y (`auto_explore.SPAWN_YAW`),
+and `target_driver`'s `origin_yaw` keeps its path in front of the robot.
+Route-clearance tests and match shot occlusion read every field collision
+mesh and transform directly from the SDF through `combat::load_field`.
+The corrected 2026-10-20 export restores the 2 m bar at world x = -1..1 m,
+y = 2.98488..3.00393 m, with top z = 0.41 m; the earlier export omitted it
+above the 0.208162 m platform. Placement, floor and outer bounds are unchanged.
+For the canonical occupancy map derived from the corrected collision geometry
+at nominal lidar height, see [saved map](../sentry_localization/README.md#saved-map).
+Use mapping mode from a blank map for new-field SLAM validation (no pose graph ships).
+The [2026-10-19 integration measurements](docs/real-field-2026-10-19.md)
+compare the earlier export with nightly, including the known test failures;
+they do not validate runtime behavior with the corrected export.
 
 ### SAPIEN: tried, not adopted
 
@@ -690,6 +740,8 @@ meshes, and `test_cv_bench.cpp` checks the two agree.
 
 ### sentry_v2.urdf.xacro: motion model
 
+Noise, gimbal dynamics, suspension and spawn coordinates remain estimates.
+
 Gravity and collision are on. `VelocityControl` sets the chassis's whole
 twist every step: planar velocity from `/cmd_vel`, zero angular velocity (a
 hard yaw lock) and zero vertical velocity. The chassis settles onto its
@@ -725,9 +777,9 @@ head's pose -- between 863 and 1613 of 3000 beams, reported as `-inf` because
 the self-hits land inside `range_min`. `lidar_self_filter` then blanked 1.0
 rad (126-183 deg), so up to 140 deg of the scan was being lost to something
 nothing in the stack knew about. A bare `gpu_lidar` at the same height in the
-same world returns all 3000 beams at 2.22-7.17 m, which is what the sentry's
-sensor now returns too. Both models have since dropped to the A2M8's 800
-beams.
+same world returned all 3000 beams at 2.22-7.17 m; the exclusion restored
+that coverage on the sentry too. Both models now use the measured
+angle-compensated A2M8 grid [below](#lidar-format-and-model-limits).
 
 Hardware is the reason to prefer it: the real RPLIDAR's scanning disk sits
 clear of the chassis, and only the head's own footprint blocks it.
@@ -735,6 +787,32 @@ clear of the chassis, and only the head's own footprint blocks it.
 the robot. Its sector (0.09-1.41 rad) now comes from slicing `sentry_v2`'s CAD
 at the scan plane, and still needs checking against a real `/scan_raw` (see
 `../thornbots_pkg/README.md`).
+
+### Lidar format and model limits
+
+Both robot models match the sentry's RPLIDAR A2M8 with
+`angle_compensate:=true`: 720 fixed samples, inclusive -pi/+pi endpoints
+(2pi/719 = 0.5007 degrees), 11.2 Hz, 0.05–12 m and frame `lidar`.
+Keep the symmetric endpoints: rf2o derives bearings from the FOV around
+zero, ignoring `angle_min`; a 0–2pi grid would rotate its interpretation by pi.
+The Gazebo bridge feeds `/sim/scan`; sim's `lidar_scan` adapter supplies
+`/scan_raw`, then the shared `thornbots_pkg` self-filter publishes `/scan`.
+The adapter preserves the capture stamp, grid and intensities. It fills
+`scan_time` from successive capture stamps (nominal 1/11.2 s at startup,
+a reset or a missed frame) and `time_increment = scan_time / (N-1)`, as the
+hardware driver does. Nonfinite and out-of-range returns become positive
+infinity; finite boundary returns remain valid. This deliberately follows
+the hardware missing-return convention, collapsing REP 117's distinct
+`-inf` (too close) and `NaN` (invalid) sentinels into `+inf`.
+
+Gazebo captures all rays at once: these timing fields describe nominal
+rotary acquisition, without rolling motion distortion or the real driver's
+roughly one-rotation delivery latency. Intensities are Gazebo values, not
+calibrated RPLIDAR quality. Gaussian noise remains constant 0.01 m rather
+than a measured range/material-dependent error model. Visual geometry and
+the shared head blind sector determine no-return coverage; the real field's
+38–44% infinity fraction includes material/geometry losses that Gazebo does
+not model. No random dropout is added to force that fraction.
 
 ### Localization drift suite
 
@@ -819,10 +897,11 @@ scenarios). `slam --use-rf2o` measured worse than plain `slam`; see
 The suite runs them in this order.
 
 1. `baseline` (noise off) asserts the correction TF settles and stays stable,
-   with no ERROR in any log. A steady ~0.1-0.15m offset is normal, because the
-   saved maps sit that far off the gz world (measured before both were turned
-   into the field frame, the same turn for each). A
-   growing offset would be a real problem.
+   with no ERROR in any log. Historical runs with the previous saved maps
+   showed a steady ~0.1-0.15m map-to-world offset (measured before both were
+   turned into the field frame, the same turn for each). That measurement
+   does not establish alignment for the current [saved map](../sentry_localization/README.md#saved-map).
+   A growing offset would be a real problem.
 2. `noise_correction` drives the 3m square under drift and jitter (slip 0.02,
    no jerks) for a fixed 30s (60s before 2026-07-27). The second half's samples
    must stay under 2x the first half's max. The window doesn't exit early, so
@@ -885,6 +964,18 @@ The suite runs them in this order.
    (0.4 m). Across four runs
    (2026-09-27) the blackout peaked at 0.398-0.432 m, failing three against
    0.4 m, while before and after stayed under 0.154 m.
+10. `parked_push` runs with `odom_slip_ratio` 1, so `/odom` reads still
+   whatever the chassis does: a robot shoved with its wheels held. After 20 s
+   parked it commands 1 cm/s for 4 s, then holds 5 s. It passes when truth
+   moved 0.025-0.05 m and `parent->root` moved within 0.015 m of it.
+   With rf2o enabled, `/scan_odom` must also track the displacement within
+   0.015 m and report successful scan increments with no failed grades during
+   the shove and settling interval. It guards rf2o's
+   [reference scans](../rf2o_laser_odometry/README.md), which anchor a
+   parked pose, against hiding motion under their drop distance.
+   2026-10-25: truth moved 0.041 m; the estimate fell short by
+   0.004-0.006 m with references (9 runs) and 0.003-0.011 m without (13).
+   rf2o blends each match with the still wheel prior either way.
 
 Two checks were removed. `jerk_stationary` (2026-07-23) re-verified a documented limit
 of the travel gate instead of testing recovery. A no-leak-before-motion check
@@ -1065,10 +1156,15 @@ from every edge and always clear, across the -x, +y and +x edges.
 Moves go through `sim.launch.py`'s `set_pose_bridge`, gz's `set_pose` as a
 ROS `SetEntityPose` service, one async call per box per tick. The first
 version started a `gz service` process (Ruby) per call, and ticks lagged to
-~0.19 s of sim time. The default paths clear the ARCC26 map's walls by at
-least 0.4 m.
+~0.19 s of sim time. The default paths clear the real field's walls (the `ARCC_Field_2026`
+mesh, [world frame](#the-world-frame)) by at least 0.4 m.
 
 ### sim.launch.py: spawn_robot uses -string
+
+`spawn_model` can report failure after a slow `sentry_v2` spawn succeeds;
+check `model_names()`. Spawning inside the colliding chassis stalls `/clock`.
+For the other robot, `opponent_driver` uses `OpponentMover` instead of
+VelocityControl.
 
 `-topic robot_description` makes `create` subscribe over ROS, and it reliably
 misses `robot_state_publisher`'s TRANSIENT_LOCAL message. `ros2 topic echo`
@@ -1240,8 +1336,8 @@ sets the sign and the test checks it analytically.
 
 With no `/cv/target` it stops publishing and holds position, without
 re-homing, since a lost target is usually a brief FOV gap. `CVTarget` has no
-confidence; every message is an aim point, patrol points included, and the
-head follows each.
+confidence; every message is an aim point, non-firing idle points included,
+and the head follows each.
 
 ### MCB emulator
 
@@ -1307,7 +1403,8 @@ ros2 launch sim mcb.launch.py backend:=hosted
 
 Use `drive:=simple` for the firmware's waypoint route or, with
 `backend:=hosted`, `drive:=auto` for NAV_GOAL. The default `stop` parks the
-robot; firmware powered zero-velocity holding applies in game. Foxglove serves
+robot under centred manual drive. With main's firmware the keyboard peek
+release schedules beyblade at boot, so the parked chassis spins. Foxglove serves
 on :8765, and
 gz/rviz open where a display is available. This launch uses the actual MCB
 and bridge without an opponent; the `e2e.launch.py` stages score it.
@@ -1443,6 +1540,10 @@ pose, twist and gimbal joints from the ECM, runs one firmware cycle per 1 ms
 physics step, then applies motor outputs as joint torques and a chassis wrench.
 `mcb_physics:=true` removes both JointPositionControllers and VelocityControl.
 The UART bridge starts after `mcb_ready` observes a CRC-valid POSE on the PTY.
+The PTY link defaults to `/tmp/mcb_emulator_pty-<GZ_PARTITION>-<ROS_DOMAIN_ID>`
+(`mcb_device_link:=` overrides), so concurrent stacks keep separate UARTs. The
+plugin refuses a link whose pty a live stack still owns and removes only a link
+that still names its own pty.
 It waits 30 wall seconds for hosted execution or 600 for Renode boot.
 The former ROS timer adapter
 is removed; `mcb.launch.py` uses this same physics path.
@@ -1462,9 +1563,9 @@ measured tire, ESC, gearbox or launcher behaviour.
 The plant adds passive wheel/roller resistance to the frictionless CAD contacts:
 `rolling_resistance=0.03` times each wheel's nominal normal load, smoothed
 through zero tangential speed. It dissipates motion without clamping chassis
-velocity or pose. The sentry parked and centered manual commands hold a latched raw odometry
-position while chassis power is available in game; outside that state the stop
-command writes zero current. Navigation corrections cannot move the hold point. The passive resistance alone did not hold a rapidly tracking chassis.
+velocity or pose. Firmware parking is main's hold, confirmed on the robot: centred
+manual drive commands zero wheel velocity and the stop command writes zero
+current. Neither latches a position, so navigation corrections cannot move it.
 This coefficient is estimated, not a measured tire parameter. `mcb_parked`
 records maximum truth displacement in `parking.jsonl` and rejects cells
 moving more than 0.03 m. Only the hosted direct-sensor fixture delays gyro

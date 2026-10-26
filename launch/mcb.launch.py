@@ -26,6 +26,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from sim.display import display_error
+from sim.mcb_link import default_mcb_link
 
 
 def stack(context):
@@ -50,7 +51,7 @@ def stack(context):
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'none',
-                          'use_rf2o': 'false', 'patrol_enabled': 'false'}.items())
+                          'use_rf2o': 'false', 'idle_direction': 'hold'}.items())
     relay = Node(package='thornbots_pkg', executable='mcb_relay', output='screen',
                  parameters=[{'use_sim_time': True}])
     ready = Node(package='sim', executable='mcb_ready', output='screen',
@@ -70,7 +71,7 @@ def generate_launch_description():
                               description='MCB executable or board ELF; default is the '
                                           'selected backend release build'),
         DeclareLaunchArgument('backend', default_value='renode', choices=['hosted', 'renode']),
-        DeclareLaunchArgument('device_link', default_value='/tmp/mcb_emulator_pty'),
+        DeclareLaunchArgument('device_link', default_value=default_mcb_link()),
         DeclareLaunchArgument('drive', default_value='stop', choices=['stop', 'simple', 'auto']),
         DeclareLaunchArgument('auto_fire', default_value='true'),
         OpaqueFunction(function=stack),

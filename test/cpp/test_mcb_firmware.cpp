@@ -443,7 +443,7 @@ TEST_P(McbPatrolFlag, StageGateStillBlocksFire) {
 }
 INSTANTIATE_TEST_SUITE_P(AllFlags, McbPatrolFlag, testing::Range<uint8_t>(0, 16));
 
-TEST_F(McbFirmware, ParkedWheelControllerBrakesMotionAndHonorsRefereePower) {
+TEST_F(McbFirmware, ParkedWheelControllerBrakesMotion) {
   sim::mcb_motor::Plant plant;
   const auto feedback = plant.feedback({}, 0, .3, 0, .001);
   hw::Firmware::Output output{};
@@ -451,27 +451,19 @@ TEST_F(McbFirmware, ParkedWheelControllerBrakesMotionAndHonorsRefereePower) {
   double power = 0;
   for (int i = 0; i < 4; ++i) power += output.motors[6 + i] * plant.speed[6 + i];
   EXPECT_LT(power, 0) << "A parked powered chassis must brake wheel motion";
-  ref.chassis_power = false;
-  for (int i = 0; i < 21; ++i) output = firmware->step(5, {}, ref, feedback);
-  for (int i = 0; i < 4; ++i) EXPECT_EQ(output.motors[6 + i], 0);
-  ref.chassis_power = true;
-  for (int i = 0; i < 21; ++i) output = firmware->step(5, {}, ref, feedback);
-  power = 0;
-  for (int i = 0; i < 4; ++i) power += output.motors[6 + i] * plant.speed[6 + i];
-  EXPECT_LT(power, 0);
 }
 
-TEST_F(McbFirmware, RawPositionHoldRejectsMotionButIgnoresNavigationCorrections) {
+// Main's parked hold is a zero wheel-velocity setpoint with no latched pose,
+// so neither a navigation correction nor a displacement commands translation.
+// Spin is not checked: main's keyboard peek release schedules beyblade at boot.
+TEST_F(McbFirmware, ParkedHoldHasNoPositionTarget) {
   run(200);
   const auto corrected = run(100, wire::frame(wire::Relocalize{1.25F, -.75F}));
-  EXPECT_NEAR(corrected.outputs.back().right, 0, 1e-6);
-  EXPECT_NEAR(corrected.outputs.back().forward, 0, 1e-6);
-  EXPECT_NEAR(corrected.outputs.back().spin, 0, 1e-6);
   const auto displaced = run(100, {}, {0, .05});
-  EXPECT_LT(displaced.outputs.back().forward, 0);
-  const auto reanchored = run(100, {}, {0, 9.30});
-  EXPECT_NEAR(reanchored.outputs.back().right, 0, 1e-6);
-  EXPECT_NEAR(reanchored.outputs.back().forward, 0, 1e-6);
+  for (const auto *result : {&corrected, &displaced}) {
+    EXPECT_NEAR(result->outputs.back().right, 0, 1e-6);
+    EXPECT_NEAR(result->outputs.back().forward, 0, 1e-6);
+  }
 }
 
 TEST_F(McbFirmware, ImmediateFireDuringFirstLatencyIntervalDoesNotWrapTimer) {

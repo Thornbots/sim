@@ -209,25 +209,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       teams.push_back(e);
     referee = std::make_unique<combat::Referee>(teams);
     std::string share = ament_index_cpp::get_package_share_directory("sim");
-    tinyxml2::XMLDocument doc;
-    doc.LoadFile((share + "/world/ARCC_Field_2026.sdf").c_str());
-    auto *model =
-        doc.RootElement()->FirstChildElement("world")->FirstChildElement(
-            "model");
-    auto *collision =
-        model->FirstChildElement("link")->FirstChildElement("collision");
-    std::array<double, 6> pose{{0, 0, 0, 0, 0, 0}};
-    std::istringstream input(model->FirstChildElement("pose")->GetText());
-    for (auto &v : pose)
-      input >> v;
-    auto field = combat::load_stl(share + "/world/composite_part_1.stl");
-    Vec offset = xyz(collision->FirstChildElement("pose")->GetText());
-    for (auto &tri : field)
-      for (auto &v : tri)
-        v += offset;
-    Matrix m =
-        combat::armor_offset({pose[0], pose[1], pose[2]}, {0, 0, pose[5]});
-    field = combat::transform_mesh(field, m);
+    auto field = combat::load_field(share);
     resolver_ = std::make_unique<combat::ShotResolver>(
         field,
         combat::load_stl(share + "/urdf/sentry_v2/meshes/collision/root.stl"),
@@ -815,13 +797,26 @@ void Scorer::sync_referee() {
   referee_pub_->publish(msg);
   if (referee_future_) {
     if (referee_future_->wait_for(std::chrono::seconds(0)) !=
-        std::future_status::ready)
-      return;
-    const auto response = referee_future_->get();
-    for (const auto &r : response->results)
-      if (!r.successful)
-        throw std::runtime_error("MCB rejected match referee status");
-    referee_future_.reset();
+        std::future_status::ready) {
+      // Responses can be lost after parameters were applied. Retry current state.
+      if (std::chrono::steady_clock::now() - referee_sent_ <
+          std::chrono::seconds(2))
+        return;
+      referee_client_->remove_pending_request(*referee_future_);
+      referee_future_.reset();
+      if (++referee_timeouts_ >= 3)
+        throw std::runtime_error("MCB referee parameter response timed out 3 times");
+      RCLCPP_WARN(get_logger(),
+                  "MCB referee parameter response timed out; retrying current state (%d/3)",
+                  referee_timeouts_);
+    } else {
+      const auto response = referee_future_->get();
+      for (const auto &r : response->results)
+        if (!r.successful)
+          throw std::runtime_error("MCB rejected match referee status: " + r.reason);
+      referee_future_.reset();
+      referee_timeouts_ = 0;
+    }
   }
   if (!referee_client_->service_is_ready())
     return;
@@ -840,6 +835,7 @@ void Scorer::sync_referee() {
            rclcpp::Parameter("shooter_power", alive)})
     req->parameters.push_back(p.to_parameter_msg());
   referee_future_ = referee_client_->async_send_request(req);
+  referee_sent_ = std::chrono::steady_clock::now();
 }
 double hit_rate(const std::vector<Json> &shots) {
   int hits = 0;

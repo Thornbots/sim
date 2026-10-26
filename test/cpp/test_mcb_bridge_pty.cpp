@@ -271,6 +271,7 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
   ASSERT_TRUE(wait([&] { return shots >= 3; },
                    [&] {
                      if (std::chrono::steady_clock::now() >= next_cv) {
+                       target.header.stamp = node->now();
                        cv->publish(target);
                        next_cv = std::chrono::steady_clock::now() +
                                  std::chrono::milliseconds(100);
@@ -326,6 +327,7 @@ TEST(McbBridgePty, PacksAllCvFlagCombinationsThroughTheRealBridge) {
     const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (!received && std::chrono::steady_clock::now() < end) {
       ASSERT_TRUE(bridge.alive()) << bridge.read_log();
+      target.header.stamp = node->now();
       cv->publish(target);
       std::this_thread::sleep_for(std::chrono::milliseconds(30));
       uint8_t data[4096];
