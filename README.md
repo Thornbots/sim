@@ -19,6 +19,8 @@ harnesses expect it; this is the workspace timestamp rule's standard-interface e
 
 ## Run the tests
 
+No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
+
 Build first on a fresh container (see Build). Each test starts its own sim and
 `thornbots_pkg` stacks, so stop anything you already have running.
 
@@ -184,8 +186,9 @@ empty values use the node defaults declared in `target_tracker.cpp`.
 The [G.1 investigation](docs/cv-estimation-g1-2026-10-15.md#matched-radius-and-prior-trials)
 records the radius/prior screens and their full-matrix failures; no tuning
 default or estimation limit is changed by that checkpoint.
-`chassis_spin:=9` spins our chassis (rad/s, CCW, the firmware's rate) under
-the head, which holds world yaw as the MCB's IMU loop does;
+`chassis_spin:=9` spins our chassis (rad/s, CCW) as a stand-in under
+the head; firmware sentry spin is clockwise. The head holds world yaw as
+the MCB's IMU loop does;
 `yaw_bearing_damping:=` (N m s/rad, default 0, unmeasured) lets the spin drag
 the head. A cell
 passes on liveness until `LIMITS` in `include/sim/estimation_limits_data.hpp` has
@@ -234,7 +237,7 @@ the bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
 picks the moving cases. `headless:=true` drops the gz GUI and rviz from
 either. `--show-args` on either launch lists the rest.
 
-`tools/run_suite.sh drift|ekf|shot_hit|estimation [args]` wraps any of these
+`tools/run_suite.sh drift|ekf|shot_hit|estimation|mcb_parked|mcb_drive|mcb_match [args]` wraps any of these
 launches: it refuses to start over a running stack, tees the output to
 `/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.cpp` on it. It exits 0
 only when GTest passed and the checker trusts the run:
@@ -733,6 +736,8 @@ meshes, and `test_cv_bench.cpp` checks the two agree.
 
 ### sentry_v2.urdf.xacro: motion model
 
+Noise, gimbal dynamics, suspension and spawn coordinates remain estimates.
+
 Gravity and collision are on. `VelocityControl` sets the chassis's whole
 twist every step: planar velocity from `/cmd_vel`, zero angular velocity (a
 hard yaw lock) and zero vertical velocity. The chassis settles onto its
@@ -1151,6 +1156,11 @@ version started a `gz service` process (Ruby) per call, and ticks lagged to
 mesh, [world frame](#the-world-frame)) by at least 0.4 m.
 
 ### sim.launch.py: spawn_robot uses -string
+
+`spawn_model` can report failure after a slow `sentry_v2` spawn succeeds;
+check `model_names()`. Spawning inside the colliding chassis stalls `/clock`.
+For the other robot, `opponent_driver` uses `OpponentMover` instead of
+VelocityControl.
 
 `-topic robot_description` makes `create` subscribe over ROS, and it reliably
 misses `robot_state_publisher`'s TRANSIENT_LOCAL message. `ros2 topic echo`
