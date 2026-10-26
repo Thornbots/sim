@@ -163,6 +163,16 @@ std::array<double, 3> triple(const char *s) {
   }
   return out;
 }
+std::string defaults(const tinyxml2::XMLDocument &doc, const char *s) {
+  std::string out = s ? s : "0 0 0";
+  for (auto *arg = doc.RootElement()->FirstChildElement("xacro:arg"); arg;
+       arg = arg->NextSiblingElement("xacro:arg")) {
+    const auto token = "$(arg " + std::string(arg->Attribute("name")) + ")";
+    if (auto pos = out.find(token); pos != std::string::npos)
+      out.replace(pos, token.size(), arg->Attribute("default"));
+  }
+  return out;
+}
 std::map<std::string, Joint> joints(const std::filesystem::path &file) {
   tinyxml2::XMLDocument doc;
   if (doc.LoadFile(file.c_str()) != tinyxml2::XML_SUCCESS)
@@ -172,8 +182,8 @@ std::map<std::string, Joint> joints(const std::filesystem::path &file) {
        j = j->NextSiblingElement("joint")) {
     Joint r;
     if (auto *o = j->FirstChildElement("origin")) {
-      r.xyz = triple(o->Attribute("xyz"));
-      r.rpy = triple(o->Attribute("rpy"));
+      r.xyz = triple(defaults(doc, o->Attribute("xyz")).c_str());
+      r.rpy = triple(defaults(doc, o->Attribute("rpy")).c_str());
     }
     if (auto *a = j->FirstChildElement("axis"))
       r.axis = triple(a->Attribute("xyz"));

@@ -19,6 +19,8 @@ harnesses expect it; this is the workspace timestamp rule's standard-interface e
 
 ## Run the tests
 
+No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
+
 Build first on a fresh container (see Build). Each test starts its own sim and
 `thornbots_pkg` stacks, so stop anything you already have running.
 
@@ -184,8 +186,9 @@ empty values use the node defaults declared in `target_tracker.cpp`.
 The [G.1 investigation](docs/cv-estimation-g1-2026-10-15.md#matched-radius-and-prior-trials)
 records the radius/prior screens and their full-matrix failures; no tuning
 default or estimation limit is changed by that checkpoint.
-`chassis_spin:=9` spins our chassis (rad/s, CCW, the firmware's rate) under
-the head, which holds world yaw as the MCB's IMU loop does;
+`chassis_spin:=9` spins our chassis (rad/s, CCW) as a stand-in under
+the head; firmware sentry spin is clockwise. The head holds world yaw as
+the MCB's IMU loop does;
 `yaw_bearing_damping:=` (N m s/rad, default 0, unmeasured) lets the spin drag
 the head. A cell
 passes on liveness until `LIMITS` in `include/sim/estimation_limits_data.hpp` has
@@ -234,7 +237,7 @@ the bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
 picks the moving cases. `headless:=true` drops the gz GUI and rviz from
 either. `--show-args` on either launch lists the rest.
 
-`tools/run_suite.sh drift|ekf|shot_hit|estimation [args]` wraps any of these
+`tools/run_suite.sh drift|ekf|shot_hit|estimation|mcb_parked|mcb_drive|mcb_match [args]` wraps any of these
 launches: it refuses to start over a running stack, tees the output to
 `/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.cpp` on it. It exits 0
 only when GTest passed and the checker trusts the run:
@@ -439,10 +442,13 @@ pty, with `dji_serial_bridge` and `mcb_relay` on the other end, the real CV
 chain from `target_selector` to `point_to_cv_target`, and no camera:
 `detector_standin` feeds gz truth in place of YOLO and `roi_depth_node`.
 Shots are the ones the firmware fires, each falling under gravity since the
-firmware pitches up for it. `point_to_cv_target` patrols with no target, as
-on the robot, so it can sweep for an opponent that starts out of view or
-whose track was lost; patrol frames clear `fire`. Reacquisition and moving
-hit rates still vary (ROADMAP T17). The
+firmware pitches up for it. All three stages use the robot's no-patrol
+`point_to_cv_target` behavior: last-enemy and hit holds, then a look toward
+the enemy starting zone. Idle frames clear `fire` and keep hit turns permitted;
+firing requires a detection no more than 0.15 s old. The MCB fixture
+(`mcb.launch.py`) and both aiming benches (`shot_hit.launch.py` and
+`estimation.launch.py`) use `idle_direction=hold` for their controlled setups.
+Reacquisition and moving hit rates still vary (ROADMAP T17). The
 [2026-10-11 hosted-firmware run](docs/match-check-2026-10-11.md) records all
 cells/segments, checker verdicts and comparison with the previous status.
 
@@ -472,8 +478,9 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 
 `mcb_parked`'s test-owned stack brings up a parked, non-spinning opponent
 and waits for a valid `/cv/target_state` before requesting the first cell
-(patrol keeps `/cv/target` fresh without one). Starting it at the launch's
-moving defaults left unscored motion dependent on wall-time bring-up speed.
+(non-firing idle frames keep `/cv/target` fresh without one). Starting it at
+the launch's moving defaults left unscored motion dependent on wall-time
+bring-up speed.
 Each requested cell sets its speed/spin and settles for three sim seconds
 before scoring.
 
@@ -760,6 +767,8 @@ meshes, and `test_cv_bench.cpp` checks the two agree.
 
 ### sentry_v2.urdf.xacro: motion model
 
+Noise, gimbal dynamics, suspension and spawn coordinates remain estimates.
+
 Gravity and collision are on. `VelocityControl` sets the chassis's whole
 twist every step: planar velocity from `/cmd_vel`, zero angular velocity (a
 hard yaw lock) and zero vertical velocity. The chassis settles onto its
@@ -802,9 +811,11 @@ angle-compensated A2M8 grid [below](#lidar-format-and-model-limits).
 Hardware is the reason to prefer it: the real RPLIDAR's scanning disk sits
 clear of the chassis, and only the head's own footprint blocks it.
 `lidar_self_filter` models exactly that, in the one place that also runs on
-the robot. Its sector comes from slicing the active CAD at the scan plane,
-and still needs checking against a real `/scan_raw`; current values and the
-frame convention live in [lidar_self_filter](../thornbots_pkg/README.md#lidar_self_filter).
+the robot. Its scan-frame sector uses the Oct 26 robot measurement
+([filter and evidence](../thornbots_pkg/README.md#lidar_self_filter)).
+The spawned `sentry_v2` lidar joint matches the hardware TF's CAD translation
+and measured scan-zero yaw; the sensor attaches to that joint, with no extra
+sensor pose. The legacy `sentry` model retains its historical frame convention.
 
 ### Lidar format and model limits
 
@@ -1179,6 +1190,11 @@ mesh, [world frame](#the-world-frame)) by at least 0.4 m.
 
 ### sim.launch.py: spawn_robot uses -string
 
+`spawn_model` can report failure after a slow `sentry_v2` spawn succeeds;
+check `model_names()`. Spawning inside the colliding chassis stalls `/clock`.
+For the other robot, `opponent_driver` uses `OpponentMover` instead of
+VelocityControl.
+
 `-topic robot_description` makes `create` subscribe over ROS, and it reliably
 misses `robot_state_publisher`'s TRANSIENT_LOCAL message. `ros2 topic echo`
 got it instantly on the same QoS while a matched `spawn_sentry` waited 30+
@@ -1348,8 +1364,8 @@ sets the sign and the test checks it analytically.
 
 With no `/cv/target` it stops publishing and holds position, without
 re-homing, since a lost target is usually a brief FOV gap. `CVTarget` has no
-confidence; every message is an aim point, patrol points included, and the
-head follows each.
+confidence; every message is an aim point, non-firing idle points included,
+and the head follows each.
 
 ### MCB emulator
 

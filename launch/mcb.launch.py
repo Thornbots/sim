@@ -51,7 +51,7 @@ def stack(context):
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'none',
-                          'use_rf2o': 'false', 'patrol_enabled': 'false'}.items())
+                          'use_rf2o': 'false', 'idle_direction': 'hold'}.items())
     relay = Node(package='thornbots_pkg', executable='mcb_relay', output='screen',
                  parameters=[{'use_sim_time': True}])
     ready = Node(package='sim', executable='mcb_ready', output='screen',

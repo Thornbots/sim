@@ -73,7 +73,7 @@ def cv_node(executable, package='thornbots_pkg', **params):
 def _aim_node(context, harness):
     cfg = context.launch_configurations
     params = {'cv_target_publish_rate_hz': harness.TEST_FIRE_HZ,
-              'tick_topic': '/cv/target/tick', 'patrol_enabled': False,
+              'tick_topic': '/cv/target/tick', 'idle_direction': 'hold',
               'fire_rate_hz': harness.TEST_FIRE_HZ + 10.0,
               'gimbal_lag_s': float(cfg['gimbal_lag_s']),
               'chase_settle_s': float(cfg['chase_settle_s']),
