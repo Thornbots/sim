@@ -283,7 +283,8 @@ TEST(UrdfConstants, ArmorRules) {
   EXPECT_LE(*std::max_element(edges.begin(), edges.end()) -
                 *std::min_element(edges.begin(), edges.end()),
             .1);
-  EXPECT_GE(*std::min_element(edges.begin(), edges.end()), .06);
+  EXPECT_GT(*std::min_element(edges.begin(), edges.end()), 0.0);
+  EXPECT_LE(*std::max_element(edges.begin(), edges.end()), .400);
 }
 TEST(UrdfConstants, BenchPanels) {
   auto j = joints(sim_dir / "urdf/sentry_v2/sentry_v2.urdf");

@@ -724,10 +724,13 @@ visual and collision, so depth sees it and shots can hit it. From the CAD
   from the gun, then every 90 deg anticlockwise. Face centres are 0.252 m
   from the chassis axis.
 - `armor_0` and `armor_2` sit at 0.230 m, `armor_1` and `armor_3` at
-  0.136 m, so the lower edges are 94 mm apart (S126 allows 100).
-- Every normal is 75.0 deg from straight up (S122's 15 deg cant).
+  0.136 m, so the lower edges are 94 mm apart.
+- Every normal is 75.0 deg from straight up (15 deg cant).
 - The face is 135 x 125 mm, the Small Armor Module's, the only size in
   ARCC 2026.
+
+The [workspace armor rules comparison](https://github.com/Thornbots/thornbots_workspace/blob/428b294/docs/ARCC_2026_SENTRY_CONTEXT.md#armor-geometry-and-building-limits)
+provides the verified 2026/2027 limits and citations for cant, stagger and lower-edge height.
 
 The regenerated meshes aren't byte-identical across trimesh versions, so when
 only the URDF text should change, keep the committed meshes
