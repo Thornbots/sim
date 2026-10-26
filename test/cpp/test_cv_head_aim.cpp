@@ -35,7 +35,7 @@ std::pair<Vector3d, Vector3d> muzzle_pose(double theta_y, double theta_p)
   const Vector3d p_pitch = p_head + r_head * Vector3d(0, 0, 0.136);
   const Eigen::Matrix3d r_pitch = r_head *
     Eigen::AngleAxisd(theta_p, Vector3d::UnitY()).toRotationMatrix();
-  const Vector3d p_muzzle = p_pitch + r_pitch * Vector3d(0.1729764, 0.00190269, 0);
+  const Vector3d p_muzzle = p_pitch + r_pitch * Vector3d(0, 0.00190269, 0);
   return {p_muzzle, r_pitch * Vector3d::UnitX()};
 }
 
@@ -47,8 +47,7 @@ TEST(CvHeadAim, MuzzleConstantsMatchIndependentFk)
     for (double theta_p : {0.0, 0.5}) {
       const auto [pos, direction] = muzzle_pose(theta_y, theta_p);
       (void)direction;
-      EXPECT_NEAR(pos.z(), sim::cv_head_aim::kMuzzleZ -
-        0.1729764 * std::sin(theta_p), 1e-12);
+      EXPECT_NEAR(pos.z(), sim::cv_head_aim::kMuzzleZ, 1e-12);
     }
   }
   const auto [pos, direction] = muzzle_pose(0.0, 0.0);

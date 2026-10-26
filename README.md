@@ -657,7 +657,7 @@ for the archive checksum, derivation, old/new comparisons and validation.
 
 The imported yaw bearing is centred on the chassis axis; zero pitch points
 the gun horizontally along +x. The camera is at the IR cone apex and the
-muzzle is at the front bore centre. `lidar` uses the CAD FOV reference,
+muzzle aiming origin stays on the pitch axis with the CAD lateral offset. `lidar` uses the CAD FOV reference,
 including its -8.568° scan-zero yaw relative to the gun. Physical scan zero
 and scan-plane height still require a robot check. Panel indices follow
 CCW bearing; even indices are now the lower pair, with about 103.9 mm
@@ -1315,13 +1315,10 @@ muzzlelink). `test/cpp/test_cv_head_aim.cpp` checks it against a separately
 written FK, and `test_cv_bench.cpp` pins the C++ core header's constants to
 `thornbots_pkg`'s URDF and checks sim's model against it.
 
-The active CAD places the muzzle at the front bore centre, forward of the
-pitch axis; see [robot geometry](../thornbots_pkg/README.md#robot-geometry).
-Its position now changes with pitch. The existing solver assumes a
-pitch-invariant muzzle location, and its independent ray/round-trip tests
-fail with this geometry. The CAD integration updates geometry constants
-but deliberately leaves the aiming algorithm for its owning workstream;
-see the [integration results](../docs/investigations/sentry-cad-2026-10-26.md#validation).
+The `muzzle` aiming origin stays on the pitch axis between the flywheels;
+see [robot geometry](../thornbots_pkg/README.md#robot-geometry). Only its
+lateral offset is taken from the CAD bore centre. Its position is invariant
+under pitch, as required by the existing closed-form solver.
 
 It aims along the ray from the muzzle. Before 2026-09-09 it aimed from root,
 assuming a ~0.35m offset wouldn't matter at range. That's true for flight time,
@@ -1333,7 +1330,7 @@ being solved. It assumes the shot leaves along the head's +x, and whatever the y
 line passes `kMuzzleY` to the left of the yaw axis. So azimuth is
 `bearing - asin(kMuzzleY / horizontal_range)`, with bearing and range taken
 from the yaw axis, and pitch follows from the elevation seen from the unpitched
-muzzle at that azimuth. That last step needs revisiting for the new forward offset.
+muzzle at that azimuth. The pitch-axis origin makes that elevation independent of pitch.
 Head yaw is the azimuth, because `headlink` turns about +z, CCW like the MCB's
 `head_yaw`.
 
