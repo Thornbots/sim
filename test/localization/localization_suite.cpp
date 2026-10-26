@@ -1084,7 +1084,7 @@ void scan_degraded(Scenario &sc) {
     for (int i = 4; i < 6; ++i) {
       leg(i, "during");
     }
-    sector(0.09, 1.41);
+    sector(-0.5585, 1.0123);
     blanked = false;
     phase = "after";
     for (int i = 6; i < 14; ++i) {
@@ -1093,7 +1093,7 @@ void scan_degraded(Scenario &sc) {
   } catch (...) {
     if (blanked) {
       try {
-        sector(0.09, 1.41);
+        sector(-0.5585, 1.0123);
       } catch (...) {
       }
     }

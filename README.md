@@ -784,9 +784,11 @@ angle-compensated A2M8 grid [below](#lidar-format-and-model-limits).
 Hardware is the reason to prefer it: the real RPLIDAR's scanning disk sits
 clear of the chassis, and only the head's own footprint blocks it.
 `lidar_self_filter` models exactly that, in the one place that also runs on
-the robot. Its sector (0.09-1.41 rad) now comes from slicing `sentry_v2`'s CAD
-at the scan plane, and still needs checking against a real `/scan_raw` (see
-`../thornbots_pkg/README.md`).
+the robot. Its scan-frame sector uses the Oct 26 robot measurement
+([filter and evidence](../thornbots_pkg/README.md#lidar_self_filter)).
+The spawned `sentry_v2` lidar joint matches the hardware TF's CAD translation
+and measured scan-zero yaw; the sensor attaches to that joint, with no extra
+sensor pose. The legacy `sentry` model retains its historical frame convention.
 
 ### Lidar format and model limits
 
