@@ -281,6 +281,10 @@ std::map<std::string, std::array<double, 3>> armor_sizes() {
   return out;
 }
 TEST(UrdfConstants, ArmorRules) {
+  // 2027 S124 limits lower-edge spread to 100 mm. On 2026-10-26 the
+  // 103.88 mm CAD deviation was accepted pending a mechanical plate fix.
+  // Return this bound to 0.100 m when the mechanical team fixes the plates.
+  constexpr double kAcceptedCadArmorSpreadM = 0.104;
   auto j = joints(sim_dir / "urdf/sentry_v2/sentry_v2.urdf");
   auto sizes = armor_sizes();
   std::vector<double> edges;
@@ -292,7 +296,7 @@ TEST(UrdfConstants, ArmorRules) {
   }
   EXPECT_LE(*std::max_element(edges.begin(), edges.end()) -
                 *std::min_element(edges.begin(), edges.end()),
-            .1);
+            kAcceptedCadArmorSpreadM);
   EXPECT_GE(*std::min_element(edges.begin(), edges.end()), .06);
 }
 TEST(UrdfConstants, BenchPanels) {

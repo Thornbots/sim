@@ -751,10 +751,22 @@ visual and collision, so depth sees it and shots can hit it. From the CAD
   from the gun, then every 90 deg anticlockwise. Face centres are 0.252 m
   from the chassis axis.
 - `armor_0` and `armor_2` sit at 0.230 m, `armor_1` and `armor_3` at
-  0.136 m, so the lower edges are 94 mm apart (S126 allows 100).
-- Every normal is 75.0 deg from straight up (S122's 15 deg cant).
+  0.136 m, so the lower edges are 94 mm apart (S124 allows 100).
+- Every normal is 75.0 deg from straight up (S120's 15 deg cant).
 - The face is 135 x 125 mm, the Small Armor Module's, the only size in
   ARCC 2026.
+
+Rule numbers refer to the RoboMaster 2027 University Series Robot Building
+Specifications Manual V1.0.0 (2026-10-15), §3.6.1: S120 specifies cant,
+S124 limits lower-edge spread to 100 mm (§3.6.1.3; English p.87 / Chinese
+p.64), and S125 limits lower-edge height to 400 mm without ground contact.
+See the [rules text](https://github.com/Thornbots/thornbots_workspace/blob/docs/review-rmuc-2027-rules/docs/rules/rm2027/robot-building-specifications.md#3613-robot-deformation).
+The ARCC 2026 base spec V1.3.0 wording is unconfirmed; its text is absent
+from this repository. The Oct 26 CAD supersedes the older coordinates above:
+its 103.8847 mm spread exceeds S124. Accepted on 2026-10-26 as a mechanical
+deviation with no material CV impact, it is no longer a merge blocker.
+`UrdfConstants.ArmorRules` pins a temporary 0.104 m bound; restore 0.100 m
+after the mechanical team corrects the plates. Cant and other checks stay fixed.
 
 The regenerated meshes aren't byte-identical across trimesh versions, so when
 only the URDF text should change, keep the committed meshes
