@@ -223,7 +223,7 @@ TEST(UrdfConstants, SimModel) {
   actual["muzzlelink"] = wrapper.at("muzzlelink");
   same(actual.at("fastened_2").xyz, {0, 0, 0});
   same(actual.at("fastened_2").rpy, {0, 0, 0});
-  for (const auto &n : {"headlink", "headpitch", "cameralink", "muzzlelink"}) {
+  for (const auto &n : {"headlink", "headpitch", "lidarlink", "cameralink", "muzzlelink"}) {
     same(ref.at(n).xyz, actual.at(n).xyz);
     same(ref.at(n).rpy, actual.at(n).rpy);
     ASSERT_EQ(ref.at(n).axis.has_value(), actual.at(n).axis.has_value());
@@ -288,14 +288,15 @@ TEST(UrdfConstants, ArmorRules) {
 TEST(UrdfConstants, BenchPanels) {
   auto j = joints(sim_dir / "urdf/sentry_v2/sentry_v2.urdf");
   auto sizes = armor_sizes();
-  double radius = 0;
+  std::array<double, 2> radius{};
   for (int k = 0; k < 4; ++k) {
     auto &v = j.at("armor_" + std::to_string(k) + "link").xyz;
-    radius += std::hypot(v[0], v[1]) / 4;
+    radius[k % 2] += std::hypot(v[0], v[1]) / 2;
   }
-  for (double v : {cb::kPanelRadiusX, cb::kPanelRadiusY,
-                   sim::cv_model::kPanelRadiusX, sim::cv_model::kPanelRadiusY})
-    EXPECT_NEAR(v, radius, .001);
+  for (double v : {cb::kPanelRadiusX, sim::cv_model::kPanelRadiusX})
+    EXPECT_NEAR(v, radius[0], .001);
+  for (double v : {cb::kPanelRadiusY, sim::cv_model::kPanelRadiusY})
+    EXPECT_NEAR(v, radius[1], .001);
   for (double v : {cb::kPanelWidth, sim::cv_model::kPanelWidth})
     EXPECT_NEAR(v, sizes.begin()->second[1], .001);
   for (double v : {cb::kPanelHeight, sim::cv_model::kPanelHeight})
@@ -313,9 +314,8 @@ TEST(UrdfConstants, BenchPanels) {
   EXPECT_NEAR(value("kPanelWidth = ([0-9.]+)"), sizes.begin()->second[1], .001);
   EXPECT_NEAR(value("kPanelHeight = ([0-9.]+)"), sizes.begin()->second[2],
               .001);
-  for (const auto &a : {"x", "y"})
-    EXPECT_NEAR(value(std::string("\"panel_radius_") + a + "\", ([0-9.]+)"),
-                radius, .001);
+  EXPECT_NEAR(value("\"panel_radius_x\", ([0-9.]+)"), radius[0], .001);
+  EXPECT_NEAR(value("\"panel_radius_y\", ([0-9.]+)"), radius[1], .001);
 }
 
 TEST(E2ELocalization, RejectsParkedDriftDespitePerfectShotScores) {

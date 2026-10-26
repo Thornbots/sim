@@ -36,8 +36,8 @@ of the standard run: run it after changing the EKF or rf2o config.
 
 The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
-neighbouring panels staggered 9.47 cm apart vertically (about 76% of a
-panel's 12.5 cm height)
+neighbouring panels staggered 10.39 cm apart vertically (about 83% of a
+panel's 12.5 cm height, with even-numbered panels lower)
 (`panel_layout:=` picks one). It launches the stack once and only changes the
 target between cases; each case settles for 3s, then scores 30s of sim time.
 The bench fires at up to 40 Hz, far above the real launcher, and scores each
@@ -648,6 +648,33 @@ comes back.
 
 ### tools/simplify_urdf.cpp and urdf/sentry_v2
 
+The active model uses the team's **2026-10-26 low-resolution CAD** for the
+chassis visual, yaw/pitch visuals and collision hulls, sensor/muzzle frames,
+head joint origins and armor faces. `thornbots_pkg` carries matching visual
+assets and TF geometry. See [robot geometry](../thornbots_pkg/README.md#robot-geometry)
+for frame conventions and the [dated investigation](../docs/investigations/sentry-cad-2026-10-26.md)
+for the archive checksum, derivation, old/new comparisons and validation.
+
+The imported yaw bearing is centred on the chassis axis; zero pitch points
+the gun horizontally along +x. The camera is at the IR cone apex and the
+muzzle is at the front bore centre. `lidar` uses the CAD FOV reference,
+including its -8.568° scan-zero yaw relative to the gun. Physical scan zero
+and scan-plane height still require a robot check. Panel indices follow
+CCW bearing; even indices are now the lower pair, with about 103.9 mm
+stagger. This exceeds the existing 100 mm rule assertion and is retained
+as supplied rather than flattened.
+
+Mass/inertia, chassis collision, wheel/suspension dynamics, pitch limits,
+controllers, plugins and topics remain the previous approximations. In
+particular, the new export's gram-scale inertias are not adopted. The CAD
+wheel bottoms are not coplanar, so the lowest exported wheel is only a
+clearance datum. `urdf/sentry_v2.yaml` and `simplify_urdf` describe the older
+high-resolution export below; they do **not** reproduce the active assets.
+
+#### Legacy high-resolution export
+
+The following records the previous model's source and simplification method.
+
 The mechanical team's Onshape export of the new sentry has 3782 links, 3781
 joints and 581 meshes (220 MB), with no collision geometry. Onshape turns
 every assembly mate into joints (a planar mate becomes two prismatics and a
@@ -775,9 +802,9 @@ angle-compensated A2M8 grid [below](#lidar-format-and-model-limits).
 Hardware is the reason to prefer it: the real RPLIDAR's scanning disk sits
 clear of the chassis, and only the head's own footprint blocks it.
 `lidar_self_filter` models exactly that, in the one place that also runs on
-the robot. Its sector (0.09-1.41 rad) now comes from slicing `sentry_v2`'s CAD
-at the scan plane, and still needs checking against a real `/scan_raw` (see
-`../thornbots_pkg/README.md`).
+the robot. Its sector comes from slicing the active CAD at the scan plane,
+and still needs checking against a real `/scan_raw`; current values and the
+frame convention live in [lidar_self_filter](../thornbots_pkg/README.md#lidar_self_filter).
 
 ### Lidar format and model limits
 
@@ -1282,29 +1309,31 @@ aiming bench has its own perfect gimbal. `CVTarget.x/y/z` is an `odom`
 position; each tick it goes into root at the newest `odom->root`, the way
 the MCB holds it, then through the solve below.
 
-`cv_head_aim_core::solve_head_angles()` inverts the FK chain from root to the
+`cv_head_aim_core::solve_head_angles()` attempts to invert the FK chain from root to the
 `muzzle` frame (root -> body -> headlink(yaw) -> headpitch(pitch) ->
 muzzlelink). `test/cpp/test_cv_head_aim.cpp` checks it against a separately
 written FK, and `test_cv_bench.cpp` pins the C++ core header's constants to
 `thornbots_pkg`'s URDF and checks sim's model against it.
 
-The `muzzle` frame sits on `head_pitch` at (0, 0.1128, 0): on the pitch axis,
-between the two stacked flywheels. In the CAD the barrel is 0.3915 m up and
-the pitch axis 0.3906 m, so the barrel really does sit on the axis. In the head
-frame that puts the muzzle `kMuzzleY` = 0.0127 m left of the yaw axis and
-`kMuzzleZ` = 0.391 m above root.
+The active CAD places the muzzle at the front bore centre, forward of the
+pitch axis; see [robot geometry](../thornbots_pkg/README.md#robot-geometry).
+Its position now changes with pitch. The existing solver assumes a
+pitch-invariant muzzle location, and its independent ray/round-trip tests
+fail with this geometry. The CAD integration updates geometry constants
+but deliberately leaves the aiming algorithm for its owning workstream;
+see the [integration results](../docs/investigations/sentry-cad-2026-10-26.md#validation).
 
 It aims along the ray from the muzzle. Before 2026-09-09 it aimed from root,
 assuming a ~0.35m offset wouldn't matter at range. That's true for flight time,
 but a parallel offset in direction stays the same size at any range. On the
 old model every stationary shot missed by ~0.33m against a 0.05m hit radius.
 
-The solve is closed-form even though the muzzle's position depends on the yaw
-being solved. The shot leaves along the head's +x, and whatever the yaw that
+The existing solve is closed-form even though the muzzle's position depends on the yaw
+being solved. It assumes the shot leaves along the head's +x, and whatever the yaw that
 line passes `kMuzzleY` to the left of the yaw axis. So azimuth is
 `bearing - asin(kMuzzleY / horizontal_range)`, with bearing and range taken
-from the yaw axis, and pitch follows from the elevation seen from the muzzle
-at that azimuth. The muzzle is on the pitch axis, so pitching never moves it.
+from the yaw axis, and pitch follows from the elevation seen from the unpitched
+muzzle at that azimuth. That last step needs revisiting for the new forward offset.
 Head yaw is the azimuth, because `headlink` turns about +z, CCW like the MCB's
 `head_yaw`.
 

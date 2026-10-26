@@ -66,13 +66,13 @@
   <xacro:corner i="2"/>
   <xacro:corner i="3"/>
 
-  <!-- Where the shot leaves: on the pitch axis, between the flywheels.
+  <!-- Where the shot leaves: at the front bore centre of the 2026-10-26 CAD.
        thornbots_pkg's URDF carries the same frame. -->
   <link name="muzzle"/>
   <joint name="muzzlelink" type="fixed">
     <parent link="head_pitch"/>
     <child link="muzzle"/>
-    <origin xyz="0 0.1128 0" rpy="0 0 0"/>
+    <origin xyz="0.1729764 0.00190269 0" rpy="0 0 0"/>
   </joint>
 
   <!-- Same angle-compensated A2M8 grid as sentry.urdf.xacro;

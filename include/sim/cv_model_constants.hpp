@@ -18,16 +18,13 @@
 namespace sim::cv_model {
 inline constexpr std::array<double, 3> kFastenedRotation{0, 0, 0};
 inline constexpr std::array<double, 3> kHeadlinkRotation{0, 0, 0};
-inline constexpr std::array<double, 3> kHeadlinkTranslation{
-    -.000171242, 9.52126e-05, .248293};
+inline constexpr std::array<double, 3> kHeadlinkTranslation{0, 0, 0.267503694};
 inline constexpr std::array<double, 3> kHeadlinkAxis{0, 0, 1};
 inline constexpr std::array<double, 3> kHeadpitchRotation{0, 0, 0};
-inline constexpr std::array<double, 3> kHeadpitchTranslation{-.00760542,
-                                                             -.100122, .14235};
+inline constexpr std::array<double, 3> kHeadpitchTranslation{0, 0, 0.136};
 inline constexpr std::array<double, 3> kHeadpitchAxis{0, 1, 0};
-inline constexpr std::array<double, 3> kCameraTranslation{.0920381, .0948673,
-                                                          .0566588};
-inline constexpr double kPanelRadiusX = .252, kPanelRadiusY = .252,
+inline constexpr std::array<double, 3> kCameraTranslation{0.095699877, -0.011500052, 0.055000043};
+inline constexpr double kPanelRadiusX = .253729, kPanelRadiusY = .249716,
                         kPanelWidth = .135, kPanelHeight = .125,
                         kPanelNormalAngle = 1.3089969389957472;
 } // namespace sim::cv_model

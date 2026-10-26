@@ -1,4 +1,5 @@
-# sim/tools/simplify_urdf.py config for the mechanical team's "NEW!!!! (tm) Sentry" Onshape export.
+# Legacy 2026-09-27 export: does not regenerate the 2026-10-26 low-res assets.
+# sim/tools/simplify_urdf.cpp config for the mechanical team's "NEW!!!! (tm) Sentry" Onshape export.
 # Coordinates are the export's world frame (metres) unless noted. see README.md for design rationale
 robot_name: sentry_v2
 mesh_uri: package://sim/urdf/sentry_v2/meshes
