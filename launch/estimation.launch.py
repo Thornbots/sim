@@ -93,7 +93,7 @@ def _stack(context):
              parameters=[world]),
         robot_tf, cv_node('target_selector'), cv_node('target_tracker', **tracker),
         cv_node('point_to_cv_target', tick_topic='/cv/target/tick',
-                state_ack_topic='/cv/target/state_ack', patrol_enabled=False),
+                state_ack_topic='/cv/target/state_ack', idle_direction='hold'),
     ]
     if not headless:
         actions.append(cv_node('target_state_markers', package='sim'))

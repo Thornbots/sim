@@ -442,10 +442,13 @@ pty, with `dji_serial_bridge` and `mcb_relay` on the other end, the real CV
 chain from `target_selector` to `point_to_cv_target`, and no camera:
 `detector_standin` feeds gz truth in place of YOLO and `roi_depth_node`.
 Shots are the ones the firmware fires, each falling under gravity since the
-firmware pitches up for it. `point_to_cv_target` patrols with no target, as
-on the robot, so it can sweep for an opponent that starts out of view or
-whose track was lost; patrol frames clear `fire`. Reacquisition and moving
-hit rates still vary (ROADMAP T17). The
+firmware pitches up for it. All three stages use the robot's no-patrol
+`point_to_cv_target` behavior: last-enemy and hit holds, then a look toward
+the enemy starting zone. Idle frames clear `fire` and keep hit turns permitted;
+firing requires a detection no more than 0.15 s old. The MCB fixture
+(`mcb.launch.py`) and both aiming benches (`shot_hit.launch.py` and
+`estimation.launch.py`) use `idle_direction=hold` for their controlled setups.
+Reacquisition and moving hit rates still vary (ROADMAP T17). The
 [2026-10-11 hosted-firmware run](docs/match-check-2026-10-11.md) records all
 cells/segments, checker verdicts and comparison with the previous status.
 
@@ -475,8 +478,9 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 
 `mcb_parked`'s test-owned stack brings up a parked, non-spinning opponent
 and waits for a valid `/cv/target_state` before requesting the first cell
-(patrol keeps `/cv/target` fresh without one). Starting it at the launch's
-moving defaults left unscored motion dependent on wall-time bring-up speed.
+(non-firing idle frames keep `/cv/target` fresh without one). Starting it at
+the launch's moving defaults left unscored motion dependent on wall-time
+bring-up speed.
 Each requested cell sets its speed/spin and settles for three sim seconds
 before scoring.
 
@@ -1332,8 +1336,8 @@ sets the sign and the test checks it analytically.
 
 With no `/cv/target` it stops publishing and holds position, without
 re-homing, since a lost target is usually a brief FOV gap. `CVTarget` has no
-confidence; every message is an aim point, patrol points included, and the
-head follows each.
+confidence; every message is an aim point, non-firing idle points included,
+and the head follows each.
 
 ### MCB emulator
 
