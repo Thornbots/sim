@@ -174,6 +174,12 @@ def generate_launch_description():
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
         parameters=[{'use_sim_time': True}])
 
+    def idle_zone(hosted_parked, field):
+        return PythonExpression([
+            str(hosted_parked), " if '", LaunchConfiguration('stage'),
+            "' == 'mcb_parked' and '", LaunchConfiguration('backend'),
+            "' == 'hosted' else ", str(field)])
+
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
@@ -183,7 +189,9 @@ def generate_launch_description():
                           'firmware_latency_s': LaunchConfiguration('firmware_latency_s'),
                           'chase_settle_s': LaunchConfiguration('chase_settle_s'),
                           'chase_margin_s': LaunchConfiguration('chase_margin_s'),
-                          'v_muzzle': '24.0',
+                          'v_muzzle': '22.0',
+                          'zone_start_x_m': idle_zone(0.0, 4.625),
+                          'zone_start_y_m': idle_zone(-4.625, 0.0),
                           'use_rf2o': 'true', 'load_map': 'true',
                           'initial_x': PythonExpression([
                               "'4.625' if '", LaunchConfiguration('stage'),
@@ -261,7 +269,7 @@ def generate_launch_description():
         DeclareLaunchArgument('speeds', default_value='',
                               description="opponent speeds, m/s, 0 = stationary, e.g. '0 2'; "
                                           'empty = the harness default'),
-        DeclareLaunchArgument('firmware_latency_s', default_value='0.094',
+        DeclareLaunchArgument('firmware_latency_s', default_value='0.020',
                               description='Decision-to-exit firing delay estimate in seconds'),
         DeclareLaunchArgument('chase_settle_s', default_value='-1.0'),
         DeclareLaunchArgument('chase_margin_s', default_value=PythonExpression([

@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <optional>
 #include <utility>
 
@@ -84,6 +85,19 @@ TEST(Combat, PanelIsAFaceNotAHitSphere)
   EXPECT_EQ(sim::combat::segment_panel_hit({1, 0, 0}, {-1, 0, 0}, panel), 0.5);
   EXPECT_FALSE(sim::combat::segment_panel_hit({1, 0.08, 0}, {-1, 0.08, 0}, panel));
   EXPECT_FALSE(sim::combat::segment_panel_hit({1, 0, 0.07}, {-1, 0, 0.07}, panel));
+}
+
+TEST(Combat, PanelCrossingIsInShooterRightAndFaceUpAxes)
+{
+  // The panel faces -x; a shot travelling +x has world -y on its right.
+  const Matrix4d panel = sim::combat::armor_offset({0, 0, 0}, {0, 0, M_PI});
+  const auto crossing =
+    sim::combat::segment_panel_crossing({-1, -0.03, -0.02}, {1, -0.03, -0.02}, panel);
+  ASSERT_TRUE(crossing);
+  EXPECT_TRUE(crossing->from_front);
+  EXPECT_NEAR(crossing->point.x(), 0.03, 1e-9);
+  EXPECT_NEAR(crossing->point.y(), -0.02, 1e-9);
+  EXPECT_FALSE(sim::combat::segment_panel_crossing({1, 0, 0}, {-1, 0, 0}, panel)->from_front);
 }
 
 TEST(Combat, DamageDeadTimeIsPerPanelAndHpCannotGoNegative)

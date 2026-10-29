@@ -35,7 +35,7 @@ using PoseHistory = std::function<std::optional<Eigen::Matrix4d>(double)>;
 using Histories = std::vector<std::pair<std::string, PoseHistory>>;
 
 constexpr double kGravity = -9.80665;
-constexpr double kMuzzleSpeed = 24.0;
+constexpr double kMuzzleSpeed = 22.0;  // sentry shot speed, as MCBV3 and v_muzzle
 constexpr double kStepS = 0.01;
 constexpr double kFlightS = 0.5;
 constexpr double kPanelWidth = 0.135;
@@ -54,6 +54,18 @@ std::optional<double> segment_mesh_hit(
 std::optional<double> segment_panel_hit(
   const Eigen::Vector3d & start, const Eigen::Vector3d & end, const Eigen::Matrix4d & panel);
 
+// Where a segment crosses a panel's plane, face bounds ignored: the fraction
+// along it and the point in panel axes (y to the right of a shooter facing the
+// panel, z up its face), and whether it came from the outer side.
+struct PanelCrossing
+{
+  double fraction;
+  Eigen::Vector2d point;
+  bool from_front;
+};
+std::optional<PanelCrossing> segment_panel_crossing(
+  const Eigen::Vector3d & start, const Eigen::Vector3d & end, const Eigen::Matrix4d & panel);
+
 struct Impact
 {
   double impact_t = 0.0;
@@ -62,6 +74,10 @@ struct Impact
   std::optional<int> panel;
   bool eligible = false;
   double normal_speed = 0.0;
+  // The front-side panel-plane crossing nearest a panel centre up to the
+  // impact: where a hit landed on its panel, or how a near miss passed one.
+  std::optional<int> crossing_panel;
+  std::optional<Eigen::Vector2d> crossing;
   bool pending = false;
   int next_step = 0;
 };
@@ -76,6 +92,10 @@ public:
     const Eigen::Vector3d & barrel, double launch, const Histories & histories,
     std::optional<double> until = std::nullopt, int start_step = 0,
     const Eigen::Vector3d & launch_velocity = Eigen::Vector3d::Zero()) const;
+  // Fills impact.crossing over the flight up to impact.impact_t.
+  void add_crossing(
+    Impact & impact, const std::string & shooter, const Eigen::Vector3d & origin,
+    const Eigen::Vector3d & velocity, double launch, const Histories & histories) const;
 
   Mesh field;
   Mesh hull;
