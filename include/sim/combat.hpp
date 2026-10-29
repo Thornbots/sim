@@ -35,7 +35,7 @@ using PoseHistory = std::function<std::optional<Eigen::Matrix4d>(double)>;
 using Histories = std::vector<std::pair<std::string, PoseHistory>>;
 
 constexpr double kGravity = -9.80665;
-constexpr double kMuzzleSpeed = 24.0;
+constexpr double kMuzzleSpeed = 22.0;  // sentry shot speed, as MCBV3 and v_muzzle
 constexpr double kStepS = 0.01;
 constexpr double kFlightS = 0.5;
 constexpr double kPanelWidth = 0.135;

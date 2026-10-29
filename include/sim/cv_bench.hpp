@@ -34,7 +34,7 @@ constexpr double kPi = 3.14159265358979323846, kQuarterTurn = kPi / 2,
                  kPanelRadiusX = .252, kPanelRadiusY = .252, kPanelWidth = .135,
                  kPanelHeight = .125, kStagger = .0947,
                  kNormalAngle = 75 * kPi / 180, kExposure = 72.5 * kPi / 180,
-                 kMuzzleSpeed = 25, kFireLatency = .05, kFireHz = 40;
+                 kMuzzleSpeed = 22, kFireLatency = .05, kFireHz = 40;
 inline std::string number(double x) {
   std::ostringstream s;
   s << x;

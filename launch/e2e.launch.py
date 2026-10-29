@@ -183,7 +183,7 @@ def generate_launch_description():
                           'firmware_latency_s': LaunchConfiguration('firmware_latency_s'),
                           'chase_settle_s': LaunchConfiguration('chase_settle_s'),
                           'chase_margin_s': LaunchConfiguration('chase_margin_s'),
-                          'v_muzzle': '24.0',
+                          'v_muzzle': '22.0',
                           'use_rf2o': 'true', 'load_map': 'true',
                           'initial_x': PythonExpression([
                               "'4.625' if '", LaunchConfiguration('stage'),

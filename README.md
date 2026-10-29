@@ -1798,9 +1798,9 @@ firmware waypoint/spin behavior; the three ghosts spin and use a truth-fed aimer
 0.015 rad Gaussian aim noise, and a 2 Hz fire rate. The selector sees both
 red opponents and the blue ally. Only our robot runs the real CV stack.
 
-The scorer advances 24 m/s ballistic shots under gravity against the field
+The scorer advances 22 m/s ballistic shots under gravity against the field
 mesh, chassis hulls and canted armor. It includes the physical muzzle velocity
-at launch, including chassis motion. 24 m/s matches the checked-out sentry
+at launch, including chassis motion. 22 m/s matches the checked-out sentry
 firmware ballistic solver; the E2E Jetson planner uses the same value. The
 first impact absorbs the shot;
 damage requires more than 12 m/s relative normal speed, the exposure cone,

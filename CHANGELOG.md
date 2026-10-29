@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Shots fly at the sentry's 22 m/s (was 24 in E2E ballistics, 25 in the
+  gz-free aiming bench and ghost lead), matching MCBV3 and `v_muzzle`.
 - Match the robot's timed 20 ms indexer request-to-exit: a ball now leaves
   0.045 ball into a feed from the pre-indexed rest (was the next chamber
   boundary, 94 ms), once per feed. E2E stages pass `firmware_latency_s` 0.020.
