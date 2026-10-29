@@ -117,10 +117,12 @@ TEST_F(McbFirmware, SendsPoseRefereeAndEchoesPing) {
 }
 TEST_F(McbFirmware, IgnoresUnknownPingsAndAlwaysEchoesPeerNumbers) {
   EXPECT_TRUE(messages<wire::Ping>(run(1000, wire::frame(wire::Ping{42}))).empty());
-  for (uint8_t number : {2, 4}) {
-    const auto pings = messages<wire::Ping>(run(1000, wire::frame(wire::Ping{number})));
-    ASSERT_FALSE(pings.empty());
-    for (const auto &ping : pings) EXPECT_EQ(ping.number, number);
+  // No operator start is bound: every peer number must echo even in Main.
+  for (uint8_t number : {6, 6, 2, 2, 4, 4, 6, 6, 2, 4, 6}) {
+    SCOPED_TRACE(static_cast<int>(number));
+    const auto pings = messages<wire::Ping>(run(100, wire::frame(wire::Ping{number})));
+    ASSERT_EQ(pings.size(), 1U);
+    EXPECT_EQ(pings.front().number, number);
   }
 }
 TEST_F(McbFirmware, ConsumesFakeSensors) {
