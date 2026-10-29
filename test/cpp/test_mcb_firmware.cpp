@@ -104,7 +104,7 @@ TEST_F(McbFirmware, IndexerResumesWhenSetupBecomesInGame) {
 }
 
 TEST_F(McbFirmware, SendsPoseRefereeAndEchoesPing) {
-  const auto result = run(1000, wire::frame(wire::Ping{42}));
+  const auto result = run(1000, wire::frame(wire::Ping{0}));
   const auto poses = messages<wire::Pose>(result);
   const auto refs = messages<wire::RefSys>(result);
   ASSERT_GE(poses.size(), 85U);
@@ -114,6 +114,14 @@ TEST_F(McbFirmware, SendsPoseRefereeAndEchoesPing) {
   EXPECT_EQ(refs.back().robot_id, 7);
   EXPECT_EQ(refs.back().robot_hp, 400);
   EXPECT_FALSE(messages<wire::Ping>(result).empty());
+}
+TEST_F(McbFirmware, IgnoresUnknownPingsAndAlwaysEchoesPeerNumbers) {
+  EXPECT_TRUE(messages<wire::Ping>(run(1000, wire::frame(wire::Ping{42}))).empty());
+  for (uint8_t number : {2, 4}) {
+    const auto pings = messages<wire::Ping>(run(1000, wire::frame(wire::Ping{number})));
+    ASSERT_FALSE(pings.empty());
+    for (const auto &ping : pings) EXPECT_EQ(ping.number, number);
+  }
 }
 TEST_F(McbFirmware, ConsumesFakeSensors) {
   // Fixed fake poses cannot respond to motor torque; isolate sensor decoding.
