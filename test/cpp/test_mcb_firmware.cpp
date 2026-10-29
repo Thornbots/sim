@@ -15,6 +15,7 @@
 #include "sim/mcb_firmware.hpp"
 #include <gtest/gtest.h>
 #include <cmath>
+#include <optional>
 namespace {
 namespace hw = sim::mcb_firmware;
 namespace wire = sim::mcb_protocol;
@@ -162,12 +163,61 @@ TEST_F(McbFirmware, ZeroDelayFireRequestsAShotImmediately) {
 TEST_F(McbFirmware, FireDelayAccountsForItsNativeIndexerLatency) {
   run(200);
   const auto start = firmware->time_ms();
-  const auto result = run(200, wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 150, wire::kCvTargetFlagFire}));
+  // Sent once: each new aim frame restarts the pending request.
+  const auto packet = wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 150, wire::kCvTargetFlagFire});
+  ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
+            static_cast<ssize_t>(packet.size()));
+  const auto result = run(200);
   ASSERT_FALSE(result.shots.empty());
-  // 150 ms requested exit minus the calibrated 94 ms chamber travel.
-  EXPECT_GE(result.shots.front() - start, 56U);
-  EXPECT_LT(result.shots.front() - start, 66U);
+  // 150 ms requested exit minus the robot's 20 ms request-to-exit.
+  EXPECT_GE(result.shots.front() - start, 130U);
+  EXPECT_LT(result.shots.front() - start, 140U);
+}
+TEST_F(McbFirmware, ANewerAimDoesNotCancelAPendingShot) {
+  run(200);
+  const auto send = [&](uint16_t delay_ms, uint8_t flags) {
+    const auto packet = wire::frame(wire::CvTarget{
+        static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, delay_ms, flags});
+    ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
+              static_cast<ssize_t>(packet.size()));
+  };
+  const auto start = firmware->time_ms();
+  send(45, wire::kCvTargetFlagFire);  // request 25 ms after receipt
+  run(10);
+  send(0, 0);  // the next 40 Hz frame, not firing
+  const auto result = run(100);
+  ASSERT_EQ(result.shots.size(), 1U);
+  EXPECT_GE(result.shots.front() - start, 25U);
+  EXPECT_LT(result.shots.front() - start, 35U);
+}
+TEST_F(McbFirmware, ChamberExitFollowsEachShotRequestByTheTimedLatency) {
+  sim::mcb_motor::Plant plant;
+  sim::mcb_motor::ProjectileExit exit;
+  const std::array<double, 10> readings{};
+  std::vector<uint32_t> requested, exited;
+  const auto packet = wire::frame(wire::CvTarget{
+      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 0, wire::kCvTargetFlagFire});
+  for (int ms = 0; ms < 4600; ++ms) {
+    if (ms >= 3000 && (ms - 3000) % 500 == 0) {  // three single shots, settling between
+      ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
+                static_cast<ssize_t>(packet.size()));
+    }
+    const auto feedback = plant.feedback(readings, 0, 0, 0, 0.001);
+    const auto output = firmware->step(1, readings, ref, feedback);
+    plant.commands = output.motors;
+    requested.insert(requested.end(), output.shots.begin(), output.shots.end());
+    for (uint32_t i = exit.update(feedback[2]); i > 0; --i) exited.push_back(firmware->time_ms());
+    if (ms == 2999) {
+      ASSERT_TRUE(exited.empty()) << "pre-indexing fired a ball";
+      ASSERT_TRUE(requested.empty());
+    }
+  }
+  ASSERT_GE(requested.size(), 3U);
+  ASSERT_EQ(exited.size(), requested.size());
+  for (size_t i = 0; i < requested.size(); ++i) {
+    EXPECT_NEAR(static_cast<double>(exited[i] - requested[i]), 20.0, 3.0) << "shot " << i;
+  }
 }
 TEST_F(McbFirmware, PhysicalCanSpeedChangesFirmwareMotorOutputs) {
   firmware->set_mode(3);

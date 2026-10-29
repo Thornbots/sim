@@ -1582,7 +1582,8 @@ moving more than 0.03 m. Only the hosted direct-sensor fixture delays gyro
 yaw/rate by eight 1 ms ticks to match the firmware predictor; the board path
 runs the full IMU filter, which owns sample age. CAN feedback stays current.
 The hosted E2E profile uses zero residual yaw lag after setpoint-rate
-filtering and a 94 ms indexing delay. Spinning uses alignment gating on the
+filtering and the robot-timed 20 ms indexing delay (the chamber-exit point
+`ProjectileExit::kExitAt` is placed to match). Spinning uses alignment gating on the
 steady center-to-shooter line; chasing each rotating panel is opt-in through
 nonnegative `chase_settle_s` (the previous fixture used 25 ms windows). These
 are model calibrations; board gimbal timing remains uncalibrated.

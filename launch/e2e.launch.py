@@ -261,7 +261,7 @@ def generate_launch_description():
         DeclareLaunchArgument('speeds', default_value='',
                               description="opponent speeds, m/s, 0 = stationary, e.g. '0 2'; "
                                           'empty = the harness default'),
-        DeclareLaunchArgument('firmware_latency_s', default_value='0.094',
+        DeclareLaunchArgument('firmware_latency_s', default_value='0.020',
                               description='Decision-to-exit firing delay estimate in seconds'),
         DeclareLaunchArgument('chase_settle_s', default_value='-1.0'),
         DeclareLaunchArgument('chase_margin_s', default_value=PythonExpression([

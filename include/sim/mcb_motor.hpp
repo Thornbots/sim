@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 
 namespace sim::mcb_motor {
 constexpr double kPi = 3.14159265358979323846;
@@ -19,19 +20,33 @@ using Commands = std::array<int16_t, 10>;
 struct ProjectileExit {
   // Sentry's estimated 36:1 indexer gearbox and eight chambers.
   static constexpr double kShaftTurnsPerBall = 36.0 / 8;
-  int previous = 0;
+  // A ball leaves kExitTravel into a feed that starts from the firmware's
+  // pre-indexed rest (n + kRestAt balls, INITIAL_INDEX_OFFSET): ~22 ms after
+  // the request, near the robot's timed 20 ms (2026-10-28). One per feed, so
+  // overshoot doesn't count twice; the plant's acceleration is an estimate.
+  static constexpr double kRestAt = 0.20, kRestTolerance = 0.1, kExitTravel = 0.045;
+  static constexpr int kStillCounts = 2, kStillUpdates = 10;  // encoder counts, updates
+  int previous = 0, still = 0;
   double turns = 0;
-  uint32_t exited = 0;
+  std::optional<double> rest;  // armed: where the shaft last settled, in balls
   uint32_t update(const std::array<uint8_t, 8> &feedback) {
     const int encoder = static_cast<int>(feedback[0]) << 8 | feedback[1];
     const int delta = (encoder - previous + 12288) % 8192 - 4096;
     previous = encoder;
     // The index motor is inverted; reverse/unjam movement does not add shots.
     turns -= delta / 8192.0;
-    const auto total = static_cast<uint32_t>(std::max(0.0, std::floor(turns / kShaftTurnsPerBall)));
-    const auto count = total > exited ? total - exited : 0;
-    exited = std::max(exited, total);
-    return count;
+    const double balls = turns / kShaftTurnsPerBall;
+    still = std::abs(delta) <= kStillCounts ? still + 1 : 0;
+    if (still >= kStillUpdates) {
+      const double phase = balls - std::floor(balls);
+      rest = std::abs(phase - kRestAt) <= kRestTolerance ? std::optional<double>(balls)
+                                                          : std::nullopt;
+    }
+    if (rest && balls - *rest >= kExitTravel) {
+      rest.reset();
+      return 1;
+    }
+    return 0;
   }
 };
 

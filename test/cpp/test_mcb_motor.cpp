@@ -16,20 +16,28 @@
 #include "sim/mcb_sensors.hpp"
 namespace motor = sim::mcb_motor;
 
-TEST(McbMotor, ProjectileExitWrapsShaftFeedbackAndDoesNotCountUnjamTwice) {
+TEST(McbMotor, ProjectileExitCountsOneBallPerFeedFromRest) {
   motor::ProjectileExit exit;
   unsigned shots = 0;
-  const auto advance = [&](double begin, double end) {
-    const double direction = end > begin ? 1 : -1;
-    for (double turns = begin; direction * turns <= direction * end; turns += direction / 16)
-      shots += exit.update(motor::packet(-turns * 2 * motor::kPi, 0, 0));
+  double at = 0;  // balls
+  const auto go = [&](double to, int settle = 20) {
+    const double step = (to > at ? 1 : -1) / 64.0;
+    while ((to - at) * step > 0) {
+      at += step;
+      shots += exit.update(motor::packet(-at * exit.kShaftTurnsPerBall * 2 * motor::kPi, 0, 0));
+    }
+    for (int i = 0; i < settle; ++i)
+      shots += exit.update(motor::packet(-at * exit.kShaftTurnsPerBall * 2 * motor::kPi, 0, 0));
   };
-  advance(0, 4.5);
+  go(0.2);  // pre-indexing from home fires nothing
+  EXPECT_EQ(shots, 0u);
+  go(1.25, 0);  // a feed with overshoot past the next rest
+  go(1.2);
   EXPECT_EQ(shots, 1u);
-  advance(4.5, 3.5);
-  advance(3.5, 4.5);
+  go(0.9);  // unjam back and return
+  go(1.2);
   EXPECT_EQ(shots, 1u);
-  advance(4.5, 9);
+  go(2.2);
   EXPECT_EQ(shots, 2u);
 }
 

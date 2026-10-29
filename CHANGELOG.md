@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Match the robot's timed 20 ms indexer request-to-exit: a ball now leaves
+  0.045 ball into a feed from the pre-indexed rest (was the next chamber
+  boundary, 94 ms), once per feed. E2E stages pass `firmware_latency_s` 0.020.
+  Hosted firmware tests pin the 20 ms exit and the held pending shot.
 - Record where each scored shot crosses its panel (`panel_right_m`,
   `panel_up_m`, and `crossing_panel` for ballistic stages) in `shots.jsonl`.
   Hosted MCB firmware tests expect the barrel-offset yaw from MCBV3.
