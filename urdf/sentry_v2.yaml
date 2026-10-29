@@ -53,6 +53,12 @@ armor:
 sensors:
   lidar: lidar
   camera: camera_cover
+# Added to a sensor's part centre, output axes (m). roi_depth_node deprojects with
+# the D435's colour intrinsics, so `camera` is the RGB lens: 32.5 mm to the
+# camera's left of the device centre (17.5 mm to the depth origin, 15 mm to
+# colour), as MCBV3's cameraXoffset -0.0325 also records.
+sensor_offsets:
+  camera: [0, 0.0325, 0]
 
 # Visual budget: one convex hull per part, parts under min_part_size (m, bbox diagonal)
 # kept for mass only; about 50 bytes per face on disk.

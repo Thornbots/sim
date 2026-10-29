@@ -41,7 +41,7 @@ constexpr std::array<double, 4> kPanelOffsets{0.0, kPi / 2.0, kPi, -kPi / 2.0};
 constexpr std::array<bool, 4> kUsesRadiusX{true, false, true, false};
 const Eigen::Vector3d kHeadlinkOrigin(-0.000171242, 9.52126e-05, 0.248293);
 const Eigen::Vector3d kHeadpitchOrigin(-0.00760542, -0.100122, 0.14235);
-const Eigen::Vector3d kCameralinkOrigin(0.0920381, 0.0948673, 0.0566588);
+const Eigen::Vector3d kCameralinkOrigin(0.0920381, 0.127367, 0.0566588);
 
 Eigen::Matrix3d rotation_from_quaternion(const geometry_msgs::msg::Quaternion & q)
 {

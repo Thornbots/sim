@@ -25,7 +25,7 @@ inline constexpr std::array<double, 3> kHeadpitchRotation{0, 0, 0};
 inline constexpr std::array<double, 3> kHeadpitchTranslation{-.00760542,
                                                              -.100122, .14235};
 inline constexpr std::array<double, 3> kHeadpitchAxis{0, 1, 0};
-inline constexpr std::array<double, 3> kCameraTranslation{.0920381, .0948673,
+inline constexpr std::array<double, 3> kCameraTranslation{.0920381, .127367,
                                                           .0566588};
 inline constexpr double kPanelRadiusX = .252, kPanelRadiusY = .252,
                         kPanelWidth = .135, kPanelHeight = .125,

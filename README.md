@@ -711,6 +711,14 @@ suspension travel (+-2 cm), spring rate (2200 N/m per corner, about 1 cm of
 sag) and damping. The hopper landed on the pitch stage because of how the
 export tree runs; confirm with the mechanical team.
 
+Sensor frames sit at their part's bounding-box centre plus `sensor_offsets`.
+`camera` adds 32.5 mm to the camera's left of the D435 cover's centre to reach
+the RGB lens, which `/cv/panel_detections` are deprojected from (the generated
+URDF was edited to match, since the export is not in the repo). Before
+2026-10-29 the frame sat at the device centre, and the real robot's aim
+points landed 32.5 mm right of the panels; the sim hid this because its
+detector used the same frame.
+
 The export's base link, `root`, is `G_Lidar_Bottom_Guard`: it is the grounded
 part, and nothing mates it to the head, so the tool put it on the chassis. It
 sits diametrically opposite the lidar at (0.13, 0.14, 0.32-0.35), which pushes

@@ -75,5 +75,5 @@
   <link name="lidar"/>
   <joint name="lidarlink" type="fixed"><parent link="head"/><child link="lidar"/><origin xyz="-0.105 -0.193326 0.101293" rpy="0 0 0.5907"/></joint>
   <link name="camera"/>
-  <joint name="cameralink" type="fixed"><parent link="head_pitch"/><child link="camera"/><origin xyz="0.0920381 0.0948673 0.0566588"/></joint>
+  <joint name="cameralink" type="fixed"><parent link="head_pitch"/><child link="camera"/><origin xyz="0.0920381 0.127367 0.0566588"/></joint>
 </robot>

@@ -67,7 +67,7 @@ using visualization_msgs::msg::MarkerArray;
 // carry it (test_urdf_constants.py pins those to thornbots_pkg's URDF).
 const Vector3d kHeadlinkOrigin(-0.000171242, 9.52126e-05, 0.248293);
 const Vector3d kHeadpitchOrigin(-0.00760542, -0.100122, 0.14235);
-const Vector3d kCameraOrigin(0.0920381, 0.0948673, 0.0566588);
+const Vector3d kCameraOrigin(0.0920381, 0.127367, 0.0566588);
 const Vector3d kMuzzleOrigin(0.0, 0.1128, 0.0);
 constexpr double kPitchLimit = 0.6;  // rad, URDF headpitch
 // The Small Armor Module's face (ARCC 2026's only size), from sentry_v2's CAD.

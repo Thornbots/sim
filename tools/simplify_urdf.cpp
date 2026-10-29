@@ -440,7 +440,9 @@ void run(const std::filesystem::path &directory, const std::filesystem::path &co
   std::map<std::string, std::pair<std::string, V>> sensors;
   for (const auto &s : cfg["sensors"]) {
     const auto name = s.first.as<std::string>(), part = s.second.as<std::string>(); const auto [lo, hi] = bounds(exported.mesh(part));
-    sensors[name] = {owner.at(part), point(to_out, (lo + hi) / 2)};
+    V offset = V::Zero();
+    if (cfg["sensor_offsets"] && cfg["sensor_offsets"][name]) offset = vector(cfg["sensor_offsets"][name]);
+    sensors[name] = {owner.at(part), point(to_out, (lo + hi) / 2) + offset};
   }
   const V yaw = to_out.block<3, 3>(0, 0) * yaw_ax, pitch = to_out.block<3, 3>(0, 0) * pitch_ax;
   std::ofstream out(output / (cfg["robot_name"].as<std::string>() + ".urdf"));
