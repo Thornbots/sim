@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- Move the sentry_v2 `camera` frame to the D435's RGB lens, 32.5 mm left of
-  the cover centre (`sentry_v2.yaml` `sensor_offsets`, honoured by
-  `simplify_urdf`), and the bench/emulator copies of it.
+- Adopt the team's 2026-10-26 low-resolution CAD (#48) and remove
+  `simplify_urdf`, its `sentry_v2.yaml` config and vendored mesh decimator;
+  edit `urdf/sentry_v2/` directly. `camera` is the CAD's RGB FOV apex
+  (detections are RGB-deprojected), not the IR apex.
 - Shots fly at the sentry's 22 m/s (was 24 in E2E ballistics, 25 in the
   gz-free aiming bench and ghost lead), matching MCBV3 and `v_muzzle`.
 - Match the robot's timed 20 ms indexer request-to-exit: a ball now leaves

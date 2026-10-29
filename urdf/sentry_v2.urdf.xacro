@@ -46,8 +46,8 @@
   <xacro:body_visual link="armor_2" rgb="0.85 0.85 0.85"/>
   <xacro:body_visual link="armor_3" rgb="0.85 0.85 0.85"/>
 
-  <!-- Corner i: a sprung carrier (spring rate and travel are placeholders in
-       sentry_v2.yaml) and a sphere wheel with no friction, so wheels ride
+  <!-- Corner i: a sprung carrier (spring rate and travel are placeholders, see
+       README.md#urdfsentry_v2-the-teams-low-resolution-cad) and a sphere wheel with no friction, so wheels ride
        along under the velocity-driven chassis rather than fighting it. -->
   <xacro:macro name="corner" params="i">
     <xacro:body_visual link="carrier_${i}" rgb="0.6 0.62 0.65"/>
@@ -66,13 +66,13 @@
   <xacro:corner i="2"/>
   <xacro:corner i="3"/>
 
-  <!-- Where the shot leaves: on the pitch axis, between the flywheels.
+  <!-- Aiming origin on the pitch axis, between the flywheels; CAD lateral offset.
        thornbots_pkg's URDF carries the same frame. -->
   <link name="muzzle"/>
   <joint name="muzzlelink" type="fixed">
     <parent link="head_pitch"/>
     <child link="muzzle"/>
-    <origin xyz="0 0.1128 0" rpy="0 0 0"/>
+    <origin xyz="0 0.00190269 0" rpy="0 0 0"/>
   </joint>
 
   <!-- Same angle-compensated A2M8 grid as sentry.urdf.xacro;

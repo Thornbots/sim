@@ -20,9 +20,9 @@ namespace {
 namespace hw = sim::mcb_firmware;
 namespace wire = sim::mcb_protocol;
 // The firmware's yaw for a target dx ahead and dy left: it turns the barrel,
-// which MCBV3's OFFSET_X_PITCH_PIVOT_TO_BARREL puts 12.8 mm left of the yaw axis.
+// which MCBV3's OFFSET_X_PITCH_PIVOT_TO_BARREL puts 1.9 mm left of the yaw axis.
 double aim_yaw(double dy, double dx) {
-  return std::atan2(dy, dx) + std::asin(-0.0128 / std::hypot(dx, dy));
+  return std::atan2(dy, dx) + std::asin(-0.0019 / std::hypot(dx, dy));
 }
 class McbFirmware : public testing::Test {
 protected:

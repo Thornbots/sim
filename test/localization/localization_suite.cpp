@@ -1052,6 +1052,20 @@ void scan_degraded(Scenario &sc) {
               ++grades[{phase, tier}];
             }
           });
+  auto request = std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
+  request->names = {"blind_angle_start", "blind_angle_end"};
+  const auto original = helper.call<rcl_interfaces::srv::GetParameters>(
+      "/lidar_self_filter/get_parameters", request);
+  std::vector<rclcpp::Parameter> original_sector;
+  for (size_t i = 0; i < request->names.size(); ++i) {
+    rcl_interfaces::msg::Parameter param;
+    param.name = request->names[i];
+    param.value = original->values.at(i);
+    original_sector.push_back(rclcpp::Parameter::from_parameter_msg(param));
+  }
+  const auto restore_sector = [&] {
+    helper.set_params("/lidar_self_filter/set_parameters", original_sector);
+  };
   const auto sector = [&](double start, double end) {
     helper.set_params("/lidar_self_filter/set_parameters",
                       {rclcpp::Parameter("blind_angle_start", start),
@@ -1084,7 +1098,7 @@ void scan_degraded(Scenario &sc) {
     for (int i = 4; i < 6; ++i) {
       leg(i, "during");
     }
-    sector(-0.5585, 1.0123);
+    restore_sector();
     blanked = false;
     phase = "after";
     for (int i = 6; i < 14; ++i) {
@@ -1093,7 +1107,7 @@ void scan_degraded(Scenario &sc) {
   } catch (...) {
     if (blanked) {
       try {
-        sector(-0.5585, 1.0123);
+        restore_sector();
       } catch (...) {
       }
     }
