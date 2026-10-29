@@ -450,7 +450,7 @@ private:
         }
       }
       Vector3 aim = panel.topRightCorner<3, 1>();
-      const double flight = (aim - root.topRightCorner<3, 1>()).norm() / 25.0;
+      const double flight = (aim - root.topRightCorner<3, 1>()).norm() / sim::combat::kMuzzleSpeed;
       aim.head<2>() += samples.at(*target).second * flight;
       aim.z() += 9.80665 * flight * flight / 2.0;
       const Vector3 relative =

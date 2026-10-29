@@ -12,15 +12,15 @@ namespace sim::cv_head_aim
 {
 
 // sentry_v2 root -> headlink -> headpitch -> muzzlelink, in metres.
-constexpr double kHeadlinkOriginX = -0.000171242;
-constexpr double kHeadlinkOriginY = 9.52126e-05;
-constexpr double kHeadlinkOriginZ = 0.248293;
-constexpr double kHeadpitchOriginX = -0.00760542;
-constexpr double kHeadpitchOriginY = -0.100122;
-constexpr double kHeadpitchOriginZ = 0.14235;
-constexpr double kMuzzlelinkOriginX = 0.0;
-constexpr double kMuzzlelinkOriginY = 0.1128;
-constexpr double kMuzzlelinkOriginZ = 0.0;
+constexpr double kHeadlinkOriginX = 0.000000000;
+constexpr double kHeadlinkOriginY = 0.000000000;
+constexpr double kHeadlinkOriginZ = 0.267503694;
+constexpr double kHeadpitchOriginX = 0.000000000;
+constexpr double kHeadpitchOriginY = 0.000000000;
+constexpr double kHeadpitchOriginZ = 0.136000000;
+constexpr double kMuzzlelinkOriginX = 0.000000000;
+constexpr double kMuzzlelinkOriginY = 0.001902690;
+constexpr double kMuzzlelinkOriginZ = 0.000000000;
 constexpr double kMuzzleX = kHeadpitchOriginX + kMuzzlelinkOriginX;
 constexpr double kMuzzleY = kHeadpitchOriginY + kMuzzlelinkOriginY;
 constexpr double kMuzzleZ = kHeadlinkOriginZ + kHeadpitchOriginZ + kMuzzlelinkOriginZ;

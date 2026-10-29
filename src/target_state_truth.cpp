@@ -19,8 +19,8 @@ public:
   : Node("target_state_truth")
   {
     const auto output_topic = declare_parameter("output_topic", std::string("/cv/target_state"));
-    declare_parameter("panel_radius_x", 0.252);
-    declare_parameter("panel_radius_y", 0.252);
+    declare_parameter("panel_radius_x", 0.253729);
+    declare_parameter("panel_radius_y", 0.249716);
     declare_parameter("panel_stagger_m", 0.0);
     declare_parameter("model_yaw_jitter_rad", 0.0);
     pub_ = create_publisher<dji_serial_bridge::msg::TargetState>(output_topic, 10);

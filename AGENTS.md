@@ -53,4 +53,4 @@ Keep approach firing disabled until all routes reach center.
 - Changes shared with `target_driver`, `cv_target_emulator`, `cv_head_aim` or
   `pose_emulator` may also need `src/bench_world.cpp`; it has its own lockstep implementation.
 - Lidar/CAD and carried-map/zone gaps: [track J](../docs/ROADMAP.md#j-lidar-and-camera),
-  [track H](../docs/ROADMAP.md#h-slam-at-amcls-level), [URDF export](README.md#toolssimplify_urdfcpp-and-urdfsentry_v2).
+  [track H](../docs/ROADMAP.md#h-slam-at-amcls-level), [URDF](README.md#urdfsentry_v2-the-teams-low-resolution-cad).

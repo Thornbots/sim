@@ -38,8 +38,8 @@ of the standard run: run it after changing the EKF or rf2o config.
 
 The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
-neighbouring panels staggered 9.47 cm apart vertically (about 76% of a
-panel's 12.5 cm height)
+neighbouring panels staggered 10.39 cm apart vertically (about 83% of a
+panel's 12.5 cm height, with even-numbered panels lower)
 (`panel_layout:=` picks one). It launches the stack once and only changes the
 target between cases; each case settles for 3s, then scores 30s of sim time.
 The bench fires at up to 40 Hz, far above the real launcher, and scores each
@@ -480,7 +480,10 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 and waits for a valid `/cv/target_state` before requesting the first cell
 (non-firing idle frames keep `/cv/target` fresh without one). Starting it at
 the launch's moving defaults left unscored motion dependent on wall-time
-bring-up speed.
+bring-up speed. The hosted parked fixture keeps its existing -y paths and
+sets the idle-look enemy zone in that same frame; the board fixture and
+both driving stages retain the field's -x enemy zone. This changes no path,
+spawn, control law or scoring gate.
 Each requested cell sets its speed/spin and settles for three sim seconds
 before scoring.
 
@@ -488,6 +491,11 @@ before scoring.
 the barrel's angle off the aim and the aim's distance from the panel, and
 each case prints TargetState's centre, velocity and spin error against
 truth. `pytest_args:='--e2e-spin 0'` holds the spin for every cell.
+Each shot record also has `panel_right_m` and `panel_up_m`: where it crossed
+the scored panel's plane, from the face centre, right as the shooter sees it
+and up the canted face. Ballistic `mcb_drive`/`mcb_match` records take the
+nearest front-side crossing of any panel along the flight (`crossing_panel`),
+so near misses show their side too.
 `states.jsonl` records stamped TargetState errors by case. `mcb_parked` shot
 and state records also include head-TF and map-localization errors against gz
 truth. The localization error is `map->root` truth error;
@@ -653,93 +661,48 @@ and removed on 2026-09-24 before it ever ran a full suite. We are staying on
 gz. The removed `sim/sapien_sim.py` is in the commit log if the question
 comes back.
 
-### tools/simplify_urdf.cpp and urdf/sentry_v2
+### urdf/sentry_v2: the team's low-resolution CAD
 
-The mechanical team's Onshape export of the new sentry has 3782 links, 3781
-joints and 581 meshes (220 MB), with no collision geometry. Onshape turns
-every assembly mate into joints (a planar mate becomes two prismatics and a
-continuous, a cylindrical one a prismatic and a continuous) and closes loops
-with `*_loop_closure` dummy links, so almost none of those joints are real
-motion. The export itself is not in the repo; regenerate from it with:
+The model uses the team's **2026-10-26 low-resolution CAD** (`sentry_low_res_model`,
+an Onshape URDF export of 67 links) for the chassis visual, yaw/pitch visuals and
+collision hulls, sensor/muzzle frames, head joint origins and armor faces. It was
+imported once into `urdf/sentry_v2/`; there is no generator, so edit the URDF and
+meshes directly when the CAD changes. `thornbots_pkg` carries matching visual
+assets and TF geometry, and `test_cv_bench.cpp` checks the two agree. See
+[robot geometry](../thornbots_pkg/README.md#robot-geometry) for frame conventions
+and the [dated investigation](../docs/investigations/sentry-cad-2026-10-26.md)
+for the archive checksum, derivation and validation.
 
-```bash
-ros2 run sim simplify_urdf <export_dir> urdf/sentry_v2.yaml urdf/sentry_v2
-```
+The yaw bearing is centred on the chassis axis; zero pitch points the gun
+horizontally along +x, and the origin is on the ground under the chassis centre.
+`camera` is the apex of the CAD's **RGB** FOV cone, 44 mm left of the IR cone,
+because `/cv/panel_detections` are deprojected with the colour intrinsics. Before
+2026-10-29 it sat on the D435 centre or IR apex, so real-robot aim points landed
+right of the panels; the sim hid this because its detector shared the frame.
+`muzzle` is on the pitch axis at the bore, 1.9 mm left of the yaw axis. `lidar`
+uses the CAD translation with the robot-measured 0.5907 rad yaw.
 
-The tool collapses it to eleven bodies (plus `body`, a massless frame): chassis (`root`), gimbal yaw (`head`),
-gimbal pitch (`head_pitch`), and per corner a sprung carrier and an omni
-wheel. Each body's mass and inertia are summed exactly (parallel-axis), so the
-total stays 8.92 kg. Assignment, in order:
+Joint and link names (`root`, `body`, `head`, `head_pitch`, `lidar`, `camera`,
+`muzzle`, `headlink`, `headpitch`) are stable; `headlink` turns about +z, CCW
+like the MCB's `head_yaw`. Each `armor_i` frame sits at its face centre with +x
+along the outward normal and +y horizontal, carrying a 135 x 125 mm box (the
+Small Armor Module) 3 mm deep as visual and collision; normals are 15 deg up,
+indices follow CCW bearing from +x and even indices are the lower pair.
 
-- `head` and `head_pitch` are the export tree below the yaw slewing bearing
-  (`revolute_1_2`) and the horizontal shooter axis (`cylindrical_1_4`).
-- A wheel is every part inside its measured cylinder (r 0.0949 m, +-0.02 m
-  axially); its carrier is the parts inboard of the wheel within 0.10 m of
-  the axle, plus the suspension arms by name.
-- Everything else is chassis. Reference geometry (the rules keep-out boxes,
-  FOV cones) and two stray parts with no inertia are dropped by name.
+The CAD's 103.8847 mm lower-edge spread exceeds the 100 mm stagger limit
+([armor rules](https://github.com/Thornbots/thornbots_workspace/blob/428b294/docs/ARCC_2026_SENTRY_CONTEXT.md#armor-geometry-and-building-limits)).
+Accepted on 2026-10-26 as a mechanical deviation with no material CV impact,
+`UrdfConstants.ArmorRules` pins a temporary 0.104 m bound; restore 0.100 m after
+the plates are corrected.
 
-Each corner's parallel-arm suspension is one prismatic joint, which is close
-to the arms' real arc over a few centimetres of travel. Wheels collide as
-spheres (omni rollers can't be modelled with isotropic friction anyway),
-other bodies as convex hulls of their parts above 3 cm. The robot's links
-must not collide with each other; the chassis hull contains the wheels.
-Visuals are one convex hull per part, capped at 120 faces, with parts under
-15 mm left out: CAD tessellations are full of T-junctions that quadric
-decimation cannot reduce. That keeps the model at 6.4 MB.
+Not from the CAD: mass/inertia (the export's gram-scale values are not
+credible), chassis collision, wheels and suspension (travel +-2 cm, 2200 N/m
+per corner, damping), pitch limits (+-0.6 rad), controllers, plugins and topics
+remain the earlier approximations. The two odometry pods are omitted; see the
+[odometry pod table](../docs/investigations/sentry-cad-2026-10-26.md#odometry-pods).
 
-The native tool uses Assimp, Qhull and the pinned fast-simplification library.
-It preserves part assignment, mass, inertia and joint geometry. Qhull facet
-ordering can change the decimated visual mesh; regeneration is not a
-byte-for-byte reproduction of trimesh output. Review regenerated meshes before
-replacing the checked-in assets.
-
-The joint and link names match the old model's (`root`, `body`, `head`,
-`head_pitch`, `lidar`, `camera`, `headlink`, `headpitch`) and `headlink` turns about
-+z, CCW like the MCB's `head_yaw` (it was -z until 2026-10-03, which mirrored
-the camera on the sentry), and `test_cv_bench.cpp` pins it.
-The output frame puts the gun on +x (the export's +y) with the origin on the
-ground under the chassis centre.
-
-Placeholders, not from the CAD: pitch limits (the old model's +-0.6 rad),
-suspension travel (+-2 cm), spring rate (2200 N/m per corner, about 1 cm of
-sag) and damping. The hopper landed on the pitch stage because of how the
-export tree runs; confirm with the mechanical team.
-
-The export's base link, `root`, is `G_Lidar_Bottom_Guard`: it is the grounded
-part, and nothing mates it to the head, so the tool put it on the chassis. It
-sits diametrically opposite the lidar at (0.13, 0.14, 0.32-0.35), which pushes
-the chassis collision hull up to 0.362 m. Scans don't notice (see the lidar
-note below), but the hull is wrong. Fix it in Onshape by mating the guard to
-the head, or drop it in `sentry_v2.yaml`'s `drop` list.
-
-The export has all four armor modules, and the tool emits one fixed link per
-module face, `armor_0` to `armor_3`, found by the face part's mesh file
-(`armor.face_mesh`). Each frame sits at the face centre with +x along the
-outward normal and +y horizontal, and carries a box of the face's size as
-visual and collision, so depth sees it and shots can hit it. From the CAD
-(2026-09-27):
-
-- The faces sit on the diagonals, between the wheels: `armor_0` at +45 deg
-  from the gun, then every 90 deg anticlockwise. Face centres are 0.252 m
-  from the chassis axis.
-- `armor_0` and `armor_2` sit at 0.230 m, `armor_1` and `armor_3` at
-  0.136 m, so the lower edges are 94 mm apart.
-- Every normal is 75.0 deg from straight up (15 deg cant).
-- The face is 135 x 125 mm, the Small Armor Module's, the only size in
-  ARCC 2026.
-
-The [workspace armor rules comparison](https://github.com/Thornbots/thornbots_workspace/blob/428b294/docs/ARCC_2026_SENTRY_CONTEXT.md#armor-geometry-and-building-limits)
-provides the verified 2026/2027 limits and citations for cant, stagger and lower-edge height.
-
-The regenerated meshes aren't byte-identical across trimesh versions, so when
-only the URDF text should change, keep the committed meshes
-(`git checkout -- urdf/sentry_v2/meshes`).
-
-`sentry_v2.urdf.xacro` wraps the generated URDF for gz: colours, the lidar and
-camera sensors, the plugins, and a `muzzle` frame (see the CV head aim node
-note). `thornbots_pkg`'s `sentry.urdf.xacro` carries the same frames and
-meshes, and `test_cv_bench.cpp` checks the two agree.
+`sentry_v2.urdf.xacro` wraps the URDF for gz: colours, the lidar and camera
+sensors and the plugins.
 
 ### sentry_v2.urdf.xacro: motion model
 
@@ -1301,29 +1264,28 @@ aiming bench has its own perfect gimbal. `CVTarget.x/y/z` is an `odom`
 position; each tick it goes into root at the newest `odom->root`, the way
 the MCB holds it, then through the solve below.
 
-`cv_head_aim_core::solve_head_angles()` inverts the FK chain from root to the
+`cv_head_aim_core::solve_head_angles()` attempts to invert the FK chain from root to the
 `muzzle` frame (root -> body -> headlink(yaw) -> headpitch(pitch) ->
 muzzlelink). `test/cpp/test_cv_head_aim.cpp` checks it against a separately
 written FK, and `test_cv_bench.cpp` pins the C++ core header's constants to
 `thornbots_pkg`'s URDF and checks sim's model against it.
 
-The `muzzle` frame sits on `head_pitch` at (0, 0.1128, 0): on the pitch axis,
-between the two stacked flywheels. In the CAD the barrel is 0.3915 m up and
-the pitch axis 0.3906 m, so the barrel really does sit on the axis. In the head
-frame that puts the muzzle `kMuzzleY` = 0.0127 m left of the yaw axis and
-`kMuzzleZ` = 0.391 m above root.
+The `muzzle` aiming origin stays on the pitch axis between the flywheels;
+see [robot geometry](../thornbots_pkg/README.md#robot-geometry). Only its
+lateral offset is taken from the CAD bore centre. Its position is invariant
+under pitch, as required by the existing closed-form solver.
 
 It aims along the ray from the muzzle. Before 2026-09-09 it aimed from root,
 assuming a ~0.35m offset wouldn't matter at range. That's true for flight time,
 but a parallel offset in direction stays the same size at any range. On the
 old model every stationary shot missed by ~0.33m against a 0.05m hit radius.
 
-The solve is closed-form even though the muzzle's position depends on the yaw
-being solved. The shot leaves along the head's +x, and whatever the yaw that
+The existing solve is closed-form even though the muzzle's position depends on the yaw
+being solved. It assumes the shot leaves along the head's +x, and whatever the yaw that
 line passes `kMuzzleY` to the left of the yaw axis. So azimuth is
 `bearing - asin(kMuzzleY / horizontal_range)`, with bearing and range taken
-from the yaw axis, and pitch follows from the elevation seen from the muzzle
-at that azimuth. The muzzle is on the pitch axis, so pitching never moves it.
+from the yaw axis, and pitch follows from the elevation seen from the unpitched
+muzzle at that azimuth. The pitch-axis origin makes that elevation independent of pitch.
 Head yaw is the azimuth, because `headlink` turns about +z, CCW like the MCB's
 `head_yaw`.
 
@@ -1577,7 +1539,8 @@ moving more than 0.03 m. Only the hosted direct-sensor fixture delays gyro
 yaw/rate by eight 1 ms ticks to match the firmware predictor; the board path
 runs the full IMU filter, which owns sample age. CAN feedback stays current.
 The hosted E2E profile uses zero residual yaw lag after setpoint-rate
-filtering and a 94 ms indexing delay. Spinning uses alignment gating on the
+filtering and the robot-timed 20 ms indexing delay (the chamber-exit point
+`ProjectileExit::kExitAt` is placed to match). Spinning uses alignment gating on the
 steady center-to-shooter line; chasing each rotating panel is opt-in through
 nonnegative `chase_settle_s` (the previous fixture used 25 ms windows). These
 are model calibrations; board gimbal timing remains uncalibrated.
@@ -1657,7 +1620,7 @@ intervals. Pure wire-format behavior is covered by GTests.
 | `sim/auto_explore.py` Gazebo helpers, `sim/odometry.py` | `include/sim/gazebo_helpers.hpp`, `include/sim/target_odometry.hpp` |
 | `sim/display.py` probe, `sim/cv_target_emulator.py` constants | `src/display_probe.cpp`, `include/sim/cv_model_constants.hpp` |
 | Python unit tests and `conftest.py` fixtures | `test/cpp/*`, native suite environments and value-parameterized cases |
-| `tools/{check_bench_log,compare_runs,estimation_limits,shot_floors,rf2o_quality,rviz_to_foxglove,simplify_urdf}.py` | matching `tools/*.cpp`, installed as `ros2 run sim <name>` |
+| `tools/{check_bench_log,compare_runs,estimation_limits,shot_floors,rf2o_quality,rviz_to_foxglove}.py` | matching `tools/*.cpp`, installed as `ros2 run sim <name>` |
 
 `suite_exit.py` creates ROS launch events synchronously, `display.py` calls the
 native probe from launch, and `auto_explore.py` supplies the launch spawn
@@ -1792,9 +1755,9 @@ firmware waypoint/spin behavior; the three ghosts spin and use a truth-fed aimer
 0.015 rad Gaussian aim noise, and a 2 Hz fire rate. The selector sees both
 red opponents and the blue ally. Only our robot runs the real CV stack.
 
-The scorer advances 24 m/s ballistic shots under gravity against the field
+The scorer advances 22 m/s ballistic shots under gravity against the field
 mesh, chassis hulls and canted armor. It includes the physical muzzle velocity
-at launch, including chassis motion. 24 m/s matches the checked-out sentry
+at launch, including chassis motion. 22 m/s matches the checked-out sentry
 firmware ballistic solver; the E2E Jetson planner uses the same value. The
 first impact absorbs the shot;
 damage requires more than 12 m/s relative normal speed, the exposure cone,

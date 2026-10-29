@@ -165,7 +165,7 @@ std::optional<double> segment_mesh_hit(
   return nearest;
 }
 
-std::optional<double> segment_panel_hit(
+std::optional<PanelCrossing> segment_panel_crossing(
   const Eigen::Vector3d & start, const Eigen::Vector3d & end, const Eigen::Matrix4d & panel)
 {
   const Eigen::Matrix4d inverse = panel.inverse();
@@ -179,8 +179,17 @@ std::optional<double> segment_panel_hit(
     return std::nullopt;
   }
   const Eigen::Vector3d hit = a + fraction * (b - a);
-  if (std::abs(hit.y()) <= kPanelWidth / 2 && std::abs(hit.z()) <= kPanelHeight / 2) {
-    return fraction;
+  return PanelCrossing{fraction, hit.tail<2>(), a.x() > b.x()};
+}
+
+std::optional<double> segment_panel_hit(
+  const Eigen::Vector3d & start, const Eigen::Vector3d & end, const Eigen::Matrix4d & panel)
+{
+  const auto crossing = segment_panel_crossing(start, end, panel);
+  if (crossing && std::abs(crossing->point.x()) <= kPanelWidth / 2 &&
+    std::abs(crossing->point.y()) <= kPanelHeight / 2)
+  {
+    return crossing->fraction;
   }
   return std::nullopt;
 }
@@ -282,6 +291,7 @@ Impact ShotResolver::resolve(
       result.panel = candidate->panel;
       result.eligible = candidate->eligible;
       result.normal_speed = candidate->normal_speed;
+      add_crossing(result, shooter, origin, velocity, launch, histories);
       return result;
     }
   }
@@ -292,8 +302,41 @@ Impact ShotResolver::resolve(
   } else {
     result.impact_t = launch + kFlightS;
     result.impact = "miss";
+    add_crossing(result, shooter, origin, velocity, launch, histories);
   }
   return result;
+}
+
+void ShotResolver::add_crossing(
+  Impact & impact, const std::string & shooter, const Eigen::Vector3d & origin,
+  const Eigen::Vector3d & velocity, double launch, const Histories & histories) const
+{
+  const Eigen::Vector3d gravity(0.0, 0.0, kGravity);
+  const double flight = impact.impact_t - launch;
+  for (int step = 0; step * kStepS < flight; ++step) {
+    const double t0 = step * kStepS;
+    const double t1 = std::min((step + 1) * kStepS, flight + 1e-9);
+    const Eigen::Vector3d a = origin + velocity * t0 + gravity * (t0 * t0 / 2);
+    const Eigen::Vector3d b = origin + velocity * t1 + gravity * (t1 * t1 / 2);
+    for (const auto & [name, history] : histories) {
+      if (name == shooter) {
+        continue;
+      }
+      const auto root = history(launch + (t0 + t1) / 2);
+      if (!root) {
+        continue;
+      }
+      for (std::size_t index = 0; index < armors.size(); ++index) {
+        const auto crossing = segment_panel_crossing(a, b, *root * armors[index]);
+        if (crossing && crossing->from_front &&
+          (!impact.crossing || crossing->point.norm() < impact.crossing->norm()))
+        {
+          impact.crossing_panel = static_cast<int>(index);
+          impact.crossing = crossing->point;
+        }
+      }
+    }
+  }
 }
 
 Referee::Referee(std::vector<std::pair<std::string, std::string>> teams)

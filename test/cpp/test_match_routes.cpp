@@ -51,7 +51,7 @@ TEST(FieldGeometry, CenteredMetresAndGroundLevel) {
 }
 TEST(FieldGeometry, CorrectedBarIntersectsLidarPlane) {
   const auto field = sim::combat::load_field(SIM_SOURCE_DIR);
-  const auto bar = sim::combat::segment_mesh_hit({0, 2.8, 0.3543931}, {0, 3.2, 0.3543931}, field);
+  const auto bar = sim::combat::segment_mesh_hit({0, 2.8, 0.357296694}, {0, 3.2, 0.357296694}, field);
   ASSERT_TRUE(bar.has_value());
   EXPECT_NEAR(2.8 + 0.4 * *bar, 2.98488, 1e-5);
   EXPECT_FALSE(sim::combat::segment_mesh_hit({0, 2.8, 0.42}, {0, 3.2, 0.42}, field));

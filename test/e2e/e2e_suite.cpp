@@ -60,7 +60,7 @@ public:
                     std::string(cb::options.headless ? "true" : "false"),
                 "stage:=" + cb::options.stage, "backend:=" + cb::options.backend, "target_speed:=0.0",
                 "pose_latency_s:=" + cb::number(cb::options.pose_latency_s),
-                "firmware_latency_s:=" + cb::number(cb::options.firmware_latency_s.value_or(.094)),
+                "firmware_latency_s:=" + cb::number(cb::options.firmware_latency_s.value_or(.020)),
                 "gimbal_lag_s:=" + cb::number(cb::options.gimbal_lag_s.value_or(
                     cb::options.backend == "hosted" ? 0.0 : .05)),
                 "chase_settle_s:=" + cb::number(cb::options.chase_settle_s.value_or(-1.0)),
