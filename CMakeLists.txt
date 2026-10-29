@@ -48,6 +48,17 @@ find_package(gz-sim REQUIRED)
 find_package(gz_plugin_vendor REQUIRED)
 find_package(gz-plugin REQUIRED COMPONENTS register)
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../firmware/MCBV3/MCB-project/src/hosted/mapping_control.hpp")
+  add_executable(mmm_suite test/mcb/mmm_suite.cpp src/process.cpp)
+  target_compile_features(mmm_suite PUBLIC cxx_std_17)
+  target_compile_definitions(mmm_suite PRIVATE MCB_HOSTED)
+  target_include_directories(mmm_suite PRIVATE include
+    "${CMAKE_CURRENT_SOURCE_DIR}/../firmware/MCBV3/MCB-project/src")
+  target_link_libraries(mmm_suite mcb_protocol util GTest::gtest nlohmann_json::nlohmann_json)
+  ament_target_dependencies(mmm_suite rclcpp geometry_msgs nav_msgs sensor_msgs dji_serial_bridge tf2_ros)
+  install(TARGETS mmm_suite DESTINATION lib/${PROJECT_NAME})
+endif()
+
 add_executable(bench_world src/bench_world.cpp)
 target_compile_features(bench_world PUBLIC cxx_std_17)
 target_link_libraries(bench_world Eigen3::Eigen)
