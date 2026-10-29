@@ -488,6 +488,11 @@ before scoring.
 the barrel's angle off the aim and the aim's distance from the panel, and
 each case prints TargetState's centre, velocity and spin error against
 truth. `pytest_args:='--e2e-spin 0'` holds the spin for every cell.
+Each shot record also has `panel_right_m` and `panel_up_m`: where it crossed
+the scored panel's plane, from the face centre, right as the shooter sees it
+and up the canted face. Ballistic `mcb_drive`/`mcb_match` records take the
+nearest front-side crossing of any panel along the flight (`crossing_panel`),
+so near misses show their side too.
 `states.jsonl` records stamped TargetState errors by case. `mcb_parked` shot
 and state records also include head-TF and map-localization errors against gz
 truth. The localization error is `map->root` truth error;

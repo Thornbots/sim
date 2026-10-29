@@ -14,9 +14,15 @@
 
 #include "sim/mcb_firmware.hpp"
 #include <gtest/gtest.h>
+#include <cmath>
 namespace {
 namespace hw = sim::mcb_firmware;
 namespace wire = sim::mcb_protocol;
+// The firmware's yaw for a target dx ahead and dy left: it turns the barrel,
+// which MCBV3's OFFSET_X_PITCH_PIVOT_TO_BARREL puts 12.8 mm left of the yaw axis.
+double aim_yaw(double dy, double dx) {
+  return std::atan2(dy, dx) + std::asin(-0.0128 / std::hypot(dx, dy));
+}
 class McbFirmware : public testing::Test {
 protected:
   std::unique_ptr<hw::PtyLink> link;
@@ -132,7 +138,7 @@ TEST_F(McbFirmware, AimsAndFires) {
       1000,
       wire::frame(wire::CvTarget{static_cast<float>(-firmware->start_x() + 3),
                                  1, 0.2F, 100, wire::kCvTargetFlagFire}));
-  EXPECT_NEAR(result.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+  EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
   EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
   EXPECT_GE(result.shots.size(), 8U);
 }
@@ -143,7 +149,7 @@ TEST_F(McbFirmware, HoldsNonFiringAimAfterTheTargetExpires) {
             static_cast<ssize_t>(packet.size()));
   const auto result = run(500);
   EXPECT_TRUE(result.shots.empty());
-  EXPECT_NEAR(result.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+  EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
 }
 TEST_F(McbFirmware, ZeroDelayFireRequestsAShotImmediately) {
   run(200);  // Let referee, motor feedback and command scheduling become ready.
@@ -194,7 +200,7 @@ TEST_F(McbFirmware, RelocalizationPreservesRawPoseAndHeldAim) {
   ASSERT_FALSE(moving_poses.empty());
   EXPECT_NEAR(moving_poses.back().x, -firmware->start_x() + 0.5, 1e-6);
   EXPECT_NEAR(moving_poses.back().y, firmware->start_y() - 0.25, 1e-6);
-  EXPECT_NEAR(moving.outputs.back().yaw, std::atan2(1.25, 2.5), 1e-6);
+  EXPECT_NEAR(moving.outputs.back().yaw, aim_yaw(1.25, 2.5), 1e-6);
 }
 TEST_F(McbFirmware, RejectsCorruptCv) {
   auto packet =
@@ -293,7 +299,7 @@ TEST_F(McbFirmware, ClearingTurnToHitFlagCancelsActiveHitTurn) {
       wire::CvTarget{target_x, 1, 0.2F, 0, patrol});
   const std::array<double, 10> hit_readings{0, 0, 0, 0, 0.45, 0, 0.05};
   const auto aimed = run(100, initial_target, hit_readings);
-  EXPECT_NEAR(aimed.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+  EXPECT_NEAR(aimed.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
 
   ref.current_hp = 380;
   ref.hurt_armor_id = 1;
@@ -308,7 +314,7 @@ TEST_F(McbFirmware, ClearingTurnToHitFlagCancelsActiveHitTurn) {
       wire::CvTarget{target_x, 1, 0.2F, 0, 0});
   const auto resumed_aim = run(5, clear_target, hit_readings);
   ASSERT_FALSE(resumed_aim.outputs.empty());
-  EXPECT_NEAR(resumed_aim.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+  EXPECT_NEAR(resumed_aim.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
   EXPECT_GT(std::abs(hw::wrap(resumed_aim.outputs.back().yaw - hit_yaw)), 1.0);
   EXPECT_TRUE(resumed_aim.shots.empty());
 }
@@ -346,7 +352,7 @@ TEST_P(McbPatrolFlag, ParsesAimAndOnlyFireBitRequestsShots) {
   run(200);
   const auto result = run(300, wire::frame(wire::CvTarget{
       static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 100, GetParam()}));
-  EXPECT_NEAR(result.outputs.back().yaw, std::atan2(1.0, 3.0), 1e-5);
+  EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
   EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
   EXPECT_EQ(result.shots.empty(), (GetParam() & wire::kCvTargetFlagFire) == 0);
 }
@@ -370,7 +376,7 @@ TEST_P(McbPatrolFlag, DamageTurnRequiresItsPermissionBit) {
   ref.current_hp = 380;
   ref.hurt_armor_id = 1;
   const auto hit = run(100, frame);
-  const double expected = (GetParam() & wire::kCvTargetFlagTurnToHit) ? hw::kPi / 2 : std::atan2(1.0, 3.0);
+  const double expected = (GetParam() & wire::kCvTargetFlagTurnToHit) ? hw::kPi / 2 : aim_yaw(1.0, 3.0);
   EXPECT_NEAR(hit.outputs.back().yaw, expected, 1e-5);
 }
 TEST_P(McbPatrolFlag, StageGateStillBlocksFire) {

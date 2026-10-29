@@ -466,6 +466,7 @@ std::optional<Json> Scorer::judge(double t) {
     double off, miss, incidence, range;
     int k;
     Vec dir;
+    std::optional<Eigen::Vector2d> face;  // panel_right_m, panel_up_m
   };
   std::optional<Candidate> best;
   for (int k = 0; k < 4; ++k) {
@@ -490,12 +491,18 @@ std::optional<Json> Scorer::judge(double t) {
     along = (pos - origin).dot(dir);
     double off = cb::off_face(
         origin, dir, {pos, normal, p.block<3, 1>(0, 1), p.block<3, 1>(0, 2)});
+    std::optional<Eigen::Vector2d> face;
+    if (dir.dot(normal) < -1e-9) {
+      const Vec rel = origin + (pos - origin).dot(normal) / dir.dot(normal) * dir - pos;
+      face = Eigen::Vector2d(rel.dot(p.block<3, 1>(0, 1)), rel.dot(p.block<3, 1>(0, 2)));
+    }
     Candidate c{incidence <= cb::kExposure ? off : INFINITY,
                 (pos - origin - along * dir).norm(),
                 incidence,
                 along,
                 k,
-                dir};
+                dir,
+                face};
     if (!best || std::tie(c.off, c.miss) < std::tie(best->off, best->miss))
       best = c;
   }
@@ -508,6 +515,10 @@ std::optional<Json> Scorer::judge(double t) {
                                                   : Json(nullptr)},
               {"incidence_deg", cb::rounded(b.incidence * 180 / cb::kPi, 1)},
               {"range_m", cb::rounded(b.range, 3)}};
+  if (b.face) {
+    out["panel_right_m"] = b.face->x();
+    out["panel_up_m"] = b.face->y();
+  }
   out.update(aim_split(t, origin, b.dir, b.k));
   out["muzzle_velocity_m_s"] = {inherited.x(), inherited.y(), inherited.z()};
   out.update(pose_errors(t));
@@ -626,6 +637,11 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
               {"panel", impact.panel ? Json(*impact.panel) : Json(nullptr)},
               {"eligible", impact.eligible},
               {"normal_speed", impact.normal_speed}};
+  if (impact.crossing) {
+    out["crossing_panel"] = *impact.crossing_panel;
+    out["panel_right_m"] = impact.crossing->x();
+    out["panel_up_m"] = impact.crossing->y();
+  }
   out.update(pose_errors(launch));
   if (shooter == "sentry")
     out.update(aim_split(launch, muzzle.block<3, 1>(0, 3),
