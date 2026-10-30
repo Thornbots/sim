@@ -19,6 +19,30 @@ harnesses expect it; this is the workspace timestamp rule's standard-interface e
 
 ## Run the tests
 
+The hosted MMM end-to-end suite runs compiled sentry firmware, the real UART
+bridge and `auto.launch.py`'s `mmm`, SLAM reset and map save service. Initialize
+MCBV3 and its build tools, build the [hosted firmware](#mcb-emulator), then
+build `sim` with the matching firmware checkout present. Run in a fresh,
+isolated ROS domain with no other stack:
+
+```sh
+MMM_EVIDENCE_DIR="$HOME/mmm-$(date +%Y%m%d-%H%M%S)" ros2 run sim mmm_suite
+```
+
+Use a Linux filesystem for this directory; Mac shared mounts can reject the
+standard library's file copy during map finalization. Archive the directory
+before removing a disposable container. The suite keeps frame traces, process
+logs, measurements and map bundles. It covers telemetry load, bidirectional
+drop/CRC faults, UART backpressure, bridge/firmware restarts, the sole PING
+publisher, mapping restrictions, setup/save failures and validated saving.
+The private hosted control socket supplies start/save and DBUS sticks without
+operator bindings. The hardware build excludes it; firmware unit tests check
+that boundary. LED indication is inferred from Ready state, while beep timing
+comes from the firmware's Ready timer. Hosted loop execution time does not
+represent board scheduling. This suite applies firmware velocity setpoints to
+Gazebo's velocity controller; it does not measure the CAN motor plant or board
+drive dynamics. Motor-force tests remain in the MCB physics suite.
+
 No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
 
 Build first on a fresh container (see Build). Each test starts its own sim and
