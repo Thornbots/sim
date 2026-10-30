@@ -145,6 +145,17 @@ TEST(MatchRoutes, CenterManeuversClearField) {
     assert_clear(route::sample_match(t).position, data);
   }
 }
+TEST(MatchRoutes, CommonBootHeadingPreservesFieldIngress) {
+  for (const auto &name : {"sentry", "opponent_0", "ally_0", "opponent_1"}) {
+    const auto sample = route::sample_robot(name, 0);
+    EXPECT_DOUBLE_EQ(sample.yaw, pi / 2);
+    EXPECT_EQ(sample.position, route::routes().at(name).front());
+  }
+  EXPECT_EQ(route::routes().at("sentry").front(), (route::Point{4.625, 0}));
+  EXPECT_EQ(route::routes().at("opponent_0").front(), (route::Point{-4.625, 0}));
+  EXPECT_EQ(route::routes().at("sentry")[1], (route::Point{4.625, -2.35}));
+  EXPECT_EQ(route::routes().at("opponent_0")[1], (route::Point{-4.625, -2.35}));
+}
 TEST(MatchRoutes, FourRobotsNeverOverlap) {
   for (double t = 0; t < route::match_duration("mcb_match"); t += 0.025) {
     std::vector<std::pair<std::string, route::Point>> positions{

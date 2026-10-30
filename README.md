@@ -664,8 +664,12 @@ interior. The coarse export does not establish precise RFID zone boundaries.
 The ROS 1 launch files alongside the export are provenance; gz loads the SDF.
 
 World-coordinate spawns, drift loops, actors and map-sweep grids keep their
-field-frame coordinates. The robot spawns facing -y (`auto_explore.SPAWN_YAW`),
-and `target_driver`'s `origin_yaw` keeps its path in front of the robot.
+field-frame coordinates. Both teams boot facing +y (field yaw π/2,
+`auto_explore.SPAWN_YAW`); red starts at (-4.625, 0), blue at (4.625, 0).
+The ROS `root` remains heading-fixed at yaw zero. Match routes retain their
+field coordinates; the parked diagnostic target paths retain their -y orientation.
+See the [boot-heading verification](docs/boot-heading-2026-10-30.md) for
+hosted firmware, MMM, physics and route test results and limits.
 Route-clearance tests and match shot occlusion read every field collision
 mesh and transform directly from the SDF through `combat::load_field`.
 The corrected 2026-10-20 export restores the 2 m bar at world x = -1..1 m,
@@ -1447,8 +1451,8 @@ Per-run extracted flash, platform, script and Renode log remain in the printed
 `/tmp/mcb-type-c-*` directory. The adapter owns and shuts down its Renode process.
 Supported drive selections are `stop` and `simple`; `auto` and `external` are
 hosted fixture controls and are rejected by the board adapter.
-The Renode parked scene faces the blue team's start heading and rotates its
-target paths with it. The calibrated gyro starts at zero; the hosted fixture
+Both parked backends face the common start heading and keep the same field
+target paths. The calibrated gyro starts at zero; the hosted fixture
 can supply an arbitrary initial gyro angle directly, which the board cannot.
 `backend:=hosted` explicitly selects the faster native fixture. Driving stages
 use the firmware's `SimpleAutoDriveCommand` with either backend; they arm it

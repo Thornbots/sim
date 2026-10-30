@@ -22,7 +22,7 @@ namespace wire = sim::mcb_protocol;
 // The firmware's yaw for a target dx ahead and dy left: it turns the barrel,
 // which MCBV3's OFFSET_X_PITCH_PIVOT_TO_BARREL puts 1.9 mm left of the yaw axis.
 double aim_yaw(double dy, double dx) {
-  return std::atan2(dy, dx) + std::asin(-0.0019 / std::hypot(dx, dy));
+  return std::atan2(dy, dx) + std::asin(-0.0019 / std::hypot(dx, dy)) - hw::kStartYaw;
 }
 class McbFirmware : public testing::Test {
 protected:
@@ -138,11 +138,34 @@ TEST_F(McbFirmware, ConsumesFakeSensors) {
   const auto poses = messages<wire::Pose>(
       run(200, {}, {0.25, 0.5, 0.1, 0.2, 0.7, 0.3, 0.4, 0.1, 0.2, 0.0}));
   ASSERT_FALSE(poses.empty());
-  EXPECT_NEAR(poses.back().x, -firmware->start_x() + 0.5, 1e-5);
-  EXPECT_NEAR(poses.back().y, firmware->start_y() - 0.25, 1e-6);
-  EXPECT_NEAR(poses.back().vel_x, 0.2, 1e-6);
-  EXPECT_NEAR(poses.back().vel_y, -0.1, 1e-6);
-  EXPECT_NEAR(poses.back().head_yaw, 0.7, 0.01);
+  EXPECT_NEAR(poses.back().x, -firmware->start_x() + 0.25, 1e-5);
+  EXPECT_NEAR(poses.back().y, firmware->start_y() + 0.5, 1e-6);
+  EXPECT_NEAR(poses.back().vel_x, 0.1, 1e-6);
+  EXPECT_NEAR(poses.back().vel_y, 0.2, 1e-6);
+  EXPECT_NEAR(poses.back().head_yaw, 0.7 + hw::kStartYaw, 0.01);
+}
+TEST_F(McbFirmware, BothTeamsRoundTripFieldDisplacementVelocityAndHeading) {
+  ref.game_stage = 1;
+  for (const int id : {7, 107}) {
+    ref.robot_id = id;
+    hw::GzHardware hardware;
+    const double start = id > 100 ? firmware->start_x() : -firmware->start_x();
+    hardware.pos = {start + 0.6, firmware->start_y() - 0.3};
+    hardware.vel = {-0.2, 0.4};
+    hardware.chassis_yaw = hw::kStartYaw;
+    hardware.yaw_joint[0] = 0.2;
+    const auto readings = firmware->gz_readings(hardware, ref);
+    EXPECT_NEAR(readings[0], 0.6, 1e-12);
+    EXPECT_NEAR(readings[1], -0.3, 1e-12);
+    EXPECT_NEAR(readings[4], 0.2, 1e-12);
+    const auto poses = messages<wire::Pose>(run(200, {}, readings));
+    ASSERT_FALSE(poses.empty());
+    EXPECT_NEAR(poses.back().x, hardware.pos[0], 1e-5);
+    EXPECT_NEAR(poses.back().y, hardware.pos[1], 1e-5);
+    EXPECT_NEAR(poses.back().vel_x, hardware.vel[0], 1e-5);
+    EXPECT_NEAR(poses.back().vel_y, hardware.vel[1], 1e-5);
+    EXPECT_NEAR(poses.back().head_yaw, hw::kStartYaw + 0.2, 0.01);
+  }
 }
 TEST_F(McbFirmware, AimsAndFires) {
   const auto result = run(
@@ -258,9 +281,9 @@ TEST_F(McbFirmware, RelocalizationPreservesRawPoseAndHeldAim) {
   const auto moving = run(100, aim, {0.25, 0.5});
   const auto moving_poses = messages<wire::Pose>(moving);
   ASSERT_FALSE(moving_poses.empty());
-  EXPECT_NEAR(moving_poses.back().x, -firmware->start_x() + 0.5, 1e-6);
-  EXPECT_NEAR(moving_poses.back().y, firmware->start_y() - 0.25, 1e-6);
-  EXPECT_NEAR(moving.outputs.back().yaw, aim_yaw(1.25, 2.5), 1e-6);
+  EXPECT_NEAR(moving_poses.back().x, -firmware->start_x() + 0.25, 1e-6);
+  EXPECT_NEAR(moving_poses.back().y, firmware->start_y() + 0.5, 1e-6);
+  EXPECT_NEAR(moving.outputs.back().yaw, aim_yaw(0.5, 2.75), 1e-6);
 }
 TEST_F(McbFirmware, RejectsCorruptCv) {
   auto packet =
@@ -367,7 +390,7 @@ TEST_F(McbFirmware, ClearingTurnToHitFlagCancelsActiveHitTurn) {
   ASSERT_FALSE(hit_turn.outputs.empty());
   const double hit_yaw = 0.4 + hw::kPi / 2;
   const double encoder_quantum = 2 * hw::kPi / 8192 / sim::mcb_motor::kYawRatio;
-  EXPECT_NEAR(hit_turn.outputs.back().yaw, hit_yaw, encoder_quantum);
+  EXPECT_NEAR(hw::wrap(hit_turn.outputs.back().yaw - hit_yaw), 0, encoder_quantum);
   EXPECT_TRUE(hit_turn.shots.empty());
 
   const auto clear_target = wire::frame(
@@ -402,7 +425,7 @@ TEST_F(McbFirmware, AutoDriveAcceptsNavGoal) {
                    static_cast<float>(-firmware->start_x() + 1), -1}))
           .outputs.back();
   EXPECT_GT(output.right, 0);
-  EXPECT_GT(output.forward, 0);
+  EXPECT_LT(output.forward, 0);
   EXPECT_GT(output.spin, 1);
 }
 } // namespace
