@@ -82,7 +82,7 @@ git diff --check
   806 fire decisions. Acquisition succeeded: 1,209 states, median centre error
   0.032 m. There were zero lockstep timeouts in this clean run. Its checker
   rejected the failed suite; this is not an accepted combat result, and the
-  cause of the zero physical shots remains unresolved.
+  zero-shot result is pre-existing; see the nightly baseline below.
 - Final process check found no remaining installed nodes, gz, or ROS launch/run
   processes. The task container and its volumes were removed afterward.
 
@@ -110,3 +110,85 @@ SIGKILL fallback to stop the intentionally stalled bridge.
 Renode/board execution, other parked speed/path cells, broad localization drift
 and CV accuracy suites were not run for this change. These hosted checks do not
 establish hardware timing or combat accuracy.
+
+
+## Nightly parked baseline — round 2
+
+The unchanged workspace `origin/nightly` at
+`bce1754696ff9376491be081221577e0fb4792d2` reproduces zero counted physical
+shots. This failure predates the common +y heading change. Both baseline runs
+failed their native log checks; neither is accepted as a combat accuracy result.
+
+Exact relevant workspace gitlinks (not the package branches' moving heads):
+
+- sim: `38b886865ae795d4118e2ffd62374983a1e50910`
+- firmware/MCBV3: `143b63f601b5eab2243c13acf5a891aa6e4e3df0`
+- thornbots_pkg: `f0e1756b7eb69e5649dfad4b79911c3dabce14df`
+- sentry_localization: `1bb9a8524f0fc1e8e57e765b3b295e169a1abf6b`
+- ros2_dji_serial_bridge: `3abf41ce0a96adc7ded76a1ca6adccaa3db549b9`
+
+The detached baseline worktree had every workspace submodule checked out at its
+nightly gitlink, with recursive firmware dependencies initialized. All packages
+up to sim and the checked-out hosted firmware were built in own container
+`isaac-agent-parked-nightly`, capped at eight CPUs, ROS domain 135, private
+partition `agent-parked-nightly-135`. The smoke check passed, verified the local
+sim/operator/localization overlays, NVIDIA libraries, and an empty ROS graph.
+No display was available, matching round 1. No builds overlapped measurements.
+Raw host evidence, including all pins, setup logs and launch/stack logs, is at
+`/tmp/parked-nightly-evidence`.
+
+Both runs used the identical command, changing only the evidence directory:
+
+```sh
+src/sim/tools/run_suite.sh mcb_parked backend:=hosted speeds:=0 paths:=lateral log_dir:=/evidence/parked-baseline
+src/sim/tools/run_suite.sh mcb_parked backend:=hosted speeds:=0 paths:=lateral log_dir:=/evidence/parked-repeat
+```
+
+- Nightly baseline: 820 fire decisions, 0 physical shots, 0 physical hits;
+  1,230 acquired states, median centre error 0.039 m, zero lockstep timeouts;
+  failed in 33.27 s.
+- Nightly repeat: 799 fire decisions, 0 physical shots, 0 physical hits;
+  1,199 acquired states, median centre error 0.043 m, zero lockstep timeouts;
+  failed in 34.21 s. A passive 100 Hz indexer-motor subscriber was added only
+  to this repeat; the sources and launch settings were unchanged.
+- Heading branch (round 1, sim `ebcb1d8`, firmware `d2e8294`): 806 fire decisions,
+  0 physical shots, 0 physical hits; 1,209 acquired states, median centre error
+  0.032 m, zero lockstep timeouts; failed in 32.22 s. All three runs report
+  fire-decision hit rate 1.0, which is separate from physical-shot scoring.
+
+### Diagnosis and scope
+
+The likely gate is the simulated chamber-exit counter, rather than an aim-angle
+comparison. `ProjectileExit::update` in
+`include/sim/mcb_motor.hpp` arms only after ten consecutive 1 ms updates with
+at most two encoder counts of travel, at chamber phase 0.20 ± 0.10. It counts
+one subsequent forward feed, then requires another rest to rearm. The plugin
+publishes physical shots solely from this counter in
+`src/mcb_firmware_system.cpp`; hosted firmware indexing requests alone are not
+physical exits.
+
+The repeat's `motors-repeat.jsonl` records continuous indexer travel during
+scoring: from sim time 16 to 29 s, 1,300 samples cover about 194.87 chamber
+increments, with indexer shaft speed between -667.78 and -62.80 rad/s. The
+indexer is therefore moving despite zero scored exits. Continuous production
+fire requests plausibly prevent the rest required to rearm the counter; the
+100 Hz trace is diagnostic evidence, not an exact 1 ms replay of its state.
+The existing `ChamberExitFollowsEachShotRequestByTheTimedLatency` firmware/plant
+test exercises requests spaced 500 ms apart, which allows settling and does
+not cover this continuous cadence.
+
+Firmware `AutoAimAndFireCommand::execute` applies the boot yaw to its aim
+setpoint but has no yaw-error firing gate. It requests indexing when targeting,
+shot timing, game state and the FIRE flag allow it; `IndexerSubsystem::canShoot`
+checks motor availability, heat, referee power, beam state and cooldown.
+These checks and the chamber-exit implementation are unchanged by the heading
+PR. This is a diagnosis of the pre-existing fixture behavior, not a claim that
+hosted combat accuracy or real hardware firing has passed.
+
+No runtime source, acceptance floor or baseline was changed in round 2.
+Physics/MMM/drive/match/registered sim/firmware suites were not rerun: the
+regression-only fix path was unnecessary, and this update changes only the
+record. Host Python 3.12 quality, actionlint and whitespace checks passed for
+the documentation update and workspace pin. Final process checks found only
+the ROS CLI daemon; the task container and all three volumes were removed.
+No physical robot, Renode run, merge, Mac or Colima was used.
