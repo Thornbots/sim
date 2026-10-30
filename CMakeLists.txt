@@ -197,7 +197,7 @@ target_include_directories(localization_suite PRIVATE include)
 target_link_libraries(localization_suite suite_support GTest::gtest
   gz-transport::core gz-msgs::core)
 ament_target_dependencies(localization_suite rclcpp diagnostic_msgs geometry_msgs
-  nav_msgs sensor_msgs rcl_interfaces std_srvs tf2_ros)
+  nav_msgs sensor_msgs rcl_interfaces std_msgs std_srvs tf2_ros)
 install(TARGETS localization_suite DESTINATION lib/${PROJECT_NAME})
 
 add_executable(cv_head_aim src/cv_head_aim.cpp)
