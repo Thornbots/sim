@@ -7,6 +7,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and limitations under the License.
 #include <sys/socket.h>
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -64,8 +65,9 @@ protected:
   size_t telemetryFrames[2] = {};
   std::map<int, double> pending[2];
   std::map<int, std::vector<double>> latencies[2];
-  std::map<int, double> rosPending;
-  std::map<int, std::vector<double>> rosLatencies;
+  // Even PINGs by publisher source time; echoes by (source, receipt) system ns.
+  std::map<int, std::vector<int64_t>> rosRequests;
+  std::map<int, std::vector<std::pair<int64_t, int64_t>>> rosEchoes;
   std::vector<std::pair<int, double>> firmwareAcks;
   std::vector<double> loop[2];
   std::vector<double> periods[2];
@@ -111,16 +113,20 @@ protected:
       "/dji_serial_bridge/ref_sys", rclcpp::SensorDataQoS(), [&](dji_serial_bridge::msg::RefSysStatus::ConstSharedPtr) {
         ++refCount;
       }));
+    // The two PING topics have different publishers, so an echo can be taken
+    // before its request; pairing uses publisher source time, not callback order.
     subscriptions.push_back(node->create_subscription<dji_serial_bridge::msg::Ping>(
-      "/dji_serial_bridge/ping_to_mcb", 10, [&](dji_serial_bridge::msg::Ping::ConstSharedPtr m) {
-        if (m->number % 2 == 0) rosPending[m->number] = seconds();
+      "/dji_serial_bridge/ping_to_mcb", 10,
+      [&](dji_serial_bridge::msg::Ping::ConstSharedPtr m, const rclcpp::MessageInfo &info) {
+        if (m->number % 2 == 0)
+          rosRequests[m->number].push_back(info.get_rmw_message_info().source_timestamp);
       }));
     subscriptions.push_back(node->create_subscription<dji_serial_bridge::msg::Ping>(
-      "/dji_serial_bridge/ping_from_mcb", 10, [&](dji_serial_bridge::msg::Ping::ConstSharedPtr m) {
-        if (rosPending.count(m->number)) {
-          rosLatencies[m->number].push_back(seconds() - rosPending[m->number]);
-          rosPending.erase(m->number);
-        }
+      "/dji_serial_bridge/ping_from_mcb", 10,
+      [&](dji_serial_bridge::msg::Ping::ConstSharedPtr m, const rclcpp::MessageInfo &info) {
+        const int64_t received = std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::system_clock::now().time_since_epoch()).count();
+        rosEchoes[m->number].emplace_back(info.get_rmw_message_info().source_timestamp, received);
       }));
     subscriptions.push_back(node->create_subscription<nav_msgs::msg::Odometry>(
       "/odom", 10, [&](nav_msgs::msg::Odometry::ConstSharedPtr m) { rawOdom = *m; }));
@@ -348,12 +354,35 @@ protected:
     report["telemetry_ref_sys"] = refCount;
     report["state_transitions_since_firmware_boot"] = status.transitions;
     report["simulated_control_period_ms"] = 1;
-    for (const auto &[number, samples] : rosLatencies) {
+    for (const auto &[number, samples] : rosRoundTrips()) {
       if (samples.empty()) continue;
       const auto maximum = 1000 * *std::max_element(samples.begin(), samples.end());
       report["ros_round_trip_max_ms"][std::to_string(number)] = maximum;
       EXPECT_LT(maximum, 100.0);
     }
+  }
+
+  // Each echo answers the latest even request published before it, once;
+  // later echoes of an answered request (the final leg's repeat) are ignored.
+  std::map<int, std::vector<double>> rosRoundTrips() const {
+    std::map<int, std::vector<double>> result;
+    for (const auto &[number, echoes] : rosEchoes) {
+      if (!rosRequests.count(number)) continue;
+      auto requests = rosRequests.at(number);
+      std::sort(requests.begin(), requests.end());
+      auto ordered = echoes;
+      std::sort(ordered.begin(), ordered.end());
+      std::vector<bool> answered(requests.size(), false);
+      for (const auto &[source, received] : ordered) {
+        const auto after = std::lower_bound(requests.begin(), requests.end(), source);
+        if (after == requests.begin()) continue;
+        const auto index = static_cast<size_t>(after - requests.begin()) - 1;
+        if (answered[index]) continue;
+        answered[index] = true;
+        result[number].push_back(1e-9 * static_cast<double>(received - requests[index]));
+      }
+    }
+    return result;
   }
 };
 
