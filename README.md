@@ -43,6 +43,21 @@ represent board scheduling. This suite applies firmware velocity setpoints to
 Gazebo's velocity controller; it does not measure the CAN motor plant or board
 drive dynamics. Motor-force tests remain in the MCB physics suite.
 
+The `BothTeams/TeamBoot.*` cases use the real firmware/bridge and Gazebo scans
+with REF_SYS held at the UART relay. They assert AMCL is absent through missing
+and invalid team data, then release the real team frame and check raw `/odom`
+near zero, `/localization/odom` near the red/blue field start, and the absolute
+wire RELOCALIZE within the relay's 0.05 m threshold with rf2o/EKF enabled.
+They drop the first RELOCALIZE and require a later absolute retry to unlock
+actual firmware navigation. A goal at that fix must command no translation;
+a displaced goal must drive. Separate both-team mapping cases check the first
+published map pose is `(0, 0)` while navigation keeps its field offset. Run these cases
+with a fresh evidence directory:
+
+```sh
+MMM_EVIDENCE_DIR=/tmp/team-boot-evidence ros2 run sim mmm_suite --gtest_filter='BothTeams/TeamBoot.*'
+```
+
 No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
 
 Build first on a fresh container (see Build). Each test starts its own sim and
@@ -646,7 +661,11 @@ comments can stay short. Each heading names a file.
 ### The world frame
 
 The gz world is the field frame (REP-105, (0, 0) at the field centre, x
-along the 12 m toward blue's base), as are `odom`, `map` and the saved maps.
+along the 12 m toward blue's base). Raw `odom` has the same axes but its
+origin is the robot's boot position; it is not field-centred. Team initialization
+seeds field-centred ROS navigation; the first absolute RELOCALIZE brings the
+MCB's navigation coordinates into that frame. Saved field maps use the world frame; blank-map SLAM starts its
+`map` at (0, 0) at boot, including when spawned at a team start.
 `ARCC_Field_2026.sdf` uses the coarse Onshape export in
 `world/real_field_assmbly/meshes/`: `Field.stl` (8,550 triangles) and
 `CenterMarker.stl` (12 triangles), each for visual and collision geometry.
@@ -666,8 +685,20 @@ The ROS 1 launch files alongside the export are provenance; gz loads the SDF.
 World-coordinate spawns, drift loops, actors and map-sweep grids keep their
 field-frame coordinates. Both teams boot facing +y (field yaw π/2,
 `auto_explore.SPAWN_YAW`); red starts at (-4.625, 0), blue at (4.625, 0).
-The ROS `root` remains heading-fixed at yaw zero. Match routes retain their
-field coordinates; the parked diagnostic target paths retain their -y orientation.
+The ROS `root` remains heading-fixed at yaw zero. Both raw MCB POSE and
+`pose_emulator` start at (0, 0); displacement and velocity retain the field
+axes with no team rotation. RELOCALIZE changes only the MCB navigation offset,
+which starts at zero. Autonomous navigation driving waits for that first
+absolute fix; aiming continues to use raw odometry. AMCL waits for a valid MCB
+REF_SYS team before it is constructed and seeded, including in simulation.
+The pose-only fixture supplies no referee data: its caller must supply a
+valid fixture REF_SYS when testing AMCL.
+
+All MCB E2E stages, including the parked diagnostic, spawn at blue's field
+start so referee-based AMCL seeding matches the world. Match routes retain
+their field coordinates; parked target paths retain their field positions and
+-y orientation. Historical parked scores at the former world-centre shooter
+position do not validate this placement.
 See the [boot-heading verification](docs/boot-heading-2026-10-30.md) for
 hosted firmware, MMM, physics and route test results and limits.
 Route-clearance tests and match shot occlusion read every field collision
@@ -845,8 +876,10 @@ suite.
 alone. Dated measurements below retain the frame names used when those runs
 were collected under the previous architecture.
 
-`mapping` starts slam_toolbox on a blank map (`load_map:=false`) at spawn,
-the world origin, so its `map` frame is the world's. Like `none`, it scores
+`mapping` starts slam_toolbox on a blank map (`load_map:=false`) at map (0, 0).
+This suite spawns mapping/none at world (0, 0), so their comparison frames
+coincide. Its AMCL fixture spawns at blue's field start and publishes an
+explicit valid blue REF_SYS; it does not bypass the production team gate. Like `none`, it scores
 `map->root` against `/sim/raw_odom` in `noise_correction` and the
 cornering-loop scenarios; the rest watch `map->nav_odom` as under `slam`. Each
 scenario's stack builds a fresh map: nothing carries between scenarios.
@@ -1054,6 +1087,8 @@ registrations in a ~35s run, so `jerk_with_motion`'s post-drive
 
 ### Pose emulator: odom noise model
 
+Position follows the [boot-relative frame contract](#the-world-frame). Its
+noise reset clears drift/slip state while preserving the boot origin.
 It sends what the MCB sends: `head_yaw` in the world (gz's joint is relative
 to the chassis), velocity in the world (gz's twist is in the chassis frame),
 and the chassis's heading as `chassis_yaw`, which the firmware doesn't send
@@ -1719,8 +1754,8 @@ the tracker read 1.6-1.9 m/s for the still target (T17).
 ros2 launch sim e2e.launch.py stage:=mcb_drive
 ```
 
-Our sentry starts at blue's provisional firmware spawn `(4.625, 0)`,
-facing red; the opponent starts at `(-4.625, 0)`. After bring-up the scorer
+The sentry and opponent use the [team starts and boot heading](#the-world-frame).
+After bring-up the scorer
 arms the firmware's own `SimpleAutoDriveCommand` (the sentry's ARCC rough
 route). The selected command generates its waypoints, translations and spin
 requests; its own controller emits CAN motor commands applied as forces in gz.

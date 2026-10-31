@@ -25,6 +25,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "sim/mcb_sensors.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
 class PoseEmulator : public rclcpp::Node {
@@ -192,6 +193,7 @@ class PoseEmulator : public rclcpp::Node {
   void on_odom(const nav_msgs::msg::Odometry & msg) {
     const double true_x = msg.pose.pose.position.x;
     const double true_y = msg.pose.pose.position.y;
+    boot_origin_.observe(true_x, true_y);
     true_x_ = true_x;
     true_y_ = true_y;
     const double slip_ratio = get_parameter("odom_slip_ratio").as_double();
@@ -237,14 +239,15 @@ class PoseEmulator : public rclcpp::Node {
       vel_y *= 1.0 - slip_ratio;
     }
     if (odom_stuck_) {
-      x = y = vel_x = vel_y = 0.0;
+      vel_x = vel_y = 0.0;
     }
 
     dji_serial_bridge::msg::RobotPose pose;
     pose.header.stamp = msg.header.stamp;
     pose.header.frame_id = "odom";
-    pose.x = x;
-    pose.y = y;
+    const auto raw = boot_origin_.relative(x, y);
+    pose.x = odom_stuck_ ? 0.0 : raw[0];
+    pose.y = odom_stuck_ ? 0.0 : raw[1];
     pose.vel_x = vel_x;
     pose.vel_y = vel_y;
     const auto [head_yaw, head_pitch] = head_at(msg.header.stamp);
@@ -260,6 +263,8 @@ class PoseEmulator : public rclcpp::Node {
   std::deque<JointSample> joint_hist_;
   double drift_x_{0.0}, drift_y_{0.0};
   double true_x_{0.0}, true_y_{0.0}, true_yaw_{0.0};
+  // Noise reset preserves the boot origin, as RELOCALIZE preserves raw MCB odometry.
+  sim::BootTranslation boot_origin_;
   std::optional<double> slipped_x_, slipped_y_, prev_true_x_, prev_true_y_;
   bool odom_stuck_{false};
   std::mt19937_64 random_;

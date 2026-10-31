@@ -61,6 +61,8 @@ def _stack(context):
     # foxglove: this launch's own bridge (_foxglove) covers the whole run.
     sim_args = {'gui': gui, 'rviz': gui, 'foxglove': 'false',
                 'real_time_factor': config['real_time_factor']}
+    if config['backend'] == 'amcl':
+        sim_args['x'] = '4.625'  # The suite's referee fixture represents blue.
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -71,8 +73,7 @@ def _stack(context):
     # No CV: nothing here scores it, and it costs CPU the stack under test needs.
     robot_args = {'real_hardware': 'false', 'localization_mode': backend,
                   'use_rf2o': config['use_rf2o'],
-                  # mapping builds its map from a blank one at spawn, so its
-                  # map frame matches the world's (drift_harness.TRUTH_SCORED).
+                  # Blank-map SLAM starts at its own (0, 0) boot origin.
                   'load_map': 'false' if backend == 'mapping' else 'true',
                   'enable_target_tracker': 'false', 'enable_target_selector': 'false',
                   'enable_cv_target_bridge': 'false'}

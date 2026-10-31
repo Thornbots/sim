@@ -102,7 +102,7 @@ TEST_F(McbFirmware, IndexerResumesWhenSetupBecomesInGame) {
   run(9000);
   ref.game_stage = 4;
   const auto target = wire::frame(wire::CvTarget{
-      static_cast<float>(firmware->start_x() - 3), 1, .2F, 100, 1});
+      -3.0F, 1, .2F, 100, 1});
   const auto result = run(500, target);
   ASSERT_FALSE(result.shots.empty()) << "the firmware never requested indexing";
   EXPECT_TRUE(std::any_of(result.outputs.begin(), result.outputs.end(),
@@ -116,8 +116,8 @@ TEST_F(McbFirmware, SendsPoseRefereeAndEchoesPing) {
   const auto refs = messages<wire::RefSys>(result);
   ASSERT_GE(poses.size(), 85U);
   ASSERT_GE(refs.size(), 9U);
-  EXPECT_NEAR(poses.back().x, -firmware->start_x(),
-              std::abs(firmware->start_x()) * 1e-6);
+  EXPECT_NEAR(poses.back().x, 0.0, 1e-6);
+  EXPECT_NEAR(poses.back().y, 0.0, 1e-6);
   EXPECT_EQ(refs.back().robot_id, 7);
   EXPECT_EQ(refs.back().robot_hp, 400);
   EXPECT_FALSE(messages<wire::Ping>(result).empty());
@@ -138,8 +138,8 @@ TEST_F(McbFirmware, ConsumesFakeSensors) {
   const auto poses = messages<wire::Pose>(
       run(200, {}, {0.25, 0.5, 0.1, 0.2, 0.7, 0.3, 0.4, 0.1, 0.2, 0.0}));
   ASSERT_FALSE(poses.empty());
-  EXPECT_NEAR(poses.back().x, -firmware->start_x() + 0.25, 1e-5);
-  EXPECT_NEAR(poses.back().y, firmware->start_y() + 0.5, 1e-6);
+  EXPECT_NEAR(poses.back().x, 0.25, 1e-5);
+  EXPECT_NEAR(poses.back().y, 0.5, 1e-6);
   EXPECT_NEAR(poses.back().vel_x, 0.1, 1e-6);
   EXPECT_NEAR(poses.back().vel_y, 0.2, 1e-6);
   EXPECT_NEAR(poses.back().head_yaw, 0.7 + hw::kStartYaw, 0.01);
@@ -160,8 +160,8 @@ TEST_F(McbFirmware, BothTeamsRoundTripFieldDisplacementVelocityAndHeading) {
     EXPECT_NEAR(readings[4], 0.2, 1e-12);
     const auto poses = messages<wire::Pose>(run(200, {}, readings));
     ASSERT_FALSE(poses.empty());
-    EXPECT_NEAR(poses.back().x, hardware.pos[0], 1e-5);
-    EXPECT_NEAR(poses.back().y, hardware.pos[1], 1e-5);
+    EXPECT_NEAR(poses.back().x, 0.6, 1e-5);
+    EXPECT_NEAR(poses.back().y, -0.3, 1e-5);
     EXPECT_NEAR(poses.back().vel_x, hardware.vel[0], 1e-5);
     EXPECT_NEAR(poses.back().vel_y, hardware.vel[1], 1e-5);
     EXPECT_NEAR(poses.back().head_yaw, hw::kStartYaw + 0.2, 0.01);
@@ -170,7 +170,7 @@ TEST_F(McbFirmware, BothTeamsRoundTripFieldDisplacementVelocityAndHeading) {
 TEST_F(McbFirmware, AimsAndFires) {
   const auto result = run(
       1000,
-      wire::frame(wire::CvTarget{static_cast<float>(-firmware->start_x() + 3),
+      wire::frame(wire::CvTarget{3.0F,
                                  1, 0.2F, 100, wire::kCvTargetFlagFire}));
   EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
   EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
@@ -178,7 +178,7 @@ TEST_F(McbFirmware, AimsAndFires) {
 }
 TEST_F(McbFirmware, HoldsNonFiringAimAfterTheTargetExpires) {
   const auto packet = wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 0, 0});
+      3.0F, 1, 0.2F, 0, 0});
   ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
             static_cast<ssize_t>(packet.size()));
   const auto result = run(500);
@@ -189,7 +189,7 @@ TEST_F(McbFirmware, ZeroDelayFireRequestsAShotImmediately) {
   run(200);  // Let referee, motor feedback and command scheduling become ready.
   const auto start = firmware->time_ms();
   const auto result = run(100, wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 0, wire::kCvTargetFlagFire}));
+      3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire}));
   ASSERT_FALSE(result.shots.empty());
   EXPECT_LT(result.shots.front() - start, 10U);
 }
@@ -198,7 +198,7 @@ TEST_F(McbFirmware, FireDelayAccountsForItsNativeIndexerLatency) {
   const auto start = firmware->time_ms();
   // Sent once: each new aim frame restarts the pending request.
   const auto packet = wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 150, wire::kCvTargetFlagFire});
+      3.0F, 1, 0.2F, 150, wire::kCvTargetFlagFire});
   ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
             static_cast<ssize_t>(packet.size()));
   const auto result = run(200);
@@ -211,7 +211,7 @@ TEST_F(McbFirmware, ANewerAimDoesNotCancelAPendingShot) {
   run(200);
   const auto send = [&](uint16_t delay_ms, uint8_t flags) {
     const auto packet = wire::frame(wire::CvTarget{
-        static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, delay_ms, flags});
+        3.0F, 1, 0.2F, delay_ms, flags});
     ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
               static_cast<ssize_t>(packet.size()));
   };
@@ -230,7 +230,7 @@ TEST_F(McbFirmware, ChamberExitFollowsEachShotRequestByTheTimedLatency) {
   const std::array<double, 10> readings{};
   std::vector<uint32_t> requested, exited;
   const auto packet = wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 0, wire::kCvTargetFlagFire});
+      3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire});
   for (int ms = 0; ms < 4600; ++ms) {
     if (ms >= 3000 && (ms - 3000) % 500 == 0) {  // three single shots, settling between
       ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
@@ -269,20 +269,20 @@ TEST_F(McbFirmware, PhysicalCanSpeedChangesFirmwareMotorOutputs) {
 }
 TEST_F(McbFirmware, RelocalizationPreservesRawPoseAndHeldAim) {
   const auto aim = wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 0, 0});
+      3.0F, 1, 0.2F, 0, 0});
   const auto before = run(200, aim);
   const auto after = run(100, wire::frame(wire::Relocalize{1.25F, -0.75F}));
   const auto poses = messages<wire::Pose>(after);
   ASSERT_FALSE(poses.empty());
-  EXPECT_NEAR(poses.back().x, -firmware->start_x(), 1e-6);
-  EXPECT_NEAR(poses.back().y, firmware->start_y(), 1e-6);
+  EXPECT_NEAR(poses.back().x, 0.0, 1e-6);
+  EXPECT_NEAR(poses.back().y, 0.0, 1e-6);
   EXPECT_NEAR(after.outputs.back().yaw, before.outputs.back().yaw, 1e-6);
   EXPECT_NEAR(after.outputs.back().pitch, before.outputs.back().pitch, 1e-6);
   const auto moving = run(100, aim, {0.25, 0.5});
   const auto moving_poses = messages<wire::Pose>(moving);
   ASSERT_FALSE(moving_poses.empty());
-  EXPECT_NEAR(moving_poses.back().x, -firmware->start_x() + 0.25, 1e-6);
-  EXPECT_NEAR(moving_poses.back().y, firmware->start_y() + 0.5, 1e-6);
+  EXPECT_NEAR(moving_poses.back().x, 0.25, 1e-6);
+  EXPECT_NEAR(moving_poses.back().y, 0.5, 1e-6);
   EXPECT_NEAR(moving.outputs.back().yaw, aim_yaw(0.5, 2.75), 1e-6);
 }
 TEST_F(McbFirmware, RejectsCorruptCv) {
@@ -375,7 +375,7 @@ TEST_F(McbFirmware, LatchesLatestHitUntilRefSysAndConsumesIt) {
 }
 TEST_F(McbFirmware, ClearingTurnToHitFlagCancelsActiveHitTurn) {
   run(200);
-  const auto target_x = static_cast<float>(-firmware->start_x() + 3);
+  const auto target_x = 3.0F;
   const auto patrol = wire::kCvTargetFlagPatrol |
                       wire::kCvTargetFlagTurnToHit;
   const auto initial_target = wire::frame(
@@ -408,8 +408,13 @@ TEST_F(McbFirmware, StageBlocksFire) {
                   .shots.empty());
 }
 TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
-  firmware->set_mode(1);
   ref.game_stage = 0;
+  firmware->set_mode(1);
+  const auto waiting = run(300).outputs.back();
+  EXPECT_NEAR(std::hypot(waiting.right, waiting.forward), 0.0, 1e-6);
+  EXPECT_NEAR(waiting.spin, 0.0, 1e-6);
+  run(100, wire::frame(wire::Relocalize{
+      static_cast<float>(-firmware->start_x()), 0}));
   auto output = run(200).outputs.back();
   EXPECT_LT(std::hypot(output.right, output.forward), 0.05);
   EXPECT_LT(output.spin, -1);
@@ -418,8 +423,15 @@ TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
   EXPECT_GT(std::hypot(output.right, output.forward), 0.1);
   EXPECT_LT(output.spin, -1);
 }
-TEST_F(McbFirmware, AutoDriveAcceptsNavGoal) {
+TEST_F(McbFirmware, AutoDriveWaitsForAbsoluteRelocalization) {
   firmware->set_mode(2);
+  const auto goal = wire::frame(wire::NavGoal{
+      static_cast<float>(-firmware->start_x() + 1), -1});
+  const auto waiting = run(300, goal).outputs.back();
+  EXPECT_NEAR(waiting.right, 0.0, 1e-6);
+  EXPECT_NEAR(waiting.forward, 0.0, 1e-6);
+  run(100, wire::frame(wire::Relocalize{
+      static_cast<float>(-firmware->start_x()), 0}));
   const auto output =
       run(300, wire::frame(wire::NavGoal{
                    static_cast<float>(-firmware->start_x() + 1), -1}))
@@ -434,7 +446,7 @@ class McbPatrolFlag : public McbFirmware, public testing::WithParamInterface<uin
 TEST_P(McbPatrolFlag, ParsesAimAndOnlyFireBitRequestsShots) {
   run(200);
   const auto result = run(300, wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 100, GetParam()}));
+      3.0F, 1, 0.2F, 100, GetParam()}));
   EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
   EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
   EXPECT_EQ(result.shots.empty(), (GetParam() & wire::kCvTargetFlagFire) == 0);
@@ -442,7 +454,7 @@ TEST_P(McbPatrolFlag, ParsesAimAndOnlyFireBitRequestsShots) {
 TEST_P(McbPatrolFlag, PatrolAfterExpiryRequiresItsPermissionBit) {
   run(200);
   const auto aimed = run(100, wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 100, GetParam()}));
+      3.0F, 1, 0.2F, 100, GetParam()}));
   const auto expired = run(500);
   const double swing = std::abs(hw::wrap(expired.outputs.back().yaw - aimed.outputs.back().yaw));
   if (GetParam() & wire::kCvTargetFlagTypeCBasedPatrol) {
@@ -454,7 +466,7 @@ TEST_P(McbPatrolFlag, PatrolAfterExpiryRequiresItsPermissionBit) {
 TEST_P(McbPatrolFlag, DamageTurnRequiresItsPermissionBit) {
   run(200);
   const auto frame = wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 100, GetParam()});
+      3.0F, 1, 0.2F, 100, GetParam()});
   run(100, frame);
   ref.current_hp = 380;
   ref.hurt_armor_id = 1;
@@ -467,7 +479,7 @@ TEST_P(McbPatrolFlag, StageGateStillBlocksFire) {
   ref.game_stage = 0;
   run(100);  // Deliver the next periodic referee frame before asking to fire.
   const auto result = run(500, wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, 0.2F, 100, GetParam()}));
+      3.0F, 1, 0.2F, 100, GetParam()}));
   EXPECT_TRUE(result.shots.empty());
 }
 INSTANTIATE_TEST_SUITE_P(AllFlags, McbPatrolFlag, testing::Range<uint8_t>(0, 16));
@@ -498,6 +510,6 @@ TEST_F(McbFirmware, ParkedHoldHasNoPositionTarget) {
 TEST_F(McbFirmware, ImmediateFireDuringFirstLatencyIntervalDoesNotWrapTimer) {
   run(60);  // Arm the initial cooldown, still below the indexing latency.
   const auto result = run(15, wire::frame(wire::CvTarget{
-      static_cast<float>(-firmware->start_x() + 3), 1, .2F, 0, 1}));
+      3.0F, 1, .2F, 0, 1}));
   EXPECT_FALSE(result.shots.empty());
 }

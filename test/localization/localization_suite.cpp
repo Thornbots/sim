@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "dji_serial_bridge/msg/ref_sys_status.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rcl_interfaces/srv/get_parameters.hpp"
@@ -134,6 +135,8 @@ public:
                  {rclcpp::Parameter("use_sim_time", true)})),
         parent(parent_frame), child(child_frame), buffer(get_clock()),
         listener(buffer) {
+    referee = create_publisher<dji_serial_bridge::msg::RefSysStatus>(
+        "/dji_serial_bridge/ref_sys", rclcpp::SensorDataQoS());
     command = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
     scan_sub = create_subscription<sensor_msgs::msg::LaserScan>(
         "/scan", 10,
@@ -175,6 +178,17 @@ public:
   tf2_ros::Buffer buffer;
   tf2_ros::TransformListener listener;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr command;
+  rclcpp::Publisher<dji_serial_bridge::msg::RefSysStatus>::SharedPtr referee;
+  double last_referee = -1.0;
+  void publish_referee() {
+    if (!truth || now_s() - last_referee < 0.1) return;
+    dji_serial_bridge::msg::RefSysStatus msg;
+    msg.header.stamp = now();
+    msg.robot_id = 7;
+    msg.is_on_blue_team = true;
+    referee->publish(msg);
+    last_referee = now_s();
+  }
   int scan_count = 0, raw_scan_count = 0, invalid_scans = 0;
   std::optional<Point> truth;
   double truth_yaw = 0.0;
@@ -187,6 +201,7 @@ public:
     }
     const auto end = Clock::now() + std::chrono::duration<double>(seconds);
     while (rclcpp::ok() && Clock::now() < end) {
+      publish_referee();
       rclcpp::spin_some(shared_from_this());
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -199,6 +214,7 @@ public:
                                         std::max(3.0 * seconds, seconds + 5.0));
     std::optional<double> start;
     while (rclcpp::ok() && Clock::now() < end) {
+      publish_referee();
       rclcpp::spin_some(shared_from_this());
       const double t = now_s();
       if (!start && t > 0.0) {
@@ -511,6 +527,7 @@ std::unique_ptr<Stack> run_stack(bool noise,
         "sim",
         launch_command({{"run_tests", "false"},
                         {"part", "sim"},
+                        {"backend", backend},
                         {"headless", options.gui ? "false" : "true"},
                         {"real_time_factor", options.rtf}}),
         std::string(kLogDir) + "/sim.log");

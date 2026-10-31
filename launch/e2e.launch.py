@@ -61,8 +61,7 @@ def _sim(context):
     config = context.launch_configurations
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
-    spawn = ({'x': '4.625', 'y': '0.0', 'yaw': str(SPAWN_YAW)}
-             if config['stage'] in DRIVING else {})
+    spawn = {'x': '4.625', 'y': '0.0', 'yaw': str(SPAWN_YAW)}
     view = 'e2e-parked' if config['stage'] == 'mcb_parked' else 'e2e'
     share = get_package_share_directory('sim')
     return [IncludeLaunchDescription(
@@ -171,12 +170,6 @@ def generate_launch_description():
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
         parameters=[{'use_sim_time': True}])
 
-    def idle_zone(hosted_parked, field):
-        return PythonExpression([
-            str(hosted_parked), " if '", LaunchConfiguration('stage'),
-            "' == 'mcb_parked' and '", LaunchConfiguration('backend'),
-            "' == 'hosted' else ", str(field)])
-
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
@@ -187,12 +180,9 @@ def generate_launch_description():
                           'chase_settle_s': LaunchConfiguration('chase_settle_s'),
                           'chase_margin_s': LaunchConfiguration('chase_margin_s'),
                           'v_muzzle': '22.0',
-                          'zone_start_x_m': idle_zone(0.0, 4.625),
-                          'zone_start_y_m': idle_zone(-4.625, 0.0),
-                          'use_rf2o': 'true', 'load_map': 'true',
-                          'initial_x': PythonExpression([
-                              "'4.625' if '", LaunchConfiguration('stage'),
-                              "' in ", repr(DRIVING), " else '0.0'"])}.items())
+                          'zone_start_x_m': '4.625',
+                          'zone_start_y_m': '0.0',
+                          'use_rf2o': 'true', 'load_map': 'true'}.items())
 
     match_environment = Node(
         package='sim', executable='match_environment', name='match_environment', output='screen',

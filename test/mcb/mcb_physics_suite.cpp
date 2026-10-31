@@ -88,7 +88,7 @@ protected:
   }
   void aim(double yaw) {
     const auto packet = sim::mcb_protocol::frame(sim::mcb_protocol::CvTarget{
-      static_cast<float>(4.625 - 3 * std::sin(yaw)), static_cast<float>(3 * std::cos(yaw)), 0.2F, 100, 0});
+      static_cast<float>(-3 * std::sin(yaw)), static_cast<float>(3 * std::cos(yaw)), 0.2F, 100, 0});
     const double begin = rclcpp::Time(motors_.header.stamp).seconds();
     double last_sent = begin - 0.02;
     double max_speed = 0;

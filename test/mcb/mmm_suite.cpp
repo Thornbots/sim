@@ -15,11 +15,13 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <thread>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 #include "hosted/mapping_control.hpp"
 #include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "dji_serial_bridge/msg/ping.hpp"
@@ -45,7 +47,7 @@ protected:
   fs::path directory;
   std::unique_ptr<fixture::PtyLink> mcb, jetson;
   std::unique_ptr<fixture::Firmware> firmware;
-  std::unique_ptr<sim::LaunchTree> simulator, robot, bridge;
+  std::unique_ptr<sim::LaunchTree> simulator, robot, bridge, navigationRelay;
   int control[2] = {-1, -1};
   hosted::MappingStatus status{};
   fixture::Firmware::Output output{};
@@ -68,7 +70,12 @@ protected:
   std::vector<double> loop[2];
   std::vector<double> periods[2];
   size_t poseCount = 0, refCount = 0;
-  bool stall = false, driveSim = true;
+  bool stall = false, driveSim = true, holdRef = false, dropFirstFix = false;
+  size_t heldRefs = 0, fixes = 0;
+  size_t droppedFixes = 0;
+  std::optional<nav_msgs::msg::Odometry> rawOdom, navOdom;
+  std::optional<geometry_msgs::msg::PoseWithCovarianceStamped> firstMapPose;
+  std::optional<wire::Relocalize> lastFix;
   int phase = 0;
   Json report = Json::object();
   std::ofstream trace;
@@ -115,6 +122,14 @@ protected:
           rosPending.erase(m->number);
         }
       }));
+    subscriptions.push_back(node->create_subscription<nav_msgs::msg::Odometry>(
+      "/odom", 10, [&](nav_msgs::msg::Odometry::ConstSharedPtr m) { rawOdom = *m; }));
+    subscriptions.push_back(node->create_subscription<nav_msgs::msg::Odometry>(
+      "/localization/odom", 10, [&](nav_msgs::msg::Odometry::ConstSharedPtr m) { navOdom = *m; }));
+    subscriptions.push_back(node->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+      "/pose", 10, [&](geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr m) {
+        if (!firstMapPose) firstMapPose = *m;
+      }));
     buffer = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     listener = std::make_unique<tf2_ros::TransformListener>(*buffer);
     restartFirmware();
@@ -124,6 +139,7 @@ protected:
   void TearDown() override {
     summaries();
     if (drive) { drive->publish(geometry_msgs::msg::Twist{}); }
+    navigationRelay.reset();
     robot.reset();
     simulator.reset();
     bridge.reset();
@@ -176,6 +192,18 @@ protected:
     } else { bytes = jetson->read_data(); }
     for (const auto &frame : parsers[direction].feed(bytes)) {
       if (frame.msg_type == wire::kPose || frame.msg_type == wire::kRefSys) ++telemetryFrames[direction];
+      if (direction == 0 && frame.msg_type == wire::kRefSys && holdRef) {
+        ++heldRefs;
+        continue;
+      }
+      if (direction == 1 && frame.msg_type == wire::kRelocalize) {
+        if (dropFirstFix && droppedFixes == 0) {
+          ++droppedFixes;
+          continue;
+        }
+        lastFix = wire::unpack<wire::Relocalize>(frame.payload);
+        ++fixes;
+      }
       auto packet = wire::encode_frame(frame.msg_type, frame.payload);
       if (frame.msg_type == wire::kPing) {
         const int number = frame.payload.at(0);
@@ -251,15 +279,18 @@ protected:
     ASSERT_TRUE(wait([&] { return seconds() >= end; }, duration + 2));
   }
 
-  void launchStack(bool failSetup = false) {
+  void launchStack(bool failSetup = false, const std::string &backend = "mapping",
+                   bool useRf2o = false) {
     simulator = std::make_unique<sim::LaunchTree>("sim", std::vector<std::string>{
       "ros2", "launch", "sim", "sim.launch.py", "gui:=false", "rviz:=false", "foxglove:=false",
-      "pose_emulator:=false", "model:=sentry_v2", "x:=4.625", "yaw:=1.5707963267948966",
+      "pose_emulator:=false", "model:=sentry_v2",
+      std::string("x:=") + (referee.robot_id > 100 ? "4.625" : "-4.625"), "yaw:=1.5707963267948966",
       "real_time_factor:=1.0", "odom_noise_enabled:=false"}, (directory / "sim.log").string());
     robot = std::make_unique<sim::LaunchTree>("robot", std::vector<std::string>{
       "ros2", "launch", "thornbots_pkg", "auto.launch.py", "real_hardware:=false",
-      std::string("localization_mode:=") + (failSetup ? "none" : "mapping"),
-      "load_map:=false", "autosave_map:=false", "use_rf2o:=false",
+      std::string("localization_mode:=") + (failSetup ? "none" : backend),
+      std::string("load_map:=") + (backend == "amcl" ? "true" : "false"),
+      "autosave_map:=false", std::string("use_rf2o:=") + (useRf2o ? "true" : "false"),
       "mmm_room:=true", "map_save_dir:=" + (directory / "maps").string(),
       "mmm_timeout_s:=45.0", "enable_target_selector:=false", "enable_target_tracker:=false",
       "enable_cv_target_bridge:=false", "dds_transport:=udp_only"}, (directory / "robot.log").string());
@@ -271,6 +302,7 @@ protected:
     const auto root = buffer->lookupTransform("odom", "root", tf2::TimePointZero);
     EXPECT_NEAR(root.transform.rotation.z, 0.0, 1e-8);
     EXPECT_NEAR(root.transform.rotation.w, 1.0, 1e-8);
+    if (backend == "amcl") return;
     const auto publishers = node->get_publishers_info_by_topic("/dji_serial_bridge/ping_to_mcb");
     ASSERT_EQ(publishers.size(), 1U);
     EXPECT_EQ(publishers.front().node_name(), "mmm");
@@ -317,6 +349,90 @@ protected:
   }
 };
 
+class TeamBoot : public MmmSuite, public testing::WithParamInterface<int> {};
+TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
+  referee.robot_id = GetParam();
+  driveSim = false;
+  holdRef = true;
+  dropFirstFix = true;
+  navigationRelay = std::make_unique<sim::LaunchTree>("navigation-relay",
+    std::vector<std::string>{"ros2", "run", "thornbots_pkg", "mcb_relay", "--ros-args",
+      "-p", "use_sim_time:=true"}, (directory / "navigation-relay.log").string());
+  launchStack(false, "amcl", true);
+  ASSERT_FALSE(HasFatalFailure());
+  const auto hasAmcl = [&] {
+    const auto names = node->get_node_names();
+    return std::find(names.begin(), names.end(), "/amcl") != names.end();
+  };
+  ASSERT_TRUE(wait([&] { return rawOdom.has_value() && heldRefs >= 20; }));
+  auto invalidRef = node->create_publisher<dji_serial_bridge::msg::RefSysStatus>(
+    "/dji_serial_bridge/ref_sys", rclcpp::SensorDataQoS());
+  firmware->set_mode(2);
+  const auto prematureGoal = wire::frame(wire::NavGoal{1.0F, -1.0F});
+  // Continue clock/POSE delivery; an invalid ID must not unlock the team gate.
+  for (int i = 0; i < 400; ++i) {
+    if (i % 20 == 0) {
+      ASSERT_EQ(write(mcb->slave(), prematureGoal.data(), prematureGoal.size()),
+        static_cast<ssize_t>(prematureGoal.size()));
+      dji_serial_bridge::msg::RefSysStatus invalid;
+      invalid.header.stamp = node->now();
+      invalid.is_on_blue_team = GetParam() > 100;
+      invalid.robot_id = 0;
+      invalidRef->publish(invalid);
+    }
+    tick();
+    ASSERT_FALSE(hasAmcl()) << "AMCL started before the real MCB team arrived";
+    EXPECT_NEAR(output.right, 0.0, 1e-6);
+    EXPECT_NEAR(output.forward, 0.0, 1e-6);
+  }
+  EXPECT_NEAR(rawOdom->pose.pose.position.x, 0.0, 0.02);
+  EXPECT_NEAR(rawOdom->pose.pose.position.y, 0.0, 0.02);
+  EXPECT_GT(heldRefs, 0U);
+  EXPECT_EQ(fixes, 0U);
+  const auto beforeRef = refCount;
+  invalidRef.reset();
+  holdRef = false;
+  ASSERT_TRUE(wait([&] { return refCount > beforeRef && hasAmcl() && navOdom && lastFix; }, 60));
+  EXPECT_EQ(droppedFixes, 1U);
+  const double start = GetParam() > 100 ? 4.625 : -4.625;
+  const auto p = navOdom->pose.pose.position;
+  EXPECT_NEAR(p.x, start, 0.05);
+  EXPECT_NEAR(p.y, 0.0, 0.05);
+  EXPECT_LT(std::hypot(lastFix->x - p.x, lastFix->y - p.y), 0.05);
+  EXPECT_NEAR(rawOdom->pose.pose.position.x, 0.0, 0.02);
+  EXPECT_NEAR(rawOdom->pose.pose.position.y, 0.0, 0.02);
+  // A field goal at the accepted fix must stop translation in the actual MCB.
+  // With a missing/doubled offset this commands metres of unwanted travel.
+  const auto displacedGoal = wire::frame(wire::NavGoal{lastFix->x + 0.5F, lastFix->y - 0.5F});
+  ASSERT_EQ(write(mcb->slave(), displacedGoal.data(), displacedGoal.size()),
+    static_cast<ssize_t>(displacedGoal.size()));
+  dwell(0.2);
+  EXPECT_GT(std::hypot(output.right, output.forward), 0.1);
+  const auto goal = wire::frame(wire::NavGoal{lastFix->x, lastFix->y});
+  ASSERT_EQ(write(mcb->slave(), goal.data(), goal.size()), static_cast<ssize_t>(goal.size()));
+  dwell(0.2);
+  EXPECT_LT(std::hypot(output.right, output.forward), 0.05);
+  report["team_robot_id"] = GetParam();
+  report["navigation_x"] = p.x;
+  report["raw_x"] = rawOdom->pose.pose.position.x;
+  report["relocalize_x"] = lastFix->x;
+  report["held_ref_sys"] = heldRefs;
+  report["dropped_startup_fixes"] = droppedFixes;
+}
+
+TEST_P(TeamBoot, BlankMappingStartsAtMapZero) {
+  referee.robot_id = GetParam();
+  driveSim = false;
+  launchStack();
+  ASSERT_TRUE(wait([&] { return firstMapPose.has_value() && navOdom.has_value(); }));
+  EXPECT_NEAR(firstMapPose->pose.pose.position.x, 0.0, 1e-6);
+  EXPECT_NEAR(firstMapPose->pose.pose.position.y, 0.0, 1e-6);
+  EXPECT_NEAR(navOdom->pose.pose.position.x, GetParam() > 100 ? 4.625 : -4.625, 0.02);
+  report["mapping_first_map_xy"] = {firstMapPose->pose.pose.position.x,
+    firstMapPose->pose.pose.position.y};
+}
+INSTANTIATE_TEST_SUITE_P(BothTeams, TeamBoot, testing::Values(7, 107));
+
 TEST_F(MmmSuite, FullFlowLossRestartAndSave) {
   launchStack();
   const auto p0 = poseCount, r0 = refCount;
@@ -335,6 +451,11 @@ TEST_F(MmmSuite, FullFlowLossRestartAndSave) {
   ASSERT_TRUE(wait([&] { return status.state == 2; }, 60));
   const auto firstSessions = sessions();
   ASSERT_EQ(firstSessions, 1U);
+  ASSERT_TRUE(firstMapPose.has_value());
+  EXPECT_NEAR(firstMapPose->pose.pose.position.x, 0.0, 1e-6);
+  EXPECT_NEAR(firstMapPose->pose.pose.position.y, 0.0, 1e-6);
+  report["mapping_boot_map_xy"] = {firstMapPose->pose.pose.position.x,
+    firstMapPose->pose.pose.position.y};
   command(0, 1, 1);
   dwell(0.2);
   report["ready_command_speed_mps"] = std::hypot(output.right, output.forward);

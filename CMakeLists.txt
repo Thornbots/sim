@@ -196,7 +196,7 @@ target_compile_features(localization_suite PUBLIC cxx_std_17)
 target_include_directories(localization_suite PRIVATE include)
 target_link_libraries(localization_suite suite_support GTest::gtest
   gz-transport::core gz-msgs::core)
-ament_target_dependencies(localization_suite rclcpp diagnostic_msgs geometry_msgs
+ament_target_dependencies(localization_suite rclcpp diagnostic_msgs dji_serial_bridge geometry_msgs
   nav_msgs sensor_msgs rcl_interfaces std_srvs tf2_ros)
 install(TARGETS localization_suite DESTINATION lib/${PROJECT_NAME})
 
@@ -240,6 +240,7 @@ install(TARGETS match_environment DESTINATION lib/${PROJECT_NAME})
 
 add_executable(pose_emulator src/pose_emulator.cpp)
 target_compile_features(pose_emulator PUBLIC cxx_std_17)
+target_include_directories(pose_emulator PRIVATE include)
 target_link_libraries(pose_emulator gz-transport::core gz-msgs::core)
 ament_target_dependencies(pose_emulator
   dji_serial_bridge nav_msgs rclcpp sensor_msgs std_srvs)
