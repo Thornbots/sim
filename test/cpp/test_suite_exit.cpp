@@ -13,13 +13,67 @@
 // limitations under the License.
 
 #include "sim/process.hpp"
+#include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unistd.h>
 namespace {
+class ProcessStop : public testing::Test {
+protected:
+  std::filesystem::path log;
+  std::unique_ptr<sim::LaunchTree> child;
+  void SetUp() override {
+    log = std::filesystem::temp_directory_path() /
+      ("sim_stop_" + std::to_string(getpid()) + "_" +
+       testing::UnitTest::GetInstance()->current_test_info()->name() + ".log");
+    child = std::make_unique<sim::LaunchTree>(std::vector<std::string>{
+      "python3", "-c",
+      "import signal, sys, time\n"
+      "def stop(signum, frame):\n"
+      "    time.sleep(0.15)\n"
+      "    sys.exit(0)\n"
+      "signal.signal(signal.SIGINT, stop)\n"
+      "print('ready', flush=True)\n"
+      "while True: signal.pause()\n"}, log.string());
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (child->read_log().find("ready") == std::string::npos &&
+           std::chrono::steady_clock::now() < deadline) {
+      ASSERT_TRUE(child->alive());
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_NE(child->read_log().find("ready"), std::string::npos);
+  }
+  void TearDown() override {
+    child.reset();
+    std::filesystem::remove(log);
+  }
+  void expect_reaped(pid_t process) {
+    EXPECT_FALSE(child->alive());
+    errno = 0;
+    EXPECT_EQ(kill(-process, 0), -1);
+    EXPECT_EQ(errno, ESRCH);
+  }
+};
+TEST_F(ProcessStop, PumpsProgressDuringGracefulShutdown) {
+  const auto process = child->pid();
+  int calls = 0;
+  child->stop(5.0, [&] { ++calls; });
+  EXPECT_GT(calls, 1);
+  expect_reaped(process);
+}
+TEST_F(ProcessStop, ReapsChildBeforeRethrowingProgressFailure) {
+  const auto process = child->pid();
+  EXPECT_THROW(child->stop(5.0, [] { throw std::runtime_error("progress failed"); }),
+               std::runtime_error);
+  expect_reaped(process);
+}
 class SuiteExit : public testing::TestWithParam<int> {};
 TEST_P(SuiteExit, PropagatesChildResultThroughLaunchService) {
   if (GetParam() == 0) {

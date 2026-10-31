@@ -15,8 +15,22 @@
 #define SIM__MCB_SENSORS_HPP_
 #include <array>
 #include <deque>
+#include <optional>
 
 namespace sim {
+// Boot-relative translation keeps field-aligned axes; noise resets keep this origin.
+class BootTranslation {
+public:
+  void observe(double x, double y) {
+    if (!origin_) origin_ = std::array<double, 2>{x, y};
+  }
+  std::array<double, 2> relative(double x, double y) const {
+    return {x - origin_.value()[0], y - origin_.value()[1]};
+  }
+private:
+  std::optional<std::array<double, 2>> origin_;
+};
+
 // One sample per 1 ms physics tick. Matches firmware's 8 ms IMU predictor.
 class McbImuDelay {
 public:

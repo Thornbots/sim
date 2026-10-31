@@ -307,7 +307,7 @@ struct GzHardware {
 
   void maybe_boot() {
     if (!boot && seen_odom && seen_joints) {
-      boot = std::array<double, 3>{pos[0], pos[1], turret_world_yaw()};
+      boot = std::array<double, 3>{pos[0], pos[1], chassis_yaw};
       ready = true;
     }
   }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "dji_serial_bridge/msg/ref_sys_status.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rcl_interfaces/srv/get_parameters.hpp"
@@ -21,6 +22,7 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sim/gazebo_helpers.hpp"
+#include "sim/match_scenario.hpp"
 #include "sim/process.hpp"
 #include "sim/suite_timing.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -60,7 +62,7 @@ constexpr char kLogDir[] = "/tmp/localization_drift_tests";
 struct Options {
   std::string suite = "drift", backend = "amcl", scenario, rtf = "0";
   bool gui = true, rf2o = true, restart = false;
-  double speed = 4.0, accel = 20.0, spawn_yaw = sim::gazebo::kSpawnYaw;
+  double speed = 4.0, accel = 20.0, spawn_x = 0.0, spawn_yaw = sim::gazebo::kSpawnYaw;
   double slip = 0.05, drift = 0.002, seconds = 45.0;
 } options;
 std::vector<std::string> scenario_names = {
@@ -134,6 +136,11 @@ public:
                  {rclcpp::Parameter("use_sim_time", true)})),
         parent(parent_frame), child(child_frame), buffer(get_clock()),
         listener(buffer) {
+    referee = create_publisher<dji_serial_bridge::msg::RefSysStatus>(
+        "/dji_serial_bridge/ref_sys", 10);
+    // Team assignment is independent of truth and the simulated clock.
+    referee_timer = create_wall_timer(std::chrono::milliseconds(100),
+                                     [this] { publish_referee(); });
     command = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
     scan_sub = create_subscription<sensor_msgs::msg::LaserScan>(
         "/scan", 10,
@@ -175,8 +182,21 @@ public:
   tf2_ros::Buffer buffer;
   tf2_ros::TransformListener listener;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr command;
+  rclcpp::Publisher<dji_serial_bridge::msg::RefSysStatus>::SharedPtr referee;
+  double last_referee = -1.0;
+  size_t referee_count = 0;
+  void publish_referee() {
+    dji_serial_bridge::msg::RefSysStatus msg;
+    msg.header.stamp = now();
+    msg.robot_id = 7;
+    msg.is_on_blue_team = true;
+    referee->publish(msg);
+    ++referee_count;
+    last_referee = now_s();
+  }
   int scan_count = 0, raw_scan_count = 0, invalid_scans = 0;
   std::optional<Point> truth;
+  std::optional<std::vector<rclcpp::Parameter>> ingress_params;
   double truth_yaw = 0.0;
   std::optional<double> head_yaw;
   Pose yaw_range{}, head_range{};
@@ -238,17 +258,22 @@ public:
   }
   std::optional<Pose> transform(const std::string &from, const std::string &to,
                                 double timeout = 2.0) {
-    try {
-      const auto tf = buffer.lookupTransform(from, to, tf2::TimePointZero,
-                                             tf2::durationFromSec(timeout));
-      const auto &t = tf.transform.translation;
-      const auto &q = tf.transform.rotation;
-      return Pose{t.x, t.y,
-                  std::atan2(2 * (q.w * q.z + q.x * q.y),
-                             1 - 2 * (q.y * q.y + q.z * q.z))};
-    } catch (const tf2::TransformException &) {
-      return std::nullopt;
-    }
+    const auto end = Clock::now() + std::chrono::duration<double>(timeout);
+    do {
+      try {
+        const auto tf = buffer.lookupTransform(from, to, tf2::TimePointZero);
+        const auto &t = tf.transform.translation;
+        const auto &q = tf.transform.rotation;
+        return Pose{t.x, t.y,
+                    std::atan2(2 * (q.w * q.z + q.x * q.y),
+                               1 - 2 * (q.y * q.y + q.z * q.z))};
+      } catch (const tf2::TransformException &) {
+        if (Clock::now() >= end) return std::nullopt;
+        // TF's listener has its own thread; the fixture must also keep spinning.
+        spin_wall(0.01);
+      }
+    } while (rclcpp::ok());
+    return std::nullopt;
   }
   std::optional<Pose> correction(double timeout = 2.0) {
     return transform(parent, child, timeout);
@@ -392,6 +417,7 @@ private:
   }
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub, raw_scan_sub;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr truth_sub;
+  rclcpp::TimerBase::SharedPtr referee_timer;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub;
 };
 std::unique_ptr<sim::LaunchTree> sim_tree, actor_tree;
@@ -481,8 +507,22 @@ std::unique_ptr<Stack> run_stack(bool noise,
       })) {
     params.emplace_back("odom_slip_ratio", 0.02);
   }
+  const auto prepare_ingress = [&](Helper &helper) {
+    helper.ingress_params.reset();
+    if (backend != "amcl") return;
+    helper.ingress_params = params;
+    // Fault injection begins at the scenario origin, after production startup.
+    for (auto &p : params) {
+      if (p.get_name() == "odom_noise_enabled") {
+        p = rclcpp::Parameter("odom_noise_enabled", false);
+      } else if (p.get_name() == "odom_slip_ratio") {
+        p = rclcpp::Parameter("odom_slip_ratio", 0.0);
+      }
+    }
+  };
   if (options.restart) {
     stack->helper = std::make_shared<Helper>(parent, child);
+    prepare_ingress(*stack->helper);
     timing::set_sim_clock([helper = stack->helper] { return helper->now_s(); });
     for (const auto &p : params) {
       args[p.get_name()] = p.value_to_string();
@@ -505,12 +545,14 @@ std::unique_ptr<Stack> run_stack(bool noise,
   }
   timing::set_sim_clock([helper = stack->helper] { return helper->now_s(); });
   auto &helper = *stack->helper;
+  prepare_ingress(helper);
   if (!sim_tree) {
     timing::Phase phase("sim_start");
     sim_tree = std::make_unique<sim::LaunchTree>(
         "sim",
         launch_command({{"run_tests", "false"},
                         {"part", "sim"},
+                        {"backend", backend},
                         {"headless", options.gui ? "false" : "true"},
                         {"real_time_factor", options.rtf}}),
         std::string(kLogDir) + "/sim.log");
@@ -549,7 +591,8 @@ std::unique_ptr<Stack> run_stack(bool noise,
                                  "' from the world");
       }
     }
-    if (!sim::gazebo::teleport(0, 0, sim::gazebo::kZ, options.spawn_yaw)) {
+    // Raw odometry boots at this spawn; the EKF seed requires it near zero.
+    if (!sim::gazebo::teleport(options.spawn_x, 0, sim::gazebo::kZ, options.spawn_yaw)) {
       throw std::runtime_error("teleport back to spawn failed");
     }
     helper.spin_for(0.5);
@@ -586,6 +629,7 @@ std::unique_ptr<Stack> run_stack(bool noise,
                      std::to_string(robot_runs) + ".log";
     stack->robot = std::make_unique<sim::LaunchTree>(
         "robot", launch_command(args), log);
+    const auto referee_start = helper.referee_count;
     const auto end = Clock::now() + std::chrono::seconds(30);
     while (Clock::now() < end) {
       if (helper.root(0.0)) {
@@ -598,7 +642,11 @@ std::unique_ptr<Stack> run_stack(bool noise,
       return helper.transform(from, to, 0.0) ? "ready" : "missing";
     };
     throw std::runtime_error(
-        "localization startup failed after 30s: odom->root=" +
+        "localization startup failed after 30s: referee published=" +
+        std::to_string(helper.referee_count - referee_start) + " readers=" +
+        std::to_string(helper.referee->get_subscription_count()) +
+        " sim=" + fixed(helper.now_s()) + " last_referee=" + fixed(helper.last_referee) +
+        " odom->root=" +
         std::string(available("odom", "root")) + ", nav_odom->odom=" +
         available("nav_odom", "odom") + ", map->nav_odom=" +
         (backend == "none" ? "not requested" : available("map", "nav_odom")) +
@@ -615,6 +663,36 @@ bool ready(Scenario &sc, Helper &helper) {
     sc.result(
         false,
         "stack failed to reach a healthy /scan rate in time -- see log above");
+    return false;
+  }
+  if (helper.ingress_params) {
+    if (!helper.wait_correction(45.0) || !helper.root(30.0) ||
+        !helper.wait_truth()) {
+      sc.result(false, "AMCL ingress requires the seeded navigation TF and truth");
+      return false;
+    }
+    auto route = sim::match_scenario::routes().at("sentry");
+    route.push_back({0.0, 0.0});
+    for (const auto &target : route) {
+      const double dx = target[0] - (*helper.truth)[0],
+                   dy = target[1] - (*helper.truth)[1],
+                   dist = std::hypot(dx, dy);
+      if (dist > 0.03) {
+        constexpr double speed = sim::match_scenario::kRouteSpeed;
+        helper.drive(speed * dx / dist, speed * dy / dist, dist / speed,
+                     sim::match_scenario::kRouteAccel);
+      }
+      const double miss = distance(target, *helper.truth);
+      sc.log("AMCL ingress waypoint (" + fixed(target[0]) + ", " +
+             fixed(target[1]) + "): truth miss=" + fixed(miss) + " m");
+      if (miss > 0.03) {
+        sc.result(false, "AMCL ingress did not reach its waypoint within 0.03 m");
+        return false;
+      }
+    }
+    helper.set_params("/pose_emulator/set_parameters", *helper.ingress_params);
+    helper.trigger("/pose_emulator/reset");
+    helper.ingress_params.reset();
   }
   return ok;
 }
@@ -1533,6 +1611,8 @@ void parse_options(int &argc, char **argv) {
       options.speed = std::stod(value());
     } else if (arg == "--drive-accel") {
       options.accel = std::stod(value());
+    } else if (arg == "--spawn-x") {
+      options.spawn_x = std::stod(value());
     } else if (arg == "--spawn-yaw-deg") {
       options.spawn_yaw =
           sim::gazebo::kSpawnYaw + std::stod(value()) * kPi / 180;

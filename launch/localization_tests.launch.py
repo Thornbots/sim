@@ -47,6 +47,8 @@ SIM_PASSTHROUGH = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stdde
 # Head start for gz and the robot spawn before localization subscribes, so
 # its early "waiting for transform" noise stays out of the scanned logs.
 LOCALIZATION_DELAY_S = 8.0
+# The suite's AMCL referee fixture represents blue, which starts here.
+AMCL_SPAWN_X = '4.625'
 
 
 def _is_true(context, name):
@@ -61,6 +63,8 @@ def _stack(context):
     # foxglove: this launch's own bridge (_foxglove) covers the whole run.
     sim_args = {'gui': gui, 'rviz': gui, 'foxglove': 'false',
                 'real_time_factor': config['real_time_factor']}
+    if config['backend'] == 'amcl':
+        sim_args['x'] = AMCL_SPAWN_X
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -71,8 +75,7 @@ def _stack(context):
     # No CV: nothing here scores it, and it costs CPU the stack under test needs.
     robot_args = {'real_hardware': 'false', 'localization_mode': backend,
                   'use_rf2o': config['use_rf2o'],
-                  # mapping builds its map from a blank one at spawn, so its
-                  # map frame matches the world's (drift_harness.TRUTH_SCORED).
+                  # Blank-map SLAM starts at its own (0, 0) boot origin.
                   'load_map': 'false' if backend == 'mapping' else 'true',
                   'enable_target_tracker': 'false', 'enable_target_selector': 'false',
                   'enable_cv_target_bridge': 'false'}
@@ -111,6 +114,8 @@ def _tests(context):
     if suite == 'drift':
         cmd += ['--backend', config['backend'],
                 '--use-rf2o' if _is_true(context, 'use_rf2o') else '--no-use-rf2o']
+        if config['backend'] == 'amcl':
+            cmd += ['--spawn-x', AMCL_SPAWN_X]
         if config['scenario']:
             cmd += ['--scenario', config['scenario']]
     else:
@@ -120,8 +125,13 @@ def _tests(context):
     cmd += config['gtest_args'].split()
     cmd += config['pytest_args'].split()
 
+    # Keep the long-lived fixture and restarted team waiters on one UDP profile;
+    # their REF_SYS delivery must not depend on reused Fast DDS SHM channels.
+    udp_profile = os.path.join(get_package_share_directory('thornbots_pkg'),
+                               'config', 'fastdds_udp_only.xml')
     # A scenario's teardown can take ~15s before its process group is stopped.
     tests = ExecuteProcess(cmd=cmd, name='localization_tests', output='screen',
+                           additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': udp_profile},
                            sigterm_timeout='30')
     done = RegisterEventHandler(OnProcessExit(
         target_action=tests,

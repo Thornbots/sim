@@ -138,3 +138,22 @@ TEST(McbMotor, LoadedIndexerHomesAgainstAStopAndCanAdvanceForward) {
   for (int tick = 0; tick < 200; ++tick) plant.feedback({}, 0, 0, 0, .001);
   EXPECT_LT(plant.angle[2], -2 * motor::kPi);
 }
+
+TEST(BootTranslation, BothTeamsStartAtZeroAndKeepFieldDisplacementAxes) {
+  for (double start : {-4.625, 4.625}) {
+    SCOPED_TRACE(start);
+    sim::BootTranslation origin;
+    origin.observe(start, 0.0);
+    const auto boot = origin.relative(start, 0.0);
+    EXPECT_DOUBLE_EQ(boot[0], 0.0);
+    EXPECT_DOUBLE_EQ(boot[1], 0.0);
+    // Observing motion must not move the boot origin or rotate the vector.
+    origin.observe(start + 0.6, -0.3);
+    const auto moved = origin.relative(start + 0.6, -0.3);
+    EXPECT_NEAR(moved[0], 0.6, 1e-12);
+    EXPECT_NEAR(moved[1], -0.3, 1e-12);
+    const auto returned = origin.relative(start, 0.0);
+    EXPECT_DOUBLE_EQ(returned[0], 0.0);
+    EXPECT_DOUBLE_EQ(returned[1], 0.0);
+  }
+}

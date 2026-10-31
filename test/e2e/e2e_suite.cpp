@@ -31,6 +31,7 @@ public:
       "point_to_cv_target", "opponent_driver",   "target_driver",
       "mcb_emulator",       "dji_serial_bridge", "mcb_relay"};
   std::string error;
+  double parked_x = 0, parked_y = 0;
   void SetUp() override {
     try {
       for (const auto &f :
@@ -120,9 +121,11 @@ public:
                    scorer->now_s() - *scorer->target_stamp < .1;
           },
           60, "a fresh /cv/target aim point");
-      if (!scorer->driving())
+      if (!scorer->driving()) {
+        park_at_center();
         wait([&]() { return scorer->state_stamp.has_value(); }, 60,
              "a valid /cv/target_state");
+      }
     } catch (const std::exception &e) {
       error = e.what();
     }
@@ -135,13 +138,62 @@ public:
     scorer.reset();
     control.reset();
   }
+  void park_at_center() {
+    timing::Phase phase("ingress");
+    const auto trace = cb::options.log_dir + "/ingress.jsonl";
+    cb::truncate(trace);
+    // Let the stationary localization seed settle before the tight first waypoint.
+    scorer->spin_for(3);
+    control->set_params("mcb_emulator",
+                        {rclcpp::Parameter("auto_fire", false),
+                         rclcpp::Parameter("drive", std::string("simple"))});
+    const double start = scorer->now_s();
+    std::optional<double> settled;
+    bool arrived = false;
+    while (scorer->now_s() - start < 120) {
+      scorer->spin_for(.2);
+      if (launch && !launch->alive())
+        throw std::runtime_error("E2E stack exited during parked ingress");
+      auto pose = scorer->histories.at("sentry")->at(scorer->now_s() - .01);
+      if (!pose) continue;
+      const double x = pose->root(0, 3), y = pose->root(1, 3);
+      const auto previous = scorer->histories.at("sentry")->at(scorer->now_s() - .21);
+      if (!previous) continue;
+      const double speed = (pose->root.block<2, 1>(0, 3) -
+                            previous->root.block<2, 1>(0, 3)).norm() / .2;
+      cb::append_json(trace, {{"t", scorer->now_s()}, {"truth_xy", {x, y}},
+                              {"speed_m_s", speed}});
+      if (std::hypot(x, y) < 1.0 && speed < .08) {
+        if (!settled) settled = scorer->now_s();
+        if (scorer->now_s() - *settled >= 1) { arrived = true; break; }
+      } else {
+        settled.reset();
+      }
+    }
+    control->set_params("mcb_emulator",
+                        {rclcpp::Parameter("drive", std::string("stop"))});
+    if (!arrived)
+      throw std::runtime_error("firmware parked ingress did not settle at center");
+    scorer->spin_for(3);
+    const auto pose = scorer->histories.at("sentry")->at(scorer->now_s() - .01);
+    if (!pose) throw std::runtime_error("missing parked chassis truth");
+    parked_x = pose->root(0, 3);
+    parked_y = pose->root(1, 3);
+    std::cout << "Parked ingress reached center: (" << parked_x << ", "
+              << parked_y << ") after " << scorer->now_s() - start
+              << " sim seconds\n";
+    set_target(0, 0, "lateral");
+    control->set_params("mcb_emulator", {rclcpp::Parameter("auto_fire", true)});
+  }
   void set_target(double speed, double spin, const std::string &path) {
     auto p = sim::match_scenario::parked_paths().at(path);
     control->set_params("target_driver",
                         {rclcpp::Parameter("target_speed", speed),
                          rclcpp::Parameter("spin_hz", spin),
                          rclcpp::Parameter("path_angle_deg", p.path_angle_deg),
-                         rclcpp::Parameter("center_x", p.center_x),
+                         // origin_yaw=-pi/2: translate the original paths with the parked shooter.
+                         rclcpp::Parameter("center_x", p.center_x - parked_y),
+                         rclcpp::Parameter("center_y", parked_x),
                          rclcpp::Parameter("half_width", p.half_width)});
   }
   void record_score(const std::string &cell, double duration) {
