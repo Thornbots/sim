@@ -68,8 +68,8 @@ No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
 Build first on a fresh container (see Build). Each test starts its own sim and
 `thornbots_pkg` stacks, so stop anything you already have running.
 
-The localization suite runs `amcl` with the EKF by default (`backend:=` picks
-another; `auto.launch.py`'s own default is now `mapping`). Its ten scenarios
+The localization suite runs `amcl` with the EKF by default, like
+`auto.launch.py` (`backend:=` picks another). Its ten scenarios
 are listed under Notes:
 
 ```bash
