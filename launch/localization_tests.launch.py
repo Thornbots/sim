@@ -36,6 +36,7 @@ from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from sim.auto_explore import TEAM_START_X, TEAM_START_Y
 from sim.display import display_error
 from sim.suite_exit import finish_suite
 
@@ -48,7 +49,8 @@ SIM_PASSTHROUGH = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stdde
 # its early "waiting for transform" noise stays out of the scanned logs.
 LOCALIZATION_DELAY_S = 8.0
 # The suite's AMCL referee fixture represents blue, which starts here.
-AMCL_SPAWN_X = '4.625'
+AMCL_SPAWN_X = TEAM_START_X
+AMCL_SPAWN_Y = TEAM_START_Y
 
 
 def _is_true(context, name):
@@ -65,6 +67,7 @@ def _stack(context):
                 'real_time_factor': config['real_time_factor']}
     if config['backend'] == 'amcl':
         sim_args['x'] = AMCL_SPAWN_X
+        sim_args['y'] = AMCL_SPAWN_Y
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -115,7 +118,7 @@ def _tests(context):
         cmd += ['--backend', config['backend'],
                 '--use-rf2o' if _is_true(context, 'use_rf2o') else '--no-use-rf2o']
         if config['backend'] == 'amcl':
-            cmd += ['--spawn-x', AMCL_SPAWN_X]
+            cmd += ['--spawn-x', AMCL_SPAWN_X, '--spawn-y', AMCL_SPAWN_Y]
         if config['scenario']:
             cmd += ['--scenario', config['scenario']]
     else:

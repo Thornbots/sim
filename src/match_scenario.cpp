@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "sim/match_scenario.hpp"
+#include "sim/team_start.hpp"
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -20,6 +21,7 @@
 namespace sim::match_scenario {
 namespace {
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kStartX = kTeamStartX, kStartY = kTeamStartY;
 const Point center{1.55, -0.65};
 struct CenterLeg {
   std::string name;
@@ -48,9 +50,11 @@ const std::map<std::string, ParkedPath> &parked_paths() {
 }
 const std::map<std::string, Route> &routes() {
   static const std::map<std::string, Route> data = {
-      {"sentry", {{4.625, 0.0}, {4.625, -2.35}, {1.55, -2.35}, {1.55, -0.65}}},
+      // The scrim start sits 0.05 m outside the ARCC start-zone wall
+      // (x = +/-3.58), so leave straight toward center, not down the wall.
+      {"sentry", {{kStartX, kStartY}, center}},
       {"opponent_0",
-       {{-4.625, 0.0}, {-4.625, -2.35}, {-1.55, -2.35}, {-1.55, -0.65}}},
+       {{-kStartX, kStartY}, {-center[0], center[1]}}},
       {"ally_0",
        {{5.0, 0.9},
         {5.0, -2.9},

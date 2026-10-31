@@ -45,7 +45,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from sim.auto_explore import SPAWN_YAW
+from sim.auto_explore import SPAWN_YAW, TEAM_START_X, TEAM_START_Y
 from sim.display import display_error
 from sim.mcb_link import default_mcb_link
 from sim.suite_exit import finish_suite
@@ -61,7 +61,7 @@ def _sim(context):
     config = context.launch_configurations
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
-    spawn = {'x': '4.625', 'y': '0.0', 'yaw': str(SPAWN_YAW)}
+    spawn = {'x': TEAM_START_X, 'y': TEAM_START_Y, 'yaw': str(SPAWN_YAW)}
     view = 'e2e-parked' if config['stage'] == 'mcb_parked' else 'e2e'
     share = get_package_share_directory('sim')
     return [IncludeLaunchDescription(
@@ -182,10 +182,10 @@ def generate_launch_description():
                           'v_muzzle': '22.0',
                           'zone_start_x_m': PythonExpression([
                               "'0.0' if '", LaunchConfiguration('stage'),
-                              "' == 'mcb_parked' else '4.625'"]),
+                              "' == 'mcb_parked' else '", TEAM_START_X, "'"]),
                           'zone_start_y_m': PythonExpression([
                               "'-4.625' if '", LaunchConfiguration('stage'),
-                              "' == 'mcb_parked' else '0.0'"]),
+                              "' == 'mcb_parked' else '", TEAM_START_Y, "'"]),
                           'use_rf2o': 'true', 'load_map': 'true'}.items())
 
     match_environment = Node(

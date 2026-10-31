@@ -140,19 +140,20 @@ TEST(McbMotor, LoadedIndexerHomesAgainstAStopAndCanAdvanceForward) {
 }
 
 TEST(BootTranslation, BothTeamsStartAtZeroAndKeepFieldDisplacementAxes) {
-  for (double start : {-4.625, 4.625}) {
+  constexpr double kStartY = -0.426;
+  for (double start : {-3.53, 3.53}) {
     SCOPED_TRACE(start);
     sim::BootTranslation origin;
-    origin.observe(start, 0.0);
-    const auto boot = origin.relative(start, 0.0);
+    origin.observe(start, kStartY);
+    const auto boot = origin.relative(start, kStartY);
     EXPECT_DOUBLE_EQ(boot[0], 0.0);
     EXPECT_DOUBLE_EQ(boot[1], 0.0);
     // Observing motion must not move the boot origin or rotate the vector.
-    origin.observe(start + 0.6, -0.3);
-    const auto moved = origin.relative(start + 0.6, -0.3);
+    origin.observe(start + 0.6, kStartY - 0.3);
+    const auto moved = origin.relative(start + 0.6, kStartY - 0.3);
     EXPECT_NEAR(moved[0], 0.6, 1e-12);
     EXPECT_NEAR(moved[1], -0.3, 1e-12);
-    const auto returned = origin.relative(start, 0.0);
+    const auto returned = origin.relative(start, kStartY);
     EXPECT_DOUBLE_EQ(returned[0], 0.0);
     EXPECT_DOUBLE_EQ(returned[1], 0.0);
   }
