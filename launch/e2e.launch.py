@@ -74,7 +74,7 @@ def _sim(context):
                           'mcb_physics': 'true',
                           'mcb_device_link': config['mcb_device_link'],
                           'mcb_drive': 'stop',
-                          'mcb_auto_fire': 'false' if config['stage'] in DRIVING else 'true',
+                          'mcb_auto_fire': 'false',
                           'firmware_binary': config['firmware_binary'],
                           'mcb_backend': config['backend'],
                           'mcb_game_stage': '4',
@@ -180,8 +180,12 @@ def generate_launch_description():
                           'chase_settle_s': LaunchConfiguration('chase_settle_s'),
                           'chase_margin_s': LaunchConfiguration('chase_margin_s'),
                           'v_muzzle': '22.0',
-                          'zone_start_x_m': '4.625',
-                          'zone_start_y_m': '0.0',
+                          'zone_start_x_m': PythonExpression([
+                              "'0.0' if '", LaunchConfiguration('stage'),
+                              "' == 'mcb_parked' else '4.625'"]),
+                          'zone_start_y_m': PythonExpression([
+                              "'-4.625' if '", LaunchConfiguration('stage'),
+                              "' == 'mcb_parked' else '0.0'"]),
                           'use_rf2o': 'true', 'load_map': 'true'}.items())
 
     match_environment = Node(

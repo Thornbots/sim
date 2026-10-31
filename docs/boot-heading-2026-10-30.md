@@ -7,6 +7,9 @@ for both backends; its acquisition check is part of the parked run below.
 Previously Renode alone rotated those targets to π. No board accuracy result
 is inferred from the hosted run.
 
+The current parked ingress and geometry verification supersedes this report's
+parked spawn behavior: [2026-10-31 results](mcb-parked-ingress-2026-10-31.md).
+
 ## Sources and isolation
 
 - Sim branch `fix/team-boot-heading` was created at `444e8257`, then rebased onto

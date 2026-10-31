@@ -498,13 +498,14 @@ cells/segments, checker verdicts and comparison with the previous status.
 
 | Stage | Test | What it scores |
 |---|---|---|
-| `mcb_parked` (default) | `test/e2e/e2e_suite.cpp` | our robot parked, one red opponent riding `target_driver`'s path; one test per speed and path |
+| `mcb_parked` (default) | `test/e2e/e2e_suite.cpp` | firmware ingress from team start, then our robot parked against `target_driver`; one test per speed and path |
 | `mcb_drive` | `test/e2e/e2e_suite.cpp` | our robot drives spawn to center against one red sentry |
 | `mcb_match` | `test/e2e/e2e_suite.cpp` | the 2v2 center fight with ballistic shots and HP |
 
 `mcb_parked`'s field-safe paths are separate from the gz-free aiming bench:
-lateral at world y=-1.3 with x ±1.9 m, radial y=-0.9 to -1.7 m, diagonal
-centered at (0, -1.3), half-length 0.65 m. Mesh regression checks include
+relative to the settled shooter, lateral at y=-1.3 with x ±1.9 m, radial
+y=-0.9 to -1.7 m, diagonal centered at (0, -1.3), half-length 0.65 m.
+Mesh regression checks include
 a 0.40 m robot footprint. Short paths brake before reaching high requested
 speeds; labels are speed limits. Each cell fails on zero firmware shots or
 a hit rate under its floor. Shots `CVTarget.fire` asks for are logged
@@ -521,13 +522,21 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 ```
 
 `mcb_parked`'s test-owned stack brings up a parked, non-spinning opponent
-and waits for a valid `/cv/target_state` before requesting the first cell
+and arms firmware `SimpleAutoDriveCommand` through the modeled remote after
+localization bring-up and three stationary sim seconds, with aim/fire disabled.
+It waits for truth within 1 m
+of field center and translation below 0.08 m/s for one sim second (120 sim
+seconds maximum), selects remote MID to park, and lets the chassis settle
+for three seconds. `ingress.jsonl` records position and translation speed.
+The settled truth xy translates the original target paths, retaining their
+-y orientation and shooter-to-target geometry despite firmware arrival tolerance.
+It then enables aim/fire and waits for a valid `/cv/target_state` before the
+first cell
 (non-firing idle frames keep `/cv/target` fresh without one). Starting it at
 the launch's moving defaults left unscored motion dependent on wall-time
-bring-up speed. The hosted parked fixture keeps its existing -y paths and
-sets the idle-look enemy zone in that same frame; the board fixture and
-both driving stages retain the field's -x enemy zone. This changes no path,
-spawn, control law or scoring gate.
+bring-up speed. Both parked fixtures set the idle-look enemy zone toward
+their -y paths; driving stages retain the field's -x enemy zone. The parked scoring gates
+and firmware control laws are unchanged.
 Each requested cell sets its speed/spin and settles for three sim seconds
 before scoring.
 
@@ -701,9 +710,11 @@ valid fixture REF_SYS when testing AMCL.
 
 All MCB E2E stages, including the parked diagnostic, spawn at blue's field
 start so referee-based AMCL seeding matches the world. Match routes retain
-their field coordinates; parked target paths retain their field positions and
--y orientation. Historical parked scores at the former world-centre shooter
-position do not validate this placement.
+their field coordinates. The parked diagnostic drives to center before its
+cells and translates its original -y target paths with the settled shooter,
+preserving the former world-centre shooter geometry.
+The [parked ingress verification](docs/mcb-parked-ingress-2026-10-31.md)
+compares repeated hosted cells with the nightly baseline and records the board attempt.
 See the [boot-heading verification](docs/boot-heading-2026-10-30.md) for
 hosted firmware, MMM, physics and route test results and limits.
 Route-clearance tests and match shot occlusion read every field collision
@@ -1502,10 +1513,11 @@ Per-run extracted flash, platform, script and Renode log remain in the printed
 `/tmp/mcb-type-c-*` directory. The adapter owns and shuts down its Renode process.
 Supported drive selections are `stop` and `simple`; `auto` and `external` are
 hosted fixture controls and are rejected by the board adapter.
-Both parked backends face the common start heading and keep the same field
-target paths. The calibrated gyro starts at zero; the hosted fixture
+Both parked backends face the common start heading and use the same
+firmware ingress and shooter-relative target paths. The calibrated gyro starts
+at zero; the hosted fixture
 can supply an arbitrary initial gyro angle directly, which the board cannot.
-`backend:=hosted` explicitly selects the faster native fixture. Driving stages
+`backend:=hosted` explicitly selects the faster native fixture. All E2E stages
 use the firmware's `SimpleAutoDriveCommand` with either backend; they arm it
 after bring-up through the modeled remote, rather than publishing velocities.
 
