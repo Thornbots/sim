@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <exception>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
@@ -103,10 +104,11 @@ bool LaunchTree::alive() {
   }
   return true;
 }
-void LaunchTree::stop(double timeout) {
+void LaunchTree::stop(double timeout, const std::function<void()> &progress) {
   if (group_ < 0) {
     return;
   }
+  std::exception_ptr progress_error;
   if (alive()) {
     std::cout << '[' << name_ << "] sending SIGINT to process group " << group_
               << "..." << std::endl;
@@ -114,6 +116,13 @@ void LaunchTree::stop(double timeout) {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::duration<double>(timeout);
     while (alive() && std::chrono::steady_clock::now() < deadline) {
+      if (progress && !progress_error) {
+        try {
+          progress();
+        } catch (...) {
+          progress_error = std::current_exception();
+        }
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (alive()) {
@@ -134,6 +143,9 @@ void LaunchTree::stop(double timeout) {
     kill(-group_, SIGKILL);
   }
   group_ = -1;
+  if (progress_error) {
+    std::rethrow_exception(progress_error);
+  }
 }
 std::string LaunchTree::read_log() const {
   std::ifstream input(logfile_);

@@ -168,8 +168,14 @@ protected:
     status = {};
   }
 
-  void restartBridge() {
+  void stopBridge() {
+    if (!bridge) return;
+    bridge->stop(15.0, [this] { tick(); });
     bridge.reset();
+  }
+
+  void restartBridge() {
+    stopBridge();
     bridge = std::make_unique<sim::LaunchTree>("bridge", std::vector<std::string>{
       "ros2", "run", "dji_serial_bridge", "dji_serial_bridge_node", "--ros-args",
       "-p", "device:=" + jetson->link(), "-p", "debug_log:=false", "-p", "read_poll_ms:=1",
@@ -476,7 +482,7 @@ TEST_F(MmmSuite, FullFlowLossRestartAndSave) {
   EXPECT_NEAR(beepStarts[1] - beepStarts[0], 1000, 5);
   report["ready_beep_period_ms"] = beepStarts[1] - beepStarts[0];
   report["led_observation"] = "Ready state only; GPIO LED output is not observable";
-  bridge.reset();
+  stopBridge();
   command(0, 0, 1);
   dwell(1.2);
   restartBridge();
@@ -501,7 +507,7 @@ TEST_F(MmmSuite, FullFlowLossRestartAndSave) {
   EXPECT_NEAR(report["mapping_command_speed_mps"].get<double>(), 0.4, 1e-5);
   command(0);
   dwell(2);
-  bridge.reset();
+  stopBridge();
   command(3);
   dwell(1.2);
   restartBridge();

@@ -43,6 +43,11 @@ represent board scheduling. This suite applies firmware velocity setpoints to
 Gazebo's velocity controller; it does not measure the CAN motor plant or board
 drive dynamics. Motor-force tests remain in the MCB physics suite.
 
+During bridge restarts the harness keeps stepping firmware and servicing ROS
+while the owned process shuts down. This preserves control and callback timing
+through the disconnect instead of introducing a shutdown-length relay pause.
+The boot snapshot records chassis heading independently of turret motion.
+
 The `BothTeams/TeamBoot.*` cases use the real firmware/bridge and Gazebo scans
 with REF_SYS held at the UART relay. They assert AMCL is absent through missing
 and invalid team data, then release the real team frame and check raw `/odom`

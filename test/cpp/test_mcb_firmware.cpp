@@ -154,6 +154,10 @@ TEST_F(McbFirmware, BothTeamsRoundTripFieldDisplacementVelocityAndHeading) {
     hardware.vel = {-0.2, 0.4};
     hardware.chassis_yaw = hw::kStartYaw;
     hardware.yaw_joint[0] = 0.2;
+    hardware.seen_odom = hardware.seen_joints = true;
+    hardware.maybe_boot();
+    ASSERT_TRUE(hardware.boot.has_value());
+    EXPECT_NEAR((*hardware.boot)[2], hw::kStartYaw, 1e-12);
     const auto readings = firmware->gz_readings(hardware, ref);
     EXPECT_NEAR(readings[0], 0.6, 1e-12);
     EXPECT_NEAR(readings[1], -0.3, 1e-12);
