@@ -72,9 +72,10 @@ protected:
   std::vector<double> loop[2];
   std::vector<double> periods[2];
   size_t poseCount = 0, refCount = 0;
-  bool stall = false, driveSim = true, holdRef = false, dropFirstFix = false;
+  bool stall = false, driveSim = true, holdRef = false, dropFirstFix = false, holdFix = false;
   size_t heldRefs = 0, fixes = 0;
   size_t droppedFixes = 0;
+  size_t heldFixes = 0;
   std::optional<nav_msgs::msg::Odometry> rawOdom, navOdom;
   std::optional<geometry_msgs::msg::PoseWithCovarianceStamped> firstMapPose;
   std::optional<wire::Relocalize> lastFix;
@@ -213,6 +214,7 @@ protected:
           ++droppedFixes;
           continue;
         }
+        if (holdFix) { ++heldFixes; continue; }
         lastFix = wire::unpack<wire::Relocalize>(frame.payload);
         ++fixes;
       }
@@ -440,6 +442,8 @@ TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
   EXPECT_NEAR(rawOdom->pose.pose.position.y, 0.0, 0.02);
   // A field goal at the accepted fix must stop translation in the actual MCB.
   // With a missing/doubled offset this commands metres of unwanted travel.
+  // Keep that fix constant: AMCL retries may change it during the goal dwell.
+  holdFix = true;
   const auto displacedGoal = wire::frame(wire::NavGoal{lastFix->x + 0.5F, lastFix->y - 0.5F});
   ASSERT_EQ(write(mcb->slave(), displacedGoal.data(), displacedGoal.size()),
     static_cast<ssize_t>(displacedGoal.size()));
@@ -448,6 +452,7 @@ TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
   const auto goal = wire::frame(wire::NavGoal{lastFix->x, lastFix->y});
   ASSERT_EQ(write(mcb->slave(), goal.data(), goal.size()), static_cast<ssize_t>(goal.size()));
   dwell(0.2);
+  report["at_fix_goal_speed_mps"] = std::hypot(output.right, output.forward);
   EXPECT_LT(std::hypot(output.right, output.forward), 0.05);
   report["team_robot_id"] = GetParam();
   report["navigation_x"] = p.x;
@@ -455,6 +460,7 @@ TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
   report["relocalize_x"] = lastFix->x;
   report["held_ref_sys"] = heldRefs;
   report["dropped_startup_fixes"] = droppedFixes;
+  report["held_goal_check_fixes"] = heldFixes;
 }
 
 TEST_P(TeamBoot, BlankMappingStartsAtMapZero) {
