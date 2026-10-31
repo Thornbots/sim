@@ -698,7 +698,9 @@ The ROS 1 launch files alongside the export are provenance; gz loads the SDF.
 
 World-coordinate spawns, drift loops, actors and map-sweep grids keep their
 field-frame coordinates. Both teams boot facing +y (field yaw π/2,
-`auto_explore.SPAWN_YAW`); red starts at (-4.625, 0), blue at (4.625, 0).
+`auto_explore.SPAWN_YAW`); red starts at (-3.53, -0.426), blue at (3.53, -0.426).
+These are temporary, unmeasured spooky scrim values matching the firmware (the
+world stays the ARCC field; ARCC was (±4.625, 0)).
 The ROS `root` remains heading-fixed at yaw zero. Both raw MCB POSE and
 `pose_emulator` start at (0, 0); displacement and velocity retain the field
 axes with no team rotation. RELOCALIZE changes only the MCB navigation offset,

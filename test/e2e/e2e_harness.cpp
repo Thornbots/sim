@@ -16,6 +16,7 @@
 #include "sim/cv_suite_options.hpp"
 #include "sim/e2e_test_core.hpp"
 #include "sim/process.hpp"
+#include "sim/team_start.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstdio>
 #include <iomanip>
@@ -310,7 +311,7 @@ Json Scorer::pose_errors(double t) {
     }
     out["speed_m_s"] = speed;
     out["spin_rad_s"] = spin;
-    out["start_displacement_m"] = std::hypot(ours->root(0, 3) - 4.625, ours->root(1, 3));
+    out["start_displacement_m"] = std::hypot(ours->root(0, 3) - sim::kTeamStartX, ours->root(1, 3) - sim::kTeamStartY);
     out["segment"] = !center_time || t < *center_time ? "approach" :
                      speed > .2 ? "drive" : std::abs(spin) > .5 ? "spin" : "parked";
   }

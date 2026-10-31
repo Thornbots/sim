@@ -31,6 +31,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sim/mcb_firmware.hpp"
 #include "sim/process.hpp"
+#include "sim/team_start.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
 
@@ -300,7 +301,8 @@ protected:
     simulator = std::make_unique<sim::LaunchTree>("sim", std::vector<std::string>{
       "ros2", "launch", "sim", "sim.launch.py", "gui:=false", "rviz:=false", "foxglove:=false",
       "pose_emulator:=false", "model:=sentry_v2",
-      std::string("x:=") + (referee.robot_id > 100 ? "4.625" : "-4.625"), "yaw:=1.5707963267948966",
+      std::string("x:=") + std::to_string(referee.robot_id > 100 ? sim::kTeamStartX : -sim::kTeamStartX),
+      std::string("y:=") + std::to_string(sim::kTeamStartY), "yaw:=1.5707963267948966",
       "real_time_factor:=1.0", "odom_noise_enabled:=false"}, (directory / "sim.log").string());
     robot = std::make_unique<sim::LaunchTree>("robot", std::vector<std::string>{
       "ros2", "launch", "thornbots_pkg", "auto.launch.py", "real_hardware:=false",
@@ -433,10 +435,10 @@ TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
   holdRef = false;
   ASSERT_TRUE(wait([&] { return refCount > beforeRef && hasAmcl() && navOdom && lastFix; }, 60));
   EXPECT_EQ(droppedFixes, 1U);
-  const double start = GetParam() > 100 ? 4.625 : -4.625;
+  const double start = GetParam() > 100 ? sim::kTeamStartX : -sim::kTeamStartX;
   const auto p = navOdom->pose.pose.position;
   EXPECT_NEAR(p.x, start, 0.05);
-  EXPECT_NEAR(p.y, 0.0, 0.05);
+  EXPECT_NEAR(p.y, sim::kTeamStartY, 0.05);
   EXPECT_LT(std::hypot(lastFix->x - p.x, lastFix->y - p.y), 0.05);
   EXPECT_NEAR(rawOdom->pose.pose.position.x, 0.0, 0.02);
   EXPECT_NEAR(rawOdom->pose.pose.position.y, 0.0, 0.02);
@@ -470,7 +472,7 @@ TEST_P(TeamBoot, BlankMappingStartsAtMapZero) {
   ASSERT_TRUE(wait([&] { return firstMapPose.has_value() && navOdom.has_value(); }));
   EXPECT_NEAR(firstMapPose->pose.pose.position.x, 0.0, 1e-6);
   EXPECT_NEAR(firstMapPose->pose.pose.position.y, 0.0, 1e-6);
-  EXPECT_NEAR(navOdom->pose.pose.position.x, GetParam() > 100 ? 4.625 : -4.625, 0.02);
+  EXPECT_NEAR(navOdom->pose.pose.position.x, GetParam() > 100 ? sim::kTeamStartX : -sim::kTeamStartX, 0.02);
   report["mapping_first_map_xy"] = {firstMapPose->pose.pose.position.x,
     firstMapPose->pose.pose.position.y};
 }

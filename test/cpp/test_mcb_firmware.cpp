@@ -418,7 +418,8 @@ TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
   EXPECT_NEAR(std::hypot(waiting.right, waiting.forward), 0.0, 1e-6);
   EXPECT_NEAR(waiting.spin, 0.0, 1e-6);
   run(100, wire::frame(wire::Relocalize{
-      static_cast<float>(-firmware->start_x()), 0}));
+      static_cast<float>(-firmware->start_x()),
+      static_cast<float>(firmware->start_y())}));
   auto output = run(200).outputs.back();
   EXPECT_LT(std::hypot(output.right, output.forward), 0.05);
   EXPECT_LT(output.spin, -1);
@@ -430,15 +431,18 @@ TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
 TEST_F(McbFirmware, AutoDriveWaitsForAbsoluteRelocalization) {
   firmware->set_mode(2);
   const auto goal = wire::frame(wire::NavGoal{
-      static_cast<float>(-firmware->start_x() + 1), -1});
+      static_cast<float>(-firmware->start_x() + 1),
+      static_cast<float>(firmware->start_y() - 1)});
   const auto waiting = run(300, goal).outputs.back();
   EXPECT_NEAR(waiting.right, 0.0, 1e-6);
   EXPECT_NEAR(waiting.forward, 0.0, 1e-6);
   run(100, wire::frame(wire::Relocalize{
-      static_cast<float>(-firmware->start_x()), 0}));
+      static_cast<float>(-firmware->start_x()),
+      static_cast<float>(firmware->start_y())}));
   const auto output =
       run(300, wire::frame(wire::NavGoal{
-                   static_cast<float>(-firmware->start_x() + 1), -1}))
+                   static_cast<float>(-firmware->start_x() + 1),
+                   static_cast<float>(firmware->start_y() - 1)}))
           .outputs.back();
   EXPECT_GT(output.right, 0);
   EXPECT_LT(output.forward, 0);

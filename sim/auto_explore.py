@@ -16,3 +16,8 @@
 import math
 
 SPAWN_YAW = math.pi / 2
+# TEMPORARY spooky scrim start (unmeasured, not good); restore or measure before the next
+# event, see docs/ROADMAP.md. Blue spawn; matches firmware START_X/START_Y and
+# include/sim/team_start.hpp.
+TEAM_START_X = '3.53'
+TEAM_START_Y = '-0.426'
