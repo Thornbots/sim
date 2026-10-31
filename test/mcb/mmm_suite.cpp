@@ -248,7 +248,9 @@ protected:
     loop[status.state != 0].push_back(status.loopUs);
     periods[status.state != 0].push_back(status.periodUs);
     relay(0);
-    if (driveSim) {
+    // Output from placeholder pre-boot readings (e.g. 12 rad/s spin) must not
+    // move Gazebo before the boot sample captures the spawn heading.
+    if (driveSim && hardware.ready) {
       geometry_msgs::msg::Twist twist;
       twist.linear.x = output.forward;
       twist.linear.y = -output.right;
