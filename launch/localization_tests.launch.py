@@ -47,6 +47,8 @@ SIM_PASSTHROUGH = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stdde
 # Head start for gz and the robot spawn before localization subscribes, so
 # its early "waiting for transform" noise stays out of the scanned logs.
 LOCALIZATION_DELAY_S = 8.0
+# The suite's AMCL referee fixture represents blue, which starts here.
+AMCL_SPAWN_X = '4.625'
 
 
 def _is_true(context, name):
@@ -62,7 +64,7 @@ def _stack(context):
     sim_args = {'gui': gui, 'rviz': gui, 'foxglove': 'false',
                 'real_time_factor': config['real_time_factor']}
     if config['backend'] == 'amcl':
-        sim_args['x'] = '4.625'  # The suite's referee fixture represents blue.
+        sim_args['x'] = AMCL_SPAWN_X
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -112,6 +114,8 @@ def _tests(context):
     if suite == 'drift':
         cmd += ['--backend', config['backend'],
                 '--use-rf2o' if _is_true(context, 'use_rf2o') else '--no-use-rf2o']
+        if config['backend'] == 'amcl':
+            cmd += ['--spawn-x', AMCL_SPAWN_X]
         if config['scenario']:
             cmd += ['--scenario', config['scenario']]
     else:

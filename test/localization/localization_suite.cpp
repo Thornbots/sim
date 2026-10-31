@@ -61,7 +61,7 @@ constexpr char kLogDir[] = "/tmp/localization_drift_tests";
 struct Options {
   std::string suite = "drift", backend = "amcl", scenario, rtf = "0";
   bool gui = true, rf2o = true, restart = false;
-  double speed = 4.0, accel = 20.0, spawn_yaw = sim::gazebo::kSpawnYaw;
+  double speed = 4.0, accel = 20.0, spawn_x = 0.0, spawn_yaw = sim::gazebo::kSpawnYaw;
   double slip = 0.05, drift = 0.002, seconds = 45.0;
 } options;
 std::vector<std::string> scenario_names = {
@@ -566,7 +566,8 @@ std::unique_ptr<Stack> run_stack(bool noise,
                                  "' from the world");
       }
     }
-    if (!sim::gazebo::teleport(0, 0, sim::gazebo::kZ, options.spawn_yaw)) {
+    // Raw odometry boots at this spawn; the EKF seed requires it near zero.
+    if (!sim::gazebo::teleport(options.spawn_x, 0, sim::gazebo::kZ, options.spawn_yaw)) {
       throw std::runtime_error("teleport back to spawn failed");
     }
     helper.spin_for(0.5);
@@ -1550,6 +1551,8 @@ void parse_options(int &argc, char **argv) {
       options.speed = std::stod(value());
     } else if (arg == "--drive-accel") {
       options.accel = std::stod(value());
+    } else if (arg == "--spawn-x") {
+      options.spawn_x = std::stod(value());
     } else if (arg == "--spawn-yaw-deg") {
       options.spawn_yaw =
           sim::gazebo::kSpawnYaw + std::stod(value()) * kPi / 180;
