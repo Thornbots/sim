@@ -15,11 +15,11 @@
 """
 Launch the MCB emulator integration suites and their camera-free Gazebo stacks.
 
-Every stage runs truth detections, the real CV stack, the hosted MCB firmware
+Every stage runs truth detections, the real CV stack, the selected MCB backend
 and the real UART bridge. mcb_parked scores 12 opponent cells with our robot
 parked; mcb_drive drives from spawn to center; mcb_match adds a 2v2 fight.
 Tests own their stack process group; run_tests:=false launches only the stack.
-See README.md for design rationale and ../E2E_PLAN.md for acceptance criteria.
+See README.md for design rationale and ../../docs/E2E_PLAN.md for acceptance criteria.
 """
 import json
 import math
@@ -31,6 +31,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    EmitEvent,
     ExecuteProcess,
     IncludeLaunchDescription,
     OpaqueFunction,
@@ -39,12 +40,14 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
+from sim.mcb_link import default_mcb_link
 from sim.suite_exit import finish_suite
 
 STAGES = ('mcb_parked', 'mcb_drive', 'mcb_match')
@@ -52,20 +55,29 @@ DRIVING = ('mcb_drive', 'mcb_match')
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
 OPPONENT_CLASS = 6  # red; we are blue
-MCB_PTY = '/tmp/mcb_emulator_pty'
 
 
 def _sim(context):
     config = context.launch_configurations
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
-    spawn = ({'x': '4.625', 'y': '0.0', 'yaw': str(math.pi)}
-             if config['stage'] in DRIVING else {})
+    spawn = {'x': '4.625', 'y': '0.0', 'yaw': str(SPAWN_YAW)}
+    view = 'e2e-parked' if config['stage'] == 'mcb_parked' else 'e2e'
+    share = get_package_share_directory('sim')
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
         launch_arguments={'gui': gui, 'rviz': gui, 'foxglove': config['foxglove'],
+                          'rviz_config': os.path.join(share, 'rviz', view + '.rviz'),
+                          'gz_gui_config': os.path.join(share, 'rviz', view + '-gz.config'),
                           'camera': 'false', 'pose_emulator': 'false',
+                          'mcb_physics': 'true',
+                          'mcb_device_link': config['mcb_device_link'],
+                          'mcb_drive': 'stop',
+                          'mcb_auto_fire': 'false',
+                          'firmware_binary': config['firmware_binary'],
+                          'mcb_backend': config['backend'],
+                          'mcb_game_stage': '4',
                           'real_time_factor': config['real_time_factor'],
                           'lockstep': config['lockstep'], **spawn}.items())]
 
@@ -76,8 +88,14 @@ def _is_true(context, name):
 
 def _tests(context):
     config = context.launch_configurations
-    cmd = ['ros2', 'run', 'sim', 'e2e_suite', '--stage', config['stage']]
+    cmd = ['ros2', 'run', 'sim', 'e2e_suite', '--stage', config['stage'],
+           '--backend', config['backend']]
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
+                     ('pose_latency_s', '--pose-latency-s'),
+                     ('gimbal_lag_s', '--gimbal-lag-s'),
+                     ('firmware_latency_s', '--firmware-latency-s'),
+                     ('chase_settle_s', '--chase-settle-s'),
+                     ('chase_margin_s', '--chase-margin-s'),
                      ('real_time_factor', '--real-time-factor'),
                      ('duration', '--e2e-duration'), ('log_dir', '--log-dir')):
         if config[arg]:
@@ -123,7 +141,7 @@ def generate_launch_description():
             'use_sim_time': True,
             'target_speed': ParameterValue(LaunchConfiguration('target_speed'), value_type=float),
             'spin_hz': ParameterValue(LaunchConfiguration('target_spin_hz'), value_type=float),
-            'origin_yaw': SPAWN_YAW,  # sim.launch.py's spawn heading: the path stays in front
+            'origin_yaw': -math.pi / 2,  # Preserve the field-safe parked paths.
             **parked_paths['lateral'],
         }])
     # The path the opponent's OpponentMover system rides, into gz.
@@ -142,20 +160,12 @@ def generate_launch_description():
         remappings=[('/target/ground_truth_odom', path_topic)])
     # The hosted firmware parked (DrivetrainStopCommand) on a pty, as
     # auto.launch.py starts the bridge and relay with real_hardware:=true.
-    mcb_emulator = Node(
-        package='sim', executable='mcb_emulator', name='mcb_emulator', output='screen',
-        parameters=[{'use_sim_time': True, 'device_link': MCB_PTY, 'drive': 'stop',
-                     'firmware_binary': LaunchConfiguration('firmware_binary'),
-                     'game_stage': ParameterValue(PythonExpression([
-                         "3 if '", LaunchConfiguration('stage'), "' == 'mcb_match' else 4"]),
-                         value_type=int)}],
-        remappings=[('/cmd_vel', PythonExpression([
-            "'/mcb_emulator/cmd_vel' if '", LaunchConfiguration('stage'),
-            "' in ", repr(DRIVING), " else '/cmd_vel'"]))])
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
-        parameters=[{'use_sim_time': True, 'device': MCB_PTY, 'debug_log': False}])
+        parameters=[{'use_sim_time': True,
+                     'device': LaunchConfiguration('mcb_device_link'),
+                     'debug_log': False}])
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
         parameters=[{'use_sim_time': True}])
@@ -163,23 +173,43 @@ def generate_launch_description():
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        # Patrol stays on, as on the robot: patrol frames clear `fire`, and
-        # it reacquires an opponent that starts out of view or is lost.
         launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
-                          'use_rf2o': 'true', 'load_map': 'true', 'patrol_enabled': 'true',
-                          'initial_x': PythonExpression([
-                              "'4.625' if '", LaunchConfiguration('stage'),
-                              "' in ", repr(DRIVING), " else '0.0'"])}.items())
+                          'pose_latency_s': LaunchConfiguration('pose_latency_s'),
+                          'gimbal_lag_s': LaunchConfiguration('gimbal_lag_s'),
+                          'firmware_latency_s': LaunchConfiguration('firmware_latency_s'),
+                          'chase_settle_s': LaunchConfiguration('chase_settle_s'),
+                          'chase_margin_s': LaunchConfiguration('chase_margin_s'),
+                          'v_muzzle': '22.0',
+                          'zone_start_x_m': PythonExpression([
+                              "'0.0' if '", LaunchConfiguration('stage'),
+                              "' == 'mcb_parked' else '4.625'"]),
+                          'zone_start_y_m': PythonExpression([
+                              "'-4.625' if '", LaunchConfiguration('stage'),
+                              "' == 'mcb_parked' else '0.0'"]),
+                          'use_rf2o': 'true', 'load_map': 'true'}.items())
 
-    match_driver = Node(
-        package='sim', executable='match_driver', name='match_driver', output='screen',
+    match_environment = Node(
+        package='sim', executable='match_environment', name='match_environment', output='screen',
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
     # The bridge opens the pty once, so it starts after the emulator makes it.
-    common = [path_bridge, opponent_driver, mcb_emulator,
-              TimerAction(period=2.0, actions=[bridge, mcb_relay])]
+    uart_ready = Node(package='sim', executable='mcb_ready', arguments=[
+        LaunchConfiguration('mcb_device_link'),
+        PythonExpression(["'600' if '", LaunchConfiguration('backend'),
+                          "' == 'renode' else '30'"]),
+    ],
+        output='screen')
+    uart_start = RegisterEventHandler(OnProcessExit(
+        target_action=uart_ready,
+        on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
+            EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
+    common = [path_bridge, opponent_driver, uart_start, uart_ready]
+    # One board batch ahead avoids outrunning the wall deadline during learning.
     coordinator = Node(
         package='sim', executable='lockstep_coordinator', output='screen',
         parameters=[{'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
+                     'learn_margin_s': ParameterValue(PythonExpression([
+                         "'0.005' if '", LaunchConfiguration('backend'),
+                         "' == 'renode' else '0.05'"]), value_type=float),
                      'mcb_batch.phase_s': 0.0, 'mcb_batch.acks': ['/mcb_emulator/tick']}],
         condition=IfCondition(LaunchConfiguration('lockstep')))
 
@@ -188,6 +218,14 @@ def generate_launch_description():
         if stage not in STAGES:
             raise RuntimeError(f"stage must be one of {', '.join(STAGES)}, not '{stage}'")
         extras = []
+        if not _is_true(context, 'headless') and display_error() is None:
+            extras.append(Node(package='sim', executable='target_state_markers',
+                               parameters=[{'use_sim_time': True}]))
+            extras.append(Node(package='sim', executable='e2e_map_view',
+                               additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': os.path.join(
+                                   get_package_share_directory('thornbots_pkg'), 'config',
+                                   'fastdds_udp_only.xml')},
+                               parameters=[{'use_sim_time': True}]))
         opponents = [OPPONENT]
         if stage == 'mcb_match':
             opponents += ['opponent_1', 'ally_0']
@@ -204,7 +242,7 @@ def generate_launch_description():
                     remappings=[(f'/model/{name}/path', topic)],
                     parameters=[{'use_sim_time': True}])]
         return ([coordinator, detector(opponents)] + extras + common
-                + ([match_driver] if stage in DRIVING else [target_driver])
+                + ([match_environment] if stage in DRIVING else [target_driver])
                 + [TimerAction(period=ROBOT_DELAY_S, actions=[robot])])
 
     return LaunchDescription([
@@ -214,12 +252,25 @@ def generate_launch_description():
         DeclareLaunchArgument('firmware_fixes', default_value='true',
                               description='Deprecated: the native MCB runs its checked-out code'),
         DeclareLaunchArgument('firmware_binary', default_value='',
-                              description='Hosted MCB executable; empty uses the firmware build'),
+                              description='MCB executable or board ELF; empty uses the '
+                                          'selected backend release build'),
+        DeclareLaunchArgument('backend', default_value='renode', choices=['hosted', 'renode']),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('speeds', default_value='',
                               description="opponent speeds, m/s, 0 = stationary, e.g. '0 2'; "
                                           'empty = the harness default'),
+        DeclareLaunchArgument('firmware_latency_s', default_value='0.020',
+                              description='Decision-to-exit firing delay estimate in seconds'),
+        DeclareLaunchArgument('chase_settle_s', default_value='-1.0'),
+        DeclareLaunchArgument('chase_margin_s', default_value=PythonExpression([
+            "'0.025' if '", LaunchConfiguration('backend'), "' == 'hosted' else '0.0'"])),
+        DeclareLaunchArgument('gimbal_lag_s', default_value=PythonExpression([
+            "'0.0' if '", LaunchConfiguration('backend'), "' == 'hosted' else '0.05'"]),
+                              description='Hosted response calibration; board remains '
+                                          'uncalibrated'),
+        DeclareLaunchArgument('pose_latency_s', default_value='0.0',
+                              description='Capture-time pose transport calibration, seconds'),
         DeclareLaunchArgument('paths', default_value='',
                               description="target_driver paths, e.g. 'lateral radial'; "
                                           'empty = all three'),
@@ -235,6 +286,8 @@ def generate_launch_description():
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('real_time_factor', default_value='0',
                               description='sim speed cap; 0 = as fast as it runs'),
+        DeclareLaunchArgument('mcb_device_link', default_value=default_mcb_link(),
+                              description='PTY link; unique per GZ_PARTITION/ROS_DOMAIN_ID'),
         DeclareLaunchArgument('lockstep', default_value='true',
                               description='hold gz at MCB batch deadlines until its tick arrives'),
         DeclareLaunchArgument('target_speed', default_value='2.0',

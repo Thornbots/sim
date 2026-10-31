@@ -45,12 +45,6 @@ template <class Q, class P> Matrix iso(const Q &q, const P &p) {
   return combat::pose_matrix({p.x, p.y, p.z},
                              Eigen::Quaterniond(q.w, q.x, q.y, q.z));
 }
-Matrix gz_iso(const gz::msgs::Pose &p) {
-  return combat::pose_matrix(
-      {p.position().x(), p.position().y(), p.position().z()},
-      Eigen::Quaterniond(p.orientation().w(), p.orientation().x(),
-                         p.orientation().y(), p.orientation().z()));
-}
 Vec transform(const Matrix &m, const Vec &p) {
   return m.block<3, 3>(0, 0) * p + m.block<3, 1>(0, 3);
 }
@@ -61,49 +55,6 @@ Vec xyz(const char *s) {
     in >> out.x() >> out.y() >> out.z();
   }
   return out;
-}
-void PoseHistory::add(const std::string &name, const gz::msgs::Pose_V &msg) {
-  const gz::msgs::Pose *model = nullptr, *root = nullptr, *head = nullptr;
-  for (const auto &p : msg.pose()) {
-    if (p.name() == name)
-      model = &p;
-    else if (p.name() == name + "::root")
-      root = &p;
-    else if (p.name() == name + "::head_pitch")
-      head = &p;
-  }
-  if (!model || !root)
-    return;
-  double t =
-      model->header().stamp().sec() + model->header().stamp().nsec() * 1e-9;
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (!history_.empty() && t <= history_.back().first)
-    return;
-  Matrix m = gz_iso(*model);
-  history_.push_back(
-      {t,
-       {m * gz_iso(*root),
-        head ? std::optional<Matrix>(m * gz_iso(*head)) : std::nullopt}});
-  while (history_.front().first < t - 3)
-    history_.pop_front();
-}
-std::optional<double> PoseHistory::newest() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return history_.empty() ? std::nullopt
-                          : std::optional<double>(history_.back().first);
-}
-std::optional<Pose> PoseHistory::at(double t) const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (history_.empty() || t < history_.front().first ||
-      t > history_.back().first)
-    return {};
-  auto i =
-      std::lower_bound(history_.begin(), history_.end(), t,
-                       [](const auto &a, double b) { return a.first < b; });
-  if (i != history_.begin() &&
-      (i == history_.end() || t - (i - 1)->first < i->first - t))
-    --i;
-  return i->second;
 }
 Offsets urdf_offsets() {
   std::string share = ament_index_cpp::get_package_share_directory("sim");
@@ -137,6 +88,7 @@ Offsets urdf_offsets() {
 Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     : SimTimeNode("e2e_scorer"), stage(stage_), log_path(logpath),
       tf(get_clock()), offsets_(urdf_offsets()), listener_(tf, this, false) {
+  visual_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/markers", 10);
   subscribe<diagnostic_msgs::msg::DiagnosticStatus>(
       "/sim/lockstep/status", rclcpp::QoS(1).reliable().transient_local(),
       [this](const auto &m) {
@@ -156,15 +108,58 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   }
   shots["flag"] = {};
   shots["mcb"] = {};
+  subscribe<sensor_msgs::msg::JointState>(
+      "/mcb_emulator/gimbal_setpoint", rclcpp::QoS(100), [this](const auto &m) {
+        if (m.position.size() != 2) return;
+        gimbal_setpoints_.push_back({stamp_s(m.header.stamp), {m.position[0], m.position[1]}});
+        while (gimbal_setpoints_.size() > 400) gimbal_setpoints_.pop_front();
+      });
+  subscribe<dji_serial_bridge::msg::PanelDetectionArray>(
+      "/cv/panel_detections", rclcpp::QoS(10), [this](const auto &m) {
+        if (!m.detections.empty()) detections_.push_back({stamp_s(m.header.stamp), m.detections.size()});
+        while (detections_.size() > 300) detections_.pop_front();
+      });
   subscribe<dji_serial_bridge::msg::CVTarget>(
       "/cv/target", rclcpp::SensorDataQoS(), [this](const auto &m) {
         double t = stamp_s(m.header.stamp);
         target_stamp = t;
+        if (visual_pub_->get_subscription_count()) {
+          visualization_msgs::msg::Marker point;
+          point.header = m.header;
+          point.ns = "aim"; point.id = 0;
+          point.type = visualization_msgs::msg::Marker::SPHERE;
+          point.pose.orientation.w = 1.;
+          point.pose.position.x = m.x; point.pose.position.y = m.y; point.pose.position.z = m.z;
+          point.scale.x = point.scale.y = point.scale.z = .09;
+          point.color.g = point.color.b = point.color.a = 1.;
+          point.lifetime.nanosec = 200000000;
+          visualization_msgs::msg::MarkerArray markers;
+          markers.markers.push_back(point);
+          try {
+            auto muzzle = tf.lookupTransform(point.header.frame_id, "muzzle", tf2::TimePointZero);
+            auto ray = point;
+            ray.header.stamp = get_clock()->now();
+            ray.ns = "aim_ray"; ray.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            ray.pose.position = geometry_msgs::msg::Point{};
+            ray.scale.x = .015;
+            geometry_msgs::msg::Point origin;
+            origin.x = muzzle.transform.translation.x;
+            origin.y = muzzle.transform.translation.y;
+            origin.z = muzzle.transform.translation.z;
+            ray.points = {origin, point.pose.position};
+            markers.markers.push_back(ray);
+          } catch (const tf2::TransformException &) {}
+          visual_pub_->publish(markers);
+        }
         aims_.push_back({t, {m.x, m.y, m.z}});
         while (aims_.front().first < t - 3)
           aims_.pop_front();
-        if (m.fire && scoring && t < score_until)
-          pending_.push_back({"flag", t + m.delay_ms / 1000. + .05});
+        if (m.fire && scoring && t < score_until) {
+          cb::append_json((std::filesystem::path(log_path).parent_path() /
+                           "fire_requests.jsonl").string(),
+                          {{"t", t}, {"delay_s", m.delay_ms / 1000.}});
+          pending_.push_back({"flag", t + m.delay_ms / 1000.});
+        }
       });
   subscribe<dji_serial_bridge::msg::RobotPose>(
       "/dji_serial_bridge/pose", rclcpp::SensorDataQoS(),
@@ -176,7 +171,11 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::TargetState>(
       "/cv/target_state", rclcpp::QoS(10), [this](const auto &m) {
+        state_validity_.push_back({stamp_s(m.header.stamp), m.valid});
+        while (state_validity_.size() > 300) state_validity_.pop_front();
         if (m.valid) {
+          state_history_.push_back(m);
+          while (state_history_.size() > 300) state_history_.pop_front();
           state_stamp = stamp_s(m.header.stamp);
           if (scoring)
             pending_states_.push_back(m);
@@ -186,23 +185,11 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
                                    [this](const auto &m) {
                                      double t = stamp_s(m.stamp);
                                      if (scoring && t < score_until)
-                                       pending_.push_back({"mcb", t + .05});
+                                       pending_.push_back({"mcb", t});
                                    });
-  if (driving())
-    subscribe<nav_msgs::msg::Odometry>(
-        "/sim/match/reference", rclcpp::QoS(10), [this](const auto &m) {
-          double t = stamp_s(m.header.stamp);
-          references_.push_back(
-              {t, {m.pose.pose.position.x, m.pose.pose.position.y, 0}});
-          if (scoring)
-            pending_reference_.push_back(t);
-          while (references_.front().first < t - 3)
-            references_.pop_front();
-        });
-  else
-    pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
+  pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
       if (scoring)
-        pending_reference_.push_back(now_s());
+        pending_poses_.push_back(now_s());
     });
   fire_timer_ =
       create_timer(std::chrono::milliseconds(100), [this]() { fire_tick(); });
@@ -222,25 +209,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       teams.push_back(e);
     referee = std::make_unique<combat::Referee>(teams);
     std::string share = ament_index_cpp::get_package_share_directory("sim");
-    tinyxml2::XMLDocument doc;
-    doc.LoadFile((share + "/world/ARCC_Field_2026.sdf").c_str());
-    auto *model =
-        doc.RootElement()->FirstChildElement("world")->FirstChildElement(
-            "model");
-    auto *collision =
-        model->FirstChildElement("link")->FirstChildElement("collision");
-    std::array<double, 6> pose{{0, 0, 0, 0, 0, 0}};
-    std::istringstream input(model->FirstChildElement("pose")->GetText());
-    for (auto &v : pose)
-      input >> v;
-    auto field = combat::load_stl(share + "/world/composite_part_1.stl");
-    Vec offset = xyz(collision->FirstChildElement("pose")->GetText());
-    for (auto &tri : field)
-      for (auto &v : tri)
-        v += offset;
-    Matrix m =
-        combat::armor_offset({pose[0], pose[1], pose[2]}, {0, 0, pose[5]});
-    field = combat::transform_mesh(field, m);
+    auto field = combat::load_field(share);
     resolver_ = std::make_unique<combat::ShotResolver>(
         field,
         combat::load_stl(share + "/urdf/sentry_v2/meshes/collision/root.stl"),
@@ -248,6 +217,8 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     subscribe<dji_serial_bridge::msg::RefSysStatus>(
         "/dji_serial_bridge/ref_sys", rclcpp::SensorDataQoS(),
         [this](const auto &m) { referee_messages.push_back(m); });
+  }
+  if (driving()) {
     referee_client_ = create_client<rcl_interfaces::srv::SetParameters>(
         "/mcb_emulator/set_parameters");
     referee_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
@@ -266,7 +237,7 @@ void Scorer::spin_for(double seconds) {
         if (!rclcpp::ok())
           throw std::runtime_error("E2E ROS context stopped during scoring");
         spin_once();
-      });
+      }, cv_bench::options.backend == "renode" ? 120 : 20);
 }
 void Scorer::reset() {
   pending_.clear();
@@ -276,7 +247,7 @@ void Scorer::reset() {
   states.clear();
   pending_states_.clear();
   route_records.clear();
-  pending_reference_.clear();
+  pending_poses_.clear();
   score_until = INFINITY;
   flight_steps_.clear();
 }
@@ -290,8 +261,8 @@ std::optional<Matrix> Scorer::world_T_odom(double t) {
                     rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME))
                   .transform;
     Matrix world = ours->root;
-    double yaw = std::atan2(world(1, 0), world(0, 0));
-    world.block<3, 3>(0, 0) = cb::rpy(0, 0, -yaw) * world.block<3, 3>(0, 0);
+    // The ROS raw root has fixed field axes, including roll and pitch.
+    world.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
     return (world * iso(tr.rotation, tr.translation).inverse()).eval();
   } catch (const tf2::TransformException &) {
     return {};
@@ -304,9 +275,45 @@ Json Scorer::pose_errors(double t) {
   Json out = {
       {"chassis_tilt_deg",
        180 / cb::kPi * std::acos(std::clamp(ours->root(2, 2), -1., 1.))}};
-  if (match_start)
-    out["segment"] =
-        match_scenario::sample_match(t - *match_start, stage).segment;
+  out["truth_xy"] = {ours->root(0, 3), ours->root(1, 3)};
+  if (ours->head)
+    for (auto i = gimbal_setpoints_.rbegin(); i != gimbal_setpoints_.rend(); ++i)
+      if (i->first <= t) {
+        const double yaw = std::atan2((*ours->head)(1, 0), (*ours->head)(0, 0));
+        const double pitch = std::asin(std::clamp(-(*ours->head)(2, 0), -1., 1.));
+        out["gimbal_command_age_s"] = t - i->first;
+        out["gimbal_yaw_error_deg"] = std::remainder(i->second[0] - yaw, 2 * cb::kPi) * 180 / cb::kPi;
+        out["gimbal_pitch_error_deg"] = (i->second[1] - pitch) * 180 / cb::kPi;
+        break;
+      }
+  out["detection_age_s"] = nullptr;
+  out["tracker_valid"] = false;
+  for (auto i = detections_.rbegin(); i != detections_.rend(); ++i)
+    if (i->first <= t) {
+      out["detection_age_s"] = t - i->first;
+      out["detection_count"] = i->second;
+      break;
+    }
+  for (auto i = state_validity_.rbegin(); i != state_validity_.rend(); ++i)
+    if (i->first <= t) {
+      out["tracker_age_s"] = t - i->first;
+      out["tracker_valid"] = i->second && t - i->first <= .5;
+      break;
+    }
+  if (match_start) {
+    const auto previous = histories.at("sentry")->at(t - .05);
+    double speed = 0, spin = 0;
+    if (previous) {
+      speed = (ours->root.block<2, 1>(0, 3) - previous->root.block<2, 1>(0, 3)).norm() / .05;
+      const Eigen::Matrix3d rotation = previous->root.block<3, 3>(0, 0).transpose() * ours->root.block<3, 3>(0, 0);
+      spin = std::atan2(rotation(1, 0), rotation(0, 0)) / .05;
+    }
+    out["speed_m_s"] = speed;
+    out["spin_rad_s"] = spin;
+    out["start_displacement_m"] = std::hypot(ours->root(0, 3) - 4.625, ours->root(1, 3));
+    out["segment"] = !center_time || t < *center_time ? "approach" :
+                     speed > .2 ? "drive" : std::abs(spin) > .5 ? "spin" : "parked";
+  }
   auto world = world_T_odom(t);
   try {
     if (!world || !ours->head)
@@ -347,12 +354,6 @@ Json Scorer::pose_errors(double t) {
       }
       break;
     }
-  for (auto i = references_.rbegin(); i != references_.rend(); ++i)
-    if (i->first <= t) {
-      out["route_error_m"] =
-          (ours->root.block<2, 1>(0, 3) - i->second.head<2>()).norm();
-      break;
-    }
   try {
     auto tr = tf.lookupTransform(
                     "map", "root",
@@ -361,14 +362,40 @@ Json Scorer::pose_errors(double t) {
     out["localization_error_m"] =
         std::hypot(tr.translation.x - ours->root(0, 3),
                    tr.translation.y - ours->root(1, 3));
-  } catch (const tf2::TransformException &) {
+    out["localization_xy"] = {tr.translation.x, tr.translation.y};
+  } catch (const tf2::TransformException & error) {
     out["localization_error_m"] = nullptr;
+    out["localization_tf_error"] = error.what();
+  }
+  try {
+    const auto tr = tf.lookupTransform(
+        "nav_odom", "root",
+        rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
+    out["navigation_error_m"] = std::hypot(
+        tr.translation.x - ours->root(0, 3), tr.translation.y - ours->root(1, 3));
+    out["navigation_xy"] = {tr.translation.x, tr.translation.y};
+  } catch (const tf2::TransformException & error) {
+    out["navigation_error_m"] = nullptr;
+    out["navigation_tf_error"] = error.what();
+  }
+  try {
+    const auto map = tf.lookupTransform(
+        "map", "nav_odom",
+        rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
+    out["map_navigation_xy"] = {map.translation.x, map.translation.y};
+    out["map_navigation_yaw_rad"] = std::atan2(
+        2 * (map.rotation.w * map.rotation.z + map.rotation.x * map.rotation.y),
+        1 - 2 * (map.rotation.y * map.rotation.y + map.rotation.z * map.rotation.z));
+  } catch (const tf2::TransformException &) {
+    out["map_navigation_xy"] = nullptr;
   }
   return out;
 }
 Json Scorer::aim_split(double launch, const Vec &origin, const Vec &direction,
                        int k, std::shared_ptr<PoseHistory> history) {
-  double t = launch - .05;
+  const double lag = cb::options.gimbal_lag_s.value_or(
+      cb::options.backend == "hosted" ? 0.0 : .05);
+  double t = launch - lag;
   auto world = world_T_odom(t);
   if (!world || aims_.empty())
     return Json::object();
@@ -384,11 +411,43 @@ Json Scorer::aim_split(double launch, const Vec &origin, const Vec &direction,
        cb::rounded(180 / cb::kPi *
                        std::acos(std::clamp(direction.dot(to), -1., 1.)),
                    2)}};
-  auto theirs = (history ? history : histories.at("opponent_0"))
-                    ->at(launch + (target - origin).dot(direction) / 25);
+  std::string selected = "opponent_0";
+  if (!history && stage == "mcb_match") {
+    for (auto i = state_history_.rbegin(); i != state_history_.rend(); ++i) {
+      const double capture = stamp_s(i->header.stamp);
+      if (capture > t) continue;
+      auto frame = world_T_odom(capture);
+      if (!frame) return out;
+      const Vec center = transform(*frame, {i->center.x, i->center.y, i->center.z});
+      double nearest = INFINITY;
+      for (const auto &entry : histories) {
+        if (entry.first.rfind("opponent_", 0) != 0) continue;
+        auto pose = entry.second->at(capture);
+        if (!pose) continue;
+        const double distance = (center - pose->root.block<3, 1>(0, 3)).head<2>().norm();
+        if (distance < nearest) { nearest = distance; selected = entry.first; }
+      }
+      out["selected_target_association_m"] = nearest;
+      break;
+    }
+  }
+  out["selected_target"] = selected;
+  const double flight = (target - origin).dot(direction) / combat::kMuzzleSpeed;
+  auto theirs = (history ? history : histories.at(selected))->at(launch + flight);
+  const Vec inherited = muzzle_velocity("sentry", launch);
+  const Vec impact_goal = target + inherited * flight;
   if (theirs) {
     Vec panel = ((*theirs).root * offsets_.armors[k]).block<3, 1>(0, 3),
-        diff = target - panel;
+        diff = impact_goal - panel;
+    double closest = INFINITY;
+    Vec closest_error = Vec::Zero();
+    for (const auto &offset : offsets_.armors) {
+      Vec point = (theirs->root * offset).block<3, 1>(0, 3);
+      const Vec error = impact_goal - point;
+      if (error.norm() < closest) { closest = error.norm(); closest_error = error; }
+    }
+    out["aim_closest_panel_m"] = closest;
+    out["aim_minus_closest_panel"] = {closest_error.x(), closest_error.y(), closest_error.z()};
     out["aim_off_panel_m"] = cb::rounded(diff.norm(), 3);
     out["aim_minus_panel"] = {cb::rounded(diff.x(), 3),
                               cb::rounded(diff.y(), 3),
@@ -401,11 +460,13 @@ std::optional<Json> Scorer::judge(double t) {
   if (!ours || !ours->head)
     return {};
   Matrix muzzle = *ours->head * offsets_.muzzle;
+  const Vec inherited = muzzle_velocity("sentry", t);
   Vec origin = muzzle.block<3, 1>(0, 3), barrel = muzzle.block<3, 1>(0, 0);
   struct Candidate {
     double off, miss, incidence, range;
     int k;
     Vec dir;
+    std::optional<Eigen::Vector2d> face;  // panel_right_m, panel_up_m
   };
   std::optional<Candidate> best;
   for (int k = 0; k < 4; ++k) {
@@ -414,10 +475,12 @@ std::optional<Json> Scorer::judge(double t) {
       return {};
     Vec centre = (theirs->root * offsets_.armors[k]).block<3, 1>(0, 3);
     double along = std::max((centre - origin).dot(barrel), 0.);
+    const double flight_speed = combat::kMuzzleSpeed + inherited.dot(barrel);
+    const double flight = along / flight_speed;
     Vec chord =
-            along * barrel - Vec{0, 0, 9.80665 / 2 * std::pow(along / 25, 2)},
+        combat::kMuzzleSpeed * flight * barrel + inherited * flight - Vec{0, 0, 9.80665 / 2 * flight * flight},
         dir = chord.norm() > 0 ? Vec(chord.normalized()) : barrel;
-    theirs = histories.at("opponent_0")->at(t + along / 25);
+    theirs = histories.at("opponent_0")->at(t + along / flight_speed);
     if (!theirs)
       return {};
     Matrix p = theirs->root * offsets_.armors[k];
@@ -428,12 +491,18 @@ std::optional<Json> Scorer::judge(double t) {
     along = (pos - origin).dot(dir);
     double off = cb::off_face(
         origin, dir, {pos, normal, p.block<3, 1>(0, 1), p.block<3, 1>(0, 2)});
+    std::optional<Eigen::Vector2d> face;
+    if (dir.dot(normal) < -1e-9) {
+      const Vec rel = origin + (pos - origin).dot(normal) / dir.dot(normal) * dir - pos;
+      face = Eigen::Vector2d(rel.dot(p.block<3, 1>(0, 1)), rel.dot(p.block<3, 1>(0, 2)));
+    }
     Candidate c{incidence <= cb::kExposure ? off : INFINITY,
                 (pos - origin - along * dir).norm(),
                 incidence,
                 along,
                 k,
-                dir};
+                dir,
+                face};
     if (!best || std::tie(c.off, c.miss) < std::tie(best->off, best->miss))
       best = c;
   }
@@ -446,21 +515,45 @@ std::optional<Json> Scorer::judge(double t) {
                                                   : Json(nullptr)},
               {"incidence_deg", cb::rounded(b.incidence * 180 / cb::kPi, 1)},
               {"range_m", cb::rounded(b.range, 3)}};
+  if (b.face) {
+    out["panel_right_m"] = b.face->x();
+    out["panel_up_m"] = b.face->y();
+  }
   out.update(aim_split(t, origin, b.dir, b.k));
+  out["muzzle_velocity_m_s"] = {inherited.x(), inherited.y(), inherited.z()};
   out.update(pose_errors(t));
   return out;
+}
+Vec Scorer::muzzle_velocity(const std::string &name, double t) {
+  const auto before = histories.at(name)->at(t - .01);
+  const auto after = histories.at(name)->at(t + .01);
+  if (!before || !after || !before->head || !after->head)
+    throw std::runtime_error("missing capture-time muzzle velocity truth");
+  const Matrix a = *before->head * offsets_.muzzle;
+  const Matrix b = *after->head * offsets_.muzzle;
+  return (b.block<3, 1>(0, 3) - a.block<3, 1>(0, 3)) / .02;
 }
 void Scorer::judge_state(const dji_serial_bridge::msg::TargetState &m) {
   double t = stamp_s(m.header.stamp);
   auto world = world_T_odom(t);
-  auto before = histories.at("opponent_0")->at(t - .02),
-       after = histories.at("opponent_0")->at(t + .02),
-       truth = histories.at("opponent_0")->at(t);
-  if (!world || !before || !after || !truth)
-    return;
-  Vec center = transform(*world, {m.center.x, m.center.y, m.center.z}),
-      vel = world->block<3, 3>(0, 0) *
-            Vec{m.velocity.x, m.velocity.y, m.velocity.z},
+  if (!world) return;
+  Vec center = transform(*world, {m.center.x, m.center.y, m.center.z});
+  std::string selected;
+  double nearest = INFINITY, second = INFINITY;
+  for (const auto &entry : histories) {
+    if (entry.first.rfind("opponent_", 0) != 0) continue;
+    auto pose = entry.second->at(t);
+    if (!pose) continue;
+    const double distance = (center - pose->root.block<3, 1>(0, 3)).head<2>().norm();
+    if (distance < nearest) {
+      second = nearest; nearest = distance; selected = entry.first;
+    } else second = std::min(second, distance);
+  }
+  if (selected.empty()) return;
+  auto history = histories.at(selected);
+  auto before = history->at(t - .02), after = history->at(t + .02), truth = history->at(t);
+  if (!before || !after || !truth) return;
+  Vec vel = world->block<3, 3>(0, 0) * Vec{m.velocity.x, m.velocity.y, m.velocity.z},
       true_vel =
           (after->root.block<3, 1>(0, 3) - before->root.block<3, 1>(0, 3)) /
           .04;
@@ -469,10 +562,38 @@ void Scorer::judge_state(const dji_serial_bridge::msg::TargetState &m) {
          rate = std::atan2(std::sin(dyaw), std::cos(dyaw)) / .04;
   Vec error = vel - true_vel;
   Json out = pose_errors(t);
+  const Vec acceleration = world->block<3, 3>(0, 0) *
+      Vec{m.acceleration.x, m.acceleration.y, m.acceleration.z};
+  const auto ours = histories.at("sentry")->at(t);
+  if (ours) {
+    const double horizon = .05 + (center - ours->root.block<3, 1>(0, 3)).norm() / combat::kMuzzleSpeed;
+    const auto future = history->at(t + horizon);
+    if (future) {
+      Vec local_center = Vec::Zero();
+      for (const auto &offset : offsets_.armors) local_center += offset.block<3, 1>(0, 3) / 4;
+      const Vec point = transform(future->root, local_center);
+      out["prediction_horizon_s"] = horizon;
+      out["cv_prediction_error_m"] = (center + vel * horizon - point).norm();
+      out["ca_prediction_error_m"] =
+          (center + vel * horizon + acceleration * horizon * horizon / 2 - point).norm();
+    }
+  }
   out.update({{"t", t},
+              {"selected_target", selected},
+              {"association_margin_m", std::isfinite(second) ? Json(second - nearest) : Json(nullptr)},
+              {"acceleration_est_m_s2", {acceleration.x(), acceleration.y(), acceleration.z()}},
+              {"valid", m.valid},
+              {"estimated_speed_m_s", vel.norm()},
+              {"actual_speed_m_s", true_vel.norm()},
               {"centre_xy_m",
                (center - truth->root.block<3, 1>(0, 3)).head<2>().norm()},
               {"vel_err", {error.x(), error.y(), error.z()}},
+              {"velocity_error_m_s", error.norm()},
+              {"yaw_error_rad", std::remainder(
+                  m.yaw + std::atan2((*world)(1, 0), (*world)(0, 0)) -
+                  std::atan2(truth->root(1, 0), truth->root(0, 0)) -
+                  std::atan2(offsets_.armors.front()(1, 0), offsets_.armors.front()(0, 0)), cb::kPi / 2)},
+              {"signed_yaw_rate_err", m.yaw_rate - rate},
               {"yaw_rate_err", std::abs(m.yaw_rate) - std::abs(rate)}});
   states.push_back(out);
 }
@@ -489,22 +610,26 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
            return p ? std::optional<Matrix>(p->root) : std::nullopt;
          }});
   }
-  if (launch > available)
+  if (launch + .01 > available)
     return {};
   auto pose = histories.at(shooter)->at(launch);
   if (!pose || !pose->head)
     throw std::runtime_error("missing muzzle truth");
   Matrix muzzle = *pose->head * offsets_.muzzle;
+  const Vec inherited = muzzle_velocity(shooter, launch);
   auto key = std::make_pair(kind, launch);
   auto impact = resolver_->resolve(
       shooter, muzzle.block<3, 1>(0, 3), muzzle.block<3, 1>(0, 0), launch,
-      functions, std::min(now_s() - .02, available), flight_steps_[key]);
+      functions, std::min(now_s() - .02, available), flight_steps_[key], inherited);
   if (impact.pending) {
     flight_steps_[key] = impact.next_step;
     return {};
   }
   flight_steps_.erase(key);
   Json out = {{"t", launch},
+              {"muzzle_velocity_m_s", {inherited.x(), inherited.y(), inherited.z()}},
+              {"muzzle_speed_m_s", combat::kMuzzleSpeed},
+              {"gravity_m_s2", 9.80665},
               {"shooter", shooter},
               {"impact_t", impact.impact_t},
               {"impact", impact.impact},
@@ -512,34 +637,46 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
               {"panel", impact.panel ? Json(*impact.panel) : Json(nullptr)},
               {"eligible", impact.eligible},
               {"normal_speed", impact.normal_speed}};
+  if (impact.crossing) {
+    out["crossing_panel"] = *impact.crossing_panel;
+    out["panel_right_m"] = impact.crossing->x();
+    out["panel_up_m"] = impact.crossing->y();
+  }
   out.update(pose_errors(launch));
   if (shooter == "sentry")
     out.update(aim_split(launch, muzzle.block<3, 1>(0, 3),
                          muzzle.block<3, 1>(0, 0), impact.panel.value_or(0),
-                         impact.victim && histories.count(*impact.victim)
-                             ? histories.at(*impact.victim)
-                             : histories.at("opponent_0")));
+                         nullptr));
   return out;
 }
 void Scorer::fire_tick() {
   double now = now_s();
   std::vector<dji_serial_bridge::msg::TargetState> states_keep;
   for (const auto &m : pending_states_)
-    if (stamp_s(m.header.stamp) < now - .1)
+    if (stamp_s(m.header.stamp) < now - .5)
       judge_state(m);
     else
       states_keep.push_back(m);
   pending_states_ = std::move(states_keep);
   std::vector<double> ref_keep;
-  for (double t : pending_reference_)
+  for (double t : pending_poses_)
     if (t > now - .1)
       ref_keep.push_back(t);
     else {
       auto out = pose_errors(t);
+      // EKF + raw-pose pairing can arrive after the first scoring callback.
+      // Retry the capture stamp; terminal gaps remain visible after one second.
+      if (now - t < 1.0 &&
+          (out.value("navigation_error_m", Json(nullptr)).is_null() ||
+           out.value("localization_error_m", Json(nullptr)).is_null())) {
+        ref_keep.push_back(t);
+        continue;
+      }
+      out["pose_score_delay_s"] = now - t;
       out["t"] = t;
       route_records.push_back(out);
     }
-  pending_reference_ = std::move(ref_keep);
+  pending_poses_ = std::move(ref_keep);
   std::vector<std::pair<std::string, double>> keep;
   std::vector<std::pair<std::string, Json>> completed;
   for (const auto &e : pending_) {
@@ -555,6 +692,8 @@ void Scorer::fire_tick() {
       auto out = judge(e.second);
       if (out) {
         (*out)["kind"] = e.first;
+        (*out)["scored_at"] = now;
+        visualize_shot(e.first, *out);
         shots[e.first].push_back(*out);
         cb::append_json(log_path, *out);
       }
@@ -593,17 +732,65 @@ void Scorer::fire_tick() {
       hp[p.first] = p.second;
     shot["hp"] = hp;
     shot["kind"] = e.first;
+    shot["scored_at"] = now;
+    visualize_shot(e.first, shot);
     shots[e.first].push_back(shot);
     cb::append_json(log_path, shot);
   }
-  if (stage == "mcb_match")
+  if (driving())
     sync_referee();
+}
+void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
+  if (kind != "mcb" || !visual_pub_->get_subscription_count()) return;
+  const double launch = shot.at("t").get<double>();
+  auto pose = histories.at("sentry")->at(launch);
+  auto world = world_T_odom(launch);
+  if (!pose || !pose->head || !world) return;
+  const Matrix muzzle = *pose->head * offsets_.muzzle;
+  const Vec origin = muzzle.block<3, 1>(0, 3);
+  const Vec velocity = combat::kMuzzleSpeed * muzzle.block<3, 1>(0, 0) +
+      muzzle_velocity("sentry", launch);
+  const double flight = std::max(.01, shot.contains("impact_t") ?
+      shot.at("impact_t").get<double>() - launch :
+      shot.value("range_m", 4.) / combat::kMuzzleSpeed);
+  using Marker = visualization_msgs::msg::Marker;
+  Marker line;
+  line.header.frame_id = "odom"; line.header.stamp = rclcpp::Time(static_cast<int64_t>(launch * 1e9), RCL_ROS_TIME);
+  line.ns = "scored_shot"; line.id = visual_id_++ % 64;
+  line.type = Marker::LINE_STRIP; line.pose.orientation.w = 1.;
+  line.scale.x = .025; line.color.a = 1.;
+  const bool hit = shot.value("enemy_hit", shot.value("hit", false));
+  line.color.g = hit ? 1.F : .2F; line.color.r = hit ? .15F : 1.F;
+  line.lifetime.nanosec = 750000000;
+  for (int i = 0; i <= 24; ++i) {
+    const double t = flight * i / 24.;
+    const Vec p = transform(world->inverse(), origin + t * velocity - Vec{0, 0, 4.903325*t*t});
+    geometry_msgs::msg::Point point;
+    point.x = p.x(); point.y = p.y(); point.z = p.z();
+    line.points.push_back(point);
+  }
+  auto impact = line;
+  impact.ns = "scored_endpoint"; impact.type = Marker::SPHERE;
+  impact.pose.position = line.points.back(); impact.points.clear();
+  impact.scale.x = impact.scale.y = impact.scale.z = hit ? .13 : .07;
+  visualization_msgs::msg::MarkerArray markers;
+  markers.markers = {line, impact};
+  visual_pub_->publish(markers);
 }
 void Scorer::sync_referee() {
   double elapsed = now_s() - match_start.value_or(now_s());
+  if (match_start && !center_time) {
+    bool ready = true;
+    for (const auto &[name, history] : histories) {
+      const auto pose = history->at(now_s() - .01);
+      ready &= pose && std::abs(pose->root(0, 3)) < match_scenario::kCenterHalfWidth &&
+                       std::abs(pose->root(1, 3)) < match_scenario::kCenterHalfHeight;
+    }
+    if (ready) center_time = now_s();
+  }
   diagnostic_msgs::msg::DiagnosticArray msg;
   msg.header.stamp = get_clock()->now();
-  for (const auto &p : referee->hit_points()) {
+  if (referee) for (const auto &p : referee->hit_points()) {
     diagnostic_msgs::msg::DiagnosticStatus s;
     s.name = s.hardware_id = p.first;
     s.level = p.second ? 0 : 2;
@@ -616,33 +803,55 @@ void Scorer::sync_referee() {
     s.values = {hp, team};
     msg.status.push_back(s);
   }
+  diagnostic_msgs::msg::DiagnosticStatus gate;
+  gate.name = "approach";
+  diagnostic_msgs::msg::KeyValue ready;
+  ready.key = "center_ready";
+  ready.value = center_time ? "true" : "false";
+  gate.values = {ready};
+  msg.status.push_back(gate);
   referee_pub_->publish(msg);
   if (referee_future_) {
     if (referee_future_->wait_for(std::chrono::seconds(0)) !=
-        std::future_status::ready)
-      return;
-    const auto response = referee_future_->get();
-    for (const auto &r : response->results)
-      if (!r.successful)
-        throw std::runtime_error("MCB rejected match referee status");
-    referee_future_.reset();
+        std::future_status::ready) {
+      // Responses can be lost after parameters were applied. Retry current state.
+      if (std::chrono::steady_clock::now() - referee_sent_ <
+          std::chrono::seconds(2))
+        return;
+      referee_client_->remove_pending_request(*referee_future_);
+      referee_future_.reset();
+      if (++referee_timeouts_ >= 3)
+        throw std::runtime_error("MCB referee parameter response timed out 3 times");
+      RCLCPP_WARN(get_logger(),
+                  "MCB referee parameter response timed out; retrying current state (%d/3)",
+                  referee_timeouts_);
+    } else {
+      const auto response = referee_future_->get();
+      for (const auto &r : response->results)
+        if (!r.successful)
+          throw std::runtime_error("MCB rejected match referee status: " + r.reason);
+      referee_future_.reset();
+      referee_timeouts_ = 0;
+    }
   }
   if (!referee_client_->service_is_ready())
     return;
   auto req = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
+  const bool alive = !referee || referee->hp("sentry") > 0;
   for (const auto &p : std::vector<rclcpp::Parameter>{
-           rclcpp::Parameter("current_hp", referee->hp("sentry")),
+           rclcpp::Parameter("current_hp", referee ? referee->hp("sentry") : 400),
+           rclcpp::Parameter("drive", std::string(match_start && alive ? "simple" : "stop")),
+           rclcpp::Parameter("auto_fire", alive && center_time.has_value()),
            rclcpp::Parameter(
                "game_stage",
-               elapsed >= match_scenario::match_duration("mcb_match")     ? 5
-               : elapsed >= match_scenario::ingress_duration("mcb_match") ? 4
-                                                                          : 3),
+               elapsed >= match_scenario::match_duration(stage) ? 5 : 4),
            rclcpp::Parameter("stage_time_remaining",
                              std::max(0, 300 - static_cast<int>(elapsed))),
            rclcpp::Parameter("hurt_armor_id", hurt_armor_id),
-           rclcpp::Parameter("shooter_power", referee->hp("sentry") > 0)})
+           rclcpp::Parameter("shooter_power", alive)})
     req->parameters.push_back(p.to_parameter_msg());
   referee_future_ = referee_client_->async_send_request(req);
+  referee_sent_ = std::chrono::steady_clock::now();
 }
 double hit_rate(const std::vector<Json> &shots) {
   int hits = 0;

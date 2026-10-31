@@ -16,50 +16,56 @@
 #include "sim/match_scenario.hpp"
 #include <algorithm>
 #include <cmath>
-#include <filesystem>
 #include <gtest/gtest.h>
-#include <sstream>
-#include <stdexcept>
 #include <string>
-#include <tinyxml2.h>
 #include <vector>
 namespace {
 namespace route = sim::match_scenario;
 constexpr double radius = 0.40, pi = 3.14159265358979323846;
 using Triangle = std::array<Eigen::Vector2d, 3>;
+TEST(FieldGeometry, CenteredMetresAndGroundLevel) {
+  const auto field = sim::combat::load_field(SIM_SOURCE_DIR);
+  ASSERT_EQ(field.size(), 8562u);
+  Eigen::Vector3d low = Eigen::Vector3d::Constant(INFINITY), high = -low;
+  for (const auto &triangle : field) {
+    for (const auto &vertex : triangle) {
+      low = low.cwiseMin(vertex);
+      high = high.cwiseMax(vertex);
+    }
+  }
+  EXPECT_NEAR(low.x(), -6.168884277, 1e-6);
+  EXPECT_NEAR(high.x(), 6.168884277, 1e-6);
+  EXPECT_NEAR(low.y(), -4.168884277, 1e-6);
+  EXPECT_NEAR(high.y(), 4.168884277, 1e-6);
+  EXPECT_NEAR(low.z(), -0.025, 1e-6);
+  EXPECT_NEAR(high.z(), 0.498611624, 1e-6);
+  const auto floor = sim::combat::segment_mesh_hit({0, 0, 1}, {0, 0, -1}, field);
+  ASSERT_TRUE(floor.has_value());
+  EXPECT_NEAR(*floor, 0.5, 1e-6);
+  const auto wall = sim::combat::segment_mesh_hit({5.9, 3.8, 0.3}, {6.1, 3.8, 0.3}, field);
+  ASSERT_TRUE(wall.has_value());
+  EXPECT_NEAR(*wall, 0.5, 1e-6);
+  const auto side = sim::combat::segment_mesh_hit({5.8, 3.9, 0.3}, {5.8, 4.1, 0.3}, field);
+  ASSERT_TRUE(side.has_value());
+  EXPECT_NEAR(*side, 0.5, 1e-6);
+}
+TEST(FieldGeometry, CorrectedBarIntersectsLidarPlane) {
+  const auto field = sim::combat::load_field(SIM_SOURCE_DIR);
+  const auto bar = sim::combat::segment_mesh_hit({0, 2.8, 0.357296694}, {0, 3.2, 0.357296694}, field);
+  ASSERT_TRUE(bar.has_value());
+  EXPECT_NEAR(2.8 + 0.4 * *bar, 2.98488, 1e-5);
+  EXPECT_FALSE(sim::combat::segment_mesh_hit({0, 2.8, 0.42}, {0, 3.2, 0.42}, field));
+}
 std::vector<Triangle> obstacles() {
-  const auto world = std::filesystem::path(SIM_SOURCE_DIR) / "world";
-  tinyxml2::XMLDocument xml;
-  if (xml.LoadFile((world / "ARCC_Field_2026.sdf").c_str()) !=
-      tinyxml2::XML_SUCCESS) {
-    throw std::runtime_error("cannot read field SDF");
-  }
-  auto *model =
-      xml.RootElement()->FirstChildElement("world")->FirstChildElement("model");
-  auto *collision =
-      model->FirstChildElement("link")->FirstChildElement("collision");
-  std::array<double, 6> origin{}, offset{};
-  std::istringstream model_pose(model->FirstChildElement("pose")->GetText());
-  for (double &x : origin) {
-    model_pose >> x;
-  }
-  std::istringstream collision_pose(
-      collision->FirstChildElement("pose")->GetText());
-  for (double &x : offset) {
-    collision_pose >> x;
-  }
-  const double c = std::cos(origin[5]), s = std::sin(origin[5]);
+  const auto field = sim::combat::load_field(SIM_SOURCE_DIR);
   std::vector<Triangle> triangles;
-  for (const auto &triangle :
-       sim::combat::load_stl(world / "composite_part_1.stl")) {
+  for (const auto &triangle : field) {
     Triangle out;
     double max_z = -INFINITY;
     for (size_t i = 0; i < 3; ++i) {
-      const Eigen::Vector3d p =
-          triangle[i] + Eigen::Vector3d(offset[0], offset[1], offset[2]);
-      out[i] = Eigen::Vector2d(c * p.x() - s * p.y() + origin[0],
-                               s * p.x() + c * p.y() + origin[1]);
-      max_z = std::max(max_z, p.z() + origin[2]);
+      const auto &p = triangle[i];
+      out[i] = p.head<2>();
+      max_z = std::max(max_z, p.z());
     }
     if (max_z > 0.1) {
       triangles.push_back(out);
@@ -138,6 +144,17 @@ TEST(MatchRoutes, CenterManeuversClearField) {
   for (double t = 0; t < route::match_duration(); t += 0.025) {
     assert_clear(route::sample_match(t).position, data);
   }
+}
+TEST(MatchRoutes, CommonBootHeadingPreservesFieldIngress) {
+  for (const auto &name : {"sentry", "opponent_0", "ally_0", "opponent_1"}) {
+    const auto sample = route::sample_robot(name, 0);
+    EXPECT_DOUBLE_EQ(sample.yaw, pi / 2);
+    EXPECT_EQ(sample.position, route::routes().at(name).front());
+  }
+  EXPECT_EQ(route::routes().at("sentry").front(), (route::Point{4.625, 0}));
+  EXPECT_EQ(route::routes().at("opponent_0").front(), (route::Point{-4.625, 0}));
+  EXPECT_EQ(route::routes().at("sentry")[1], (route::Point{4.625, -2.35}));
+  EXPECT_EQ(route::routes().at("opponent_0")[1], (route::Point{-4.625, -2.35}));
 }
 TEST(MatchRoutes, FourRobotsNeverOverlap) {
   for (double t = 0; t < route::match_duration("mcb_match"); t += 0.025) {

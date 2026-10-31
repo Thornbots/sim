@@ -30,6 +30,7 @@ Report check(const std::string &path) {
   const std::regex prefix(R"(^\[([\w.-]+)\] )");
   struct Pattern { std::string label; std::regex pattern; bool fatal; };
   const std::vector<Pattern> patterns{
+    {"launch exception", std::regex("Caught exception in launch"), true},
     {"no display", std::regex("Qt platform plugin|could not connect to display"), true},
     {"wait gave up", std::regex(R"(wall-clock cap hit|\[wait_until\] timed out)"), true},
     {"stack not ready", std::regex("stack NOT ready"), true},

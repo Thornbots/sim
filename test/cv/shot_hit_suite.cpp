@@ -20,6 +20,7 @@
 #include <dji_serial_bridge/msg/cv_target.hpp>
 #include <gtest/gtest.h>
 #include <nav_msgs/msg/odometry.hpp>
+#include <optional>
 #include <std_msgs/msg/header.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 namespace cb = sim::cv_bench;
@@ -46,6 +47,8 @@ public:
   std::vector<cb::Json> records;
   std::vector<double> misses;
   int fired = 0, hits = 0;
+  double aim_yaw_tv = 0, aim_pitch_tv = 0;
+  int panel_flips = 0, scored_aims = 0;
   double stagger, lifetime;
   explicit ShotSampler(double stagger_ = 0, double lifetime_ = 5)
       : SimTimeNode("shot_hit_test_sampler"), stagger(stagger_),
@@ -60,7 +63,11 @@ public:
           if (!truth.empty())
             y = truth.back().yaw + std::atan2(std::sin(y - truth.back().yaw),
                                               std::cos(y - truth.back().yaw));
-          truth.push_back({t, {p.x, p.y, p.z}, cb::Vec::Zero(), y, 0});
+          const auto &q = m.pose.pose.orientation;
+          const auto &v = m.twist.twist.linear;
+          truth.push_back({t, {p.x, p.y, p.z},
+              Eigen::Quaterniond(q.w, q.x, q.y, q.z) * cb::Vec{v.x, v.y, v.z},
+              y, m.twist.twist.angular.z});
           while (t - truth.front().t > 1)
             truth.pop_front();
           launch_due(t);
@@ -94,6 +101,35 @@ public:
             unlaunched_.push_back(
                 {t + m.delay_ms / 1000. + cb::kFireLatency, m.delay_ms});
           }
+          if (scoring_ && !shooter.empty() && !truth.empty()) {
+            const cb::Vec delta = cb::Vec{m.x, m.y, m.z} - shooter.back().center;
+            const double horizontal = std::hypot(delta.x(), delta.y());
+            const double yaw = std::atan2(delta.y(), delta.x());
+            const double pitch = std::atan2(delta.z(), horizontal);
+            if (last_aim_angles_) {
+              aim_yaw_tv += std::abs(std::atan2(std::sin(yaw - last_aim_angles_->first),
+                                                std::cos(yaw - last_aim_angles_->first)));
+              aim_pitch_tv += std::abs(std::atan2(std::sin(pitch - last_aim_angles_->second),
+                                                  std::cos(pitch - last_aim_angles_->second)));
+            }
+            last_aim_angles_ = std::pair{yaw, pitch};
+            const double arrival = t + delta.norm() / cb::kMuzzleSpeed;
+            auto predicted = cb::interpolate(truth, arrival);
+            predicted.center += predicted.velocity * (arrival - predicted.t);
+            predicted.yaw += predicted.yaw_rate * (arrival - predicted.t);
+            const auto panels = cb::panel_poses(predicted.center,
+                                                cb::rpy(0, 0, predicted.yaw), stagger);
+            int selected = 0;
+            double nearest = std::numeric_limits<double>::infinity();
+            for (int k = 0; k < 4; ++k) {
+              const double distance = (panels[k].pos - cb::Vec{m.x, m.y, m.z}).squaredNorm();
+              if (distance < nearest) { nearest = distance; selected = k; }
+            }
+            if (last_selected_panel_ && selected != *last_selected_panel_)
+              ++panel_flips;
+            last_selected_panel_ = selected;
+            ++scored_aims;
+          }
         });
     progress_ = create_publisher<std_msgs::msg::Header>("/bench/progress", 10);
     tick_sub_ = create_subscription<std_msgs::msg::Header>(
@@ -106,6 +142,11 @@ public:
   }
   void reset() {
     fired = hits = 0;
+    aim_yaw_tv = aim_pitch_tv = 0;
+    panel_flips = scored_aims = 0;
+    last_aim_angles_.reset();
+    last_selected_panel_.reset();
+    scoring_ = true;
     records.clear();
     misses.clear();
     pending_.clear();
@@ -241,6 +282,9 @@ public:
   }
 
 private:
+  bool scoring_ = false;
+  std::optional<std::pair<double, double>> last_aim_angles_;
+  std::optional<int> last_selected_panel_;
   std::vector<Fire> unlaunched_;
   std::vector<Shot> pending_;
   std::vector<Mark> marks_;
@@ -416,10 +460,12 @@ TEST_P(ShotSuite, ShotHit) {
     auto params = cb::path_params(cb::options.path);
     params.push_back(rclcpp::Parameter("target_speed", c.speed));
     params.push_back(rclcpp::Parameter("spin_hz", c.spin));
+    params.push_back(rclcpp::Parameter("yaw_offset", c.yaw * cb::kPi / 180));
     environment->control->set_params("target_driver", params);
     environment->control->set_params(
         "target_state_truth",
-        {rclcpp::Parameter("panel_stagger_m", c.stagger)});
+        {rclcpp::Parameter("panel_stagger_m", c.stagger),
+         rclcpp::Parameter("model_yaw_jitter_rad", cb::options.model_yaw_jitter_rad)});
     std::cout << "[stack] target set to speed=" << cb::python_float(c.speed)
               << " m/s, spin=" << std::fixed << std::setprecision(2) << c.spin
               << " Hz, panel stagger=" << std::setprecision(3) << c.stagger
@@ -444,7 +490,13 @@ TEST_P(ShotSuite, ShotHit) {
                       {"spin_hz", cb::rounded(c.spin, 3)},
                       {"panel_stagger_m", c.stagger},
                       {"target_path", cb::options.path},
-                      {"shooter_speed", cb::options.shooter}};
+                      {"shooter_speed", cb::options.shooter},
+                      {"target_yaw_deg", c.yaw},
+                      {"model_yaw_jitter_rad", cb::options.model_yaw_jitter_rad},
+                      {"panel_switch_margin_rad",
+                       cb::options.panel_switch_margin_rad
+                           ? cb::Json(*cb::options.panel_switch_margin_rad)
+                           : cb::Json(nullptr)}};
   for (const auto &r : s->records) {
     auto record = details;
     record.update(r);
@@ -459,12 +511,17 @@ TEST_P(ShotSuite, ShotHit) {
          hit_rate = s->fired ? static_cast<double>(s->hits) / s->fired : 0,
          total = .5 * (hit_rate + s->hits / expected),
          keep_up = s->fired / expected;
-  cb::append_json(cb::options.log_dir + "/scores.jsonl",
-                  {{"cell", c.name},
+  auto summary = details;
+  summary.update({{"cell", c.name},
                    {"score", cb::rounded(total, 4)},
                    {"hits", s->hits},
                    {"shots", s->fired},
-                   {"keep_up", cb::rounded(keep_up, 4)}});
+                   {"keep_up", cb::rounded(keep_up, 4)},
+                   {"aim_yaw_total_variation_rad", cb::rounded(s->aim_yaw_tv, 6)},
+                   {"aim_pitch_total_variation_rad", cb::rounded(s->aim_pitch_tv, 6)},
+                   {"scored_aim_samples", s->scored_aims},
+                   {"selected_panel_flips", s->panel_flips}});
+  cb::append_json(cb::options.log_dir + "/scores.jsonl", summary);
   // Python's {x:5.1%}: the percent sign sits inside the width.
   const auto percent = [](double fraction) {
     std::ostringstream text;

@@ -72,13 +72,14 @@ def cv_node(executable, package='thornbots_pkg', **params):
 
 def _aim_node(context, harness):
     cfg = context.launch_configurations
-    return cv_node('point_to_cv_target',
-                   cv_target_publish_rate_hz=harness.TEST_FIRE_HZ,
-                   tick_topic='/cv/target/tick', patrol_enabled=False,
-                   fire_rate_hz=harness.TEST_FIRE_HZ + 10.0,
-                   gimbal_lag_s=float(cfg['gimbal_lag_s']),
-                   chase_settle_s=float(cfg['chase_settle_s']),
-                   chase_margin_s=float(cfg['chase_margin_s']))
+    params = {'cv_target_publish_rate_hz': harness.TEST_FIRE_HZ,
+              'tick_topic': '/cv/target/tick', 'idle_direction': 'hold',
+              'gimbal_lag_s': float(cfg['gimbal_lag_s']),
+              'chase_settle_s': float(cfg['chase_settle_s']),
+              'chase_margin_s': float(cfg['chase_margin_s'])}
+    if cfg['panel_switch_margin_rad']:
+        params['panel_switch_margin_rad'] = float(cfg['panel_switch_margin_rad'])
+    return cv_node('point_to_cv_target', **params)
 
 
 def _point_stack(context, harness, headless):
@@ -107,8 +108,11 @@ def _point_stack(context, harness, headless):
                           'half_width': harness.SHOOTER_HALF_WIDTH,
                           'target_speed': float(context.launch_configurations['shooter_speed'])}]),
         cv_node('point_shooter', package='sim'),
-        cv_node('target_driver', package='sim', target_speed=0.0, spin_hz=0.0),
-        cv_node('target_state_truth', package='sim'),
+        cv_node('target_driver', package='sim', target_speed=0.0, spin_hz=0.0,
+                yaw_offset=(float(context.launch_configurations['target_yaw_deg']) *
+                            3.141592653589793 / 180.0)),
+        cv_node('target_state_truth', package='sim',
+                model_yaw_jitter_rad=float(context.launch_configurations['model_yaw_jitter_rad'])),
         _aim_node(context, harness),
         cv_node('mcb_relay'),
     ]
@@ -130,6 +134,14 @@ def _tests(context):
     speeds = context.launch_configurations['speeds'].replace(',', ' ').split()
     if speeds:
         cmd += ['--shot-speeds', ','.join(speeds)]
+    for arg, opt in (('panel_switch_margin_rad', '--panel-switch-margin-rad'),
+                     ('target_yaw_deg', '--shot-yaw-deg'),
+                     ('target_spin_hz', '--shot-spin'),
+                     ('model_yaw_jitter_rad', '--model-yaw-jitter-rad')):
+        if context.launch_configurations[arg] and not (
+                arg == 'target_yaw_deg' and
+                float(context.launch_configurations[arg]) == 0.0):
+            cmd += [opt, context.launch_configurations[arg]]
     for arg, opt in (('duration', '--shot-duration'), ('log_dir', '--log-dir')):
         if context.launch_configurations[arg]:
             cmd += [opt, context.launch_configurations[arg]]
@@ -181,6 +193,14 @@ def generate_launch_description():
                                           '(timed fire), >= 0 chase the facing panel'),
         DeclareLaunchArgument('chase_margin_s', default_value='0.0',
                               description="point_to_cv_target's chase_margin_s"),
+        DeclareLaunchArgument('panel_switch_margin_rad', default_value='',
+                              description='optional point_to_cv_target panel switch margin'),
+        DeclareLaunchArgument('target_yaw_deg', default_value='0',
+                              description='target initial yaw in degrees'),
+        DeclareLaunchArgument('target_spin_hz', default_value='',
+                              description='override target spin for shot_hit cells'),
+        DeclareLaunchArgument('model_yaw_jitter_rad', default_value='0',
+                              description='synthetic 4 Hz target-state yaw jitter amplitude'),
         DeclareLaunchArgument('panel_layout', default_value='both',
                               choices=['flat', 'staggered', 'both']),
         DeclareLaunchArgument('skip_stationary', default_value='false'),

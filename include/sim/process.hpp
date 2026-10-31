@@ -14,6 +14,7 @@
 
 #ifndef SIM__PROCESS_HPP_
 #define SIM__PROCESS_HPP_
+#include <functional>
 #include <string>
 #include <sys/types.h>
 #include <vector>
@@ -27,7 +28,9 @@ public:
   LaunchTree(const LaunchTree &) = delete;
   LaunchTree &operator=(const LaunchTree &) = delete;
   bool alive();
-  void stop(double timeout = 15.0);
+  // Keep fixture I/O moving during shutdown; cleanup precedes callback rethrows.
+  void stop(double timeout = 15.0,
+            const std::function<void()> &progress = {});
   std::string read_log() const;
   std::string log_text() const { return read_log(); }
   pid_t pid() const { return pid_; }

@@ -30,7 +30,7 @@
 #include <string>
 #include <vector>
 namespace sim::gazebo {
-constexpr double kSpawnYaw = -1.57079632679489661923;
+constexpr double kSpawnYaw = 1.57079632679489661923;
 constexpr double kZ = 0.03;
 inline gz::transport::Node &node() {
   static std::unique_ptr<gz::transport::Node> instance = [] {

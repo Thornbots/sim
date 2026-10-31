@@ -139,12 +139,13 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
     return true;
   };
   ASSERT_TRUE(wait([&] { return !poses.empty() && !refs.empty(); }));
-  EXPECT_NEAR(poses.back().x, firmware.start_x(),
-              std::abs(firmware.start_x()) * 1e-6);
+  EXPECT_NEAR(poses.back().x, 0.0, 1e-6);
+  EXPECT_NEAR(poses.back().y, 0.0, 1e-6);
+  EXPECT_EQ(poses.back().header.frame_id, "odom");
   EXPECT_TRUE(refs.back().is_on_blue_team);
   EXPECT_EQ(refs.back().robot_id, 7);
   dji_serial_bridge::msg::CVTarget target;
-  target.x = firmware.start_x() - 3;
+  target.x = -3;
   target.y = 1.0;
   target.z = 0.2;
   target.fire = true;
@@ -153,6 +154,7 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
   ASSERT_TRUE(wait([&] { return shots >= 3; },
                    [&] {
                      if (std::chrono::steady_clock::now() >= next_cv) {
+                       target.header.stamp = node->now();
                        cv->publish(target);
                        next_cv = std::chrono::steady_clock::now() +
                                  std::chrono::milliseconds(100);
@@ -161,10 +163,87 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
   geometry_msgs::msg::PointStamped point;
   point.point.x = 1.25;
   point.point.y = -0.75;
+  point.header.frame_id = "nav_odom";
+  const auto pose_count = poses.size();
   EXPECT_TRUE(wait(
-      [&] {
-        return std::abs(poses.back().x - 1.25) <= 1.25e-6 &&
-               std::abs(poses.back().y + 0.75) <= 0.75e-6;
-      },
+      [&] { return poses.size() >= pose_count + 20; },
       [&] { reloc->publish(point); }));
+  EXPECT_NEAR(poses.back().x, 0.0, 1e-6);
+  EXPECT_NEAR(poses.back().y, 0.0, 1e-6);
+  EXPECT_NE(bridge.read_log().find("navigation fix:"), std::string::npos);
+}
+
+TEST(McbBridgePty, PacksAllCvFlagCombinationsThroughTheRealBridge) {
+  namespace wire = sim::mcb_protocol;
+  const auto directory = std::filesystem::path("/tmp/mcb_flags_test_" + std::to_string(getpid()));
+  std::filesystem::create_directories(directory);
+  sim::mcb_firmware::PtyLink link((directory / "mcb").string());
+  fcntl(link.master(), F_SETFL, fcntl(link.master(), F_GETFL) | O_NONBLOCK);
+  rclcpp::InitOptions init;
+  init.set_domain_id(87);
+  auto context = std::make_shared<rclcpp::Context>();
+  context->init(0, nullptr, init);
+  struct ContextGuard {
+    std::shared_ptr<rclcpp::Context> ctx;
+    ~ContextGuard() { ctx->shutdown("bridge flags test finished"); }
+  } guard{context};
+  auto node = std::make_shared<rclcpp::Node>("bridge_flags_test", rclcpp::NodeOptions().context(context));
+  auto cv = node->create_publisher<dji_serial_bridge::msg::CVTarget>(
+      "/dji_serial_bridge/cv_target", rclcpp::SensorDataQoS());
+  sim::LaunchTree bridge("bridge", {"env", "ROS_DOMAIN_ID=87", "ros2", "run",
+      "dji_serial_bridge", "dji_serial_bridge_node", "--ros-args", "-p",
+      "device:=" + link.link(), "-p", "debug_log:=false", "-p", "read_poll_ms:=2",
+      "-p", "diag_interval_s:=0"},
+      (directory / "bridge.log").string());
+  wire::DJISerial parser;
+  for (uint8_t flags = 0; flags < 16; ++flags) {
+    dji_serial_bridge::msg::CVTarget target;
+    target.x = flags + 1.0F;
+    target.y = 2;
+    target.z = 0.2F;
+    target.delay_ms = 150;
+    target.fire = flags & wire::kCvTargetFlagFire;
+    target.type_c_based_patrol = flags & wire::kCvTargetFlagTypeCBasedPatrol;
+    target.turn_to_hit = flags & wire::kCvTargetFlagTurnToHit;
+    target.patrol = flags & wire::kCvTargetFlagPatrol;
+    bool received = false;
+    const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!received && std::chrono::steady_clock::now() < end) {
+      ASSERT_TRUE(bridge.alive()) << bridge.read_log();
+      target.header.stamp = node->now();
+      cv->publish(target);
+      std::this_thread::sleep_for(std::chrono::milliseconds(30));
+      uint8_t data[4096];
+      const auto count = read(link.master(), data, sizeof(data));
+      if (count <= 0) { continue; }
+      for (const auto & frame : parser.feed(data, static_cast<size_t>(count))) {
+        if (frame.msg_type != wire::kCvTarget) { continue; }
+        ASSERT_EQ(frame.payload.size(), 15U);
+        const auto packet = wire::unpack<wire::CvTarget>(frame.payload);
+        if (packet.x != target.x) { continue; }
+        EXPECT_EQ(packet.flags, flags);
+        EXPECT_EQ(packet.delay_ms, 150);
+        EXPECT_EQ(packet.y, target.y);
+        EXPECT_EQ(packet.z, target.z);
+        received = true;
+      }
+    }
+    ASSERT_TRUE(received) << "flags=" << static_cast<int>(flags) << '\n' << bridge.read_log();
+  }
+  EXPECT_NE(bridge.read_log().find("Diagnostic summary disabled"), std::string::npos);
+  EXPECT_EQ(bridge.read_log().find("── DIAG"), std::string::npos);
+}
+
+TEST(McbBridgePty, RejectsNegativeDiagnosticIntervalBeforeOpeningTheDevice) {
+  const auto log = "/tmp/mcb_negative_diag_" + std::to_string(getpid()) + ".log";
+  sim::LaunchTree bridge("bridge", {"env", "ROS_DOMAIN_ID=87", "ros2", "run",
+      "dji_serial_bridge", "dji_serial_bridge_node", "--ros-args", "-p",
+      "device:=/unused-negative-diag-test", "-p", "diag_interval_s:=-1"}, log);
+  const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (bridge.alive() && std::chrono::steady_clock::now() < end) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  EXPECT_FALSE(bridge.alive());
+  EXPECT_NE(bridge.read_log().find("diag_interval_s must be nonnegative"), std::string::npos);
+  EXPECT_EQ(bridge.read_log().find("cannot be stat"), std::string::npos);
 }

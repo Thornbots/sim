@@ -1,0 +1,77 @@
+{
+  "configById": {
+    "3D!e2e": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 9.0,
+        "phi": 26.97,
+        "thetaOffset": 90.0,
+        "target": [
+          -1.2,
+          0.0,
+          0.2
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.01,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "odom",
+      "scene": {
+        "meshUpAxis": "z_up"
+      },
+      "transforms": {},
+      "topics": {
+        "/scan": {
+          "visible": true,
+          "pointSize": 3,
+          "colorMode": "flat",
+          "flatColor": "#ffd26eff"
+        },
+        "/robot_description": {
+          "visible": true
+        },
+        "/sim/e2e/map": {
+          "visible": true
+        },
+        "/cv/target_state_markers": {
+          "visible": true
+        },
+        "/sim/e2e/markers": {
+          "visible": true
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameId": "odom",
+          "size": 20,
+          "divisions": 20,
+          "color": "#a0a0a480"
+        }
+      },
+      "publish": {
+        "type": "point"
+      },
+      "imageMode": {}
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": "3D!e2e"
+}

@@ -18,6 +18,7 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -42,9 +43,11 @@
 #include <unistd.h>
 
 #include "sim/mcb_protocol.hpp"
+#include "sim/mcb_motor.hpp"
 extern char **environ;
 namespace sim::mcb_firmware {
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kStartYaw = kPi / 2;
 [[noreturn]] inline void system_error(const std::string &operation) {
   throw std::runtime_error(operation + ": " + std::strerror(errno));
 }
@@ -117,7 +120,7 @@ struct Referee {
   int64_t current_hp = 400, max_hp = 400, hurt_armor_id = 0;
   bool restoration_zone = false, exchange_zone = false,
        central_buff_zone = false;
-  bool shooter_power = true;
+  bool shooter_power = true, chassis_power = true;
 
   template <typename Parameter> void apply(const Parameter &p) {
     const auto &n = p.get_name();
@@ -141,6 +144,8 @@ struct Referee {
       exchange_zone = p.as_bool();
     } else if (n == "central_buff_zone") {
       central_buff_zone = p.as_bool();
+    } else if (n == "chassis_power") {
+      chassis_power = p.as_bool();
     } else if (n == "shooter_power") {
       shooter_power = p.as_bool();
     }
@@ -164,7 +169,8 @@ inline std::vector<uint8_t> referee_frames(const Referee &ref) {
                            int64_t{1000}, int64_t{240}}) {
     append_u16(robot, referee_u16(value));
   }
-  robot.push_back(3 | static_cast<uint8_t>(ref.shooter_power) << 2);
+  robot.push_back(1 | static_cast<uint8_t>(ref.chassis_power) << 1 |
+                  static_cast<uint8_t>(ref.shooter_power) << 2);
   frame(0x0201, robot);
   std::vector<uint8_t> power;
   append_u16(power, 24000);
@@ -207,13 +213,28 @@ public:
         system_error("ttyname");
       }
       slave_name_ = name;
+      // A link whose pty still exists belongs to a live stack: refuse it. A
+      // dangling link, a plain file, or a link to the pty just opened here (a
+      // killed owner's pts number, reused) is stale and replaced.
       struct stat info{};
-      if (lstat(link_.c_str(), &info) == 0 && unlink(link_.c_str()) < 0) {
-        system_error("unlink pty link");
+      if (lstat(link_.c_str(), &info) == 0) {
+        struct stat target{}, own{};
+        if (fstat(slave_, &own) < 0) {
+          system_error("fstat pty");
+        }
+        if (S_ISLNK(info.st_mode) && stat(link_.c_str(), &target) == 0 &&
+            target.st_rdev != own.st_rdev) {
+          throw std::runtime_error("MCB pty link " + link_ + " is owned by a live stack; "
+                                   "set a unique mcb_device_link per stack");
+        }
+        if (unlink(link_.c_str()) < 0) {
+          system_error("unlink pty link");
+        }
       }
       if (symlink(slave_name_.c_str(), link_.c_str()) < 0) {
         system_error("symlink pty");
       }
+      linked_ = true;
     } catch (...) {
       close_fd(master_);
       close_fd(slave_);
@@ -222,9 +243,13 @@ public:
   }
 
   ~PtyLink() {
-    struct stat info{};
-    if (lstat(link_.c_str(), &info) == 0 && S_ISLNK(info.st_mode)) {
-      unlink(link_.c_str());
+    // Only remove the link while it still names this pty.
+    if (linked_) {
+      char target[PATH_MAX];
+      const auto length = readlink(link_.c_str(), target, sizeof(target) - 1);
+      if (length >= 0 && std::string(target, static_cast<size_t>(length)) == slave_name_) {
+        unlink(link_.c_str());
+      }
     }
     close_fd(master_);
     close_fd(slave_);
@@ -268,9 +293,11 @@ private:
   int master_ = -1, slave_ = -1;
   size_t dropped_ = 0;
   std::string link_, slave_name_;
+  bool linked_ = false;
 };
 
 struct GzHardware {
+  // Boot-relative pod input stays raw; firmware alone owns navigation corrections.
   bool ready = false, seen_odom = false, seen_joints = false;
   double chassis_yaw = 0.0, chassis_rate = 0.0;
   std::array<double, 2> pos{}, vel{}, yaw_joint{}, pitch_joint{};
@@ -280,7 +307,7 @@ struct GzHardware {
 
   void maybe_boot() {
     if (!boot && seen_odom && seen_joints) {
-      boot = std::array<double, 3>{pos[0], pos[1], turret_world_yaw()};
+      boot = std::array<double, 3>{pos[0], pos[1], chassis_yaw};
       ready = true;
     }
   }
@@ -310,10 +337,21 @@ struct GzHardware {
   }
 };
 
+inline uint32_t control_mode(const std::string &drive, bool auto_fire) {
+  uint32_t mode;
+  if (drive == "stop") mode = 0;
+  else if (drive == "simple") mode = 1;
+  else if (drive == "auto") mode = 2;
+  else if (drive == "external") mode = 3;
+  else throw std::invalid_argument("unknown MCB drive mode: " + drive);
+  return mode | (auto_fire ? 0 : 4);
+}
+
 class Firmware {
 public:
   Firmware(int master_fd, const std::string &requested_binary,
-           const std::string &drive, bool auto_fire) {
+           const std::string &drive, bool auto_fire, const std::string &adapter = "") {
+    adapter_ = adapter;
     binary_ = requested_binary;
     if (binary_.empty()) {
       const char *override_path = std::getenv("MCB_FIRMWARE_BINARY");
@@ -325,32 +363,23 @@ public:
                        .parent_path()
                        .parent_path()
                        .parent_path() /
-                   "firmware/MCBV3/MCB-project/build/sim/scons-release/"
+                   (adapter_.empty() ? "firmware/MCBV3/MCB-project/build/sim/scons-release/" :
+                                       "firmware/MCBV3/MCB-project/build/hardware/scons-release/") /
                    "MCB-project.elf")
                       .string();
       }
     }
-    if (drive == "stop") {
-      mode_ = 0;
-    } else if (drive == "simple") {
-      mode_ = 1;
-    } else if (drive == "auto") {
-      mode_ = 2;
-    } else {
-      throw std::invalid_argument("unknown MCB drive mode: " + drive);
-    }
-    if (!auto_fire) {
-      mode_ |= 4;
-    }
-    if (access(binary_.c_str(), X_OK) != 0) {
+    mode_ = control_mode(drive, auto_fire);
+    if (access(binary_.c_str(), adapter_.empty() ? X_OK : R_OK) != 0) {
       throw std::runtime_error(
           "MCB firmware binary not built: " + binary_ +
-          ". Run src/sim/tools/build_mcb_firmware.sh first, or set "
+          (adapter_.empty() ? ". Run src/sim/tools/build_mcb_firmware.sh first, or set " :
+                              ". Build scons build robot=sentry profile=release first, or set ") +
           "firmware_binary / MCB_FIRMWARE_BINARY.");
     }
     try {
       spawn(master_fd);
-      if (read(4) != std::vector<uint8_t>{'M', 'C', 'B', '1'}) {
+      if (read(4, adapter_.empty() ? 5 : 600) != std::vector<uint8_t>{'M', 'C', 'B', '3'}) {
         throw std::runtime_error(
             "MCB firmware hardware interface version mismatch");
       }
@@ -372,7 +401,7 @@ public:
 
   std::array<double, 10> gz_readings(const GzHardware &hw,
                                      const Referee &ref) const {
-    const double heading = ref.robot_id > 100 ? kPi : 0.0;
+    const double heading = kStartYaw;
     const double sx = ref.robot_id > 100 ? start_x_ : -start_x_;
     const double c = std::cos(heading), s = std::sin(heading);
     const double dx = hw.pos[0] - sx, dy = hw.pos[1] - start_y_;
@@ -394,18 +423,31 @@ public:
   struct Output {
     double yaw, pitch, right, forward, spin;
     std::vector<uint32_t> shots;
+    mcb_motor::Commands motors{};
   };
 
   Output step(int64_t cycles, const std::array<double, 10> &readings,
-              const Referee &ref) {
+              const Referee &ref,
+              const std::vector<uint8_t> &referee_packets = {}) {
+    mcb_motor::Plant fixture;
+    return step(cycles, readings, ref, fixture.feedback(readings, 0, 0, 0, 0),
+                {}, {}, referee_packets);
+  }
+
+  Output step(int64_t cycles, const std::array<double, 10> &readings,
+              const Referee &ref, const mcb_motor::Feedback &motors,
+              const std::array<double, 3> &external = {},
+              const std::optional<std::array<double, 6>> &imu = {},
+              const std::vector<uint8_t> &referee_packets = {}) {
     if (cycles < 1 || cycles > 100) {
       throw std::invalid_argument(
           "MCB hardware ticks must contain 1..100 cycles");
     }
-    const auto packets =
-        time_ms_ == 0 || time_ms_ / 100 != (time_ms_ + cycles) / 100
-            ? referee_frames(ref)
-            : std::vector<uint8_t>{};
+    const auto packets = referee_packets.empty()
+                             ? (time_ms_ == 0 || time_ms_ / 100 != (time_ms_ + cycles) / 100
+                                    ? referee_frames(ref)
+                                    : std::vector<uint8_t>{})
+                             : referee_packets;
     std::vector<uint8_t> input;
     append_u32(input, static_cast<uint32_t>(cycles));
     for (double value : readings) {
@@ -413,6 +455,10 @@ public:
     }
     append_u32(input, static_cast<uint32_t>(packets.size()));
     append_u32(input, mode_);
+    for (const auto &motor : motors) input.insert(input.end(), motor.begin(), motor.end());
+    for (const double value : external) append_float(input, value);
+    const auto sample = imu.value_or(std::array<double, 6>{0, 0, readings[5], 0, 0, 1});
+    for (const double value : sample) append_float(input, value);
     input.insert(input.end(), packets.begin(), packets.end());
     size_t offset = 0;
     while (offset < input.size()) {
@@ -426,13 +472,17 @@ public:
       }
       offset += static_cast<size_t>(sent);
     }
-    const auto output = read(28);
+    const auto output = read(48);
     Output result{
         read_float(output.data()),      read_float(output.data() + 4),
         read_float(output.data() + 8),  read_float(output.data() + 12),
         read_float(output.data() + 16), {}};
     const uint32_t count = read_u32(output.data() + 20);
     time_ms_ = read_u32(output.data() + 24);
+    for (size_t i = 0; i < result.motors.size(); ++i) {
+      result.motors[i] = static_cast<int16_t>(static_cast<uint16_t>(output[28 + 2 * i]) |
+                                             static_cast<uint16_t>(output[29 + 2 * i]) << 8);
+    }
     const auto shots = read(static_cast<size_t>(count) * 4);
     for (size_t i = 0; i < count; ++i) {
       result.shots.push_back(read_u32(shots.data() + i * 4));
@@ -463,25 +513,30 @@ private:
     posix_spawn_file_actions_adddup2(&actions, master_fd, master_fd);
     std::vector<std::string> environment;
     for (char **p = environ; *p != nullptr; ++p) {
-      if (std::strncmp(*p, "MCB_UART_FD=", 12) != 0) {
+      if (std::strncmp(*p, "MCB_UART_FD=", 12) != 0 &&
+          std::strncmp(*p, "MCB_BOARD_ELF=", 14) != 0) {
         environment.emplace_back(*p);
       }
     }
     environment.push_back("MCB_UART_FD=" + std::to_string(master_fd));
+    if (!adapter_.empty()) environment.push_back("MCB_BOARD_ELF=" + binary_);
     std::vector<char *> envp;
     for (auto &entry : environment) {
       envp.push_back(entry.data());
     }
     envp.push_back(nullptr);
-    char *argv[] = {binary_.data(), nullptr};
+    auto executable = adapter_.empty() ? binary_ : adapter_;
+    char *argv[] = {executable.data(), nullptr};
     posix_spawnattr_t attributes;
     posix_spawnattr_init(&attributes);
     sigset_t defaults;
     sigemptyset(&defaults);
     sigaddset(&defaults, SIGPIPE);
     posix_spawnattr_setsigdefault(&attributes, &defaults);
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGDEF);
-    const int error = posix_spawn(&pid_, binary_.c_str(), &actions, &attributes,
+    // Parent destruction closes stdin; group SIGINT must not kill a tick mid-read.
+    posix_spawnattr_setpgroup(&attributes, 0);
+    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP);
+    const int error = posix_spawn(&pid_, executable.c_str(), &actions, &attributes,
                                   argv, envp.data());
     posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
@@ -498,11 +553,11 @@ private:
     output_fd_ = out[0];
   }
 
-  std::vector<uint8_t> read(size_t count) {
+  std::vector<uint8_t> read(size_t count, int timeout_seconds = 5) {
     std::vector<uint8_t> data(count);
     size_t offset = 0;
     const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        std::chrono::steady_clock::now() + std::chrono::seconds(timeout_seconds);
     while (offset < count) {
       const auto remaining = deadline - std::chrono::steady_clock::now();
       const auto timeout =
@@ -573,7 +628,7 @@ private:
     close_fd(output_fd_);
   }
 
-  std::string binary_;
+  std::string binary_, adapter_;
   uint32_t mode_ = 0, time_ms_ = 0;
   double start_x_ = 0.0, start_y_ = 0.0;
   pid_t pid_ = -1;

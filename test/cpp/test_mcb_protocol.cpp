@@ -133,3 +133,15 @@ TEST(McbProtocol, ParserDropsBadCrcAndResyncs)
   EXPECT_EQ(parser.errors().crc16, 1U);
   EXPECT_EQ(parser.errors().crc8, 1U);
 }
+
+TEST(McbProtocol, PatrolBitPreservesCurrentPayloadAndOtherFlags)
+{
+  for (uint8_t flags = 0; flags < 16; ++flags) {
+    const auto payload = wire::pack(wire::CvTarget{3, 1, 0.2F, 150, flags});
+    ASSERT_EQ(payload.size(), 15U);
+    EXPECT_EQ(payload.back(), flags);
+    EXPECT_EQ(wire::unpack<wire::CvTarget>(payload).flags, flags);
+  }
+  EXPECT_EQ(wire::kCvTargetFlagPatrol, 0x08);
+  EXPECT_EQ(wire::kCvTargetFlagsDefault & wire::kCvTargetFlagPatrol, 0);
+}

@@ -43,13 +43,15 @@ from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit, OnProcessStart, OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
-    Command, LaunchConfiguration, PathJoinSubstitution)
+    Command, LaunchConfiguration, PathJoinSubstitution, PythonExpression)
 from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 from sim.auto_explore import SPAWN_YAW
+from sim.clock_bridge import clock_bridge_node
 from sim.display import display_error
+from sim.mcb_link import default_mcb_link
 
 
 RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
@@ -79,7 +81,10 @@ def _world_with_rtf(context):
         f.write(sdf)
 
     def remove_world(event, context):
-        os.unlink(path)
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass  # Shutdown can be emitted by both the parent and child launch.
         return []
 
     return [SetLaunchConfiguration('world', path),
@@ -115,9 +120,11 @@ def generate_launch_description():
     z_arg = DeclareLaunchArgument('z', default_value='0.03')
     yaw_arg = DeclareLaunchArgument(
         'yaw', default_value=str(SPAWN_YAW),
-        description='Spawn heading, rad CCW; the default faces across the field (-y)')
+        description='Spawn heading, rad CCW; both teams boot facing +y')
     # Windows default off where no display opens; watch in Foxglove there.
     windows = 'true' if display_error() is None else 'false'
+    gz_gui_config_arg = DeclareLaunchArgument(
+        'gz_gui_config', default_value='', description='Optional gz GUI configuration path')
     gui_arg = DeclareLaunchArgument(
         'gui', default_value=windows,
         description='Set to false to run gz sim headless (server only)'
@@ -148,9 +155,8 @@ def generate_launch_description():
     )
 
     # --- Optional synthetic wheel-odometry drift injection (pose emulator).
-    # Off by default -- sim's /dji_serial_bridge/pose stays exact ground truth unless explicitly
-    # opted into, so this never changes existing behavior by accident. Turn
-    # it on to exercise/demonstrate slam_toolbox's map->odom correction, which
+    # Off by default: /dji_serial_bridge/pose reports exact displacement from boot. Turn
+    # it on to exercise/demonstrate slam_toolbox's map->nav_odom correction, which
     # otherwise has nothing real to correct against in sim.
     odom_noise_enabled_arg = DeclareLaunchArgument(
         'odom_noise_enabled', default_value='false',
@@ -297,14 +303,7 @@ def generate_launch_description():
     )
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
-    clock_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name='clock_bridge',
-        output='screen',
-        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
-        parameters=[{'use_sim_time': True}],
-    )
+    clock_bridge = clock_bridge_node()
 
     # --- Spawn the robot into the running world.
     # NOTE: deliberately -string (raw URDF text), NOT -topic
@@ -319,6 +318,13 @@ def generate_launch_description():
         arguments=[
             '-string', Command(['xacro '] + model_xacro
                                + [' camera:=', LaunchConfiguration('camera'),
+                                  ' mcb_physics:=', LaunchConfiguration('mcb_physics'),
+                                  ' mcb_drive:=', LaunchConfiguration('mcb_drive'),
+                                  ' firmware_binary:=', LaunchConfiguration('firmware_binary'),
+                                  ' mcb_backend:=', LaunchConfiguration('mcb_backend'),
+                                  ' mcb_game_stage:=', LaunchConfiguration('mcb_game_stage'),
+                                  ' mcb_device_link:=', LaunchConfiguration('mcb_device_link'),
+                                  ' mcb_auto_fire:=', LaunchConfiguration('mcb_auto_fire'),
                                   ' name:=', robot_name]),
             '-name', robot_name,
             '-x', LaunchConfiguration('x'),
@@ -345,23 +351,31 @@ def generate_launch_description():
             on_exit=[IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(PathJoinSubstitution(
                     [FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])),
-                launch_arguments={'gz_args': '-g'}.items(),
+                launch_arguments={'gz_args': ['-g', PythonExpression([
+                    "' --gui-config '", " + '", LaunchConfiguration('gz_gui_config'),
+                    "' if '", LaunchConfiguration('gz_gui_config'), "' else ''"])]}.items(),
             )],
         ),
         condition=IfCondition(LaunchConfiguration('gui')),
     )
 
     # --- Bridge the gpu_lidar sensor's /scan topic (defined in the model xacro)
-    # into ROS 2, remapped to scan_raw -- thornbots_pkg's lidar_self_filter node
-    # is the only thing that publishes the final /scan (see its docstring),
-    # for both sim and real hardware.
+    # into ROS 2. The sim adapter adds acquisition timing and normalizes
+    # invalid ranges before the shared hardware/sim lidar_self_filter.
     scan_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='scan_bridge',
         output='screen',
         arguments=['/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan'],
-        remappings=[('/scan', '/scan_raw')],
+        remappings=[('/scan', '/sim/scan')],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    lidar_scan = Node(
+        package='sim',
+        executable='lidar_scan',
+        output='screen',
         parameters=[{'use_sim_time': True}],
     )
 
@@ -673,6 +687,8 @@ def generate_launch_description():
         name='rviz2',
         output='screen',
         arguments=['-d', LaunchConfiguration('rviz_config')],
+        additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': os.path.join(
+            get_package_share_directory('thornbots_pkg'), 'config', 'fastdds_udp_only.xml')},
         parameters=[{'use_sim_time': True}],
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
@@ -685,6 +701,13 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument('mcb_physics', default_value='false'),
+        DeclareLaunchArgument('mcb_drive', default_value='stop'),
+        DeclareLaunchArgument('firmware_binary', default_value=''),
+        DeclareLaunchArgument('mcb_backend', default_value='hosted', choices=['hosted', 'renode']),
+        DeclareLaunchArgument('mcb_game_stage', default_value='4'),
+        DeclareLaunchArgument('mcb_device_link', default_value=default_mcb_link()),
+        DeclareLaunchArgument('mcb_auto_fire', default_value='true'),
         world_arg,
         lockstep_arg,
         model_arg,
@@ -694,6 +717,7 @@ def generate_launch_description():
         z_arg,
         yaw_arg,
         gui_arg,
+        gz_gui_config_arg,
         rviz_arg,
         foxglove_arg,
         rviz_config_arg,
@@ -723,6 +747,7 @@ def generate_launch_description():
         gz_sim,
         clock_bridge,
         scan_bridge,
+        lidar_scan,
         joint_state_bridge,
         odom_bridge,
         head_slider_relay,
