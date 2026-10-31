@@ -38,7 +38,7 @@ protected:
       "<sdf version='1.9'><world name='mcb_physics'><gravity>0 0 0</gravity>"
       "<physics type='ode'><max_step_size>0.001</max_step_size><real_time_factor>1</real_time_factor></physics>"
       "<plugin filename='gz-sim-physics-system' name='gz::sim::systems::Physics'/>"
-      "<model name='sentry'><pose>4.625 0 0 0 0 3.141592653589793</pose>"
+      "<model name='sentry'><pose>4.625 0 0 0 0 1.5707963267948966</pose>"
       "<link name='root'><inertial><mass>15.68</mass><inertia><ixx>1</ixx><iyy>1</iyy><izz>0.47</izz></inertia></inertial></link>"
       "<link name='head'><inertial><mass>1</mass><inertia><ixx>0.04</ixx><iyy>0.04</iyy><izz>0.04</izz></inertia></inertial></link>"
       "<link name='head_pitch'><inertial><mass>0.1</mass><inertia><ixx>0.009</ixx><iyy>0.009</iyy><izz>0.009</izz></inertia></inertial></link>"
@@ -88,7 +88,7 @@ protected:
   }
   void aim(double yaw) {
     const auto packet = sim::mcb_protocol::frame(sim::mcb_protocol::CvTarget{
-      static_cast<float>(4.625 - 3 * std::cos(yaw)), static_cast<float>(-3 * std::sin(yaw)), 0.2F, 100, 0});
+      static_cast<float>(4.625 - 3 * std::sin(yaw)), static_cast<float>(3 * std::cos(yaw)), 0.2F, 100, 0});
     const double begin = rclcpp::Time(motors_.header.stamp).seconds();
     double last_sent = begin - 0.02;
     double max_speed = 0;
@@ -187,7 +187,7 @@ TEST_F(McbPhysics, NativeCanControllerMovesInBothDirectionsAndStopsCleanly) {
     if (report == ref_samples_.end()) return false;
     EXPECT_NEAR(report->delta_angle_got_hit_in, angle, 0.05);
     if (pose_samples_.size() <= pose_start) return false;
-    EXPECT_NEAR(pose_samples_.back().head_yaw, pi - 0.5, 0.05);
+    EXPECT_NEAR(pose_samples_.back().head_yaw, pi / 2 - 0.5, 0.05);
     return true;
   };
   const auto reported_clear = [&](size_t start, int hp) -> bool {

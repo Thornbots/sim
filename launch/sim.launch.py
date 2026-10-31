@@ -120,7 +120,7 @@ def generate_launch_description():
     z_arg = DeclareLaunchArgument('z', default_value='0.03')
     yaw_arg = DeclareLaunchArgument(
         'yaw', default_value=str(SPAWN_YAW),
-        description='Spawn heading, rad CCW; the default faces across the field (-y)')
+        description='Spawn heading, rad CCW; both teams boot facing +y')
     # Windows default off where no display opens; watch in Foxglove there.
     windows = 'true' if display_error() is None else 'false'
     gz_gui_config_arg = DeclareLaunchArgument(

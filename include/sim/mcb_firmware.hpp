@@ -47,6 +47,7 @@
 extern char **environ;
 namespace sim::mcb_firmware {
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kStartYaw = kPi / 2;
 [[noreturn]] inline void system_error(const std::string &operation) {
   throw std::runtime_error(operation + ": " + std::strerror(errno));
 }
@@ -400,7 +401,7 @@ public:
 
   std::array<double, 10> gz_readings(const GzHardware &hw,
                                      const Referee &ref) const {
-    const double heading = ref.robot_id > 100 ? kPi : 0.0;
+    const double heading = kStartYaw;
     const double sx = ref.robot_id > 100 ? start_x_ : -start_x_;
     const double c = std::cos(heading), s = std::sin(heading);
     const double dx = hw.pos[0] - sx, dy = hw.pos[1] - start_y_;

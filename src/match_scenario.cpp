@@ -167,7 +167,7 @@ RobotSample sample_robot(const std::string &name, double seconds,
                          const std::string &stage) {
   const double delay = stage == "mcb_match" ? route_delays().at(name) : 0.0;
   auto sample = sample_route(routes().at(name), std::max(0.0, seconds - delay));
-  double yaw = teams().at(name) == "blue" ? kPi : 0.0, spin = 0.0;
+  double yaw = kPi / 2, spin = 0.0;
   const double fight = std::max(0.0, seconds - ingress_duration(stage));
   if (sample.finished && fight > 0.0) {
     const double omega = 3.0 * kPi, accel = 20.0, ramp = omega / accel;

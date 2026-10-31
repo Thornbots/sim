@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Gazebo hardware fixture, compiled sentry firmware, and the real UART bridge."""
-import math
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -31,7 +30,6 @@ from sim.mcb_link import default_mcb_link
 
 def stack(context):
     windows = display_error() is None
-    spawn = {'yaw': str(math.pi)} if context.launch_configurations['backend'] == 'renode' else {}
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
@@ -42,7 +40,7 @@ def stack(context):
                           'mcb_auto_fire': LaunchConfiguration('auto_fire'),
                           'firmware_binary': LaunchConfiguration('firmware_binary'),
                           'mcb_backend': LaunchConfiguration('backend'),
-                          'real_time_factor': '1', **spawn}.items())
+                          'real_time_factor': '1'}.items())
     bridge = Node(package='dji_serial_bridge', executable='dji_serial_bridge_node',
                   name='dji_serial_bridge', output='screen', parameters=[{
                       'use_sim_time': True, 'device': LaunchConfiguration('device_link'),

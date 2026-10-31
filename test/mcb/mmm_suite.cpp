@@ -254,7 +254,7 @@ protected:
   void launchStack(bool failSetup = false) {
     simulator = std::make_unique<sim::LaunchTree>("sim", std::vector<std::string>{
       "ros2", "launch", "sim", "sim.launch.py", "gui:=false", "rviz:=false", "foxglove:=false",
-      "pose_emulator:=false", "model:=sentry_v2", "x:=4.625", "yaw:=3.141592653589793",
+      "pose_emulator:=false", "model:=sentry_v2", "x:=4.625", "yaw:=1.5707963267948966",
       "real_time_factor:=1.0", "odom_noise_enabled:=false"}, (directory / "sim.log").string());
     robot = std::make_unique<sim::LaunchTree>("robot", std::vector<std::string>{
       "ros2", "launch", "thornbots_pkg", "auto.launch.py", "real_hardware:=false",
@@ -265,6 +265,12 @@ protected:
       "enable_cv_target_bridge:=false", "dds_transport:=udp_only"}, (directory / "robot.log").string());
     ASSERT_TRUE(wait([&] { return hardware.ready && poseCount > 10 && counts[1][0] > 0; }, 60));
     dwell(5);
+    ASSERT_TRUE(hardware.boot.has_value());
+    EXPECT_NEAR((*hardware.boot)[2], fixture::kStartYaw, 0.05);
+    ASSERT_TRUE(wait([&] { return buffer->canTransform("odom", "root", tf2::TimePointZero); }));
+    const auto root = buffer->lookupTransform("odom", "root", tf2::TimePointZero);
+    EXPECT_NEAR(root.transform.rotation.z, 0.0, 1e-8);
+    EXPECT_NEAR(root.transform.rotation.w, 1.0, 1e-8);
     const auto publishers = node->get_publishers_info_by_topic("/dji_serial_bridge/ping_to_mcb");
     ASSERT_EQ(publishers.size(), 1U);
     EXPECT_EQ(publishers.front().node_name(), "mmm");

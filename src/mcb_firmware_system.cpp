@@ -152,7 +152,7 @@ public:
     hw.pitch_joint = {pp->Data()[0], pv->Data()[0]};
     auto readings = firmware_->gz_readings(hw, referee_);
     const auto gyro = head_pose->Rot().RotateVectorReverse(*head_rate);
-    const double heading = referee_.robot_id > 100 ? mcb_motor::kPi : 0;
+    const double heading = mcb_firmware::kStartYaw;
     const double yaw = head_pose->Rot().Yaw() - heading;
     readings[4] = std::atan2(std::sin(yaw), std::cos(yaw));
     readings[5] = gyro.Z();
@@ -187,7 +187,7 @@ public:
         setpoint.header = tick;
         setpoint.header.frame_id = "odom";
         setpoint.name = {"desired_head_yaw_field", "desired_head_pitch"};
-        setpoint.position = {output.yaw + (referee_.robot_id > 100 ? mcb_firmware::kPi : 0),
+        setpoint.position = {output.yaw + mcb_firmware::kStartYaw,
                              output.pitch};
         setpoints_->publish(setpoint);
       }

@@ -61,9 +61,8 @@ def _sim(context):
     config = context.launch_configurations
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
-    spawn = ({'x': '4.625', 'y': '0.0', 'yaw': str(math.pi)}
-             if config['stage'] in DRIVING else
-             {'yaw': str(math.pi)} if config['backend'] == 'renode' else {})
+    spawn = ({'x': '4.625', 'y': '0.0', 'yaw': str(SPAWN_YAW)}
+             if config['stage'] in DRIVING else {})
     view = 'e2e-parked' if config['stage'] == 'mcb_parked' else 'e2e'
     share = get_package_share_directory('sim')
     return [IncludeLaunchDescription(
@@ -143,9 +142,7 @@ def generate_launch_description():
             'use_sim_time': True,
             'target_speed': ParameterValue(LaunchConfiguration('target_speed'), value_type=float),
             'spin_hz': ParameterValue(LaunchConfiguration('target_spin_hz'), value_type=float),
-            'origin_yaw': ParameterValue(PythonExpression([
-                str(math.pi), " if '", LaunchConfiguration('backend'),
-                "' == 'renode' else ", str(SPAWN_YAW)]), value_type=float),
+            'origin_yaw': -math.pi / 2,  # Preserve the field-safe parked paths.
             **parked_paths['lateral'],
         }])
     # The path the opponent's OpponentMover system rides, into gz.
