@@ -22,6 +22,7 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sim/gazebo_helpers.hpp"
+#include "sim/match_scenario.hpp"
 #include "sim/process.hpp"
 #include "sim/suite_timing.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -191,6 +192,7 @@ public:
   }
   int scan_count = 0, raw_scan_count = 0, invalid_scans = 0;
   std::optional<Point> truth;
+  std::optional<std::vector<rclcpp::Parameter>> ingress_params;
   double truth_yaw = 0.0;
   std::optional<double> head_yaw;
   Pose yaw_range{}, head_range{};
@@ -497,8 +499,22 @@ std::unique_ptr<Stack> run_stack(bool noise,
       })) {
     params.emplace_back("odom_slip_ratio", 0.02);
   }
+  const auto prepare_ingress = [&](Helper &helper) {
+    helper.ingress_params.reset();
+    if (backend != "amcl") return;
+    helper.ingress_params = params;
+    // Fault injection begins at the scenario origin, after production startup.
+    for (auto &p : params) {
+      if (p.get_name() == "odom_noise_enabled") {
+        p = rclcpp::Parameter("odom_noise_enabled", false);
+      } else if (p.get_name() == "odom_slip_ratio") {
+        p = rclcpp::Parameter("odom_slip_ratio", 0.0);
+      }
+    }
+  };
   if (options.restart) {
     stack->helper = std::make_shared<Helper>(parent, child);
+    prepare_ingress(*stack->helper);
     timing::set_sim_clock([helper = stack->helper] { return helper->now_s(); });
     for (const auto &p : params) {
       args[p.get_name()] = p.value_to_string();
@@ -521,6 +537,7 @@ std::unique_ptr<Stack> run_stack(bool noise,
   }
   timing::set_sim_clock([helper = stack->helper] { return helper->now_s(); });
   auto &helper = *stack->helper;
+  prepare_ingress(helper);
   if (!sim_tree) {
     timing::Phase phase("sim_start");
     sim_tree = std::make_unique<sim::LaunchTree>(
@@ -633,6 +650,36 @@ bool ready(Scenario &sc, Helper &helper) {
     sc.result(
         false,
         "stack failed to reach a healthy /scan rate in time -- see log above");
+    return false;
+  }
+  if (helper.ingress_params) {
+    if (!helper.wait_correction(45.0) || !helper.root(30.0) ||
+        !helper.wait_truth()) {
+      sc.result(false, "AMCL ingress requires the seeded navigation TF and truth");
+      return false;
+    }
+    auto route = sim::match_scenario::routes().at("sentry");
+    route.push_back({0.0, 0.0});
+    for (const auto &target : route) {
+      const double dx = target[0] - (*helper.truth)[0],
+                   dy = target[1] - (*helper.truth)[1],
+                   dist = std::hypot(dx, dy);
+      if (dist > 0.03) {
+        constexpr double speed = sim::match_scenario::kRouteSpeed;
+        helper.drive(speed * dx / dist, speed * dy / dist, dist / speed,
+                     sim::match_scenario::kRouteAccel);
+      }
+      const double miss = distance(target, *helper.truth);
+      sc.log("AMCL ingress waypoint (" + fixed(target[0]) + ", " +
+             fixed(target[1]) + "): truth miss=" + fixed(miss) + " m");
+      if (miss > 0.03) {
+        sc.result(false, "AMCL ingress did not reach its waypoint within 0.03 m");
+        return false;
+      }
+    }
+    helper.set_params("/pose_emulator/set_parameters", *helper.ingress_params);
+    helper.trigger("/pose_emulator/reset");
+    helper.ingress_params.reset();
   }
   return ok;
 }

@@ -890,6 +890,16 @@ cornering-loop scenarios; the rest watch `map->nav_odom` as under `slam`. Each
 scenario's stack builds a fresh map: nothing carries between scenarios.
 `odom_stuck` drives two mapping laps first.
 
+After AMCL's seeded navigation TF and valid scans are available, the fixture
+drives the surveyed blue `sentry` ingress from
+[`match_scenario.cpp`](src/match_scenario.cpp) and then to world (0, 0).
+Truth-feedback velocity commands must reach every waypoint within 0.03 m;
+a blocked ingress fails the scenario. Noise and slip injection begin only
+after arrival, with the boot-relative odometry origin preserved. Scenario
+reference poses are captured afterward, so the original loop, box and actor
+geometry and acceptance thresholds still apply. This setup also runs with
+`restart_sim:=true`.
+
 `mapping --use-rf2o` passed 9/9
 (2026-10-02, archlinux, unthrottled):
 cornering loops 0.02-0.09 m truth error, `noise_correction` 0.04 m,
@@ -1019,7 +1029,8 @@ correction.
 #### Geometry and helpers
 
 Every cornering scenario traces `loop_legs()`: a 3m square centred on the
-world origin, where the box and robot spawn, with corners at (+-1.5, +-1.5).
+world origin, where the box spawns and scenario driving begins, with corners
+at (+-1.5, +-1.5).
 Each leg is `3 / --speed` seconds (0.75s at the 4.0 m/s default), and
 `reposition()` drives to the start corner first. The square was widened from
 2m on 2026-07-26 (`4f182e7`). Wall clearances are known on x only: +x clears
