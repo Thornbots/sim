@@ -74,7 +74,7 @@
   <link name="armor_3"><visual><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></visual><collision><geometry><box size="0.00301404 0.135002 0.125002"/></geometry></collision></link>
   <joint name="armor_3link" type="fixed"><parent link="root"/><child link="armor_3"/><origin xyz="0.148299403 -0.200910883 0.252487973" rpy="0 -0.261799535 -0.934934345"/></joint>
   <link name="lidar"/>
-  <joint name="lidarlink" type="fixed"><parent link="head"/><child link="lidar"/><origin xyz="-0.105 -0.193326 0.101293" rpy="0 0 0.5907"/></joint>
+  <joint name="lidarlink" type="fixed"><parent link="head"/><child link="lidar"/><origin xyz="-0.0056 -0.193326 0.063707" rpy="0 0 2.579"/></joint>
   <link name="camera"/>
   <joint name="cameralink" type="fixed"><parent link="head_pitch"/><child link="camera"/><origin xyz="0.095699877 0.0325 0.055000043" rpy="0 0 0"/></joint>
 </robot>
