@@ -137,7 +137,10 @@ public:
         parent(parent_frame), child(child_frame), buffer(get_clock()),
         listener(buffer) {
     referee = create_publisher<dji_serial_bridge::msg::RefSysStatus>(
-        "/dji_serial_bridge/ref_sys", rclcpp::SensorDataQoS());
+        "/dji_serial_bridge/ref_sys", 10);
+    // Team assignment is independent of truth and the simulated clock.
+    referee_timer = create_wall_timer(std::chrono::milliseconds(100),
+                                     [this] { publish_referee(); });
     command = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
     scan_sub = create_subscription<sensor_msgs::msg::LaserScan>(
         "/scan", 10,
@@ -181,13 +184,14 @@ public:
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr command;
   rclcpp::Publisher<dji_serial_bridge::msg::RefSysStatus>::SharedPtr referee;
   double last_referee = -1.0;
+  size_t referee_count = 0;
   void publish_referee() {
-    if (!truth || now_s() - last_referee < 0.1) return;
     dji_serial_bridge::msg::RefSysStatus msg;
     msg.header.stamp = now();
     msg.robot_id = 7;
     msg.is_on_blue_team = true;
     referee->publish(msg);
+    ++referee_count;
     last_referee = now_s();
   }
   int scan_count = 0, raw_scan_count = 0, invalid_scans = 0;
@@ -203,7 +207,6 @@ public:
     }
     const auto end = Clock::now() + std::chrono::duration<double>(seconds);
     while (rclcpp::ok() && Clock::now() < end) {
-      publish_referee();
       rclcpp::spin_some(shared_from_this());
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -216,7 +219,6 @@ public:
                                         std::max(3.0 * seconds, seconds + 5.0));
     std::optional<double> start;
     while (rclcpp::ok() && Clock::now() < end) {
-      publish_referee();
       rclcpp::spin_some(shared_from_this());
       const double t = now_s();
       if (!start && t > 0.0) {
@@ -256,17 +258,22 @@ public:
   }
   std::optional<Pose> transform(const std::string &from, const std::string &to,
                                 double timeout = 2.0) {
-    try {
-      const auto tf = buffer.lookupTransform(from, to, tf2::TimePointZero,
-                                             tf2::durationFromSec(timeout));
-      const auto &t = tf.transform.translation;
-      const auto &q = tf.transform.rotation;
-      return Pose{t.x, t.y,
-                  std::atan2(2 * (q.w * q.z + q.x * q.y),
-                             1 - 2 * (q.y * q.y + q.z * q.z))};
-    } catch (const tf2::TransformException &) {
-      return std::nullopt;
-    }
+    const auto end = Clock::now() + std::chrono::duration<double>(timeout);
+    do {
+      try {
+        const auto tf = buffer.lookupTransform(from, to, tf2::TimePointZero);
+        const auto &t = tf.transform.translation;
+        const auto &q = tf.transform.rotation;
+        return Pose{t.x, t.y,
+                    std::atan2(2 * (q.w * q.z + q.x * q.y),
+                               1 - 2 * (q.y * q.y + q.z * q.z))};
+      } catch (const tf2::TransformException &) {
+        if (Clock::now() >= end) return std::nullopt;
+        // TF's listener has its own thread; the fixture must also keep spinning.
+        spin_wall(0.01);
+      }
+    } while (rclcpp::ok());
+    return std::nullopt;
   }
   std::optional<Pose> correction(double timeout = 2.0) {
     return transform(parent, child, timeout);
@@ -410,6 +417,7 @@ private:
   }
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub, raw_scan_sub;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr truth_sub;
+  rclcpp::TimerBase::SharedPtr referee_timer;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub;
 };
 std::unique_ptr<sim::LaunchTree> sim_tree, actor_tree;
@@ -621,6 +629,7 @@ std::unique_ptr<Stack> run_stack(bool noise,
                      std::to_string(robot_runs) + ".log";
     stack->robot = std::make_unique<sim::LaunchTree>(
         "robot", launch_command(args), log);
+    const auto referee_start = helper.referee_count;
     const auto end = Clock::now() + std::chrono::seconds(30);
     while (Clock::now() < end) {
       if (helper.root(0.0)) {
@@ -633,7 +642,11 @@ std::unique_ptr<Stack> run_stack(bool noise,
       return helper.transform(from, to, 0.0) ? "ready" : "missing";
     };
     throw std::runtime_error(
-        "localization startup failed after 30s: odom->root=" +
+        "localization startup failed after 30s: referee published=" +
+        std::to_string(helper.referee_count - referee_start) + " readers=" +
+        std::to_string(helper.referee->get_subscription_count()) +
+        " sim=" + fixed(helper.now_s()) + " last_referee=" + fixed(helper.last_referee) +
+        " odom->root=" +
         std::string(available("odom", "root")) + ", nav_odom->odom=" +
         available("nav_odom", "odom") + ", map->nav_odom=" +
         (backend == "none" ? "not requested" : available("map", "nav_odom")) +

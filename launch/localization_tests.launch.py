@@ -125,8 +125,13 @@ def _tests(context):
     cmd += config['gtest_args'].split()
     cmd += config['pytest_args'].split()
 
+    # Keep the long-lived fixture and restarted team waiters on one UDP profile;
+    # their REF_SYS delivery must not depend on reused Fast DDS SHM channels.
+    udp_profile = os.path.join(get_package_share_directory('thornbots_pkg'),
+                               'config', 'fastdds_udp_only.xml')
     # A scenario's teardown can take ~15s before its process group is stopped.
     tests = ExecuteProcess(cmd=cmd, name='localization_tests', output='screen',
+                           additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': udp_profile},
                            sigterm_timeout='30')
     done = RegisterEventHandler(OnProcessExit(
         target_action=tests,
