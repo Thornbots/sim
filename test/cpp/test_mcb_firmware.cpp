@@ -417,8 +417,10 @@ TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
   const auto waiting = run(300).outputs.back();
   EXPECT_NEAR(std::hypot(waiting.right, waiting.forward), 0.0, 1e-6);
   EXPECT_NEAR(waiting.spin, 0.0, 1e-6);
+  // Localize at the route's full start pose before checking stage-gated motion.
   run(100, wire::frame(wire::Relocalize{
-      static_cast<float>(-firmware->start_x()), 0}));
+      static_cast<float>(-firmware->start_x()),
+      static_cast<float>(firmware->start_y())}));
   auto output = run(200).outputs.back();
   EXPECT_LT(std::hypot(output.right, output.forward), 0.05);
   EXPECT_LT(output.spin, -1);
