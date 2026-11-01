@@ -182,12 +182,6 @@ def generate_launch_description():
                           'chase_settle_s': LaunchConfiguration('chase_settle_s'),
                           'chase_margin_s': LaunchConfiguration('chase_margin_s'),
                           'v_muzzle': '22.0',
-                          'zone_start_x_m': PythonExpression([
-                              "'0.0' if '", LaunchConfiguration('stage'),
-                              "' == 'mcb_parked' else '4.625'"]),
-                          'zone_start_y_m': PythonExpression([
-                              "'-4.625' if '", LaunchConfiguration('stage'),
-                              "' == 'mcb_parked' else '0.0'"]),
                           'use_rf2o': 'true', 'load_map': 'true'}.items())
 
     match_environment = Node(
