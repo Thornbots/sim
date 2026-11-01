@@ -435,7 +435,8 @@ TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
   ref.game_stage = 4;
   output = run(300).outputs.back();
   EXPECT_GT(std::hypot(output.right, output.forward), 0.1);
-  EXPECT_LT(output.spin, -1);
+  // ARCC_S2_3V3's first leg leaves through the Starting Zone doorway square.
+  EXPECT_NEAR(output.spin, 0.0, 0.5);
 }
 TEST_F(McbFirmware, AutoDriveWaitsForAbsoluteRelocalization) {
   firmware->set_mode(2);
