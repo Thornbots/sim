@@ -36,11 +36,11 @@
 #include "gz/transport/Node.hh"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sim/field.hpp"
 #include "tinyxml2.h"
 
 namespace
 {
-constexpr const char * kWorld = "/world/ARCC_Field_2026/";
 
 std::string xacro_opponent(const std::string & name)
 {
@@ -157,7 +157,7 @@ private:
     gz::msgs::Empty request;
     gz::msgs::Scene reply;
     bool result = false;
-    if (!gz_node_->Request(std::string(kWorld) + "scene/info", request, 2000u, reply, result) ||
+    if (!gz_node_->Request(sim::field::world_path("scene/info"), request, 2000u, reply, result) ||
       !result) {return std::nullopt;}
     std::vector<std::string> names;
     for (const auto & model : reply.model()) {names.push_back(model.name());}
@@ -190,7 +190,7 @@ private:
       gz::msgs::Boolean reply;
       bool result = false;
       // A create reply may time out after spawning; scene/info decides completion.
-      gz_node_->Request(std::string(kWorld) + "create", request, 2000u, reply, result);
+      gz_node_->Request(sim::field::world_path("create"), request, 2000u, reply, result);
       names = model_names();
     }
     if (present(names)) {

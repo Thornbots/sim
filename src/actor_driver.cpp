@@ -33,6 +33,7 @@
 #include "gz/transport/Node.hh"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sim/field.hpp"
 #include "ros_gz_interfaces/msg/entity.hpp"
 #include "ros_gz_interfaces/srv/set_entity_pose.hpp"
 
@@ -42,7 +43,6 @@ using Point = std::pair<double, double>;
 using Segment = std::pair<Point, Point>;
 constexpr double kStep = 0.05;
 constexpr double kOnRoute = 0.5;
-constexpr const char * kWorld = "/world/ARCC_Field_2026/";
 
 double modulo(double value, double divisor)
 {
@@ -207,7 +207,7 @@ public:
     }
     keep_out_ = radius + size_ / std::sqrt(2.0) + margin;
     set_pose_ = create_client<ros_gz_interfaces::srv::SetEntityPose>(
-      std::string(kWorld) + "set_pose");
+      sim::field::world_path("set_pose"));
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>("/sim/raw_odom", 10,
       [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {on_odom(*msg);});
     timer_ = create_timer(std::chrono::duration<double>(1.0 / rate), [this]() {tick();});
@@ -287,7 +287,7 @@ private:
       }
       gz::msgs::Boolean reply;
       bool result = false;
-      if (!gz_node_->Request(std::string(kWorld) + "create", request, 2000u, reply, result) ||
+      if (!gz_node_->Request(sim::field::world_path("create"), request, 2000u, reply, result) ||
         !result || !reply.data())
       {
         RCLCPP_ERROR(get_logger(), "spawning %s failed", actor.name.c_str());

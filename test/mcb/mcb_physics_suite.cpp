@@ -38,7 +38,7 @@ protected:
       "<sdf version='1.9'><world name='mcb_physics'><gravity>0 0 0</gravity>"
       "<physics type='ode'><max_step_size>0.001</max_step_size><real_time_factor>1</real_time_factor></physics>"
       "<plugin filename='gz-sim-physics-system' name='gz::sim::systems::Physics'/>"
-      "<model name='sentry'><pose>4.625 0 0 0 0 1.5707963267948966</pose>"
+      "<model name='sentry'><pose>5.25 -3 0 0 0 1.5707963267948966</pose>"
       "<link name='root'><inertial><mass>15.68</mass><inertia><ixx>1</ixx><iyy>1</iyy><izz>0.47</izz></inertia></inertial></link>"
       "<link name='head'><inertial><mass>1</mass><inertia><ixx>0.04</ixx><iyy>0.04</iyy><izz>0.04</izz></inertia></inertial></link>"
       "<link name='head_pitch'><inertial><mass>0.1</mass><inertia><ixx>0.009</ixx><iyy>0.009</iyy><izz>0.009</izz></inertia></inertial></link>"

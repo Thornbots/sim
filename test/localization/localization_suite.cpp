@@ -22,6 +22,7 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sim/gazebo_helpers.hpp"
+#include "sim/field.hpp"
 #include "sim/match_scenario.hpp"
 #include "sim/process.hpp"
 #include "sim/suite_timing.hpp"
@@ -62,7 +63,8 @@ constexpr char kLogDir[] = "/tmp/localization_drift_tests";
 struct Options {
   std::string suite = "drift", backend = "amcl", scenario, rtf = "0";
   bool gui = true, rf2o = true, restart = false;
-  double speed = 4.0, accel = 20.0, spawn_x = 0.0, spawn_yaw = sim::gazebo::kSpawnYaw;
+  double speed = 4.0, accel = 20.0, spawn_yaw = sim::gazebo::kSpawnYaw;
+  double spawn_x = sim::field::kLoopCentre[0], spawn_y = sim::field::kLoopCentre[1];
   double slip = 0.05, drift = 0.002, seconds = 45.0;
 } options;
 std::vector<std::string> scenario_names = {
@@ -71,8 +73,11 @@ std::vector<std::string> scenario_names = {
     "moving_obstacles", "real_accel",
     "jerk_with_motion", "odom_stuck",
     "scan_degraded",    "parked_push"};
+// Side of the square loop around sim::field::kLoopCentre; 2 m fits between the
+// Central Wall and blue's Side High Ground (README "Geometry and helpers").
+constexpr double kLoopSide = 2.0;
 std::array<Leg, 4> loop_legs() {
-  const double s = options.speed, d = 3.0 / s;
+  const double s = options.speed, d = kLoopSide / s;
   return {{{0.0, -s, d}, {s, 0.0, d}, {0.0, s, d}, {-s, 0.0, d}}};
 }
 std::string fixed(double value, int precision = 4) {
@@ -157,7 +162,10 @@ public:
     truth_sub = create_subscription<nav_msgs::msg::Odometry>(
         "/sim/raw_odom", 10,
         [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
-          truth = Point{msg->pose.pose.position.x, msg->pose.pose.position.y};
+          // Blank-map backends boot at the spawn, so their frames start there.
+          const bool booted = options.backend == "none" || options.backend == "mapping";
+          truth = Point{msg->pose.pose.position.x - (booted ? options.spawn_x : 0.0),
+                        msg->pose.pose.position.y - (booted ? options.spawn_y : 0.0)};
           const auto &q = msg->pose.pose.orientation;
           truth_yaw = std::atan2(2 * (q.w * q.z + q.x * q.y),
                                  1 - 2 * (q.y * q.y + q.z * q.z));
@@ -592,7 +600,8 @@ std::unique_ptr<Stack> run_stack(bool noise,
       }
     }
     // Raw odometry boots at this spawn; the EKF seed requires it near zero.
-    if (!sim::gazebo::teleport(options.spawn_x, 0, sim::gazebo::kZ, options.spawn_yaw)) {
+    if (!sim::gazebo::teleport(options.spawn_x, options.spawn_y, sim::gazebo::kZ,
+                               options.spawn_yaw)) {
       throw std::runtime_error("teleport back to spawn failed");
     }
     helper.spin_for(0.5);
@@ -672,7 +681,7 @@ bool ready(Scenario &sc, Helper &helper) {
       return false;
     }
     auto route = sim::match_scenario::routes().at("sentry");
-    route.push_back({0.0, 0.0});
+    route.push_back(sim::field::kLoopCentre);
     for (const auto &target : route) {
       const double dx = target[0] - (*helper.truth)[0],
                    dy = target[1] - (*helper.truth)[1],
@@ -705,8 +714,8 @@ bool correction_ready(Scenario &sc, Helper &helper, std::optional<Pose> &p) {
   return p.has_value();
 }
 void reposition(Helper &helper) {
-  helper.drive(0.0, options.speed, 1.5 / options.speed);
-  helper.drive(-options.speed, 0.0, 1.5 / options.speed);
+  helper.drive(0.0, options.speed, kLoopSide / 2 / options.speed);
+  helper.drive(-options.speed, 0.0, kLoopSide / 2 / options.speed);
 }
 std::optional<double> truth_error(Helper &helper) {
   const auto root = helper.root();
@@ -758,7 +767,7 @@ void noise_correction(Scenario &sc) {
     return;
   }
   reposition(helper);
-  sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner (-1.5,-1.5) before "
+  sc.log("repositioned to the loop's start corner (-x, +y) before "
          "tracing it");
   const auto edge = helper.parent + "->" + helper.child,
              metric = truth_scored() ? "truth error" : "|" + edge + " xy|";
@@ -812,10 +821,24 @@ void spawn_box() {
       "0.8</size></box></geometry><material><ambient>0.1 0.1 0.8 "
       "1</ambient><diffuse>0.1 0.1 0.8 "
       "1</diffuse></material></visual></link></model></sdf>";
-  if (!sim::gazebo::spawn_model(name, sdf, 0.0, 0.0, 0.4)) {
+  if (!sim::gazebo::spawn_model(name, sdf, sim::field::kLoopCentre[0],
+                                sim::field::kLoopCentre[1], 0.4)) {
     throw std::runtime_error("spawning obstacle '" + name + "' failed");
   }
   spawned.push_back(name);
+}
+// actor_driver's default paths, scaled from its 3 m origin loop to this one.
+const std::vector<double> kActorPaths{-0.2, -0.4, -2.1, -0.4, -0.4, 0.2,
+                                     -0.4, 2.3,  0.2,  0.4,  2.1, 0.4};
+// x/y pairs in loop half-sides (or 3 m-loop metres) to a world-frame ROS list.
+std::string loop_points(const std::vector<double> &unit) {
+  const bool half_sides = unit.size() == 8;
+  std::string out = "[";
+  for (size_t i = 0; i < unit.size(); ++i) {
+    const double scale = half_sides ? kLoopSide / 2 : kLoopSide / 3.0;
+    out += (i ? ", " : "") + fixed(sim::field::kLoopCentre[i % 2] + scale * unit[i]);
+  }
+  return out + "]";
 }
 bool start_actor(Helper &helper) {
   stop_actor();
@@ -829,7 +852,8 @@ bool start_actor(Helper &helper) {
           "ros2", "run", "sim", "actor_driver", "--ros-args", "-p",
           "use_sim_time:=true", "-p", "count:=3", "-p",
           "name_prefix:=moving_actor", "-p",
-          "route:=[-1.5, 1.5, -1.5, -1.5, 1.5, -1.5, 1.5, 1.5]", "-p",
+          "route:=" + loop_points({-1, 1, -1, -1, 1, -1, 1, 1}), "-p",
+          "paths:=" + loop_points(kActorPaths), "-p",
           "route_speed:=" + fixed(options.speed, 1)},
       std::string(kLogDir) + "/actor_driver_" + std::to_string(actor_runs) + ".log");
   const auto end = Clock::now() + std::chrono::seconds(60);
@@ -859,11 +883,11 @@ void cornering(Scenario &sc, const std::string &obstacle, double accel = -1.0) {
   sc.log(edge + " before loop start = " + pose_string(*p));
   const int scans_before = helper.scan_count;
   reposition(helper);
-  sc.log("repositioned to the loop's start corner (-1.5,-1.5) before tracing "
+  sc.log("repositioned to the loop's start corner (-x, +y) before tracing "
          "its perimeter");
   if (obstacle == "box") {
     spawn_box();
-    sc.log("spawned 0.3x0.3x0.8m box obstacle at (0.0, 0.0) (not present in "
+    sc.log("spawned 0.3x0.3x0.8m box obstacle at the loop centre (not present in "
            "the saved map) -- at the center of the loop this scenario is about "
            "to drive, see OBSTACLE_LOOP_LEGS");
   }
@@ -944,14 +968,14 @@ void jerk_with_motion(Scenario &sc) {
   auto stack =
       run_stack(false, {rclcpp::Parameter("odom_jerk_stddev", 0.24),
                         rclcpp::Parameter("odom_jerk_bias_enabled", true),
-                        rclcpp::Parameter("odom_jerk_bias_x", 0.0),
-                        rclcpp::Parameter("odom_jerk_bias_y", 0.0)});
+                        rclcpp::Parameter("odom_jerk_bias_x", sim::field::kLoopCentre[0]),
+                        rclcpp::Parameter("odom_jerk_bias_y", sim::field::kLoopCentre[1])});
   auto &helper = *stack->helper;
   if (!ready(sc, helper)) {
     return;
   }
   reposition(helper);
-  sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner (-1.5,-1.5) before "
+  sc.log("repositioned to the loop's start corner (-x, +y) before "
          "tracing it");
   int passed = 0;
   std::string summary;
@@ -1038,7 +1062,7 @@ void odom_stuck(Scenario &sc) {
   const auto edge = helper.parent + "->" + helper.child;
   sc.log(edge + " before trigger = " + pose_string(*p));
   reposition(helper);
-  sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner (-1.5,-1.5) before "
+  sc.log("repositioned to the loop's start corner (-x, +y) before "
          "tracing it");
   if (options.backend == "mapping") {
     for (int i = 0; i < 8; ++i) {
@@ -1613,6 +1637,8 @@ void parse_options(int &argc, char **argv) {
       options.accel = std::stod(value());
     } else if (arg == "--spawn-x") {
       options.spawn_x = std::stod(value());
+    } else if (arg == "--spawn-y") {
+      options.spawn_y = std::stod(value());
     } else if (arg == "--spawn-yaw-deg") {
       options.spawn_yaw =
           sim::gazebo::kSpawnYaw + std::stod(value()) * kPi / 180;
