@@ -92,7 +92,8 @@ def _stack(context):
         Node(package='sim', executable='bench_world', name='bench_world', output='screen',
              parameters=[world]),
         robot_tf, cv_node('target_selector'), cv_node('target_tracker', **tracker),
-        cv_node('point_to_cv_target', tick_topic='/cv/target/tick',
+        cv_node('point_to_cv_target', red_start_x=0.0, red_start_y=0.0,
+                blue_start_x=0.0, blue_start_y=0.0, tick_topic='/cv/target/tick',
                 state_ack_topic='/cv/target/state_ack', idle_direction='hold'),
     ]
     if not headless:

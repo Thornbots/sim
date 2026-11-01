@@ -54,6 +54,7 @@ protected:
   fixture::Firmware::Output output{};
   fixture::Referee referee;
   fixture::GzHardware hardware;
+  std::array<double, 2> redStart{-4.625, 0.0}, blueStart{4.625, 0.0};
   std::shared_ptr<rclcpp::Node> node;
   std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor;
   std::unique_ptr<tf2_ros::Buffer> buffer;
@@ -297,13 +298,17 @@ protected:
 
   void launchStack(bool failSetup = false, const std::string &backend = "mapping",
                    bool useRf2o = false) {
+    const auto spawn = referee.robot_id > 100 ? blueStart : redStart;
     simulator = std::make_unique<sim::LaunchTree>("sim", std::vector<std::string>{
       "ros2", "launch", "sim", "sim.launch.py", "gui:=false", "rviz:=false", "foxglove:=false",
       "pose_emulator:=false", "model:=sentry_v2",
-      std::string("x:=") + (referee.robot_id > 100 ? "4.625" : "-4.625"), "yaw:=1.5707963267948966",
+      "x:=" + std::to_string(spawn[0]), "y:=" + std::to_string(spawn[1]),
+      "yaw:=1.5707963267948966",
       "real_time_factor:=1.0", "odom_noise_enabled:=false"}, (directory / "sim.log").string());
     robot = std::make_unique<sim::LaunchTree>("robot", std::vector<std::string>{
       "ros2", "launch", "thornbots_pkg", "auto.launch.py", "real_hardware:=false",
+      "red_start_x:=" + std::to_string(redStart[0]), "red_start_y:=" + std::to_string(redStart[1]),
+      "blue_start_x:=" + std::to_string(blueStart[0]), "blue_start_y:=" + std::to_string(blueStart[1]),
       std::string("localization_mode:=") + (failSetup ? "none" : backend),
       std::string("load_map:=") + (backend == "amcl" ? "true" : "false"),
       "autosave_map:=false", std::string("use_rf2o:=") + (useRf2o ? "true" : "false"),
@@ -390,6 +395,8 @@ protected:
 
 class TeamBoot : public MmmSuite, public testing::WithParamInterface<int> {};
 TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
+  redStart = {-4.45, 0.20};
+  blueStart = {4.10, -0.35};
   referee.robot_id = GetParam();
   driveSim = false;
   holdRef = true;
@@ -433,10 +440,10 @@ TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
   holdRef = false;
   ASSERT_TRUE(wait([&] { return refCount > beforeRef && hasAmcl() && navOdom && lastFix; }, 60));
   EXPECT_EQ(droppedFixes, 1U);
-  const double start = GetParam() > 100 ? 4.625 : -4.625;
+  const auto start = GetParam() > 100 ? blueStart : redStart;
   const auto p = navOdom->pose.pose.position;
-  EXPECT_NEAR(p.x, start, 0.05);
-  EXPECT_NEAR(p.y, 0.0, 0.05);
+  EXPECT_NEAR(p.x, start[0], 0.05);
+  EXPECT_NEAR(p.y, start[1], 0.05);
   EXPECT_LT(std::hypot(lastFix->x - p.x, lastFix->y - p.y), 0.05);
   EXPECT_NEAR(rawOdom->pose.pose.position.x, 0.0, 0.02);
   EXPECT_NEAR(rawOdom->pose.pose.position.y, 0.0, 0.02);
@@ -455,6 +462,8 @@ TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
   report["at_fix_goal_speed_mps"] = std::hypot(output.right, output.forward);
   EXPECT_LT(std::hypot(output.right, output.forward), 0.05);
   report["team_robot_id"] = GetParam();
+  report["configured_start_xy"] = start;
+  report["navigation_xy"] = {p.x, p.y};
   report["navigation_x"] = p.x;
   report["raw_x"] = rawOdom->pose.pose.position.x;
   report["relocalize_x"] = lastFix->x;

@@ -97,6 +97,13 @@ protected:
     return out;
   }
 };
+TEST_F(McbFirmware, HeaderOnlyHandshakeKeepsFirstTickAligned) {
+  const auto output = firmware->step(1, {}, ref);
+  EXPECT_EQ(firmware->time_ms(), 1u);
+  EXPECT_TRUE(std::isfinite(output.yaw));
+  EXPECT_TRUE(std::isfinite(output.forward));
+}
+
 TEST_F(McbFirmware, IndexerResumesWhenSetupBecomesInGame) {
   ref.game_stage = 2;
   run(9000);
@@ -149,8 +156,8 @@ TEST_F(McbFirmware, BothTeamsRoundTripFieldDisplacementVelocityAndHeading) {
   for (const int id : {7, 107}) {
     ref.robot_id = id;
     hw::GzHardware hardware;
-    const double start = id > 100 ? firmware->start_x() : -firmware->start_x();
-    hardware.pos = {start + 0.6, firmware->start_y() - 0.3};
+    const double start = id > 100 ? 4.625 : -4.625;
+    hardware.pos = {start, 1.2};
     hardware.vel = {-0.2, 0.4};
     hardware.chassis_yaw = hw::kStartYaw;
     hardware.yaw_joint[0] = 0.2;
@@ -158,6 +165,7 @@ TEST_F(McbFirmware, BothTeamsRoundTripFieldDisplacementVelocityAndHeading) {
     hardware.maybe_boot();
     ASSERT_TRUE(hardware.boot.has_value());
     EXPECT_NEAR((*hardware.boot)[2], hw::kStartYaw, 1e-12);
+    hardware.pos = {start + 0.6, 0.9};
     const auto readings = firmware->gz_readings(hardware, ref);
     EXPECT_NEAR(readings[0], 0.6, 1e-12);
     EXPECT_NEAR(readings[1], -0.3, 1e-12);
@@ -418,7 +426,7 @@ TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
   EXPECT_NEAR(std::hypot(waiting.right, waiting.forward), 0.0, 1e-6);
   EXPECT_NEAR(waiting.spin, 0.0, 1e-6);
   run(100, wire::frame(wire::Relocalize{
-      static_cast<float>(-firmware->start_x()), 0}));
+      static_cast<float>(-4.625), 0}));
   auto output = run(200).outputs.back();
   EXPECT_LT(std::hypot(output.right, output.forward), 0.05);
   EXPECT_LT(output.spin, -1);
@@ -430,15 +438,15 @@ TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
 TEST_F(McbFirmware, AutoDriveWaitsForAbsoluteRelocalization) {
   firmware->set_mode(2);
   const auto goal = wire::frame(wire::NavGoal{
-      static_cast<float>(-firmware->start_x() + 1), -1});
+      static_cast<float>(-4.625 + 1), -1});
   const auto waiting = run(300, goal).outputs.back();
   EXPECT_NEAR(waiting.right, 0.0, 1e-6);
   EXPECT_NEAR(waiting.forward, 0.0, 1e-6);
   run(100, wire::frame(wire::Relocalize{
-      static_cast<float>(-firmware->start_x()), 0}));
+      static_cast<float>(-4.625), 0}));
   const auto output =
       run(300, wire::frame(wire::NavGoal{
-                   static_cast<float>(-firmware->start_x() + 1), -1}))
+                   static_cast<float>(-4.625 + 1), -1}))
           .outputs.back();
   EXPECT_GT(output.right, 0);
   EXPECT_LT(output.forward, 0);

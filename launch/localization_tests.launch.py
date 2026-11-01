@@ -73,7 +73,9 @@ def _stack(context):
 
     backend = config['backend']
     # No CV: nothing here scores it, and it costs CPU the stack under test needs.
-    robot_args = {'real_hardware': 'false', 'localization_mode': backend,
+    robot_args = {'red_start_x': '-4.625', 'red_start_y': '0.0',
+                  'blue_start_x': '4.625', 'blue_start_y': '0.0',
+                  'real_hardware': 'false', 'localization_mode': backend,
                   'use_rf2o': config['use_rf2o'],
                   # Blank-map SLAM starts at its own (0, 0) boot origin.
                   'load_map': 'false' if backend == 'mapping' else 'true',

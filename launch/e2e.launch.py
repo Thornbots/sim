@@ -173,19 +173,15 @@ def generate_launch_description():
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        launch_arguments={'real_hardware': 'false', 'localization_mode': 'amcl',
+        launch_arguments={'red_start_x': '-4.625', 'red_start_y': '0.0',
+                          'blue_start_x': '4.625', 'blue_start_y': '0.0',
+                          'real_hardware': 'false', 'localization_mode': 'amcl',
                           'pose_latency_s': LaunchConfiguration('pose_latency_s'),
                           'gimbal_lag_s': LaunchConfiguration('gimbal_lag_s'),
                           'firmware_latency_s': LaunchConfiguration('firmware_latency_s'),
                           'chase_settle_s': LaunchConfiguration('chase_settle_s'),
                           'chase_margin_s': LaunchConfiguration('chase_margin_s'),
                           'v_muzzle': '22.0',
-                          'zone_start_x_m': PythonExpression([
-                              "'0.0' if '", LaunchConfiguration('stage'),
-                              "' == 'mcb_parked' else '4.625'"]),
-                          'zone_start_y_m': PythonExpression([
-                              "'-4.625' if '", LaunchConfiguration('stage'),
-                              "' == 'mcb_parked' else '0.0'"]),
                           'use_rf2o': 'true', 'load_map': 'true'}.items())
 
     match_environment = Node(

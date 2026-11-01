@@ -40,7 +40,7 @@ def stack(context):
                           'mcb_auto_fire': LaunchConfiguration('auto_fire'),
                           'firmware_binary': LaunchConfiguration('firmware_binary'),
                           'mcb_backend': LaunchConfiguration('backend'),
-                          'real_time_factor': '1'}.items())
+                          'x': '4.625', 'y': '0.0', 'real_time_factor': '1'}.items())
     bridge = Node(package='dji_serial_bridge', executable='dji_serial_bridge_node',
                   name='dji_serial_bridge', output='screen', parameters=[{
                       'use_sim_time': True, 'device': LaunchConfiguration('device_link'),
@@ -48,7 +48,9 @@ def stack(context):
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        launch_arguments={'real_hardware': 'false', 'localization_mode': 'none',
+        launch_arguments={'red_start_x': '-4.625', 'red_start_y': '0.0',
+                          'blue_start_x': '4.625', 'blue_start_y': '0.0',
+                          'real_hardware': 'false', 'localization_mode': 'none',
                           'use_rf2o': 'false', 'idle_direction': 'hold'}.items())
     relay = Node(package='thornbots_pkg', executable='mcb_relay', output='screen',
                  parameters=[{'use_sim_time': True}])
