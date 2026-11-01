@@ -576,8 +576,10 @@ it does not shorten their scoring windows.
 
 - `opponent_driver` spawns `opponent_0`, a `sentry_v2` with no sensors,
   gravity or contacts, drawn from its collision shapes (the CAD visuals
-  cost RTF 1.10 to 0.61 with the depth camera on). Its root hull is drawn at
-  75% in x and y: at full size it stood 3-7 cm proud of every panel.
+  cost RTF 1.10 to 0.61 with the depth camera on) except the CAD head and
+  gun ([lidar visibility](#both-robot-models-the-lidar-does-not-scan-its-own-model)).
+  Its root hull is drawn at 75% in x and y: at full size it stood 3-7 cm
+  proud of every panel.
 - Its `OpponentMover` gz system (`src/opponent_mover.cpp`) sets its pose
   every physics step from `target_driver`'s path, bridged to
   `/model/opponent_0/path`. VelocityControl moved only the robot
@@ -809,10 +811,21 @@ heading.
 ### Both robot models: the lidar does not scan its own model
 
 Both of sim's models, `urdf/sentry.urdf.xacro` and `urdf/sentry_v2.urdf.xacro`,
-do this. Every robot visual carries `visibility_flags=0xFFFFFFFE` against the
-`gpu_lidar`'s `visibility_mask=0x01`, so `(mask & flags) == 0` and the sensor
-renders none of the sentry. Nothing else in the world sets the flags, so the
-field keeps sdformat's default `0xFFFFFFFF` and stays visible.
+do this for our own model. Its visuals carry `visibility_flags=0xFFFFFFFE`
+against the `gpu_lidar`'s `visibility_mask=0x01`, so `(mask & flags) == 0` and
+the sensor renders none of the sentry. `sentry_v2` copies generated with
+`opponent:=true` (including allies in match stages) carry `0xFFFFFFFF`, like
+the field, and our lidar sees them. Their collision/contact masks stay
+unchanged.
+
+`opponent_driver` draws opponents from collision hulls, except that `head`
+and `head_pitch` keep their CAD meshes: their hulls are 0.35-0.48 m wide in
+the scan plane, the CAD 0.16-0.33 m. The chassis hull stays hidden from the
+lidar, because it reaches the plane (the guard pushes it to 0.362 m) while
+the CAD chassis ends below 0.32 m. The lidar therefore sees an opponent's
+head, gun and lidar arm, as on the field. The
+[head-section measurement](docs/lidar-head-section-2026-10-25.md) has the
+widths. Ground tilt that drops the plane onto a real chassis is not modelled.
 
 This was tried in July 2026, reverted as "all-or-nothing per visual", and is
 back because all-or-nothing turned out to be the right answer. Measured
