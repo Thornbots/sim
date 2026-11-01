@@ -20,7 +20,7 @@
 namespace sim::match_scenario {
 namespace {
 constexpr double kPi = 3.14159265358979323846;
-const Point center{1.55, -0.65};
+const Point center = kCenter;
 struct CenterLeg {
   std::string name;
   Route points;
@@ -29,9 +29,9 @@ struct CenterLeg {
 };
 const std::vector<CenterLeg> center_legs = {
     {"parked", {center}, 1.0, 5.0},
-    {"straight_1", {center, {1.55, -0.05}, center}, 1.0, std::nullopt},
+    {"straight_1", {center, {0.6, -1.2}, center}, 1.0, std::nullopt},
     {"turn",
-     {center, {0.65, -0.65}, {0.65, -0.05}, {1.55, -0.05}, center},
+     {center, {1.5, -1.8}, {1.5, -1.2}, {0.6, -1.2}, center},
      1.0,
      std::nullopt},
     {"spin", {center}, 1.0, 6.0}};
@@ -48,23 +48,13 @@ const std::map<std::string, ParkedPath> &parked_paths() {
 }
 const std::map<std::string, Route> &routes() {
   static const std::map<std::string, Route> data = {
-      {"sentry", {{4.625, 0.0}, {4.625, -2.35}, {1.55, -2.35}, {1.55, -0.65}}},
-      {"opponent_0",
-       {{-4.625, 0.0}, {-4.625, -2.35}, {-1.55, -2.35}, {-1.55, -0.65}}},
-      {"ally_0",
-       {{5.0, 0.9},
-        {5.0, -2.9},
-        {2.15, -2.9},
-        {2.15, -1.5},
-        {0.65, -1.5},
-        {0.65, 1.05}}},
-      {"opponent_1",
-       {{-5.0, 0.9},
-        {-5.0, -2.9},
-        {-2.15, -2.9},
-        {-2.15, -1.5},
-        {-0.65, -1.5},
-        {-0.65, 1.05}}}};
+      // The firmware's ARCC_S2_3V3 route from blue's start: square through the
+      // Starting Zone doorway, then spinning to the centre point.
+      {"sentry", {{5.25, -3.0}, {5.25, -0.635}, {2.4, -0.635}, kCenter}},
+      {"opponent_0", {{-5.25, -3.0}, {-5.25, -0.635}, {-2.4, -0.635}, {-0.9, -2.4}}},
+      // Second lane: spawned north of the Side Walls, clear of the doorway lane.
+      {"ally_0", {{4.5, 1.2}, {2.5, 0.4}, {1.75, -3.05}}},
+      {"opponent_1", {{-4.5, 1.2}, {-2.5, 0.4}, {-1.75, -3.05}}}};
   return data;
 }
 const std::map<std::string, std::string> &teams() {
@@ -94,6 +84,10 @@ double route_duration(const Route &points, double speed) {
                            speed);
   }
   return result;
+}
+bool in_center_zone(double x, double y) {
+  return std::abs(x) < kCenterHalfWidth &&
+         std::abs(y - kCenterZoneY) < kCenterHalfHeight;
 }
 RouteSample sample_route(const Route &points, double seconds, double speed) {
   seconds = std::max(seconds, 0.0);

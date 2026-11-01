@@ -25,6 +25,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "sim/field.hpp"
 #include "sim/mcb_sensors.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
@@ -146,7 +147,7 @@ class PoseEmulator : public rclcpp::Node {
     gz::msgs::Boolean reply;
     bool result = false;
     const bool executed = gz_node_->Request(
-        std::string("/world/ARCC_Field_2026/") + service,
+        sim::field::world_path(service),
         request, 2000u, reply, result);
     return executed && result && reply.data();
   }
