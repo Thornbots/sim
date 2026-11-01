@@ -18,6 +18,8 @@ constexpr uint16_t kPose = 2;
 constexpr uint16_t kRefSys = 3;
 constexpr uint16_t kRelocalize = 4;
 constexpr uint16_t kPing = 5;
+constexpr uint16_t kDebug = 6;
+constexpr size_t kDebugMaxPayload = 32;
 constexpr uint8_t kOdomPods = 0;
 constexpr uint8_t kHeadByte = 0xA5;
 constexpr size_t kRxBufferSize = 1024;
@@ -89,6 +91,12 @@ struct Ping
   uint8_t number = 0;
 };
 
+struct DebugBlob
+{
+  static constexpr uint16_t kType = kDebug;
+  std::vector<uint8_t> data;
+};
+
 const std::array<uint8_t, 256> & crc8_table();
 const std::array<uint16_t, 256> & crc16_table();
 uint8_t crc8(const uint8_t * data, size_t size, uint8_t init = kCrc8Init);
@@ -100,6 +108,7 @@ std::vector<uint8_t> pack(const Relocalize & msg);
 std::vector<uint8_t> pack(const Pose & msg);
 std::vector<uint8_t> pack(const RefSys & msg);
 std::vector<uint8_t> pack(const Ping & msg);
+std::vector<uint8_t> pack(const DebugBlob & msg);
 
 template<typename T>
 T unpack(const std::vector<uint8_t> & data);
@@ -109,6 +118,7 @@ template<> Relocalize unpack<Relocalize>(const std::vector<uint8_t> & data);
 template<> Pose unpack<Pose>(const std::vector<uint8_t> & data);
 template<> RefSys unpack<RefSys>(const std::vector<uint8_t> & data);
 template<> Ping unpack<Ping>(const std::vector<uint8_t> & data);
+template<> DebugBlob unpack<DebugBlob>(const std::vector<uint8_t> & data);
 
 std::vector<uint8_t> encode_frame(
   uint16_t msg_type, const std::vector<uint8_t> & payload, uint8_t seq = 0);
