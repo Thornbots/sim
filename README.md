@@ -622,7 +622,8 @@ doesn't have; only sim and its tests should read them.
 
 ## Record an E2E demo
 
-[Mac recording evidence](docs/e2e-video-2026-10-13.md).
+[Mac recording evidence](docs/e2e-video-2026-10-13.md) and the
+[2026-10-31 recording attempt](docs/e2e-video-2026-10-31.md).
 
 The E2E GUI uses scene-only gz views and robot-following RViz views:
 [a parked close-up](rviz/e2e-parked.rviz) and [a driving/match view](rviz/e2e.rviz). They show robot, TF, lidar, map, tracked armor,
