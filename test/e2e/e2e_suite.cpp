@@ -163,7 +163,8 @@ public:
                             previous->root.block<2, 1>(0, 3)).norm() / .2;
       cb::append_json(trace, {{"t", scorer->now_s()}, {"truth_xy", {x, y}},
                               {"speed_m_s", speed}});
-      if (std::hypot(x, y) < 1.0 && speed < .08) {
+      const auto &c = sim::match_scenario::kCenter;
+      if (std::hypot(x - c[0], y - c[1]) < 1.0 && speed < .08) {
         if (!settled) settled = scorer->now_s();
         if (scorer->now_s() - *settled >= 1) { arrived = true; break; }
       } else {

@@ -220,12 +220,14 @@ install(TARGETS latch_holder DESTINATION lib/${PROJECT_NAME})
 
 add_executable(actor_driver src/actor_driver.cpp)
 target_compile_features(actor_driver PUBLIC cxx_std_17)
+target_include_directories(actor_driver PRIVATE include)
 target_link_libraries(actor_driver gz-transport::core gz-msgs::core)
 ament_target_dependencies(actor_driver nav_msgs rclcpp ros_gz_interfaces)
 install(TARGETS actor_driver DESTINATION lib/${PROJECT_NAME})
 
 add_executable(opponent_driver src/opponent_driver.cpp)
 target_compile_features(opponent_driver PUBLIC cxx_std_17)
+target_include_directories(opponent_driver PRIVATE include)
 target_link_libraries(opponent_driver gz-transport::core gz-msgs::core tinyxml2::tinyxml2)
 ament_target_dependencies(opponent_driver ament_index_cpp nav_msgs rclcpp)
 install(TARGETS opponent_driver DESTINATION lib/${PROJECT_NAME})
@@ -334,7 +336,8 @@ install(TARGETS lockstep_suite DESTINATION lib/${PROJECT_NAME})
 
 ament_python_install_package(${PROJECT_NAME})
 
-install(DIRECTORY launch urdf meshes world rviz foxglove renode DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch urdf meshes world rviz foxglove renode DESTINATION share/${PROJECT_NAME}
+  PATTERN "cad" EXCLUDE)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)

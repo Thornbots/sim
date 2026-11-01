@@ -47,6 +47,7 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
+from sim.field import BLUE_START, team_start_args
 from sim.mcb_link import default_mcb_link
 from sim.suite_exit import finish_suite
 
@@ -61,7 +62,7 @@ def _sim(context):
     config = context.launch_configurations
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
-    spawn = {'x': '4.625', 'y': '0.0', 'yaw': str(SPAWN_YAW)}
+    spawn = {'x': str(BLUE_START[0]), 'y': str(BLUE_START[1]), 'yaw': str(SPAWN_YAW)}
     view = 'e2e-parked' if config['stage'] == 'mcb_parked' else 'e2e'
     share = get_package_share_directory('sim')
     return [IncludeLaunchDescription(
@@ -173,8 +174,7 @@ def generate_launch_description():
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        launch_arguments={'red_start_x': '-4.625', 'red_start_y': '0.0',
-                          'blue_start_x': '4.625', 'blue_start_y': '0.0',
+        launch_arguments={**team_start_args(),
                           'real_hardware': 'false', 'localization_mode': 'amcl',
                           'pose_latency_s': LaunchConfiguration('pose_latency_s'),
                           'gimbal_lag_s': LaunchConfiguration('gimbal_lag_s'),

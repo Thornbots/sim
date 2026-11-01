@@ -13,10 +13,29 @@
 // limitations under the License.
 
 #include "sim/combat.hpp"
+#include "sim/field.hpp"
 
 #include <sstream>
 #include <stdexcept>
 #include <tinyxml2.h>
+
+namespace sim::field
+{
+std::filesystem::path default_world(const std::filesystem::path & share)
+{
+  tinyxml2::XMLDocument xml;
+  const auto config = share / "world/model.config";
+  if (xml.LoadFile(config.c_str()) != tinyxml2::XML_SUCCESS) {
+    throw std::runtime_error("cannot read " + config.string());
+  }
+  const auto * model = xml.FirstChildElement("model");
+  const auto * sdf = model ? model->FirstChildElement("sdf") : nullptr;
+  if (!sdf || !sdf->GetText()) {
+    throw std::runtime_error("world/model.config has no <sdf>");
+  }
+  return share / "world" / sdf->GetText();
+}
+}  // namespace sim::field
 
 namespace sim::combat
 {
@@ -43,14 +62,14 @@ Eigen::Matrix4d pose(const tinyxml2::XMLElement * element)
 Mesh load_field(const std::filesystem::path & share)
 {
   tinyxml2::XMLDocument xml;
-  if (xml.LoadFile((share / "world/ARCC_Field_2026.sdf").c_str()) != tinyxml2::XML_SUCCESS) {
+  if (xml.LoadFile(field::default_world(share).c_str()) != tinyxml2::XML_SUCCESS) {
     throw std::runtime_error("cannot read field SDF");
   }
   const auto * root = xml.FirstChildElement("sdf");
   const auto * world = root ? root->FirstChildElement("world") : nullptr;
   const auto * model = world ? world->FirstChildElement("model") : nullptr;
-  if (!model || !model->Attribute("name", "ARCC_Field_2026")) {
-    throw std::runtime_error("missing field model");
+  if (!world || !world->Attribute("name", field::kWorld) || !model) {
+    throw std::runtime_error("field SDF needs world \"field\" with the field as its first model");
   }
   Mesh result;
   for (auto * link = model->FirstChildElement("link"); link;

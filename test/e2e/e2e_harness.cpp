@@ -15,6 +15,7 @@
 #include "sim/e2e_harness.hpp"
 #include "sim/cv_suite_options.hpp"
 #include "sim/e2e_test_core.hpp"
+#include "sim/field.hpp"
 #include "sim/process.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstdio>
@@ -310,7 +311,8 @@ Json Scorer::pose_errors(double t) {
     }
     out["speed_m_s"] = speed;
     out["spin_rad_s"] = spin;
-    out["start_displacement_m"] = std::hypot(ours->root(0, 3) - 4.625, ours->root(1, 3));
+    out["start_displacement_m"] = std::hypot(ours->root(0, 3) - field::kBlueStart[0],
+                                           ours->root(1, 3) - field::kBlueStart[1]);
     out["segment"] = !center_time || t < *center_time ? "approach" :
                      speed > .2 ? "drive" : std::abs(spin) > .5 ? "spin" : "parked";
   }
@@ -783,8 +785,7 @@ void Scorer::sync_referee() {
     bool ready = true;
     for (const auto &[name, history] : histories) {
       const auto pose = history->at(now_s() - .01);
-      ready &= pose && std::abs(pose->root(0, 3)) < match_scenario::kCenterHalfWidth &&
-                       std::abs(pose->root(1, 3)) < match_scenario::kCenterHalfHeight;
+      ready &= pose && match_scenario::in_center_zone(pose->root(0, 3), pose->root(1, 3));
     }
     if (ready) center_time = now_s();
   }

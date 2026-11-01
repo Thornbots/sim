@@ -1,7 +1,7 @@
 # sim
 
 sim holds the robot's integration tests. The localization drift suite starts a
-`gz sim` model of the `ARCC_Field_2026` field, spawns the `sentry` robot from
+`gz sim` model of the ARCC Season 2 3v3 field, spawns the `sentry` robot from
 `urdf/sentry_v2.urdf.xacro`, and runs the real `thornbots_pkg` stack against
 it. The two CV benches run no gz. The aiming bench scores `point_to_cv_target`
 against a perfectly known target; the estimation bench scores how well Part 2
@@ -53,7 +53,7 @@ with REF_SYS held at the UART relay. They assert AMCL is absent through missing
 and invalid team data, then release the real team frame and check raw `/odom`
 near zero, `/localization/odom` near the red/blue field start, and the absolute
 wire RELOCALIZE within the relay's 0.05 m threshold with rf2o/EKF enabled.
-This case overrides red to `(-4.45, 0.20)` and blue to `(4.10, -0.35)`,
+This case overrides red to `(-5.0, -2.6)` and blue to `(5.4, -3.35)`,
 with matching Gazebo spawns, to catch mirrored/default-only team seeding.
 They drop the first RELOCALIZE and require a later absolute retry to unlock
 actual firmware navigation. A goal at that fix must command no translation;
@@ -505,8 +505,8 @@ cells/segments, checker verdicts and comparison with the previous status.
 | `mcb_match` | `test/e2e/e2e_suite.cpp` | the 2v2 center fight with ballistic shots and HP |
 
 `mcb_parked`'s field-safe paths are separate from the gz-free aiming bench:
-relative to the settled shooter, lateral at y=-1.3 with x ±1.9 m, radial
-y=-0.9 to -1.7 m, diagonal centered at (0, -1.3), half-length 0.65 m.
+relative to the settled shooter (near (0.6, -1.8)), lateral at y=-1.3 with
+x ±1.9 m, radial y=-0.9 to -1.7 m, diagonal centered at (0, -1.3), half-length 0.65 m.
 Mesh regression checks include
 a 0.40 m robot footprint. Short paths brake before reaching high requested
 speeds; labels are speed limits. Each cell fails on zero firmware shots or
@@ -682,25 +682,35 @@ origin is the robot's boot position; it is not field-centred. Team initializatio
 seeds field-centred ROS navigation; the first absolute RELOCALIZE brings the
 MCB's navigation coordinates into that frame. Saved field maps use the world frame; blank-map SLAM starts its
 `map` at (0, 0) at boot, including when spawned at a team start.
-`ARCC_Field_2026.sdf` uses the coarse Onshape export in
-`world/real_field_assmbly/meshes/`: `Field.stl` (8,550 triangles) and
-`CenterMarker.stl` (12 triangles), each for visual and collision geometry.
-The export is already in metres with its centre at XY zero. Both meshes use
-the URDF's z offset of -0.0133884 m and unit scale; a -90 deg model yaw
-maps mesh +y to world +x, preserving the blue-base direction. The marker top
-and main floor are at z = 0 (within 20 nm of STL float precision).
-The inner walls enclose 12 x 8 m; the outer bounds in world coordinates are
-x = ±6.168884 m, y = ±4.168884 m, z = -0.025..0.498612 m.
+The default field is the ARCC Season 2 (2026-27) 3v3 Battlefield
+(E27 §3.2): `world/model.config` names its SDF, `ARCC_S2_3v3.sdf`, and is the
+one place to change the default field. Every field SDF names its world `field`,
+so gz services and topics (`sim/field.py`, `include/sim/field.hpp`) never change
+with it. Those two files also hold the team starts and localization loop centre.
+`world/arcc_s2_3v3/cad/arcc_3v3_field.py` (build123d) generates both the named
+STEP assembly for Onshape and the gz meshes, already in the field frame;
+[`NOTES.md`](world/arcc_s2_3v3/cad/NOTES.md) lists every dimension read off the
+drawing or estimated. `collision.stl` (748 triangles) is static structure only;
+tape, Bumpy Road tiles/ribs (2.5 + 1.2 mm) and the placeholder zig-zag pole are
+visual-only, and the movable objectives are not in gz. The lidar renders
+visuals, so it sees the pole but not the absent objectives. Collision bounds are
+x = ±6.37 m, y = ±4.37 m (floor plate), z = -0.02..1.406 m (Central Wall panel).
 
-The earlier mesh had larger outer bounds (12.61 x 8.73 m), taller geometry
-(1.41883 m before its z offset), and an approximately 8 cm lateral offset.
-These are export differences, not a reason to rescale the new 12 x 8 m
-interior. The coarse export does not establish precise RFID zone boundaries.
-The ROS 1 launch files alongside the export are provenance; gz loads the SDF.
+Geometry that shapes the routes (red side; blue mirrors x): the Central Wall
+base spans x = ±0.085, y = -1.638..1.362 m, so the field centre is inside it;
+the 0.42 m Central and 0.30 m Side Limbo Bars stop the 0.52 m sentry; and the
+Starting Zone (x = -6..-4.5, y = -4..-2) opens only through a 0.745 m doorway at
+x = -4 between the Side Wall's end (y = -0.255) and the Side High Ground
+(y < -1, 0.21/0.41 m). The sentry's 0.84 m spin sweep does not fit, so routes
+cross it square at y = -0.635 (`test_match_routes`).
+The 2026 ARCC field (`ARCC_Field_2026.sdf` and its Onshape export) is retired;
+E27 forbids reusing its geometry. `Spooky_Scrim_2v2.sdf` remains selectable with
+`world:=`.
 
 World-coordinate spawns, drift loops, actors and map-sweep grids keep their
 field-frame coordinates. Both teams boot facing +y (field yaw π/2,
-`auto_explore.SPAWN_YAW`); red starts at (-4.625, 0), blue at (4.625, 0).
+`auto_explore.SPAWN_YAW`); red starts at (-5.25, -3.0), blue at (5.25, -3.0),
+the Starting Zone centres.
 The ROS `root` remains heading-fixed at yaw zero. Both raw MCB POSE and
 `pose_emulator` start at (0, 0); displacement and velocity retain the field
 axes with no team rotation. RELOCALIZE changes only the MCB navigation offset,
@@ -711,25 +721,26 @@ The pose-only fixture supplies no referee data: its caller must supply a
 valid fixture REF_SYS when testing AMCL.
 
 All MCB E2E stages, including the parked diagnostic, spawn at blue's field
-start so referee-based AMCL seeding matches the world. Match routes retain
-their field coordinates. The parked diagnostic drives to center before its
-cells and translates its original -y target paths with the settled shooter,
-preserving the former world-centre shooter geometry.
+start so referee-based AMCL seeding matches the world. The firmware's
+`ARCC_S2_3V3` route and sim's `sentry` route end at the centre point (0.6, -1.8),
+south of the Central Wall's tip; the centre fight zone is |x| < 1.8,
+|y + 2.3| < 1.0 (`match_scenario.hpp`). The parked diagnostic settles within
+1 m of that point, then translates its -y target paths with the settled
+shooter into the open floor south of it.
 The [parked ingress verification](docs/mcb-parked-ingress-2026-10-31.md)
 compares repeated hosted cells with the nightly baseline and records the board attempt.
 See the [boot-heading verification](docs/boot-heading-2026-10-30.md) for
 hosted firmware, MMM, physics and route test results and limits.
 Route-clearance tests and match shot occlusion read every field collision
-mesh and transform directly from the SDF through `combat::load_field`.
-The corrected 2026-10-20 export restores the 2 m bar at world x = -1..1 m,
-y = 2.98488..3.00393 m, with top z = 0.41 m; the earlier export omitted it
-above the 0.208162 m platform. Placement, floor and outer bounds are unchanged.
-For the canonical occupancy map derived from the corrected collision geometry
-at nominal lidar height, see [saved map](../sentry_localization/README.md#saved-map).
+mesh and transform directly from the default SDF through `combat::load_field`.
+Routes are checked square (0.32 m half-width) while driven without spin and
+with the 0.42 m spin radius where they spin.
+For the canonical occupancy map derived from the collision geometry at nominal
+lidar height, see [saved map](../sentry_localization/README.md#saved-map).
 Use mapping mode from a blank map for new-field SLAM validation (no pose graph ships).
-The [2026-10-19 integration measurements](docs/real-field-2026-10-19.md)
-compare the earlier export with nightly, including the known test failures;
-they do not validate runtime behavior with the corrected export.
+Dated measurements before 2026-11-01 (for example the
+[2026-10-19 integration measurements](docs/real-field-2026-10-19.md)) used the
+retired 2026 field.
 
 ### SAPIEN: tried, not adopted
 
@@ -897,8 +908,8 @@ alone. Dated measurements below retain the frame names used when those runs
 were collected under the previous architecture.
 
 `mapping` starts slam_toolbox on a blank map (`load_map:=false`) at map (0, 0).
-This suite spawns mapping/none at world (0, 0), so their comparison frames
-coincide. Its AMCL fixture spawns at blue's field start and publishes an
+This suite spawns mapping/none at the loop centre and subtracts that spawn from
+`/sim/raw_odom` truth, so their comparison frames coincide. Its AMCL fixture spawns at blue's field start and publishes an
 explicit valid blue REF_SYS; it does not bypass the production team gate. Like `none`, it scores
 `map->root` against `/sim/raw_odom` in `noise_correction` and the
 cornering-loop scenarios; the rest watch `map->nav_odom` as under `slam`. Each
@@ -907,7 +918,7 @@ scenario's stack builds a fresh map: nothing carries between scenarios.
 
 After AMCL's seeded navigation TF and valid scans are available, the fixture
 drives the surveyed blue `sentry` ingress from
-[`match_scenario.cpp`](src/match_scenario.cpp) and then to world (0, 0).
+[`match_scenario.cpp`](src/match_scenario.cpp) and then to the loop centre.
 Truth-feedback velocity commands must reach every waypoint within 0.03 m;
 a blocked ingress fails the scenario. Noise and slip injection begin only
 after arrival, with the boot-relative odometry origin preserved. Scenario
@@ -961,7 +972,7 @@ The suite runs them in this order.
    turned into the field frame, the same turn for each). That measurement
    does not establish alignment for the current [saved map](../sentry_localization/README.md#saved-map).
    A growing offset would be a real problem.
-2. `noise_correction` drives the 3m square under drift and jitter (slip 0.02,
+2. `noise_correction` drives the loop square under drift and jitter (slip 0.02,
    no jerks) for a fixed 30s (60s before 2026-07-27). The second half's samples
    must stay under 2x the first half's max. The window doesn't exit early, so
    a stalled TF can't cause an open-ended drive.
@@ -988,7 +999,7 @@ The suite runs them in this order.
    `trigger_jerk`, drives one leg to the next corner, then requires
    `map->odom` to have moved more than 0.3x the applied jerk, or to sit within
    `kMaxDelta` of its pre-jerk value. Jerks (stddev 0.24) are biased toward
-   the world origin so they don't push the robot into nearby walls, and the leg
+   the loop centre so they don't push the robot into nearby walls, and the leg
    absorbs the actual (dx, dy) so the robot still lands on its corner. Eight
    trials share one stack (relaunching costs 15-20s each) and all must pass.
    A closing lap follows.
@@ -1043,17 +1054,18 @@ correction.
 
 #### Geometry and helpers
 
-Every cornering scenario traces `loop_legs()`: a 3m square centred on the
-world origin, where the box spawns and scenario driving begins, with corners
-at (+-1.5, +-1.5).
-Each leg is `3 / --speed` seconds (0.75s at the 4.0 m/s default), and
-`reposition()` drives to the start corner first. The square was widened from
-2m on 2026-07-26 (`4f182e7`). Wall clearances are known on x only: +x clears
-`upper_mid` (x=2.49) by 0.99m, -x clears `lower_mid` (x=-2.11) by 0.61m and
-`bottom_wall`'s ramp edge (x=-3.35) by 1.85m. `lower_mid` is the tightest, so
-start from it if you widen the loop. A 6-leg field tour that cleared every
-wall's bounding box by ~0.77m still hit a wall after ~10 open-loop laps, as
-small per-leg errors added up, which is why the suite uses the smaller loop.
+Every cornering scenario traces `loop_legs()`: a 2 m square centred on
+`kLoopCentre` (1.55, -1.0), where the box spawns and scenario driving begins.
+On the 2026-11-01 Season 2 field it lies between the Central Wall (x = 0.085)
+and blue's Side High Ground (x = 3, y < -1), partly on the flat Bumpy Road;
+corners clear both by 0.45 m centre-to-face (0.15 m past the chassis). The
+2026 field's 3 m origin square would cross the Central Wall, and no clear 3 m
+square fits beside it. Each leg is `2 / --speed` seconds (0.5 s at the 4.0 m/s
+default), and `reposition()` drives to the start corner first. `actor_driver`
+gets its default paths scaled by 2/3 around the same centre. Thresholds were
+calibrated on the 3 m loop; a 6-leg field tour that cleared every wall's
+bounding box by ~0.77 m once hit a wall after ~10 open-loop laps, which is why
+`drive()` closes the loop on truth.
 `cornering` and `scan_degraded` dwell 1.0s after each leg so scan and TF settle;
 nobody has validated 1.0s, so change it if the delta won't get under the
 threshold.
@@ -1218,8 +1230,9 @@ from every edge and always clear, across the -x, +y and +x edges.
 Moves go through `sim.launch.py`'s `set_pose_bridge`, gz's `set_pose` as a
 ROS `SetEntityPose` service, one async call per box per tick. The first
 version started a `gz service` process (Ruby) per call, and ticks lagged to
-~0.19 s of sim time. The default paths clear the real field's walls (the `ARCC_Field_2026`
-mesh, [world frame](#the-world-frame)) by at least 0.4 m.
+~0.19 s of sim time. The localization suite passes these paths scaled and
+moved to its loop (`loop_points`); actors have no collision, so only the robot's
+clearance matters.
 
 ### sim.launch.py: spawn_robot uses -string
 
@@ -1599,8 +1612,7 @@ pipes emit only `MCB3`, with no start coordinates before the first tick output.
 Raw POSE therefore starts at zero at any spawn, independently of firmware routes.
 Sim's Jetson launch fixtures explicitly pass `red_start_x`, `red_start_y`,
 `blue_start_x`, `blue_start_y` matching their ARCC spawn configuration
-(red `(-4.625, 0)`, blue `(4.625, 0)`). These overrides remain independent of
-Jetson's real-field defaults.
+(`sim/field.py`; red `(-5.25, -3.0)`, blue `(5.25, -3.0)`, also the Jetson defaults).
 
 `McbFirmwareSystem` owns the firmware process and PTY inside gz. It reads
 pose, twist and gimbal joints from the ECM, runs one firmware cycle per 1 ms

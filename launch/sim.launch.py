@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Launches gz sim with the ARCC_Field_2026 world and spawns the sentry robot.
+Launches gz sim with the default field world (world/model.config) and spawns the sentry robot.
 
 The robot is urdf/<model>.urdf.xacro.
 
@@ -51,6 +51,7 @@ from launch_ros.substitutions import FindPackageShare
 from sim.auto_explore import SPAWN_YAW
 from sim.clock_bridge import clock_bridge_node
 from sim.display import display_error
+from sim.field import BLUE_START, default_world, world_path
 from sim.mcb_link import default_mcb_link
 
 
@@ -94,12 +95,11 @@ def _world_with_rtf(context):
 def generate_launch_description():
     pkg_share = get_package_share_directory('sim')
 
-    default_world = os.path.join(pkg_share, 'world', 'ARCC_Field_2026.sdf')
     default_rviz_config = os.path.join(pkg_share, 'rviz', 'config.rviz')
 
     world_arg = DeclareLaunchArgument(
-        'world', default_value=default_world,
-        description='Full path to the .sdf world file to load'
+        'world', default_value=default_world(pkg_share),
+        description='Full path to the .sdf world file to load; its <world> must be named field'
     )
     lockstep_arg = DeclareLaunchArgument(
         'lockstep', default_value='false',
@@ -115,8 +115,8 @@ def generate_launch_description():
         'robot_name', default_value='sentry',
         description='Name the robot is spawned with in the sim'
     )
-    x_arg = DeclareLaunchArgument('x', default_value='0.0')
-    y_arg = DeclareLaunchArgument('y', default_value='0.0')
+    x_arg = DeclareLaunchArgument('x', default_value=str(BLUE_START[0]))
+    y_arg = DeclareLaunchArgument('y', default_value=str(BLUE_START[1]))
     z_arg = DeclareLaunchArgument('z', default_value='0.03')
     yaw_arg = DeclareLaunchArgument(
         'yaw', default_value=str(SPAWN_YAW),
@@ -388,9 +388,7 @@ def generate_launch_description():
     # publishes on the gz-transport topic
     # /world/<world>/model/<robot_name>/joint_state as gz.msgs.Model --
     # it does NOT talk to ROS on its own, hence this bridge.
-    gz_joint_state_topic = [
-        '/world/ARCC_Field_2026/model/', robot_name, '/joint_state'
-    ]
+    gz_joint_state_topic = [world_path('model/'), robot_name, '/joint_state']
     joint_state_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -499,7 +497,7 @@ def generate_launch_description():
         executable='parameter_bridge',
         name='set_pose_bridge',
         output='screen',
-        arguments=['/world/ARCC_Field_2026/set_pose@ros_gz_interfaces/srv/SetEntityPose'],
+        arguments=[world_path('set_pose') + '@ros_gz_interfaces/srv/SetEntityPose'],
         parameters=[{'use_sim_time': True}],
     )
 
