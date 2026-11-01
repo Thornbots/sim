@@ -383,9 +383,6 @@ public:
         throw std::runtime_error(
             "MCB firmware hardware interface version mismatch");
       }
-      const auto start = read(8);
-      start_x_ = read_float(start.data());
-      start_y_ = read_float(start.data() + 4);
     } catch (...) {
       close();
       throw;
@@ -395,16 +392,15 @@ public:
   ~Firmware() { close(); }
   const std::string &binary() const { return binary_; }
   uint32_t time_ms() const { return time_ms_; }
-  double start_x() const { return start_x_; }
-  double start_y() const { return start_y_; }
   void set_mode(uint32_t mode) { mode_ = mode; }
 
   std::array<double, 10> gz_readings(const GzHardware &hw,
-                                     const Referee &ref) const {
+                                     const Referee &) const {
+    if (!hw.boot) throw std::logic_error("MCB readings require a captured sim spawn");
     const double heading = kStartYaw;
-    const double sx = ref.robot_id > 100 ? start_x_ : -start_x_;
+    const double sx = (*hw.boot)[0];
     const double c = std::cos(heading), s = std::sin(heading);
-    const double dx = hw.pos[0] - sx, dy = hw.pos[1] - start_y_;
+    const double dx = hw.pos[0] - sx, dy = hw.pos[1] - (*hw.boot)[1];
     const double forward = c * dx + s * dy, left = -s * dx + c * dy;
     const double vf = c * hw.vel[0] + s * hw.vel[1],
                  vl = -s * hw.vel[0] + c * hw.vel[1];
@@ -630,7 +626,6 @@ private:
 
   std::string binary_, adapter_;
   uint32_t mode_ = 0, time_ms_ = 0;
-  double start_x_ = 0.0, start_y_ = 0.0;
   pid_t pid_ = -1;
   int input_fd_ = -1, output_fd_ = -1;
 };

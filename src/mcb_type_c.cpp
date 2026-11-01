@@ -155,8 +155,6 @@ int main() {
               << " start=" << initial->x << ',' << initial->y
               << " logs=" << emulator.directory() << '\n';
     std::fwrite("MCB3", 1, 4, stdout);
-    const float start[] = {initial->x, initial->y};
-    std::fwrite(start, sizeof(float), 2, stdout);
     std::fflush(stdout);
     Output output;
     sim::mcb_motor::ProjectileExit exit;

@@ -150,6 +150,8 @@ public:
     hw.chassis_rate = rate->Z();
     hw.yaw_joint = {yp->Data()[0], yv->Data()[0]};
     hw.pitch_joint = {pp->Data()[0], pv->Data()[0]};
+    if (!spawn_) spawn_ = std::array<double, 3>{hw.pos[0], hw.pos[1], hw.chassis_yaw};
+    hw.boot = spawn_;
     auto readings = firmware_->gz_readings(hw, referee_);
     const auto gyro = head_pose->Rot().RotateVectorReverse(*head_rate);
     const double heading = mcb_firmware::kStartYaw;
@@ -231,6 +233,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr command_;
   std::unique_ptr<mcb_firmware::PtyLink> pty_;
   std::unique_ptr<mcb_firmware::Firmware> firmware_;
+  std::optional<std::array<double, 3>> spawn_;
 };
 }  // namespace sim
 GZ_ADD_PLUGIN(::sim::McbFirmwareSystem, gz::sim::System,

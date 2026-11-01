@@ -53,6 +53,8 @@ with REF_SYS held at the UART relay. They assert AMCL is absent through missing
 and invalid team data, then release the real team frame and check raw `/odom`
 near zero, `/localization/odom` near the red/blue field start, and the absolute
 wire RELOCALIZE within the relay's 0.05 m threshold with rf2o/EKF enabled.
+This case overrides red to `(-4.45, 0.20)` and blue to `(4.10, -0.35)`,
+with matching Gazebo spawns, to catch mirrored/default-only team seeding.
 They drop the first RELOCALIZE and require a later absolute retry to unlock
 actual firmware navigation. A goal at that fix must command no translation;
 a displaced goal must drive. Separate both-team mapping cases check the first
@@ -1591,9 +1593,14 @@ explains why those observations must be distinguished.
 The hosted fixture's fake interfaces are calibrated IMU readings, Pico
 odometry, centred DBUS input with both switches up, referee UART frames,
 ADC and CAN motor feedback. The DBUS and referee packets go through the
-real parsers. Referee state remains live node parameters. The firmware's
-start constants are read from the executable and used to map gz truth into
-the pods' frame, so its field-frame POSE agrees with the gz spawn.
+real parsers. Referee state remains live node parameters. Sim captures its own
+Gazebo spawn to map truth displacement into pod readings. The hosted and Type C
+pipes emit only `MCB3`, with no start coordinates before the first tick output.
+Raw POSE therefore starts at zero at any spawn, independently of firmware routes.
+Sim's Jetson launch fixtures explicitly pass `red_start_x`, `red_start_y`,
+`blue_start_x`, `blue_start_y` matching their ARCC spawn configuration
+(red `(-4.625, 0)`, blue `(4.625, 0)`). These overrides remain independent of
+Jetson's real-field defaults.
 
 `McbFirmwareSystem` owns the firmware process and PTY inside gz. It reads
 pose, twist and gimbal joints from the ECM, runs one firmware cycle per 1 ms
@@ -1831,7 +1838,7 @@ count is zero, even with complete diagnostics; per-segment diagnostics remain
 available. These checks establish diagnostic completion, not combat accuracy.
 It does **not** mean combat accuracy passed: floors need repeated valid
 runs, and current moving runs expose tracking and gimbal misses.
-The spawn coordinates are firmware defaults, not surveyed starting zones.
+The spawn coordinates are sim configuration, not surveyed starting zones.
 [Board-stage verification](docs/mcb-auto-drive-2026-10-12.md) records clean
 parked, drive and match runs, the focused CAN/gz check, and accuracy limits.
 
