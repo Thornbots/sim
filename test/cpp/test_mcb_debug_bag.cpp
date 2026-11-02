@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -56,12 +57,21 @@ TEST(McbDebugBag, FirmwareBytesSurviveBridgeAndMcap)
   executor.add_node(node);
   std::vector<dji_serial_bridge::msg::DebugBlob> blobs;
   size_t poses = 0, refs = 0;
+  int64_t last_pose_ns = 0, max_pose_gap_ns = 0;
+  std::vector<uint8_t> expected(128);
+  for (size_t i = 0; i < expected.size(); ++i) expected[i] = static_cast<uint8_t>(i);
+  expected[1] = 0xa5; expected[2] = 0xff; expected[3] = 0x25;
   const auto debug_sub = node->create_subscription<dji_serial_bridge::msg::DebugBlob>(
     "/dji_serial_bridge/debug", rclcpp::SensorDataQoS(),
     [&](dji_serial_bridge::msg::DebugBlob::ConstSharedPtr msg) {blobs.push_back(*msg);});
   const auto pose_sub = node->create_subscription<dji_serial_bridge::msg::RobotPose>(
     "/dji_serial_bridge/pose", rclcpp::SensorDataQoS(),
-    [&](dji_serial_bridge::msg::RobotPose::ConstSharedPtr) {++poses;});
+    [&](dji_serial_bridge::msg::RobotPose::ConstSharedPtr msg) {
+      const auto stamp = rclcpp::Time(msg->header.stamp).nanoseconds();
+      if (last_pose_ns) max_pose_gap_ns = std::max(max_pose_gap_ns, stamp - last_pose_ns);
+      last_pose_ns = stamp;
+      ++poses;
+    });
   const auto ref_sub = node->create_subscription<dji_serial_bridge::msg::RefSysStatus>(
     "/dji_serial_bridge/ref_sys", rclcpp::SensorDataQoS(),
     [&](dji_serial_bridge::msg::RefSysStatus::ConstSharedPtr) {++refs;});
@@ -70,7 +80,7 @@ TEST(McbDebugBag, FirmwareBytesSurviveBridgeAndMcap)
     "-p", "debug_log:=false"}, (directory / "bridge.log").string());
   sim::LaunchTree recorder("debug_recorder", {"ros2", "bag", "record", "-s", "mcap",
     "--max-cache-size", "0", "-o", (directory / "bag").string(), "--topics",
-    "/dji_serial_bridge/debug"}, (directory / "recorder.log").string());
+    "/dji_serial_bridge/debug", "/dji_serial_bridge/pose", "/dji_serial_bridge/ref_sys"}, (directory / "recorder.log").string());
   sim::mcb_firmware::Referee referee;
   // Allow DDS discovery, then measure six seconds at the firmware's own clock.
   const auto advance = [&](int steps) {
@@ -82,37 +92,59 @@ TEST(McbDebugBag, FirmwareBytesSurviveBridgeAndMcap)
       }
     };
   advance(600);
+  for (int attempt = 0; attempt < 20 && recorder.read_log().find(
+      "All requested topics are subscribed") == std::string::npos; ++attempt) {
+    advance(100);
+  }
+  ASSERT_NE(recorder.read_log().find("All requested topics are subscribed"), std::string::npos)
+    << recorder.read_log();
+  for (int attempt = 0; attempt < 20 && (blobs.empty() || !poses || !refs); ++attempt) {
+    advance(100);
+  }
+  advance(100); // Record a warmup margin before the six-second measurement.
   ASSERT_TRUE(bridge.alive()) << bridge.read_log();
   ASSERT_TRUE(recorder.alive()) << recorder.read_log();
   ASSERT_FALSE(blobs.empty()) << bridge.read_log();
   const size_t first_poses = poses, first_refs = refs, first_blobs = blobs.size();
+  max_pose_gap_ns = 0;
+  const auto flood_start = std::chrono::steady_clock::now();
   advance(1200);
+  const double flood_seconds = std::chrono::duration<double>(
+    std::chrono::steady_clock::now() - flood_start).count();
   executor.spin_some();
   EXPECT_NEAR(static_cast<double>(poses - first_poses), 540.0, 5.0);
   EXPECT_NEAR(static_cast<double>(refs - first_refs), 60.0, 2.0);
-  EXPECT_GT(blobs.size() - first_blobs, 30u);
-  EXPECT_LE(blobs.size() - first_blobs, 62u);
+  EXPECT_GT(blobs.size() - first_blobs, 200u);
   for (const auto & blob : blobs) {
-    EXPECT_EQ(blob.data, (std::vector<uint8_t>{0, 0xa5, 0xff, 0x25}));
+    EXPECT_EQ(blob.data, expected);
     EXPECT_TRUE(blob.header.frame_id.empty());
     EXPECT_GT(rclcpp::Time(blob.header.stamp).nanoseconds(), 0);
   }
   recorder.stop();
   rosbag2_cpp::Reader reader;
   reader.open((directory / "bag").string());
-  size_t recorded = 0;
+  size_t recorded = 0, recorded_poses = 0, recorded_refs = 0;
   while (reader.has_next()) {
     const auto record = reader.read_next();
+    if (record->topic_name == "/dji_serial_bridge/pose") {++recorded_poses;}
+    if (record->topic_name == "/dji_serial_bridge/ref_sys") {++recorded_refs;}
     if (record->topic_name != "/dji_serial_bridge/debug") {continue;}
     rclcpp::SerializedMessage serialized(*record->serialized_data);
     dji_serial_bridge::msg::DebugBlob blob;
     rclcpp::Serialization<dji_serial_bridge::msg::DebugBlob> serialization;
     serialization.deserialize_message(&serialized, &blob);
-    EXPECT_EQ(blob.data, (std::vector<uint8_t>{0, 0xa5, 0xff, 0x25}));
+    EXPECT_EQ(blob.data, expected);
     EXPECT_GT(rclcpp::Time(blob.header.stamp).nanoseconds(), 0);
     ++recorded;
   }
-  EXPECT_GT(recorded, 30u) << recorder.read_log();
+  EXPECT_GT(recorded_poses, 540u);
+  EXPECT_GT(recorded_refs, 60u);
+  EXPECT_GT(recorded, 200u) << recorder.read_log();
   std::cout << "debug bag=" << directory << " recorded=" << recorded
-            << " pose/6s=" << poses - first_poses << " ref/6s=" << refs - first_refs << '\n';
+            << " pose/6s=" << poses - first_poses << " ref/6s=" << refs - first_refs
+            << " debug/6s=" << blobs.size() - first_blobs
+            << " max_pose_gap_ms=" << max_pose_gap_ns / 1e6
+            << " wall_seconds=" << flood_seconds
+            << " debug_payload_bytes_per_s=" << (blobs.size() - first_blobs) * 128.0 / flood_seconds
+            << " bag_poses=" << recorded_poses << " bag_refs=" << recorded_refs << '\n';
 }

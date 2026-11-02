@@ -202,7 +202,7 @@ template<> Ping unpack<Ping>(const std::vector<uint8_t> & data)
 std::vector<uint8_t> pack(const DebugBlob & msg)
 {
   if (msg.data.size() > kDebugMaxPayload) {
-    throw std::length_error("DEBUG payload exceeds 32 bytes");
+    throw std::length_error("DEBUG payload exceeds 128 bytes");
   }
   return msg.data;
 }

@@ -147,6 +147,7 @@ TEST(McbProtocol, PatrolBitPreservesCurrentPayloadAndOtherFlags)
 }
 
 TEST(McbProtocol, OpaqueDebugBlob) {
+  EXPECT_EQ(sim::mcb_protocol::kDebugMaxPayload, 128u);
   using namespace sim::mcb_protocol;
   for (const auto &data : {std::vector<uint8_t>{}, std::vector<uint8_t>{0, 0xa5, 0xff},
                           std::vector<uint8_t>(kDebugMaxPayload, 0xff)}) {
