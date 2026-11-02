@@ -335,10 +335,10 @@ Integration executables are installed but are invoked only through launch.
 | ROS service | `cpp/test_e2e_referee.cpp` | scorer retries and bounded failure with dropped replies; no simulation |
 | launch API | `cpp/test_suite_exit.cpp` | ROS launch, no simulation |
 | lint | `test_copyright.py`, `test_flake8.py`, `test_pep257.py` | Python + pytest |
-| integration | `localization/localization_suite.cpp` | gz-sim and a launch tree |
-| integration | `cv/shot_hit_suite.cpp` | a launch tree, no gz |
-| integration | `cv/estimation_suite.cpp` | a launch tree, no gz |
-| on demand | `localization/localization_suite.cpp` | gz-sim and a launch tree |
+| integration: `localization_drift` | `localization/localization_suite.cpp` | gz-sim and a launch tree |
+| integration: `aim` | `cv/shot_hit_suite.cpp` | a launch tree, no gz |
+| integration: `tracking` | `cv/estimation_suite.cpp` | a launch tree, no gz |
+| on demand: `ekf` | `localization/localization_suite.cpp` | gz-sim and a launch tree |
 
 The integration suites are separate executables, so a plain `colcon test`
 does not start Gazebo or a bench stack:
