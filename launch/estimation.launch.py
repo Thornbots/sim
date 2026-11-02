@@ -82,15 +82,19 @@ def _stack(context):
                'pose_latency_s': 0.0,
                # bench_world waits on it so the tracker's now() repeats run to run.
                'clock_ack_topic': '/cv/tracker/clock_ack'}
-    if cfg['process_noise_accel']:
-        tracker['process_noise_accel'] = float(cfg['process_noise_accel'])
+    for name in ('process_noise_accel', 'process_noise_radius', 'panel_radius_m',
+                 'radius_prior_std'):
+        if cfg[name]:
+            tracker[name] = float(cfg[name])
+    tracker['log_innovations'] = _is_true(context, 'log_innovations')
     actions = [
         # The world is its own clock, so no use_sim_time.
         Node(package='sim', executable='bench_world', name='bench_world', output='screen',
              parameters=[world]),
         robot_tf, cv_node('target_selector'), cv_node('target_tracker', **tracker),
-        cv_node('point_to_cv_target', tick_topic='/cv/target/tick',
-                state_ack_topic='/cv/target/state_ack', patrol_enabled=False),
+        cv_node('point_to_cv_target', red_start_x=0.0, red_start_y=0.0,
+                blue_start_x=0.0, blue_start_y=0.0, tick_topic='/cv/target/tick',
+                state_ack_topic='/cv/target/state_ack', idle_direction='hold'),
     ]
     if not headless:
         actions.append(cv_node('target_state_markers', package='sim'))
@@ -183,6 +187,17 @@ def generate_launch_description():
         DeclareLaunchArgument('process_noise_accel', default_value='',
                               description="target_tracker's process_noise_accel (m/s^2); "
                                           'empty = its default'),
+        DeclareLaunchArgument('process_noise_radius', default_value='',
+                              description="target_tracker's process_noise_radius (m/sqrt(s)); "
+                                          'empty = its default'),
+        DeclareLaunchArgument('panel_radius_m', default_value='',
+                              description="target_tracker's panel_radius_m (m); "
+                                          'empty = its default'),
+        DeclareLaunchArgument('radius_prior_std', default_value='',
+                              description="target_tracker's radius_prior_std (m); "
+                                          'empty = its default'),
+        DeclareLaunchArgument('log_innovations', default_value='false',
+                              description='log target_tracker innovation diagnostics'),
         DeclareLaunchArgument('panel_layout', default_value='both',
                               choices=['flat', 'staggered', 'both']),
         DeclareLaunchArgument('skip_stationary', default_value='false'),

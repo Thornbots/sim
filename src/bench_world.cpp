@@ -64,16 +64,16 @@ using visualization_msgs::msg::Marker;
 using visualization_msgs::msg::MarkerArray;
 
 // sentry_v2's head chain, as cv_target_emulator and cv_head_aim_core
-// carry it (test_urdf_constants.py pins those to thornbots_pkg's URDF).
-const Vector3d kHeadlinkOrigin(-0.000171242, 9.52126e-05, 0.248293);
-const Vector3d kHeadpitchOrigin(-0.00760542, -0.100122, 0.14235);
-const Vector3d kCameraOrigin(0.0920381, 0.0948673, 0.0566588);
-const Vector3d kMuzzleOrigin(0.0, 0.1128, 0.0);
+// carry it (test_cv_bench.cpp pins those to thornbots_pkg's URDF).
+const Vector3d kHeadlinkOrigin(0, 0, 0.267503694);
+const Vector3d kHeadpitchOrigin(0, 0, 0.136);
+const Vector3d kCameraOrigin(0.095699877, 0.0325, 0.055000043);
+const Vector3d kMuzzleOrigin(0.1729764, 0.00190269, 0);
 constexpr double kPitchLimit = 0.6;  // rad, URDF headpitch
 // The Small Armor Module's face (ARCC 2026's only size), from sentry_v2's CAD.
 constexpr double kPanelWidth = 0.135;  // along the ground
 constexpr double kPanelHeight = 0.125;
-const double kPanelNormalFromUp = 75.0 * M_PI / 180.0;  // S122 cant
+const double kPanelNormalFromUp = 75.0 * M_PI / 180.0;  // R27 S120; README armor rules comparison
 constexpr double kShooterCmdHz = 20.0;
 
 double wrap_pi(double a) {return std::atan2(std::sin(a), std::cos(a));}
@@ -185,7 +185,7 @@ public:
         {"noise_lateral_rad", 0.003}, {"dropout_probability", 0.03},
         {"publish_latency_s", 0.06}, {"camera_latency_s", 0.0},
         {"blackout_period_s", 0.0}, {"blackout_s", 0.0},
-        {"panel_radius_x", 0.252}, {"panel_radius_y", 0.252}, {"panel_stagger_m", 0.0},
+        {"panel_radius_x", 0.253729}, {"panel_radius_y", 0.249716}, {"panel_stagger_m", 0.0},
         // Each case: detections off this long while the head aims at the
         // truth, and our chassis bouncing along y within shooter_half_width.
         {"case_hold_s", 0.0}, {"shooter_speed", 0.0}, {"shooter_half_width", 1.0},

@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <optional>
 #include <utility>
 
@@ -86,6 +87,19 @@ TEST(Combat, PanelIsAFaceNotAHitSphere)
   EXPECT_FALSE(sim::combat::segment_panel_hit({1, 0, 0.07}, {-1, 0, 0.07}, panel));
 }
 
+TEST(Combat, PanelCrossingIsInShooterRightAndFaceUpAxes)
+{
+  // The panel faces -x; a shot travelling +x has world -y on its right.
+  const Matrix4d panel = sim::combat::armor_offset({0, 0, 0}, {0, 0, M_PI});
+  const auto crossing =
+    sim::combat::segment_panel_crossing({-1, -0.03, -0.02}, {1, -0.03, -0.02}, panel);
+  ASSERT_TRUE(crossing);
+  EXPECT_TRUE(crossing->from_front);
+  EXPECT_NEAR(crossing->point.x(), 0.03, 1e-9);
+  EXPECT_NEAR(crossing->point.y(), -0.02, 1e-9);
+  EXPECT_FALSE(sim::combat::segment_panel_crossing({1, 0, 0}, {-1, 0, 0}, panel)->from_front);
+}
+
 TEST(Combat, DamageDeadTimeIsPerPanelAndHpCannotGoNegative)
 {
   Referee referee({{"red", "red"}, {"blue", "blue"}});
@@ -137,4 +151,23 @@ TEST(Combat, LowRelativeNormalSpeedAndBackFacesCannotDamage)
     "shooter", origin, {1, 0, 0}, 0.0, moving_root());
   EXPECT_EQ(back.impact, "panel");
   EXPECT_FALSE(back.eligible);
+}
+
+TEST(Combat, SharedLateralVelocityPreservesTheBallisticHit) {
+  ShotResolver resolver = resolver_scene();
+  const auto stationary = resolver.resolve(
+      "shooter", {0, 0, .2}, {1, 0, 0}, 0, moving_root());
+  const Histories translated{{"victim", [](double t) -> std::optional<Matrix4d> {
+    auto root = *moving_root().front().second(t);
+    root(1, 3) += 2 * t;
+    return root;
+  }}};
+  const auto inherited = resolver.resolve(
+      "shooter", {0, 0, .2}, {1, 0, 0}, 0, translated, std::nullopt, 0, {0, 2, 0});
+  const auto omitted = resolver.resolve(
+      "shooter", {0, 0, .2}, {1, 0, 0}, 0, translated);
+  EXPECT_EQ(stationary.impact, "panel");
+  EXPECT_EQ(inherited.impact, "panel");
+  EXPECT_NEAR(inherited.impact_t, stationary.impact_t, 1e-9);
+  EXPECT_NE(omitted.impact, "panel");
 }

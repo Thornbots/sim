@@ -28,29 +28,29 @@ Read [tests](README.md#run-the-tests), [build](README.md#build) and
 
 Own worlds, sim URDF, sensor/pose noise models and integration suites.
 Backends belong to `sentry_localization`, robot/CV behavior to `thornbots_pkg`.
-Every `e2e.launch.py` stage runs checked-out hosted MCB firmware and the real
-UART bridge; build instructions and fake-hardware limits are in
+Every `e2e.launch.py` stage defaults to the checked-out board ELF in Renode
+inside gz's 1 ms physics step and the real UART bridge. Hosted execution is an
+explicit fast fixture; build instructions and model limits are in
 [MCB emulator](README.md#mcb-emulator). Never downgrade its wire contract.
 Keep field-safe match paths separate from bench paths; no blanket skips/xfail.
 Keep approach firing disabled until all routes reach center.
 
 ## Open
 
-- Current failures and repeatability work: [ROADMAP status](../ROADMAP.md#where-we-actually-are),
-  [match track](../ROADMAP.md#a-the-match-test), [tracker track](../ROADMAP.md#g-estimation-accuracy).
+- Current failures and repeatability work: [ROADMAP status](../docs/ROADMAP.md#where-we-actually-are),
+  [match track](../docs/ROADMAP.md#a-the-match-test), [tracker track](../docs/ROADMAP.md#g-estimation-accuracy).
   Repeat accuracy changes three times; reject lockstep timeouts.
 - Driving/match passes establish diagnostic completion; combat accuracy needs
   repeated calibrated floors: [drive](README.md#driving-and-combat-diagnostics-mcb_drive),
   [match](README.md#four-robot-center-fight-mcb_match).
 - `odom_stuck` intentionally checks liveness, not recovered localization:
   [scenarios](README.md#scenarios). Never invert rf2o's warping to retune a regression.
-- No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
-  Noise, gimbal dynamics, suspension and spawn coordinates remain estimates;
-  [model limits](README.md#sentry_v2urdfxacro-motion-model).
-- gz quirks: `spawn_model` can report failure after a slow `sentry_v2` spawn
-  succeeds (check `model_names()`); spawning inside the colliding chassis
-  stalls `/clock`; only the `sim.launch.py` robot obeys VelocityControl.
+- Scored-stage detection limits: [tests](README.md#run-the-tests).
+- [Board-stage verification](docs/mcb-auto-drive-2026-10-12.md); motor-plant limits live in
+  [MCB emulator](README.md#mcb-emulator).
+  [Model limits](README.md#sentry_v2urdfxacro-motion-model).
+- Check [gz spawn quirks](README.md#simlaunchpy-spawn_robot-uses--string) when diagnosing spawn/clock failures.
 - Changes shared with `target_driver`, `cv_target_emulator`, `cv_head_aim` or
   `pose_emulator` may also need `src/bench_world.cpp`; it has its own lockstep implementation.
-- Lidar/CAD and carried-map/zone gaps: [track J](../ROADMAP.md#j-lidar-and-camera),
-  [track H](../ROADMAP.md#h-slam-at-amcls-level), [URDF export](README.md#toolssimplify_urdfcpp-and-urdfsentry_v2).
+- Lidar/CAD and carried-map/zone gaps: [track J](../docs/ROADMAP.md#j-lidar-and-camera),
+  [track H](../docs/ROADMAP.md#h-slam-at-amcls-level), [URDF](README.md#urdfsentry_v2-the-teams-low-resolution-cad).
