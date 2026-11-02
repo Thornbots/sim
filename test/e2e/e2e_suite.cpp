@@ -36,7 +36,7 @@ public:
     try {
       for (const auto &f :
            {"shots.jsonl", "scores.jsonl", "states.jsonl", "poses.jsonl",
-            "parking.jsonl"})
+            "parking.jsonl", "inputs.jsonl"})
         cb::truncate(cb::options.log_dir + "/" + f);
       control = std::make_shared<sim::SimTimeNode>("e2e_stack");
       scorer = std::make_shared<ee::Scorer>(

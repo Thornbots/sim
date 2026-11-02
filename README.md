@@ -1804,6 +1804,20 @@ firmware approach, driving, spinning and parked motion, not a scripted
 straight/corner route; there is no scripted route-error metric for firmware
 auto-drive.
 
+Each E2E run also records `inputs.jsonl` from bring-up through teardown:
+capture/publish stamp, scorer receipt time, frame, and topic for detections
+(including empty frames), the selected panel, raw `/odom`, MCB POSE,
+tracker state (including invalid states and its contributing detection stamp),
+and outgoing aim. Integer `stamp_ns` and `received_ns` retain exact timestamps;
+`stamp_s` and `received_s` remain convenient for plotting. Detection arrays
+retain every panel's capture stamp, frame, center, corners, class and confidence;
+aim records retain delay and control flags. Each record is flushed so failed
+bring-up still leaves its input evidence. Use these to inspect acquisition, lost tracks and stamped
+input order before changing tracker tuning. A receipt-time age measures the
+observed delivery path; it does not establish deterministic consumption.
+The [Mini checkpoint](docs/input-audit-mini-2026-11-02.md) records validation
+and the deferred foundation dependency; scored acceptance remains open.
+
 `navigation_error_m` compares local `nav_odom->root` with field truth;
 `localization_error_m` measures the globally corrected `map->root` pose and
 therefore includes `map->nav_odom`. Navigation error describes field alignment

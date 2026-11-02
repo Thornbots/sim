@@ -378,7 +378,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_suite_node test/cpp/test_suite_node.cpp)
   target_include_directories(test_suite_node PRIVATE include)
   ament_target_dependencies(test_suite_node rclcpp rcl_interfaces)
-  ament_add_gtest(test_e2e_referee test/cpp/test_e2e_referee.cpp test/e2e/e2e_harness.cpp)
+  ament_add_gtest(test_e2e_referee test/cpp/test_e2e_referee.cpp test/cpp/test_input_audit.cpp
+    test/e2e/e2e_harness.cpp)
   target_compile_features(test_e2e_referee PUBLIC cxx_std_17)
   target_include_directories(test_e2e_referee PRIVATE include)
   target_link_libraries(test_e2e_referee suite_support combat cv_head_aim_core pose_history

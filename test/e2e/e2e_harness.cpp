@@ -18,6 +18,7 @@
 #include "sim/process.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstdio>
+#include <fstream>
 #include <iomanip>
 #include <tinyxml2.h>
 namespace sim::e2e {
@@ -108,6 +109,40 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   }
   shots["flag"] = {};
   shots["mcb"] = {};
+  const auto trace_path = std::filesystem::path(log_path).parent_path() / "inputs.jsonl";
+  auto trace = std::make_shared<std::ofstream>(trace_path, std::ios::app);
+  if (!*trace) throw std::runtime_error("Cannot open " + trace_path.string());
+  const auto input_trace = [this, trace](const auto &header, Json fields) {
+    const auto receipt = get_clock()->now();
+    fields["stamp_ns"] = rclcpp::Time(header.stamp).nanoseconds();
+    fields["stamp_s"] = stamp_s(header.stamp);
+    fields["received_ns"] = receipt.nanoseconds();
+    fields["received_s"] = receipt.seconds();
+    fields["frame_id"] = header.frame_id;
+    *trace << fields.dump() << std::endl;
+    if (!*trace) throw std::runtime_error("Cannot write E2E input trace");
+  };
+  const auto panel_trace = [](const auto &m) {
+    Json corners = Json::array();
+    for (const auto &p : m.corners) corners.push_back({p.x, p.y, p.z});
+    return Json{{"stamp_ns", rclcpp::Time(m.header.stamp).nanoseconds()},
+                {"frame_id", m.header.frame_id}, {"track_id", m.robot_track_id},
+                {"confidence", m.confidence}, {"class_id", m.class_id},
+                {"depth_m", m.depth_m}, {"corners", corners},
+                {"center", {m.center.x, m.center.y, m.center.z}}};
+  };
+  subscribe<nav_msgs::msg::Odometry>(
+      "/odom", rclcpp::SensorDataQoS(), [input_trace](const auto &m) {
+        input_trace(m.header, {{"topic", "/odom"},
+                    {"xy", {m.pose.pose.position.x, m.pose.pose.position.y}},
+                    {"velocity", {m.twist.twist.linear.x, m.twist.twist.linear.y}}});
+      });
+  subscribe<dji_serial_bridge::msg::PanelDetection>(
+      "/cv/panel_detection", rclcpp::QoS(10), [input_trace, panel_trace](const auto &m) {
+        auto fields = panel_trace(m);
+        fields["topic"] = "/cv/panel_detection";
+        input_trace(m.header, fields);
+      });
   subscribe<sensor_msgs::msg::JointState>(
       "/mcb_emulator/gimbal_setpoint", rclcpp::QoS(100), [this](const auto &m) {
         if (m.position.size() != 2) return;
@@ -115,12 +150,21 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         while (gimbal_setpoints_.size() > 400) gimbal_setpoints_.pop_front();
       });
   subscribe<dji_serial_bridge::msg::PanelDetectionArray>(
-      "/cv/panel_detections", rclcpp::QoS(10), [this](const auto &m) {
+      "/cv/panel_detections", rclcpp::QoS(10), [this, input_trace, panel_trace](const auto &m) {
+        Json panels = Json::array();
+        for (const auto &panel : m.detections) panels.push_back(panel_trace(panel));
+        input_trace(m.header, {{"topic", "/cv/panel_detections"},
+                              {"count", m.detections.size()}, {"detections", panels}});
         if (!m.detections.empty()) detections_.push_back({stamp_s(m.header.stamp), m.detections.size()});
         while (detections_.size() > 300) detections_.pop_front();
       });
   subscribe<dji_serial_bridge::msg::CVTarget>(
-      "/cv/target", rclcpp::SensorDataQoS(), [this](const auto &m) {
+      "/cv/target", rclcpp::SensorDataQoS(), [this, input_trace](const auto &m) {
+        input_trace(m.header, {{"topic", "/cv/target"}, {"fire", m.fire},
+                              {"delay_ms", m.delay_ms}, {"patrol", m.patrol},
+                              {"turn_to_hit", m.turn_to_hit},
+                              {"type_c_based_patrol", m.type_c_based_patrol},
+                              {"xyz", {m.x, m.y, m.z}}});
         double t = stamp_s(m.header.stamp);
         target_stamp = t;
         if (visual_pub_->get_subscription_count()) {
@@ -163,14 +207,22 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::RobotPose>(
       "/dji_serial_bridge/pose", rclcpp::SensorDataQoS(),
-      [this](const auto &m) {
+      [this, input_trace](const auto &m) {
+        input_trace(m.header, {{"topic", "/dji_serial_bridge/pose"},
+                              {"xy", {m.x, m.y}},
+                              {"head", {m.head_yaw, m.head_pitch}}});
         double t = stamp_s(m.header.stamp);
         mcb_poses_.push_back({t, {m.x, m.y, 0}});
         while (mcb_poses_.front().first < t - 3)
           mcb_poses_.pop_front();
       });
   subscribe<dji_serial_bridge::msg::TargetState>(
-      "/cv/target_state", rclcpp::QoS(10), [this](const auto &m) {
+      "/cv/target_state", rclcpp::QoS(10), [this, input_trace](const auto &m) {
+        input_trace(m.header, {{"topic", "/cv/target_state"}, {"valid", m.valid},
+                              {"track_id", m.robot_track_id},
+                              {"detection_stamp_ns", rclcpp::Time(m.detection_stamp).nanoseconds()},
+                              {"detection_stamp_s", stamp_s(m.detection_stamp)},
+                              {"center", {m.center.x, m.center.y, m.center.z}}});
         state_validity_.push_back({stamp_s(m.header.stamp), m.valid});
         while (state_validity_.size() > 300) state_validity_.pop_front();
         if (m.valid) {
