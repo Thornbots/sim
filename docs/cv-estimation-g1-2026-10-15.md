@@ -176,16 +176,8 @@ could have been selected earlier; this evidence does not establish that all
 bank hypotheses were correct. Fresh-track spin transients are distinct from
 steady-state p95 and remain part of G.3.
 
-Two existing implementation details need follow-up:
-
-- Radius constraints run in the positional update before the subsequent
-  facing-yaw pseudo-update, which can move correlated radius state again.
-  Logged radii slightly below the 0.18 m clamp warrant a tested constraint
-  ordering fix; this checkpoint does not change it.
-- `speeds:=4` changes the target spin from 1 Hz to 2 Hz because spin depends
-  on the selected speed range, without changing the cell key. A filter must
-  not silently change the test input. Use GTest filtering for the comparisons
-  here; the alone-versus-sequence acceptance work remains T8.
+Constraint ordering and filter-invariant spin input follow-ups are maintained under
+[ROADMAP G.1/T8](../../docs/ROADMAP.md#g-estimation-accuracy). The diagnostics above retain their evidence.
 
 ## Hosted E2E gate and validation
 
