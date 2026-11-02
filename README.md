@@ -561,7 +561,14 @@ the aiming path uses raw `odom` and bypasses both navigation corrections.
 Missing
 stamped TF is reported as unavailable; latest TF is never substituted to
 calculate these errors. `ros2 run sim compare_runs LOG_DIR_A LOG_DIR_B`
-prints the first record where two runs' logs diverge.
+prints the first record where two runs' logs diverge. It compares JSON object
+records in `shots.jsonl`, `states.jsonl`, `poses.jsonl` and `route.jsonl`.
+Files absent on both sides are reported as unexamined; empty optional files
+are allowed when another shared file contains records. Missing counterparts,
+malformed records, missing object fields and unequal record sequences fail.
+No shared records also fails, including two empty directories or empty logs.
+A comparison pass describes only the available traces; it does not establish
+scored-stage completion or replace the suite and native log-checker gates.
 `poses.jsonl` samples head-TF and localization at 20 Hz even when tracking
 is lost and no shots fire. Every parked cell requires at least 95% finite
 stamped map-localization samples, p95 error at most 0.15 m and maximum error

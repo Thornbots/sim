@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <set>
+#include <utility>
 #include "sim/tool_io.hpp"
 
 using sim::tools::Json;
@@ -53,15 +55,23 @@ std::string repr(const Json &value) {
   }
   return value.dump();
 }
-struct Difference { std::string key; Json a, b; };
+struct Difference {
+  std::string key;
+  Json a, b;
+  bool missing_a = false, missing_b = false;
+};
 void differ(const Json &a, const Json &b, double tolerance, const std::string &key,
             std::vector<Difference> &out) {
   if (a.is_object() && b.is_object()) {
     std::set<std::string> keys;
     for (const auto &v : a.items()) keys.insert(v.key());
     for (const auto &v : b.items()) keys.insert(v.key());
-    for (const auto &k : keys) differ(a.value(k, Json()), b.value(k, Json()), tolerance,
-                                     key.empty() ? k : key + '.' + k, out);
+    for (const auto &k : keys) {
+      const auto field = key.empty() ? k : key + '.' + k;
+      if (!a.contains(k) || !b.contains(k))
+        out.push_back({field, a.value(k, Json()), b.value(k, Json()), !a.contains(k), !b.contains(k)});
+      else differ(a.at(k), b.at(k), tolerance, field, out);
+    }
   } else if (a.is_array() && b.is_array() && a.size() == b.size()) {
     for (std::size_t i = 0; i < a.size(); ++i)
       differ(a[i], b[i], tolerance, key + '[' + std::to_string(i) + ']', out);
@@ -75,6 +85,26 @@ void differ(const Json &a, const Json &b, double tolerance, const std::string &k
     if (x != y) out.push_back({key, a, b});
   } else if (a != b) out.push_back({key, a, b});
 }
+std::vector<Json> trace_rows(const std::filesystem::path &path) {
+  std::ifstream input(path);
+  if (!input) throw std::runtime_error("cannot open trace " + path.string());
+  std::vector<Json> rows;
+  std::string line;
+  size_t number = 0;
+  while (std::getline(input, line)) {
+    ++number;
+    if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
+    try {
+      auto row = sim::tools::parse(line);
+      if (!row.is_object()) throw std::runtime_error("expected a JSON object record");
+      rows.push_back(std::move(row));
+    } catch (const std::exception &e) {
+      throw std::runtime_error(path.string() + ":" + std::to_string(number) + ": " + e.what());
+    }
+  }
+  if (input.bad()) throw std::runtime_error("cannot read trace " + path.string());
+  return rows;
+}
 }  // namespace
 int main(int argc, char **argv) {
   try {
@@ -82,19 +112,36 @@ int main(int argc, char **argv) {
     double tolerance = 0;
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
-      if (arg == "--tol" && i + 1 < argc) tolerance = std::stod(argv[++i]);
+      if (arg == "--tol") {
+        if (i + 1 >= argc) throw std::runtime_error("--tol requires a finite nonnegative number");
+        const std::string value = argv[++i];
+        size_t used = 0;
+        tolerance = std::stod(value, &used);
+        if (used != value.size() || !std::isfinite(tolerance) || tolerance < 0)
+          throw std::runtime_error("--tol requires a finite nonnegative number");
+      }
       else runs.push_back(arg);
     }
     if (runs.size() != 2) { std::cerr << "usage: compare_runs RUN_A RUN_B [--tol NUMBER]\n"; return 2; }
+    for (const auto &run : runs)
+      if (!std::filesystem::is_directory(run))
+        throw std::runtime_error("not a run directory: " + run);
     bool same = true;
+    size_t compared_records = 0;
     for (const std::string name : {"shots.jsonl", "states.jsonl", "poses.jsonl", "route.jsonl"}) {
       const auto pa = std::filesystem::path(runs[0]) / name, pb = std::filesystem::path(runs[1]) / name;
       const bool exists_a = std::filesystem::exists(pa), exists_b = std::filesystem::exists(pb);
-      if (!exists_a && !exists_b) continue;
+      if (!exists_a && !exists_b) {
+        std::cout << name << ": absent in both runs, not compared\n";
+        continue;
+      }
       if (!exists_a || !exists_b) {
         std::cout << name << ": only in run " << (exists_a ? 'A' : 'B') << '\n'; same = false; continue;
       }
-      const auto a = sim::tools::json_lines(pa), b = sim::tools::json_lines(pb);
+      if (!std::filesystem::is_regular_file(pa) || !std::filesystem::is_regular_file(pb))
+        throw std::runtime_error(name + ": expected regular trace files in both runs");
+      const auto a = trace_rows(pa), b = trace_rows(pb);
+      compared_records += std::min(a.size(), b.size());
       bool different = false;
       for (std::size_t i = 0; i < std::min(a.size(), b.size()); ++i) {
         std::vector<Difference> diffs;
@@ -103,14 +150,21 @@ int main(int argc, char **argv) {
         std::cout << name << ": first divergence at record " << i << " (t="
                   << repr(a[i].value("t", Json())) << " / " << repr(b[i].value("t", Json())) << ")\n";
         for (const auto &diff : diffs)
-          std::cout << "  " << diff.key << ": " << repr(diff.a) << " != " << repr(diff.b) << '\n';
+          std::cout << "  " << diff.key << ": " << (diff.missing_a ? "<missing>" : repr(diff.a))
+                    << " != " << (diff.missing_b ? "<missing>" : repr(diff.b)) << '\n';
         different = true; break;
       }
       if (different) same = false;
       else if (a.size() != b.size()) {
         std::cout << name << ": identical for " << std::min(a.size(), b.size())
                   << " records, then A has " << a.size() << ", B " << b.size() << '\n'; same = false;
-      } else std::cout << name << ": identical, " << a.size() << " records\n";
+      } else if (a.empty()) std::cout << name << ": empty in both runs, no records compared\n";
+      else std::cout << name << ": identical, " << a.size() << " records\n";
+    }
+    if (!compared_records) {
+      std::cerr << "no comparable records in shots.jsonl, states.jsonl, poses.jsonl or route.jsonl; "
+                   "equality not established\n";
+      return 1;
     }
     return same ? 0 : 1;
   } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }

@@ -343,6 +343,8 @@ if(BUILD_TESTING)
   # the run itself, and its [tool:pytest] deselects the integration suites.
   set(ENV{PYTEST_ADDOPTS} "-p no:anyio")
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_pytest_test(test_compare_runs test/test_compare_runs.py TIMEOUT 30
+    ENV "SIM_COMPARE_RUNS=$<TARGET_FILE:compare_runs>" "PYTEST_ADDOPTS=-p no:anyio")
   ament_add_gtest(test_lidar_scan test/cpp/test_lidar_scan.cpp)
   target_include_directories(test_lidar_scan PRIVATE include)
   target_compile_definitions(test_lidar_scan PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
