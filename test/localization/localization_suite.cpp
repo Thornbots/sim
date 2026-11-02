@@ -727,6 +727,14 @@ std::optional<double> truth_error(Helper &helper) {
       tf2::TimePoint(std::chrono::nanoseconds(stamp)));
   return root ? std::optional<double>(distance(xy(*root), *truth)) : std::nullopt;
 }
+double require_truth_error(Helper &helper) {
+  const auto error = truth_error(helper);
+  if (!error || !std::isfinite(*error)) {
+    throw std::runtime_error(
+        "missing finite " + helper.parent + "->root TF at the captured truth stamp");
+  }
+  return *error;
+}
 void baseline(Scenario &sc) {
   auto stack = run_stack(false);
   auto &helper = *stack->helper;
@@ -816,12 +824,10 @@ void noise_correction(Scenario &sc) {
   while (helper.now_s() - t0 < 30.0) {
     const auto leg = loop_legs()[i++ % 4];
     helper.drive(leg[0], leg[1], leg[2]);
-    const auto mag = truth_error(helper);
-    if (mag) {
-      samples.push_back(*mag);
-      sc.log("t=" + elapsed(helper.now_s() - t0) + "s  " + metric + "=" +
-             fixed(*mag) + " m");
-    }
+    const double mag = require_truth_error(helper);
+    samples.push_back(mag);
+    sc.log("t=" + elapsed(helper.now_s() - t0) + "s  " + metric + "=" +
+           fixed(mag) + " m");
   }
   if (samples.size() < 3) {
     sc.result(false, "too few " + metric + " samples (" +
@@ -927,12 +933,10 @@ void cornering(Scenario &sc, const std::string &obstacle, double accel = -1.0) {
     const auto leg = loop_legs()[i++ % 4];
     helper.drive(leg[0], leg[1], leg[2], accel);
     helper.spin_for(1.0);
-    const auto delta = truth_error(helper);
-    if (delta) {
-      samples.push_back(*delta);
-      sc.log("t=" + elapsed(helper.now_s() - t0) + "s  " + metric + "=" +
-             fixed(*delta) + " m");
-    }
+    const double delta = require_truth_error(helper);
+    samples.push_back(delta);
+    sc.log("t=" + elapsed(helper.now_s() - t0) + "s  " + metric + "=" +
+           fixed(delta) + " m");
   }
   sc.log("over the loop, every message: " + helper.yaw_ranges());
   if (samples.size() < 3) {
@@ -1189,14 +1193,12 @@ void scan_degraded(Scenario &sc) {
     const auto value = loop_legs()[static_cast<size_t>(i) % 4];
     helper.drive(value[0], value[1], value[2]);
     helper.spin_for(1.0);
-    const auto err = truth_error(helper);
-    if (err) {
-      samples.emplace_back(label, *err);
-      std::ostringstream out;
-      out << std::left << std::setw(6) << label << " leg " << i
-          << ": truth error " << fixed(*err) << " m";
-      sc.log(out.str());
-    }
+    const double err = require_truth_error(helper);
+    samples.emplace_back(label, err);
+    std::ostringstream out;
+    out << std::left << std::setw(6) << label << " leg " << i
+        << ": truth error " << fixed(err) << " m";
+    sc.log(out.str());
   };
   bool blanked = false;
   try {
