@@ -483,8 +483,15 @@ private:
           return last_aim_ns_ >= t_ns && last_point_ns_ >= expected_point_ns_;
         });
       }
-      if (rate_ <= 0.0 && !aim_live_ && !tracker_live_ && !progress_) {
-        std::this_thread::sleep_for(std::chrono::duration<double>(step_ns() * 1e-9));
+      if (rate_ <= 0.0) {
+        bool no_pacer;
+        {
+          std::lock_guard<std::mutex> lock(gate_mutex_);
+          no_pacer = !aim_live_ && !tracker_live_ && !progress_;
+        }
+        if (no_pacer) {
+          std::this_thread::sleep_for(std::chrono::duration<double>(step_ns() * 1e-9));
+        }
       }
       const auto wall = std::chrono::steady_clock::now();
       const double elapsed = std::chrono::duration<double>(wall - report_wall).count();
