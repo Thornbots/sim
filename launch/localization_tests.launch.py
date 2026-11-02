@@ -78,6 +78,7 @@ def _stack(context):
                   'real_hardware': 'false', 'localization_mode': backend,
                   'use_rf2o': config['use_rf2o'],
                   'slam_input_frame': config['slam_input_frame'],
+                  'amcl_sigma_hit': config['amcl_sigma_hit'],
                   # Blank-map SLAM starts at its own (0, 0) boot origin.
                   'load_map': config['load_map'] if backend == 'mapping' else 'true',
                   'enable_target_tracker': 'false', 'enable_target_selector': 'false',
@@ -115,7 +116,9 @@ def _tests(context):
     if suite == 'ekf':
         cmd.append('--run-on-demand')
     if suite == 'drift':
-        cmd += ['--slam-input-frame', config['slam_input_frame']]
+        if config['slam_input_frame']:
+            cmd += ['--slam-input-frame', config['slam_input_frame']]
+        cmd += ['--amcl-sigma-hit', config['amcl_sigma_hit']]
         cmd += ['--backend', config['backend'],
                 '--use-rf2o' if _is_true(context, 'use_rf2o') else '--no-use-rf2o']
         if config['map_file']:
@@ -176,6 +179,8 @@ def generate_launch_description():
                               description='Saved occupancy map/pose graph basename'),
         DeclareLaunchArgument('load_map', default_value='false',
                               description='mapping: refine map_file instead of starting blank'),
+        DeclareLaunchArgument('amcl_sigma_hit', default_value='0.08',
+                              description='AMCL likelihood-field width in metres'),
         DeclareLaunchArgument('slam_input_frame', default_value='',
                               description='SLAM scan-prior frame; empty uses navigation odometry'),
         DeclareLaunchArgument('backend', default_value='amcl',

@@ -63,7 +63,7 @@ struct Options {
   std::string suite = "drift", backend = "amcl", scenario, rtf = "0", slam_input_frame, map_file;
   bool gui = true, rf2o = true, restart = false, load_map = false;
   double speed = 4.0, accel = 20.0, spawn_x = 0.0, spawn_yaw = sim::gazebo::kSpawnYaw;
-  double slip = 0.05, drift = 0.002, seconds = 45.0;
+  double slip = 0.05, drift = 0.002, seconds = 45.0, amcl_sigma_hit = 0.08;
 } options;
 std::vector<std::string> scenario_names = {
     "baseline",         "noise_correction",
@@ -505,8 +505,9 @@ std::unique_ptr<Stack> run_stack(bool noise,
       {"headless", options.gui ? "false" : "true"},
       {"real_time_factor", options.rtf},
       {"backend", backend},
-      {"slam_input_frame", options.slam_input_frame},
+      {"amcl_sigma_hit", std::to_string(options.amcl_sigma_hit)},
       {"use_rf2o", options.rf2o ? "true" : "false"}};
+  if (!options.slam_input_frame.empty()) args["slam_input_frame"] = options.slam_input_frame;
   if (!options.map_file.empty()) args["map_file"] = options.map_file;
   if (options.load_map) args["load_map"] = "true";
   params.emplace_back("odom_noise_enabled", noise);
@@ -1630,6 +1631,11 @@ void parse_options(int &argc, char **argv) {
       options.suite = value();
     } else if (arg == "--backend") {
       options.backend = value();
+    } else if (arg == "--amcl-sigma-hit") {
+      options.amcl_sigma_hit = std::stod(value());
+      if (!std::isfinite(options.amcl_sigma_hit) || options.amcl_sigma_hit <= 0.0) {
+        throw std::invalid_argument("amcl-sigma-hit must be finite and positive");
+      }
     } else if (arg == "--slam-input-frame") {
       options.slam_input_frame = value();
     } else if (arg == "--map-file") {

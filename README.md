@@ -1881,3 +1881,13 @@ Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn
 are not modeled. Hurt-panel feedback is supplied, but the firmware's
 `delta_angle_got_hit_in` response has separate
 [hosted/Renode injected-hit verification](docs/t31-hit-contract-2026-10-14.md#targeted-validation).
+
+### Batched localization comparisons
+
+`tools/run_localization_campaign.sh OUTPUT_DIRECTORY --plan` prints the H
+comparison matrix without launching a stack. In a prepared overlay, omit
+`--plan` to run three repetitions of AMCL (`sigma_hit` 0.08/0.15/0.20), fused
+SLAM and raw-odom SLAM with EKF retained, followed by the wall diagnostic.
+The script records source state, commands, exit status and native logs in a new
+output directory and stops at the first failed native gate. These short trials
+do not satisfy the five-minute carried-map game requirement.
