@@ -899,11 +899,30 @@ were collected under the previous architecture.
 `mapping` starts slam_toolbox on a blank map (`load_map:=false`) at map (0, 0).
 This suite spawns mapping/none at world (0, 0), so their comparison frames
 coincide. Its AMCL fixture spawns at blue's field start and publishes an
-explicit valid blue REF_SYS; it does not bypass the production team gate. Like `none`, it scores
-`map->root` against `/sim/raw_odom` in `noise_correction` and the
-cornering-loop scenarios; the rest watch `map->nav_odom` as under `slam`. Each
-scenario's stack builds a fresh map: nothing carries between scenarios.
+explicit valid blue REF_SYS; it does not bypass the production team gate.
+All backends score the same planar distance from the estimated root to
+`/sim/raw_odom` in `noise_correction` and the cornering-loop scenarios.
+The TF lookup uses the truth message's stamp, never latest TF; missing stamped
+TF produces no sample. Other scenarios retain their specific response/liveness
+checks. Historical AMCL correction-magnitude results below are not truth-error
+baselines. Each scenario starts a fresh graph; nothing carries between scenarios.
+`slam_input_frame:=odom` selects raw odometry for SLAM scan priors while keeping
+rf2o/EKF and the public `map->nav_odom` edge. Empty (default) uses navigation
+odometry. Compare repeated runs before changing the production default.
 `odom_stuck` drives two mapping laps first.
+Saved-graph trials accept `backend:=slam map_file:=<basename>` or
+`backend:=mapping load_map:=true map_file:=<basename>`. They spawn at the same
+configured blue start and follow the AMCL ingress before scoring. The graph
+must already use this field frame; the harness does not register a local MMM
+graph into field coordinates.
+
+`scenario:=wall_impact` teleports to (5.3, 0) facing the outer +x wall, commands
+0.5 m/s for 3 s, settles for 1 s, presses for 5 s, then retreats for 3 s. It
+logs ground-truth start/end positions and maximum x for each phase. It requires
+approach displacement above 0.15 m, pressure displacement below 0.05 m and
+retreat above 0.5 m. This diagnoses contact in the current CAD collision model;
+it does not demonstrate avoidance or score localization accuracy.
+
 
 After AMCL's seeded navigation TF and valid scans are available, the fixture
 drives the surveyed blue `sentry` ingress from
