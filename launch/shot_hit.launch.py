@@ -20,7 +20,7 @@ sim_clock publishes /clock, point_shooter puts root at POINT_SHOOTER
 (bouncing along y at shooter_speed), target_driver moves the phantom target,
 target_state_truth publishes its true TargetState, and the C++ harness sends each
 shot from the shooter toward the newest aim (a perfect gimbal). Every miss is
-point_to_cv_target's. gz belongs to Part 2's estimation bench, not here.
+point_to_cv_target's. The separate tracking bench scores target estimation.
 Stops when the tests finish; Ctrl-C stops the whole stack. `run_tests:=false`
 brings up the stack alone (the C++ harness does that).
 """

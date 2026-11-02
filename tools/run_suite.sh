@@ -1,23 +1,23 @@
 #!/bin/bash
 # Run one integration suite in the container, then check its logs.
 #
-#   tools/run_suite.sh drift|ekf|shot_hit|estimation [launch args...]
+#   tools/run_suite.sh localization_drift|ekf|aim|tracking [launch args...]
 #
 # Refuses to start on top of a live stack, tees the launch to
 # /tmp/sim_suite_<suite>_<time>.log, and ends with the native check_bench_log
-# on that log (plus this run's /tmp/localization_drift_tests/*.log for drift
+# on that log (plus this run's /tmp/localization_drift_tests/*.log for localization_drift
 # and ekf). Exits 0 only if the checker trusts the run and GTest passed.
 # Needs a TTY (docker exec -it) for Ctrl-C to reach the stack.
 set -uo pipefail
 
 SUITE="${1:-}"; shift || true
 case "$SUITE" in
-    drift)      LAUNCH=(localization_tests.launch.py) ;;
+    localization_drift) LAUNCH=(localization_tests.launch.py) ;;
     ekf)        LAUNCH=(localization_tests.launch.py suite:=ekf) ;;
-    shot_hit)   LAUNCH=(shot_hit.launch.py) ;;
-    estimation) LAUNCH=(estimation.launch.py) ;;
+    aim)        LAUNCH=(shot_hit.launch.py) ;;
+    tracking)   LAUNCH=(estimation.launch.py) ;;
     mcb_parked|mcb_drive|mcb_match) LAUNCH=(e2e.launch.py "stage:=$SUITE") ;;
-    *) echo "usage: $0 drift|ekf|shot_hit|estimation|mcb_parked|mcb_drive|mcb_match [launch args...]" >&2; exit 2 ;;
+    *) echo "usage: $0 localization_drift|ekf|aim|tracking|mcb_parked|mcb_drive|mcb_match [launch args...]" >&2; exit 2 ;;
 esac
 
 LIVE=$(ps aux | grep -E 'gz sim|slam_toolbox|amcl|map_server|ekf_filter_node|pose_translator|pose_emulator|ros2 launch' \
@@ -27,7 +27,7 @@ if [ -n "$LIVE" ]; then
     echo "run_suite.sh: a stack is already running; stop it first (kill_launch.sh -l)." >&2
     exit 1
 fi
-if [[ "$SUITE" == drift || "$SUITE" == ekf ]] && ! command -v gz >/dev/null; then
+if [[ "$SUITE" == localization_drift || "$SUITE" == ekf ]] && ! command -v gz >/dev/null; then
     echo "run_suite.sh: no gz in this container; run install-sim.sh first." >&2
     exit 1
 fi
@@ -42,7 +42,7 @@ LAUNCH_STATUS=${PIPESTATUS[0]}
 trap - INT
 
 LOGS=("$LOG")
-if [[ "$SUITE" == drift || "$SUITE" == ekf ]]; then
+if [[ "$SUITE" == localization_drift || "$SUITE" == ekf ]]; then
     mapfile -t DRIFT < <(find /tmp/localization_drift_tests -name '*.log' -newer "$START" 2>/dev/null)
     LOGS+=("${DRIFT[@]}")
 fi

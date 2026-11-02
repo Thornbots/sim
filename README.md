@@ -4,7 +4,7 @@ sim holds the robot's integration tests. The localization drift suite starts a
 `gz sim` model of the `ARCC_Field_2026` field, spawns the `sentry` robot from
 `urdf/sentry_v2.urdf.xacro`, and runs the real `thornbots_pkg` stack against
 it. The two CV benches run no gz. The aiming bench scores `point_to_cv_target`
-against a perfectly known target; the estimation bench scores how well Part 2
+against a perfectly known target; the estimation bench scores how well the tracker
 turns noisy detections into a target model. The split is documented in the
 [CV interface](../thornbots_pkg/README.md#cv-interface); historical results
 are in [CV bench observations](docs/cv-bench-results-2026-09-28.md).
@@ -178,7 +178,7 @@ GTest summary as well as the measured hit rates: diagnostic-tier completion
 is not an accuracy guarantee. `tools/check_bench_log.cpp` also rejects failed
 GTest summaries and clock or lockstep stalls.
 
-The CV estimation bench scores Part 2, not hits. `bench_world` (C++)
+The CV estimation bench scores tracking, not hits. `bench_world` (C++)
 is the whole world in one lockstep loop: `/clock`, the phantom target through
 the aiming bench's ten cells plus a still one at 45 deg (`stationary45`, two
 panels in view), our chassis and head, `/dji_serial_bridge/pose`, the head controller and
@@ -218,7 +218,7 @@ ros2 launch sim estimation.launch.py
 
 Per case it prints how long the facing panel's error took to stay under
 5 cm, the fraction of states valid, and the mean and p95 over the last 30 s
-of: the facing panel's error (the panel Part 1 aims at), all four panels',
+of: the facing panel's error (the panel the aim node targets), all four panels',
 center (also split along and across the ray from us), velocity, yaw (mod a
 quarter turn), spin rate, radius and height per pair. `blackout:=true` drops every detection for 0.3 s in each 2 s.
 `camera_latency_s:=0.03` stamps detections late and tells the tracker to
@@ -283,13 +283,13 @@ the bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
 picks the moving cases. `headless:=true` drops the gz GUI and rviz from
 either. `--show-args` on either launch lists the rest.
 
-`tools/run_suite.sh drift|ekf|shot_hit|estimation|mcb_parked|mcb_drive|mcb_match [args]` wraps any of these
+`tools/run_suite.sh localization_drift|ekf|aim|tracking|mcb_parked|mcb_drive|mcb_match [args]` wraps any of these
 launches: it refuses to start over a running stack, tees the output to
 `/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.cpp` on it. It exits 0
 only when GTest passed and the checker trusts the run:
 
 ```bash
-src/sim/tools/run_suite.sh drift scenario:=odom_stuck
+src/sim/tools/run_suite.sh localization_drift scenario:=odom_stuck
 ```
 
 ## Build
@@ -335,10 +335,10 @@ Integration executables are installed but are invoked only through launch.
 | ROS service | `cpp/test_e2e_referee.cpp` | scorer retries and bounded failure with dropped replies; no simulation |
 | launch API | `cpp/test_suite_exit.cpp` | ROS launch, no simulation |
 | lint | `test_copyright.py`, `test_flake8.py`, `test_pep257.py` | Python + pytest |
-| integration | `localization/localization_suite.cpp` | gz-sim and a launch tree |
-| integration | `cv/shot_hit_suite.cpp` | a launch tree, no gz |
-| integration | `cv/estimation_suite.cpp` | a launch tree, no gz |
-| on demand | `localization/localization_suite.cpp` | gz-sim and a launch tree |
+| integration: `localization_drift` | `localization/localization_suite.cpp` | gz-sim and a launch tree |
+| integration: `aim` | `cv/shot_hit_suite.cpp` | a launch tree, no gz |
+| integration: `tracking` | `cv/estimation_suite.cpp` | a launch tree, no gz |
+| on demand: `ekf` | `localization/localization_suite.cpp` | gz-sim and a launch tree |
 
 The integration suites are separate executables, so a plain `colcon test`
 does not start Gazebo or a bench stack:
@@ -1315,10 +1315,10 @@ datasheet estimates; measure them on the robot. Set both to 0 for the old
 
 ### target_state_truth: the aiming bench's perfect knowledge
 
-Stands in for the whole of Part 2 on the aiming bench (`shot_hit.launch.py`).
+Stands in for the tracker on the aiming bench (`shot_hit.launch.py`).
 For each `/target/ground_truth_odom` sample it
 publishes the target's `TargetState` at once, stamped with that sample's time:
-the contract `TargetState.msg` sets for Part 2, a state describing the target
+the contract `TargetState.msg` sets for the tracker, a state describing the target
 at its stamp. It used to publish on its own 60 Hz timer, which ran just ahead
 of `target_driver`'s samples and sent each one ~17 ms late.
 
@@ -1729,7 +1729,7 @@ Python callables and constants. `launch/` and its ament lint tests also remain.
 The native `suite_exit` tests exercise successful, failed and collection-style
 child exit codes through the real launch service.
 
-#### Firmware behaviour and historical results (then stage E2, now `mcb_parked`)
+#### Firmware behaviour and historical results (`mcb_parked`)
 
 Current firmware uses corrected `getX/getY` for navigation and raw
 `getAimX/getAimY` for POSE and gimbal aim. `RELOCALIZE` updates only the
@@ -1768,7 +1768,7 @@ score (paths under `MCB-project/src/`):
   Its waypoints and spin requests come from the checked-out firmware;
   the simulator controls the surrounding ghosts and referee inputs.
 
-E2 on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
+`mcb_parked` on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
 lateral, still and 1 m/s, 15 s each): `CV_TARGET` and `RELOCALIZE` frames
 are read, none refused, but the gun turns away. One `RELOCALIZE` moved the
 parked MCB's odometry to (0.74, 1.86), our `odom`'s numbers, and the head
