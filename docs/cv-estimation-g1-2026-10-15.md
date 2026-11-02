@@ -206,15 +206,5 @@ for the changed repositories. No quality baseline or estimation limit is grown.
 
 ## Remaining work
 
-G.1 still needs a radius/spin repair that survives all cells and the radial/
-blackout guard, three accepted accuracy repeats, tightened limits and hosted
-E2E nonregression. Consider a model/regularization repair rather than selecting
-the lowest isolated-cell radius score. The initial-prior trials above do not
-establish a successful continuous radius prior.
-
-G.2 ray noise and blackout parity, G.3 settling validity and aiming cost, T15
-angled stationary repair/limits, T7 acceleration/path-end sweep and T8
-alone/sequence parity were not started as separate repairs: the ordered work
-stops at this G.1 investigation checkpoint. The fresh-validity tally and speed
-filter finding are evidence for later work, not completed fixes. No item is
-removed from the workspace roadmap on the strength of these rejected trials.
+Live commitments, acceptance and dependencies are maintained in [ROADMAP G](../../docs/ROADMAP.md#g-estimation-accuracy).
+The rejected trials above do not complete G.1 or the separate G.2/G.3/T15/T7/T8 repairs.

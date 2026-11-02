@@ -1,5 +1,9 @@
 # Panel choice measurement, 2026-10-11
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Linux x86_64 Jazzy, fresh local sim/bridge/aiming overlay. T32's node chooses
 the most face-on panel near impact, holding its world normal until another
 is better by the configured margin. The draft also needed hold resets on

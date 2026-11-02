@@ -1,5 +1,9 @@
 # Shared boot heading verification — 2026-10-30
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 The [world-frame contract](../README.md#the-world-frame) is tested with both
 teams at field yaw π/2. Field geometry and match route coordinates are unchanged.
 The parked diagnostic retains the hosted fixture's field-safe -y target paths

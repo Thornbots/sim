@@ -1,5 +1,9 @@
 # Indexer recovery after board startup, 2026-10-12
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 The Type C parked run finished its scoring window with valid UART traffic and
 zero lockstep timeouts, but no physical indexer exits. Its transport/boot
 history is in [the board report](mcb-type-c-2026-10-11.md). Firmware behavior

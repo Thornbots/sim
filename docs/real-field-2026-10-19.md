@@ -1,5 +1,9 @@
 # Real field integration, 2026-10-19
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Geometry and frame choices are maintained in [the world frame](../README.md#the-world-frame).
 The old export's outer dimensions (12.61 x 8.73 m; height 1.41883 m)
 differ from the new export; the new inner walls match the rules' 12 x 8 m.

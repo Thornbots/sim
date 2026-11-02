@@ -1,5 +1,9 @@
 # Aim/localization coupling, 2026-10-11
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Aim is now structurally independent of EKF/map localization and RELOCALIZE. The raw-control experiment removed frame disagreement but did not recover moving-shooter hits. Remaining combat misses need tracker/aim/gimbal work; frame isolation is not combat acceptance.
 
 ## Setup and controlled comparison
