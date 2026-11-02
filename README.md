@@ -324,6 +324,13 @@ and rebuild.
 
 ## More on the tests
 
+`test_mcb_debug_bag` opts into the hosted-only [firmware debug flood fixture](../firmware/MCBV3/README.md#opaque-debug-blobs),
+checks raw bytes through the real UART bridge and MCAP recorder, and verifies
+90 Hz POSE / 10 Hz REF_SYS during the flood. It needs the built hosted ELF;
+without it the test skips, like the other hosted-firmware tests.
+[Verification](docs/mcb-debug-bag-2026-11-01.md) records the topic/bag bytes and control rates. The Renode
+adapter already forwards arbitrary UART bytes; DEBUG requires no board hook.
+
 `colcon test` runs C++ unit tests and the ament lint checks for launch Python.
 Integration executables are installed but are invoked only through launch.
 
@@ -331,7 +338,7 @@ Integration executables are installed but are invoked only through launch.
 | --- | --- | --- |
 | unit | `cpp/test_cv_head_aim.cpp`, `cpp/test_mcb_protocol.cpp`, `cpp/test_combat.cpp`, `cpp/test_target_odometry.cpp`, `cpp/test_depth_mm.cpp`, `cpp/test_panel_view.cpp` | GTest |
 | unit | `cpp/test_cv_bench.cpp`, `cpp/test_suite_timing.cpp`, `cpp/test_match_routes.cpp`, `cpp/test_foxglove_layouts.cpp` | GTest |
-| unit | `cpp/test_mcb_firmware.cpp`, `cpp/test_mcb_pty_link.cpp`, `cpp/test_mcb_bridge_pty.cpp` | hosted firmware; bridge test also needs ROS |
+| unit | `cpp/test_mcb_firmware.cpp`, `cpp/test_mcb_pty_link.cpp`, `cpp/test_mcb_bridge_pty.cpp`, `cpp/test_mcb_debug_bag.cpp` | hosted firmware; bridge and debug-bag tests also need ROS |
 | ROS service | `cpp/test_e2e_referee.cpp` | scorer retries and bounded failure with dropped replies; no simulation |
 | launch API | `cpp/test_suite_exit.cpp` | ROS launch, no simulation |
 | lint | `test_copyright.py`, `test_flake8.py`, `test_pep257.py` | Python + pytest |
