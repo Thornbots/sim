@@ -3,7 +3,7 @@
 Historical observations, preserved from the [parked-stage documentation](../README.md#firmware-behaviour-and-historical-results-then-stage-e2-now-mcb_parked).
 These results describe the October 3 branch, not current firmware or validation.
 
-E2 on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
+`mcb_parked` on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
 lateral, still and 1 m/s, 15 s each): `CV_TARGET` and `RELOCALIZE` frames
 are read, none refused, but the gun turns away. One `RELOCALIZE` moved the
 parked MCB's odometry to (0.74, 1.86), our `odom`'s numbers, and the head
