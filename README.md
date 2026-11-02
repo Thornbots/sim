@@ -1891,3 +1891,9 @@ SLAM and raw-odom SLAM with EKF retained, followed by the wall diagnostic.
 The script records source state, commands, exit status and native logs in a new
 output directory and stops at the first failed native gate. These short trials
 do not satisfy the five-minute carried-map game requirement.
+
+`tools/analyze_lidar_returns.py BAG.mcap [...]` emits JSON summaries of raw
+no-return structure without a ROS installation or changing the bags. Use
+`--topic /scan` for filtered scans. It needs isolated Python dependencies
+`mcap==1.6.0`, `mcap-ros2-support==0.6.0`, `numpy==2.5.4`. Missing output bins
+do not identify whether acquisition or angle compensation lost the return.
