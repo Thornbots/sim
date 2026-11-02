@@ -113,10 +113,23 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   auto trace = std::make_shared<std::ofstream>(trace_path, std::ios::app);
   if (!*trace) throw std::runtime_error("Cannot open " + trace_path.string());
   const auto input_trace = [this, trace](const auto &header, Json fields) {
+    const auto receipt = get_clock()->now();
+    fields["stamp_ns"] = rclcpp::Time(header.stamp).nanoseconds();
     fields["stamp_s"] = stamp_s(header.stamp);
-    fields["received_s"] = now_s();
+    fields["received_ns"] = receipt.nanoseconds();
+    fields["received_s"] = receipt.seconds();
     fields["frame_id"] = header.frame_id;
-    *trace << fields.dump() << '\n';
+    *trace << fields.dump() << std::endl;
+    if (!*trace) throw std::runtime_error("Cannot write E2E input trace");
+  };
+  const auto panel_trace = [](const auto &m) {
+    Json corners = Json::array();
+    for (const auto &p : m.corners) corners.push_back({p.x, p.y, p.z});
+    return Json{{"stamp_ns", rclcpp::Time(m.header.stamp).nanoseconds()},
+                {"frame_id", m.header.frame_id}, {"track_id", m.robot_track_id},
+                {"confidence", m.confidence}, {"class_id", m.class_id},
+                {"depth_m", m.depth_m}, {"corners", corners},
+                {"center", {m.center.x, m.center.y, m.center.z}}};
   };
   subscribe<nav_msgs::msg::Odometry>(
       "/odom", rclcpp::SensorDataQoS(), [input_trace](const auto &m) {
@@ -125,10 +138,10 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
                     {"velocity", {m.twist.twist.linear.x, m.twist.twist.linear.y}}});
       });
   subscribe<dji_serial_bridge::msg::PanelDetection>(
-      "/cv/panel_detection", rclcpp::QoS(10), [input_trace](const auto &m) {
-        input_trace(m.header, {{"topic", "/cv/panel_detection"},
-                              {"track_id", m.robot_track_id}, {"confidence", m.confidence},
-                              {"center", {m.center.x, m.center.y, m.center.z}}});
+      "/cv/panel_detection", rclcpp::QoS(10), [input_trace, panel_trace](const auto &m) {
+        auto fields = panel_trace(m);
+        fields["topic"] = "/cv/panel_detection";
+        input_trace(m.header, fields);
       });
   subscribe<sensor_msgs::msg::JointState>(
       "/mcb_emulator/gimbal_setpoint", rclcpp::QoS(100), [this](const auto &m) {
@@ -137,15 +150,20 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         while (gimbal_setpoints_.size() > 400) gimbal_setpoints_.pop_front();
       });
   subscribe<dji_serial_bridge::msg::PanelDetectionArray>(
-      "/cv/panel_detections", rclcpp::QoS(10), [this, input_trace](const auto &m) {
+      "/cv/panel_detections", rclcpp::QoS(10), [this, input_trace, panel_trace](const auto &m) {
+        Json panels = Json::array();
+        for (const auto &panel : m.detections) panels.push_back(panel_trace(panel));
         input_trace(m.header, {{"topic", "/cv/panel_detections"},
-                              {"count", m.detections.size()}});
+                              {"count", m.detections.size()}, {"detections", panels}});
         if (!m.detections.empty()) detections_.push_back({stamp_s(m.header.stamp), m.detections.size()});
         while (detections_.size() > 300) detections_.pop_front();
       });
   subscribe<dji_serial_bridge::msg::CVTarget>(
       "/cv/target", rclcpp::SensorDataQoS(), [this, input_trace](const auto &m) {
         input_trace(m.header, {{"topic", "/cv/target"}, {"fire", m.fire},
+                              {"delay_ms", m.delay_ms}, {"patrol", m.patrol},
+                              {"turn_to_hit", m.turn_to_hit},
+                              {"type_c_based_patrol", m.type_c_based_patrol},
                               {"xyz", {m.x, m.y, m.z}}});
         double t = stamp_s(m.header.stamp);
         target_stamp = t;
@@ -202,6 +220,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       "/cv/target_state", rclcpp::QoS(10), [this, input_trace](const auto &m) {
         input_trace(m.header, {{"topic", "/cv/target_state"}, {"valid", m.valid},
                               {"track_id", m.robot_track_id},
+                              {"detection_stamp_ns", rclcpp::Time(m.detection_stamp).nanoseconds()},
                               {"detection_stamp_s", stamp_s(m.detection_stamp)},
                               {"center", {m.center.x, m.center.y, m.center.z}}});
         state_validity_.push_back({stamp_s(m.header.stamp), m.valid});

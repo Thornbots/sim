@@ -1808,7 +1808,11 @@ Each E2E run also records `inputs.jsonl` from bring-up through teardown:
 capture/publish stamp, scorer receipt time, frame, and topic for detections
 (including empty frames), the selected panel, raw `/odom`, MCB POSE,
 tracker state (including invalid states and its contributing detection stamp),
-and outgoing aim. Use these to inspect acquisition, lost tracks and stamped
+and outgoing aim. Integer `stamp_ns` and `received_ns` retain exact timestamps;
+`stamp_s` and `received_s` remain convenient for plotting. Detection arrays
+retain every panel's capture stamp, frame, center, corners, class and confidence;
+aim records retain delay and control flags. Each record is flushed so failed
+bring-up still leaves its input evidence. Use these to inspect acquisition, lost tracks and stamped
 input order before changing tracker tuning. A receipt-time age measures the
 observed delivery path; it does not establish deterministic consumption.
 The [Mini checkpoint](docs/input-audit-mini-2026-11-02.md) records validation

@@ -55,3 +55,27 @@ floor or repeatability claim is supported by this checkpoint.
 
 The owned container and its volumes were removed. Colima remained running
 because other agents' containers were active; none of those were altered.
+
+## Host-only recovery
+
+Recovery uses `/Users/blaise/.t3/worktrees/src/t3-b7f18bba` and evidence directory
+`/Users/blaise/track-a-evidence/2026-11-02-recovery/`. Workspace nightly
+`53ccdb2` retains sim's merged naming fix `bcf9d86`; the unique audit was
+rebased onto that sim base. The deferred foundational patch was not reapplied.
+No container, build or simulation ran during this host-only recovery.
+
+The audit now retains integer nanoseconds, all raw panel centers/corners and
+aim control flags, flushes each record and reports write errors. The added
+`InputAuditTest` publishes empty and populated frames with a stamp regression
+and valid-to-invalid tracker transitions, then reads the trace before scorer
+teardown. This native regression is **not run yet**: Season2 holds the heavy
+slot, followed by D/E's harness work. Python 3.12 repository quality and
+actionlint pass on the recovery source; native validation remains required.
+
+Season2 reports stationary 281/281 hits but moving speed-1 lateral 12/158,
+below the unchanged 10% floor, with the corrected physical exit counter.
+These owner-reported diagnostics are not A acceptance or calibration evidence.
+Do not lower a floor to absorb the failure. Counter/plant correctness remains
+with Season2; downstream combat/indexer calibration requires its exact pushed
+foundation handoff and accepted runs. UART serialization, consumer acks,
+deterministic bring-up and board repeatability remain unfinished.

@@ -4,6 +4,8 @@
 
 - Save stamped detection, selected-panel, raw-odometry, MCB-pose, target-state
   and aim inputs in `inputs.jsonl`, including empty detections and invalid states.
+  Retain exact nanosecond stamps, panel geometry and aim flags; flush each
+  record and fail on write errors so interrupted runs preserve diagnostic inputs.
 - Adopt the team's 2026-10-26 low-resolution CAD (#48) and remove
   `simplify_urdf`, its `sentry_v2.yaml` config and vendored mesh decimator;
   edit `urdf/sentry_v2/` directly. `camera` is the CAD's RGB FOV apex
