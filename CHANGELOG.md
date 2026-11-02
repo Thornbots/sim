@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Clear estimation reset acknowledgements before sending the reset request,
+  and acknowledge scorer pacing handoffs before writing between-cell results.
+  Scored lockstep deadlines and native log rejection remain unchanged.
 - Adopt the team's 2026-10-26 low-resolution CAD (#48) and remove
   `simplify_urdf`, its `sentry_v2.yaml` config and vendored mesh decimator;
   edit `urdf/sentry_v2/` directly. `camera` is the CAD's RGB FOV apex

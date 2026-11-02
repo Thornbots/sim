@@ -209,6 +209,15 @@ and for a publish tick's indicated aim point to arrive. Separate DDS topics
 can arrive in either order; a publication acknowledgment alone does not
 prove that the next consumer has processed its input. A wait that passes `max_wait_s`
 (0.5 s wall) is logged as a lockstep timeout, and that run may not repeat.
+The estimation scorer uses `/bench/pacing` (`std_srvs/SetBool`) to hand off
+its progress gate between cells. It waits for the inactive acknowledgement
+while still servicing truth, then writes results without holding the clock.
+Before resetting the next cell it clears its old `/bench/case` acknowledgement,
+enables pacing, and sends the parameter request; that request can itself
+dispatch the new case callback. Active samples keep their carried truth stamp
+on `/bench/progress`. The handoff does not disable tracker/aim gates or change
+the scored watchdog. Missing or rejected handoffs fail the run.
+See the [harness investigation](docs/de-harness-2026-11-02.md) for validation status.
 The 12 cells take ~30 s on the Mac (`real_time_factor:=1` for real time):
 
 ```bash

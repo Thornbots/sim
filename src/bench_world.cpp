@@ -50,6 +50,7 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/header.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 
 namespace
@@ -309,6 +310,16 @@ public:
           tracker_clock_ns_ = std::max(tracker_clock_ns_, rclcpp::Time(m->stamp).nanoseconds());
           gate_cv_.notify_all();
         }));
+    pacing_service_ = create_service<std_srvs::srv::SetBool>(
+      "/bench/pacing", [this](
+        std_srvs::srv::SetBool::Request::SharedPtr request,
+        std_srvs::srv::SetBool::Response::SharedPtr response) {
+        std::lock_guard<std::mutex> lock(gate_mutex_);
+        progress_enabled_ = request->data;
+        progress_.reset();
+        gate_cv_.notify_all();
+        response->success = true;
+      });
     subs_.push_back(create_subscription<std_msgs::msg::Header>(
         "/bench/progress", qos, [this](std_msgs::msg::Header::ConstSharedPtr m) {
           on_progress(from_stamp(m->stamp));
@@ -363,6 +374,7 @@ private:
   void on_progress(double stamp)
   {
     std::lock_guard<std::mutex> lock(gate_mutex_);
+    if (!progress_enabled_) {return;}
     progress_ = progress_ ? std::max(*progress_, stamp) : stamp;
     gate_cv_.notify_all();
   }
@@ -437,7 +449,9 @@ private:
         // The scorer only paces: it may trail a period plus pace_slack_s.
         if (progress_) {
           const double allow = 1.0 / truth_rate_hz_ + pace_slack_s_;
-          if (!wait_for(lock, "/bench/progress", [&] {return *progress_ + allow >= next_t;})) {
+          if (!wait_for(lock, "/bench/progress", [&] {
+              return !progress_ || *progress_ + allow >= next_t;
+            })) {
             progress_.reset();
           }
           if (count_publishers("/bench/progress") == 0) {progress_.reset();}
@@ -943,6 +957,8 @@ private:
   int64_t tracker_clock_ns_ = -1;
   bool warned_phase_ = false;
   std::optional<double> progress_;
+  bool progress_enabled_ = true;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr pacing_service_;
   std::atomic<int> timeouts_{0};
 
   rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr clock_pub_;
