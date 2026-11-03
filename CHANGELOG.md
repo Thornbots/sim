@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Move historical localization, sensor and gimbal experiments into dated package history; preserve README anchors and current instructions.
+
 - Clear estimation reset acknowledgements before sending the reset request,
   and acknowledge scorer pacing handoffs before writing between-cell results.
   Scored lockstep deadlines and native log rejection remain unchanged.
