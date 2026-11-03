@@ -333,10 +333,12 @@ TEST_F(McbFirmware, ReportsHitAngleRelativeToChassisHeading) {
   const std::array<double, 10> left_hit{0, 0, 0, 0, 0.45, 0, 0.05};
   ref.current_hp = 380;
   ref.hurt_armor_id = 1;
-  // Include the REF_SYS tick immediately after the 100 ms referee update.
-  auto refs = messages<wire::RefSys>(run(101, {}, left_hit, 1));
+  // Check the one hit-bearing sample across two reports, independent of slot phase.
+  auto refs = messages<wire::RefSys>(run(201, {}, left_hit, 1));
   ASSERT_FALSE(refs.empty());
-  EXPECT_NEAR(refs.back().delta_angle_got_hit_in, hw::kPi / 2, 1e-5);
+  EXPECT_EQ(std::count_if(refs.begin(), refs.end(), [](const auto & sample) {
+    return std::abs(sample.delta_angle_got_hit_in - hw::kPi / 2) < 1e-5;
+  }), 1);
 
   refs = messages<wire::RefSys>(run(100, {}, left_hit));
   ASSERT_FALSE(refs.empty());
@@ -346,9 +348,11 @@ TEST_F(McbFirmware, ReportsHitAngleRelativeToChassisHeading) {
   const std::array<double, 10> right_hit{0, 0, 0, 0, 0.61, 0, 0.06};
   ref.current_hp = 360;
   ref.hurt_armor_id = 3;
-  refs = messages<wire::RefSys>(run(100, {}, right_hit, 1));
+  refs = messages<wire::RefSys>(run(200, {}, right_hit, 1));
   ASSERT_FALSE(refs.empty());
-  EXPECT_NEAR(refs.back().delta_angle_got_hit_in, -hw::kPi / 2, 1e-5);
+  EXPECT_EQ(std::count_if(refs.begin(), refs.end(), [](const auto & sample) {
+    return std::abs(sample.delta_angle_got_hit_in + hw::kPi / 2) < 1e-5;
+  }), 1);
 
   refs = messages<wire::RefSys>(run(100, {}, right_hit));
   ASSERT_FALSE(refs.empty());

@@ -145,3 +145,17 @@ TEST(McbProtocol, PatrolBitPreservesCurrentPayloadAndOtherFlags)
   EXPECT_EQ(wire::kCvTargetFlagPatrol, 0x08);
   EXPECT_EQ(wire::kCvTargetFlagsDefault & wire::kCvTargetFlagPatrol, 0);
 }
+
+TEST(McbProtocol, OpaqueDebugBlob) {
+  EXPECT_EQ(sim::mcb_protocol::kDebugMaxPayload, 128u);
+  using namespace sim::mcb_protocol;
+  for (const auto &data : {std::vector<uint8_t>{}, std::vector<uint8_t>{0, 0xa5, 0xff},
+                          std::vector<uint8_t>(kDebugMaxPayload, 0xff)}) {
+    DJISerial parser;
+    const auto frames = parser.feed(frame(DebugBlob{data}));
+    ASSERT_EQ(frames.size(), 1u);
+    EXPECT_EQ(frames[0].msg_type, kDebug);
+    EXPECT_EQ(unpack<DebugBlob>(frames[0].payload).data, data);
+  }
+  EXPECT_THROW(pack(DebugBlob{std::vector<uint8_t>(kDebugMaxPayload + 1)}), std::length_error);
+}
