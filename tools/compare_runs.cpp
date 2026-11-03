@@ -79,11 +79,7 @@ void differ(const Json &a, const Json &b, double tolerance, const std::string &k
     const double x = a.get<double>(), y = b.get<double>();
     if (x != y && !(std::isfinite(x) && std::isfinite(y) && std::abs(x - y) <= tolerance))
       out.push_back({key, a, b});
-  } else if ((a.is_boolean() && b.is_number()) || (a.is_number() && b.is_boolean())) {
-    const double x = a.is_boolean() ? static_cast<int>(a.get<bool>()) : a.get<double>();
-    const double y = b.is_boolean() ? static_cast<int>(b.get<bool>()) : b.get<double>();
-    if (x != y) out.push_back({key, a, b});
-  } else if (a != b) out.push_back({key, a, b});
+  } else if (a.type() != b.type() || a != b) out.push_back({key, a, b});
 }
 bool finite_number(const Json &value) {
   return value.is_number() && std::isfinite(value.get<double>());

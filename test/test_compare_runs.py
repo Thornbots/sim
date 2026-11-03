@@ -194,6 +194,44 @@ class CompareRunsTest(unittest.TestCase):
         code, output = self.compare('--tol', '0.1')
         self.assertEqual(code, 0, output)
 
+    def test_boolean_number_diagnostics_are_distinct(self):
+        """Boolean diagnostics never equal numbers, even inside nested extras."""
+        for boolean, number in ((True, 1), (False, 0)):
+            for left, right in ((boolean, number), (number, boolean)):
+                for field, wrap in (
+                        ('eligible', lambda value: {'eligible': value}),
+                        ('diagnostics.eligible',
+                         lambda value: {'diagnostics': {'eligible': value}}),
+                        ('diagnostics[0].flags[1]',
+                         lambda value: {'diagnostics': [{'flags': [None, value]}]})):
+                    for tolerance in ('0', '100'):
+                        with self.subTest(left=left, right=right, field=field,
+                                          tolerance=tolerance):
+                            for run, value in ((self.a, left), (self.b, right)):
+                                row = {'t': 1, 'hit': True, **wrap(value)}
+                                self.write_rows(run, 'shots.jsonl', [row])
+                            code, output = self.compare('--tol', tolerance)
+                            self.assertNotEqual(code, 0, output)
+                            self.assertIn('first divergence at record 0', output)
+                            self.assertIn(field + ':', output)
+
+    def test_numeric_types_and_optional_nested_diagnostics_pass(self):
+        """Integer/float equivalence and tolerance coexist with typed extras."""
+        for run, number in ((self.a, 1), (self.b, 1.0)):
+            self.write_rows(run, 'shots.jsonl', [{
+                't': number, 'hit': False, 'eligible': True,
+                'diagnostics': {'values': [number, None, False], 'extra': {}},
+            }])
+        code, output = self.compare()
+        self.assertEqual(code, 0, output)
+        self.write_rows(self.b, 'shots.jsonl', [{
+            't': 1.0, 'hit': False, 'eligible': True,
+            'diagnostics': {'values': [1.05, None, False], 'extra': {}},
+        }])
+        self.assertNotEqual(self.compare()[0], 0)
+        code, output = self.compare('--tol', '0.1')
+        self.assertEqual(code, 0, output)
+
     def test_objects_without_run_payload_fail(self):
         """Object syntax, metadata and timestamps alone are not run evidence."""
         for name in ('shots.jsonl', 'states.jsonl', 'poses.jsonl', 'route.jsonl'):
