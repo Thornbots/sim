@@ -1023,10 +1023,8 @@ correction). See [threshold calibration](docs/simulation-history-2026-11-02.md#t
 
 `jerk_with_motion`'s 0.3 correction fraction: slam_toolbox plateaus at a
 partial correction, typically 40-70% of the jerk, because scan matching
-corrects the pose graph incrementally. 0.5 sat at that plateau's edge and
-flaked; 0.3 keeps margin and still catches the known-broken case
-(`minimum_travel_distance` at 0.5, indistinguishable from zero). It was never
-checked against amcl's plateau, so suspect it first if amcl runs flake.
+corrects the pose graph incrementally. The 0.3 fraction keeps margin while catching the known-broken
+`minimum_travel_distance=0.5` case. The [correction-fraction trial](docs/simulation-history-2026-11-02.md#correction-fraction-trial) records the flake and unvalidated AMCL plateau.
 
 The current jerk stddev is 0.24 (Rayleigh magnitude mean
 `stddev * sqrt(pi/2)`, about 30 cm). Each correction step drives one bounded
@@ -1113,10 +1111,7 @@ tick makes a longer jump and the actor keeps its speed.
 The boxes are free bodies with no collision and gravity off. gz only
 honours `set_pose` on a free body (see the Auto explore note), and a
 static model is welded to the world. The lidar still sees them, since
-`gpu_lidar` renders visuals. With collision, each box sat on the field's STL
-mesh and ODE ran box-on-mesh contact every 1 ms step: gz's real-time factor
-fell from ~1.0 to 0.24-0.42 and the scenario took twice as long as
-`drift_correction`. The robot would drive straight through a box, so the
+`gpu_lidar` renders visuals. The [actor collision-cost trial](docs/simulation-history-2026-11-02.md#actor-collision-cost-trial) records the reason collision is disabled. The robot would drive straight through a box, so the
 driver reads `/sim/raw_odom` and keeps every box `robot_radius`
 (0.5 m, the barrel's reach) plus the box's half diagonal plus `margin`
 (0.3 m) from wherever the robot can be within `lookahead_s` (1 s, or three
@@ -1131,9 +1126,7 @@ the -x, +y and +x edges. `closest box` logs the nearest box-centre distance.
 See the [actor avoidance trial](docs/simulation-history-2026-11-02.md#actor-avoidance-trial) for the earlier collision.
 
 Moves go through `sim.launch.py`'s `set_pose_bridge`, gz's `set_pose` as a
-ROS `SetEntityPose` service, one async call per box per tick. The first
-version started a `gz service` process (Ruby) per call, and ticks lagged to
-~0.19 s of sim time. The default paths clear the real field's walls (the `ARCC_Field_2026`
+ROS `SetEntityPose` service, one async call per box per tick. See the [actor transport trial](docs/simulation-history-2026-11-02.md#actor-transport-trial) for the former per-call process cost. The default paths clear the real field's walls (the `ARCC_Field_2026`
 mesh, [world frame](#the-world-frame)) by at least 0.4 m.
 
 ### sim.launch.py: spawn_robot uses -string
@@ -1209,9 +1202,7 @@ as a placeholder.
 Target positions use REP-103 (x forward, y left, z up), not the optical frame
 a real driver reports. Mislabelling optical as REP-103 would rotate every
 detection by a fixed offset, the same bug class as rf2o's `angle_min` (179.81
-degrees off, magnitude right). On 2026-07-27, `/cv/target`'s left/right sign
-matched an independent bearing from `/sim/raw_odom` and
-`/target/ground_truth_odom` in 20/20 samples.
+degrees off, magnitude right). See the [target-bearing check](docs/simulation-history-2026-11-02.md#target-bearing-check) for the dated sign verification.
 
 Detections outside the FOV (`horizontal_fov=1.5184`, vertical from 640x480) or
 range (0.1-10.0m) aren't published, which exercises `point_to_cv_target`'s
@@ -1231,8 +1222,7 @@ Stands in for the tracker on the aiming bench (`shot_hit.launch.py`).
 For each `/target/ground_truth_odom` sample it
 publishes the target's `TargetState` at once, stamped with that sample's time:
 the contract `TargetState.msg` sets for the tracker, a state describing the target
-at its stamp. It used to publish on its own 60 Hz timer, which ran just ahead
-of `target_driver`'s samples and sent each one ~17 ms late.
+at its stamp. The [truth publication trial](docs/simulation-history-2026-11-02.md#truth-publication-trial) records the former timer lag.
 
 Panel 0 (front) is always the tracked panel: `yaw` is the chassis yaw,
 unwrapped, and `radius` is `[panel_radius_x, panel_radius_y]`. `z_offset`

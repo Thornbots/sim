@@ -182,3 +182,34 @@ boxes forward, so on 2026-09-24 they landed on the robot's next leg and it
 drove into them. The default paths now run from the loop's middle, 1.1 m
 from every edge and always clear, across the -x, +y and +x edges.
 `closest box` in the log is the nearest a box centre got to the robot's.
+
+## Actor collision-cost trial
+
+With collision, each box sat on the field's STL
+mesh and ODE ran box-on-mesh contact every 1 ms step: gz's real-time factor
+fell from ~1.0 to 0.24-0.42 and the scenario took twice as long as
+`drift_correction`.
+
+## Actor transport trial
+
+The first
+version started a `gz service` process (Ruby) per call, and ticks lagged to
+~0.19 s of sim time.
+
+## Target-bearing check
+
+On 2026-07-27, `/cv/target`'s left/right sign
+matched an independent bearing from `/sim/raw_odom` and
+`/target/ground_truth_odom` in 20/20 samples.
+
+## Truth publication trial
+
+It used to publish on its own 60 Hz timer, which ran just ahead
+of `target_driver`'s samples and sent each one ~17 ms late.
+
+## Correction-fraction trial
+
+0.5 sat at that plateau's edge and
+flaked; 0.3 keeps margin and still catches the known-broken case
+(`minimum_travel_distance` at 0.5, indistinguishable from zero). It was never
+checked against amcl's plateau, so suspect it first if amcl runs flake.
