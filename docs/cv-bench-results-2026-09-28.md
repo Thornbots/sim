@@ -1,5 +1,9 @@
 # CV bench observations (2026-09-28 to 2026-09-29)
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Historical results retained from the retired CV split plan. They rank changes,
 not field hit rates. Current commands and bench behavior are in the
 [simulation README](../README.md#run-the-tests); open accuracy work is in

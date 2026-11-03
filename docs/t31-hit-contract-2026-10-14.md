@@ -1,5 +1,9 @@
 # T31 hit permission and REF_SYS contract, 2026-10-14
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 The Jetson clears CV_TARGET bit 2 whenever it holds any target estimate,
 including coasting or predicted tracks during brief occlusion and
 unconverged tracks. It sets the bit only without an estimate, including Jetson
