@@ -247,7 +247,7 @@ TEST_F(McbFirmware, ANewerAimDoesNotCancelAPendingShot) {
   EXPECT_GE(result.shots.front() - start, 25U);
   EXPECT_LT(result.shots.front() - start, 35U);
 }
-TEST_F(McbFirmware, FirstChamberExitHasTimedLatencyAndOvershootCanEmptyTheNext) {
+TEST_F(McbFirmware, FirstChamberExitHasTimedLatencyWithoutEmptyingTheNext) {
   sim::mcb_motor::Plant plant;
   sim::mcb_motor::ProjectileExit exit;
   const std::array<double, 10> readings{};
@@ -272,15 +272,41 @@ TEST_F(McbFirmware, FirstChamberExitHasTimedLatencyAndOvershootCanEmptyTheNext) 
     }
   }
   ASSERT_EQ(requested.size(), 1U);
-  ASSERT_EQ(exited.size(), 2U);
+  ASSERT_EQ(exited.size(), 1U);
   EXPECT_NEAR(static_cast<double>(exited.front()) - requested.front(), 20.0, 3.0);
-  EXPECT_GT(exited.back(), exited.front());
-  // The estimated plant reaches ~1.51 chambers for a 1.20 target. Its braking
-  // overshoot crosses the second exit at 1.245; settling cannot reload it.
-  EXPECT_GT(peak_balls, 1 + exit.kRestAt + exit.kExitTravel);
-  EXPECT_LT(peak_balls, 2 + exit.kRestAt + exit.kExitTravel);
+  // Correct output-shaft dynamics must not empty the following chamber while
+  // settling at 1.20. The motor test independently retains overshoot counting.
+  EXPECT_GE(peak_balls, 1 + exit.kRestAt - exit.kRestTolerance);
+  EXPECT_LT(peak_balls, 1 + exit.kRestAt + exit.kExitTravel);
   RecordProperty("peak_chambers", peak_balls);
   RecordProperty("first_exit_delay_ms", exited.front() - requested.front());
+  RecordProperty("exit_travel_chambers", exit.kExitTravel);
+}
+TEST_F(McbFirmware, SettledSingleFeedsEachKeepTheMeasuredExitLatency) {
+  sim::mcb_motor::Plant plant;
+  sim::mcb_motor::ProjectileExit exit;
+  std::vector<uint32_t> requests, exits;
+  const auto packet = wire::frame(wire::CvTarget{
+      3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire});
+  for (int ms = 0; ms < 4400; ++ms) {
+    if (ms >= 3000 && (ms - 3000) % 500 == 0) {
+      ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
+                static_cast<ssize_t>(packet.size()));
+    }
+    const auto feedback = plant.feedback({}, 0, 0, 0, .001);
+    const auto output = firmware->step(1, {}, ref, feedback);
+    plant.commands = output.motors;
+    requests.insert(requests.end(), output.shots.begin(), output.shots.end());
+    for (auto n = exit.update(feedback[2]); n > 0; --n) exits.push_back(firmware->time_ms());
+    if (ms == 2999) {
+      ASSERT_TRUE(requests.empty());
+      ASSERT_TRUE(exits.empty()) << "pre-indexing fired a ball";
+    }
+  }
+  ASSERT_EQ(requests.size(), 3U);
+  ASSERT_EQ(exits.size(), requests.size());
+  for (size_t i = 0; i < exits.size(); ++i)
+    EXPECT_NEAR(static_cast<double>(exits[i]) - requests[i], 20.0, 3.0) << "shot " << i;
 }
 TEST_F(McbFirmware, ContinuousFeedExitsFollowPhysicalChambersWithoutSettling) {
   namespace motor = sim::mcb_motor;
