@@ -82,7 +82,7 @@ class CompareRunsTest(unittest.TestCase):
     def test_optional_outputs_may_be_empty_or_absent(self):
         """No-shot intervals can compare using pose evidence alone."""
         for run in (self.a, self.b):
-            self.write_rows(run, 'poses.jsonl', [{'t': 1, 'xy': [0, 1]}])
+            self.write_rows(run, 'poses.jsonl', [{'t': 1, 'truth_xy': [0, 1]}])
             (run / 'shots.jsonl').touch()
         code, output = self.compare()
         self.assertEqual(code, 0, output)
@@ -122,7 +122,7 @@ class CompareRunsTest(unittest.TestCase):
     def test_malformed_second_line_reports_location(self):
         """Even matching corrupt files must fail with their path and line."""
         for run in (self.a, self.b):
-            (run / 'shots.jsonl').write_text('{"t": 1}\n{"t":\n')
+            (run / 'shots.jsonl').write_text('{"t": 1, "hit": true}\n{"t":\n')
         code, output = self.compare()
         self.assertNotEqual(code, 0)
         self.assertIn(str(self.a / 'shots.jsonl') + ':2:', output)
@@ -140,7 +140,8 @@ class CompareRunsTest(unittest.TestCase):
     def test_corrupt_optional_counterpart_fails(self):
         """Valid shot evidence cannot hide a corrupt optional trace."""
         self.matching_shots()
-        self.write_rows(self.a, 'states.jsonl', [{'t': 1}])
+        self.write_rows(self.a, 'states.jsonl', [{'t': 1, 'valid': False, 'centre_xy_m': 0,
+                                                 'vel_err': [0, 0, 0]}])
         (self.b / 'states.jsonl').write_text('{"t":')
         code, output = self.compare()
         self.assertNotEqual(code, 0)
@@ -166,7 +167,8 @@ class CompareRunsTest(unittest.TestCase):
     def test_different_nested_traces_report_first_divergence(self):
         """Changed numeric values retain the existing field-level diagnostic."""
         for run, value in ((self.a, 2), (self.b, 3)):
-            self.write_rows(run, 'shots.jsonl', [{'t': 1, 'aim': {'xy': [value, 4]}}])
+            self.write_rows(run, 'shots.jsonl',
+                            [{'t': 1, 'hit': False, 'aim': {'xy': [value, 4]}}])
         code, output = self.compare()
         self.assertNotEqual(code, 0)
         self.assertIn('first divergence at record 0', output)
@@ -176,9 +178,9 @@ class CompareRunsTest(unittest.TestCase):
         """Incomplete object fields must not compare equal to explicit nulls."""
         for missing_run, null_run in ((self.a, self.b), (self.b, self.a)):
             with self.subTest(missing_run=missing_run):
-                self.write_rows(missing_run, 'shots.jsonl', [{'t': 1, 'aim': {}}])
+                self.write_rows(missing_run, 'shots.jsonl', [{'t': 1, 'hit': False, 'aim': {}}])
                 self.write_rows(null_run, 'shots.jsonl',
-                                [{'t': 1, 'aim': {'xy': None}}])
+                                [{'t': 1, 'hit': False, 'aim': {'xy': None}}])
                 code, output = self.compare()
                 self.assertNotEqual(code, 0)
                 self.assertIn('aim.xy:', output)
@@ -187,10 +189,90 @@ class CompareRunsTest(unittest.TestCase):
     def test_finite_tolerance_preserves_numeric_comparison(self):
         """Explicit tolerance works while exact comparison still detects drift."""
         for run, value in ((self.a, 2), (self.b, 2.05)):
-            self.write_rows(run, 'shots.jsonl', [{'t': 1, 'value': value}])
+            self.write_rows(run, 'shots.jsonl', [{'t': 1, 'hit': False, 'value': value}])
         self.assertNotEqual(self.compare()[0], 0)
         code, output = self.compare('--tol', '0.1')
         self.assertEqual(code, 0, output)
+
+    def test_objects_without_run_payload_fail(self):
+        """Object syntax, metadata and timestamps alone are not run evidence."""
+        for name in ('shots.jsonl', 'states.jsonl', 'poses.jsonl', 'route.jsonl'):
+            for row in ({}, {'unknown': 1}, {'t': None, 'hit': None},
+                        {'t': 1}, {'t': 1, 'speed': 0, 'path': 'straight'}):
+                with self.subTest(name=name, row=row):
+                    for run in (self.a, self.b):
+                        self.write_rows(run, name, [row])
+                    code, output = self.compare()
+                    self.assertNotEqual(code, 0, output)
+                    self.assertIn(str(self.a / name) + ':1:', output)
+                    self.assertIn('unusable', output)
+                    for run in (self.a, self.b):
+                        (run / name).unlink()
+
+    def test_invalid_core_values_fail(self):
+        """Known field names with wrong types or shapes cannot supply evidence."""
+        cases = [
+            ('shots.jsonl', {'t': 1, 'hit': value})
+            for value in (None, 1, 'false', {}, [])
+        ] + [
+            ('poses.jsonl', {'t': 1, 'truth_xy': value})
+            for value in (None, [], [0], [0, 1, 2], [0, None], [True, 0],
+                          ['0', 1], {'x': 0, 'y': 1}, [0, float('inf')])
+        ] + [
+            ('states.jsonl', {'t': 1, 'valid': True, 'centre_xy_m': 0,
+                              'vel_err': value})
+            for value in (None, [], [0, 1], [0, 1, '2'])
+        ] + [
+            ('states.jsonl', {'t': 1, 'valid': 1, 'centre_xy_m': 0,
+                              'vel_err': [0, 0, 0]}),
+            ('states.jsonl', {'t': 1, 'valid': False, 'centre_xy_m': None,
+                              'vel_err': [0, 0, 0]}),
+        ] + [
+            ('shots.jsonl', {'t': value, 'hit': False})
+            for value in (None, True, '1', [], float('nan'), float('inf'))
+        ]
+        for name, row in cases:
+            with self.subTest(name=name, row=row):
+                for run in (self.a, self.b):
+                    self.write_rows(run, name, [row])
+                code, output = self.compare()
+                self.assertNotEqual(code, 0, output)
+                self.assertIn('unusable', output)
+                for run in (self.a, self.b):
+                    (run / name).unlink()
+
+    def test_valid_producer_variants_and_null_diagnostics_pass(self):
+        """CV shot stamps and unavailable TF diagnostics retain their semantics."""
+        traces = {
+            'shots.jsonl': [{'t_fire': 0, 'hit': False, 'off_face_m': None}],
+            'states.jsonl': [{'t': 0, 'valid': False, 'centre_xy_m': 0,
+                              'vel_err': [0, 0, 0], 'association_margin_m': None}],
+            'poses.jsonl': [{'t': 0, 'truth_xy': [0, 0], 'localization_error_m': None,
+                             'head_tf_error_deg': None, 'tracker_valid': False}],
+            'route.jsonl': [{'t': 0, 'truth_xy': [0, 0], 'segment': 'approach'}],
+        }
+        for name, rows in traces.items():
+            with self.subTest(name=name):
+                for run in (self.a, self.b):
+                    self.write_rows(run, name, rows)
+                code, output = self.compare()
+                self.assertEqual(code, 0, output)
+                for run in (self.a, self.b):
+                    (run / name).unlink()
+
+    def test_valid_stream_does_not_hide_unusable_optional_record(self):
+        """A populated optional stream must be valid on both sides in full."""
+        self.matching_shots()
+        for bad_run in (self.a, self.b):
+            with self.subTest(bad_run=bad_run):
+                for run in (self.a, self.b):
+                    self.write_rows(run, 'poses.jsonl', [{'t': 1, 'truth_xy': [0, 0]}])
+                with (bad_run / 'poses.jsonl').open('a') as trace:
+                    trace.write('{}\n')
+                code, output = self.compare()
+                self.assertNotEqual(code, 0, output)
+                self.assertIn(str(bad_run / 'poses.jsonl') + ':2:', output)
+                self.assertIn('unusable', output)
 
     def test_invalid_tolerances_fail(self):
         """Nonfinite or malformed tolerance cannot turn differences into passes."""

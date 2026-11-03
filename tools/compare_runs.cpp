@@ -85,6 +85,32 @@ void differ(const Json &a, const Json &b, double tolerance, const std::string &k
     if (x != y) out.push_back({key, a, b});
   } else if (a != b) out.push_back({key, a, b});
 }
+bool finite_number(const Json &value) {
+  return value.is_number() && std::isfinite(value.get<double>());
+}
+bool finite_vector(const Json &value, size_t size) {
+  return value.is_array() && value.size() == size &&
+         std::all_of(value.begin(), value.end(), finite_number);
+}
+void validate_record(const Json &row, const std::string &name) {
+  // Validate the core emitted by shot_hit_suite and Scorer::{judge_state,pose_errors}.
+  // Extra diagnostics can be absent or null (for example unavailable stamped TF).
+  const auto stamp = name == "shots.jsonl" && !row.contains("t") ? "t_fire" : "t";
+  if (!row.contains(stamp) || !finite_number(row.at(stamp)))
+    throw std::runtime_error("unusable record: expected finite numeric " + std::string(stamp));
+  if (name == "shots.jsonl") {
+    if (!row.contains("hit") || !row.at("hit").is_boolean())
+      throw std::runtime_error("unusable shot record: expected boolean hit");
+  } else if (name == "states.jsonl") {
+    if (!row.contains("valid") || !row.at("valid").is_boolean() ||
+        !row.contains("centre_xy_m") || !finite_number(row.at("centre_xy_m")) ||
+        !row.contains("vel_err") || !finite_vector(row.at("vel_err"), 3))
+      throw std::runtime_error("unusable state record: expected boolean valid, finite centre_xy_m "
+                               "and three finite vel_err components");
+  } else if (!row.contains("truth_xy") || !finite_vector(row.at("truth_xy"), 2)) {
+    throw std::runtime_error("unusable pose/route record: expected two finite truth_xy components");
+  }
+}
 std::vector<Json> trace_rows(const std::filesystem::path &path) {
   std::ifstream input(path);
   if (!input) throw std::runtime_error("cannot open trace " + path.string());
@@ -97,6 +123,7 @@ std::vector<Json> trace_rows(const std::filesystem::path &path) {
     try {
       auto row = sim::tools::parse(line);
       if (!row.is_object()) throw std::runtime_error("expected a JSON object record");
+      validate_record(row, path.filename().string());
       rows.push_back(std::move(row));
     } catch (const std::exception &e) {
       throw std::runtime_error(path.string() + ":" + std::to_string(number) + ": " + e.what());

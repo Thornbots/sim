@@ -564,9 +564,15 @@ calculate these errors. `ros2 run sim compare_runs LOG_DIR_A LOG_DIR_B`
 prints the first record where two runs' logs diverge. It compares JSON object
 records in `shots.jsonl`, `states.jsonl`, `poses.jsonl` and `route.jsonl`.
 Files absent on both sides are reported as unexamined; empty optional files
-are allowed when another shared file contains records. Missing counterparts,
+are allowed when another shared file contains usable records. Missing counterparts,
 malformed records, missing object fields and unequal record sequences fail.
-No shared records also fails, including two empty directories or empty logs.
+Each record needs a finite numeric stamp (`t`, or `t_fire` for CV shots)
+and its core payload: boolean `hit` for shots; boolean `valid`, finite
+`centre_xy_m` and three finite `vel_err` components for states; two finite
+`truth_xy` components for poses/routes. Extra fields and null optional
+diagnostics (such as unavailable stamped TF) are preserved. Empty objects,
+metadata-only records and invalid core types fail even alongside valid streams.
+No shared usable records also fails, including two empty directories or empty logs.
 A comparison pass describes only the available traces; it does not establish
 scored-stage completion or replace the suite and native log-checker gates.
 `poses.jsonl` samples head-TF and localization at 20 Hz even when tracking
