@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Move historical localization, sensor and gimbal experiments into dated package history; preserve README anchors and current instructions.
+
 - Consolidate live software/robot commitments in workspace ROADMAP/ROBOT_TESTS; retain dated reports as evidence.
 
 - Adopt the team's 2026-10-26 low-resolution CAD (#48) and remove
