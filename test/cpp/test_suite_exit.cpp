@@ -123,6 +123,10 @@ INSTANTIATE_TEST_SUITE_P(
         CheckCase{"LockstepGate: lockstep timeout 1 held at 0.065 s", true},
         CheckCase{"E2E clock stalled during scoring", true},
         CheckCase{"user interrupted with ctrl-c\n[ERROR] [launch]: Caught exception in launch: missing world", true},
+        CheckCase{"lockstep: /bench/progress timed out after 0.50 s wall", true},
+        CheckCase{"[wait_until] timed out after 10s waiting for: /bench/pacing acknowledgement", true},
+        CheckCase{"stack NOT ready: /bench/pacing unavailable", true},
+        CheckCase{"stack NOT ready: pacing cleanup: /bench/pacing rejected handoff", true},
         CheckCase{"lockstep: /cv/target/state_ack timed out after 0.50 s wall",
                   true}));
 } // namespace
