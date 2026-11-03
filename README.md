@@ -868,7 +868,8 @@ calibrated RPLIDAR quality. Gaussian noise remains constant 0.01 m rather
 than a measured range/material-dependent error model. Visual geometry and
 the shared head blind sector determine no-return coverage; the real field's
 38–44% infinity fraction includes material/geometry losses that Gazebo does
-not model. No random dropout is added to force that fraction.
+not model. No random dropout is added to force that fraction. Live model work is in
+[ROADMAP SIM-returns](../docs/ROADMAP.md#j-lidar-and-camera).
 
 ### Localization drift suite
 
@@ -1443,7 +1444,8 @@ the native log checker also rejects gate/coordinator timeout messages.
 This gates MCB acknowledgments, not the complete hit path: UART is not modeled
 in sim time, and the other
 CV/localization chains and wall-time bring-up remain asynchronous. It does not
-establish identical shot sequences or finish workspace T17.
+establish identical shot sequences. Live gates are in
+[ROADMAP T17](../docs/ROADMAP.md#a-acceptance-details).
 
 The on-demand transport test runs a small gz world in its own process group
 and checks the held clock, zero timer phase after a late first acknowledgment,
@@ -1791,8 +1793,8 @@ arms the firmware's own `SimpleAutoDriveCommand` (the sentry's ARCC rough
 route). The selected command generates its waypoints, translations and spin
 requests; its own controller emits CAN motor commands applied as forces in gz.
 `match_environment` supplies only ghost routes and combat inputs. It publishes
-no chassis velocity or reference route for our robot. A later navigation
-publisher remains separate work.
+no chassis velocity or reference route for our robot. The later navigation publisher is maintained as
+[NAV-publisher](../docs/ROADMAP.md#additional-mini-work).
 
 `backend:=renode` is the default and uses the normal board ELF.
 `backend:=hosted` explicitly selects the faster fixture, whose remote switches
@@ -1866,8 +1868,9 @@ rates, HP, friendly intersections, damage taken and shot counts per robot.
 The approach checks routing with firing disabled; center segments retain the
 same route and localization diagnostic criterion as `mcb_drive`, while the
 match pass criterion is unchanged. Accuracy floors, repeated-run
-spread and standalone-versus-sequence equivalence remain uncalibrated.
+spread and standalone-versus-sequence equivalence are tracked in
+[ROADMAP A](../docs/ROADMAP.md#a-acceptance-details).
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn
-are not modeled. Hurt-panel feedback is supplied, but the firmware's
+are not modeled; live commitments are in [A-model](../docs/ROADMAP.md#a-acceptance-details). Hurt-panel feedback is supplied, but the firmware's
 `delta_angle_got_hit_in` response has separate
 [hosted/Renode injected-hit verification](docs/t31-hit-contract-2026-10-14.md#targeted-validation).

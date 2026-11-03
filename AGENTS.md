@@ -37,6 +37,9 @@ Keep approach firing disabled until all routes reach center.
 
 ## Open
 
+Canonical commitments: [software](../docs/ROADMAP.md), [physical validation](../docs/ROBOT_TESTS.md).
+The links below are execution rules and reference contracts, not a second backlog.
+
 - Current failures and repeatability work: [ROADMAP status](../docs/ROADMAP.md#where-we-actually-are),
   [match track](../docs/ROADMAP.md#a-the-match-test), [tracker track](../docs/ROADMAP.md#g-estimation-accuracy).
   Repeat accuracy changes three times; reject lockstep timeouts.

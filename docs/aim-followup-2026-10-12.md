@@ -1,5 +1,9 @@
 # Aim isolation follow-up, 2026-10-12
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Follow-up to the [original measurements and review-fix rerun](aim-localization-coupling-2026-10-11.md). The review fixes were inspected before testing: offset-delta relay gating, heading input without TF feedback, translation-only navigation alignment, clock/reanchor queue clearing, and current UART semantics agree across the stack. The backward-navigation-stamp regression test exercises late old-epoch queue blocking. A remaining README default (`odom` instead of `nav_odom`) was corrected.
 
 ## Navigation and localization measure different estimates

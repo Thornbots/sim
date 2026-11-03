@@ -176,16 +176,8 @@ could have been selected earlier; this evidence does not establish that all
 bank hypotheses were correct. Fresh-track spin transients are distinct from
 steady-state p95 and remain part of G.3.
 
-Two existing implementation details need follow-up:
-
-- Radius constraints run in the positional update before the subsequent
-  facing-yaw pseudo-update, which can move correlated radius state again.
-  Logged radii slightly below the 0.18 m clamp warrant a tested constraint
-  ordering fix; this checkpoint does not change it.
-- `speeds:=4` changes the target spin from 1 Hz to 2 Hz because spin depends
-  on the selected speed range, without changing the cell key. A filter must
-  not silently change the test input. Use GTest filtering for the comparisons
-  here; the alone-versus-sequence acceptance work remains T8.
+Constraint ordering and filter-invariant spin input follow-ups are maintained under
+[ROADMAP G.1/T8](../../docs/ROADMAP.md#g-estimation-accuracy). The diagnostics above retain their evidence.
 
 ## Hosted E2E gate and validation
 
@@ -206,15 +198,5 @@ for the changed repositories. No quality baseline or estimation limit is grown.
 
 ## Remaining work
 
-G.1 still needs a radius/spin repair that survives all cells and the radial/
-blackout guard, three accepted accuracy repeats, tightened limits and hosted
-E2E nonregression. Consider a model/regularization repair rather than selecting
-the lowest isolated-cell radius score. The initial-prior trials above do not
-establish a successful continuous radius prior.
-
-G.2 ray noise and blackout parity, G.3 settling validity and aiming cost, T15
-angled stationary repair/limits, T7 acceleration/path-end sweep and T8
-alone/sequence parity were not started as separate repairs: the ordered work
-stops at this G.1 investigation checkpoint. The fresh-validity tally and speed
-filter finding are evidence for later work, not completed fixes. No item is
-removed from the workspace roadmap on the strength of these rejected trials.
+Live commitments, acceptance and dependencies are maintained in [ROADMAP G](../../docs/ROADMAP.md#g-estimation-accuracy).
+The rejected trials above do not complete G.1 or the separate G.2/G.3/T15/T7/T8 repairs.
