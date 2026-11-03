@@ -60,17 +60,17 @@ constexpr double kPi = 3.14159265358979323846;
 constexpr double kMaxDelta = 0.40;
 constexpr char kLogDir[] = "/tmp/localization_drift_tests";
 struct Options {
-  std::string suite = "drift", backend = "amcl", scenario, rtf = "0";
-  bool gui = true, rf2o = true, restart = false;
+  std::string suite = "drift", backend = "amcl", scenario, rtf = "0", slam_input_frame, map_file;
+  bool gui = true, rf2o = true, restart = false, load_map = false;
   double speed = 4.0, accel = 20.0, spawn_x = 0.0, spawn_yaw = sim::gazebo::kSpawnYaw;
-  double slip = 0.05, drift = 0.002, seconds = 45.0;
+  double slip = 0.05, drift = 0.002, seconds = 45.0, amcl_sigma_hit = 0.08;
 } options;
 std::vector<std::string> scenario_names = {
     "baseline",         "noise_correction",
     "drift_correction", "drift_correction_obstacle",
     "moving_obstacles", "real_accel",
     "jerk_with_motion", "odom_stuck",
-    "scan_degraded",    "parked_push"};
+    "scan_degraded",    "parked_push", "wall_impact"};
 std::array<Leg, 4> loop_legs() {
   const double s = options.speed, d = 3.0 / s;
   return {{{0.0, -s, d}, {s, 0.0, d}, {0.0, s, d}, {-s, 0.0, d}}};
@@ -158,6 +158,7 @@ public:
         "/sim/raw_odom", 10,
         [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
           truth = Point{msg->pose.pose.position.x, msg->pose.pose.position.y};
+          truth_stamp = rclcpp::Time(msg->header.stamp).nanoseconds();
           const auto &q = msg->pose.pose.orientation;
           truth_yaw = std::atan2(2 * (q.w * q.z + q.x * q.y),
                                  1 - 2 * (q.y * q.y + q.z * q.z));
@@ -196,6 +197,7 @@ public:
   }
   int scan_count = 0, raw_scan_count = 0, invalid_scans = 0;
   std::optional<Point> truth;
+  int64_t truth_stamp = 0;
   std::optional<std::vector<rclcpp::Parameter>> ingress_params;
   double truth_yaw = 0.0;
   std::optional<double> head_yaw;
@@ -257,11 +259,12 @@ public:
     return false;
   }
   std::optional<Pose> transform(const std::string &from, const std::string &to,
-                                double timeout = 2.0) {
+                                double timeout = 2.0,
+                                tf2::TimePoint stamp = tf2::TimePointZero) {
     const auto end = Clock::now() + std::chrono::duration<double>(timeout);
     do {
       try {
-        const auto tf = buffer.lookupTransform(from, to, tf2::TimePointZero);
+        const auto tf = buffer.lookupTransform(from, to, stamp);
         const auto &t = tf.transform.translation;
         const auto &q = tf.transform.rotation;
         return Pose{t.x, t.y,
@@ -430,7 +433,9 @@ launch_command(const std::map<std::string, std::string> &args) {
   std::vector<std::string> command{"ros2", "launch", "sim",
                                    "localization_tests.launch.py"};
   for (const auto &entry : args) {
-    command.push_back(entry.first + ":=" + entry.second);
+    if (!entry.second.empty()) {
+      command.push_back(entry.first + ":=" + entry.second);
+    }
   }
   return command;
 }
@@ -500,7 +505,11 @@ std::unique_ptr<Stack> run_stack(bool noise,
       {"headless", options.gui ? "false" : "true"},
       {"real_time_factor", options.rtf},
       {"backend", backend},
+      {"amcl_sigma_hit", std::to_string(options.amcl_sigma_hit)},
       {"use_rf2o", options.rf2o ? "true" : "false"}};
+  if (!options.slam_input_frame.empty()) args["slam_input_frame"] = options.slam_input_frame;
+  if (!options.map_file.empty()) args["map_file"] = options.map_file;
+  if (options.load_map) args["load_map"] = "true";
   params.emplace_back("odom_noise_enabled", noise);
   if (std::none_of(params.begin(), params.end(), [](const auto &p) {
         return p.get_name() == "odom_slip_ratio";
@@ -509,7 +518,7 @@ std::unique_ptr<Stack> run_stack(bool noise,
   }
   const auto prepare_ingress = [&](Helper &helper) {
     helper.ingress_params.reset();
-    if (backend != "amcl") return;
+    if (backend != "amcl" && !options.load_map) return;
     helper.ingress_params = params;
     // Fault injection begins at the scenario origin, after production startup.
     for (auto &p : params) {
@@ -553,6 +562,7 @@ std::unique_ptr<Stack> run_stack(bool noise,
         launch_command({{"run_tests", "false"},
                         {"part", "sim"},
                         {"backend", backend},
+                        {"load_map", options.load_map ? "true" : "false"},
                         {"headless", options.gui ? "false" : "true"},
                         {"real_time_factor", options.rtf}}),
         std::string(kLogDir) + "/sim.log");
@@ -709,13 +719,21 @@ void reposition(Helper &helper) {
   helper.drive(-options.speed, 0.0, 1.5 / options.speed);
 }
 std::optional<double> truth_error(Helper &helper) {
-  const auto root = helper.root();
-  return root && helper.truth
-             ? std::optional<double>(distance(*root, *helper.truth))
-             : std::nullopt;
+  const auto truth = helper.truth;
+  const auto stamp = helper.truth_stamp;
+  if (!truth || stamp <= 0) return std::nullopt;
+  const auto root = helper.transform(
+      helper.parent, "root", 2.0,
+      tf2::TimePoint(std::chrono::nanoseconds(stamp)));
+  return root ? std::optional<double>(distance(xy(*root), *truth)) : std::nullopt;
 }
-bool truth_scored() {
-  return options.backend == "none" || options.backend == "mapping";
+double require_truth_error(Helper &helper) {
+  const auto error = truth_error(helper);
+  if (!error || !std::isfinite(*error)) {
+    throw std::runtime_error(
+        "missing finite " + helper.parent + "->root TF at the captured truth stamp");
+  }
+  return *error;
 }
 void baseline(Scenario &sc) {
   auto stack = run_stack(false);
@@ -747,6 +765,44 @@ void baseline(Scenario &sc) {
                 " m is expected/normal, see note above), log_errors=" +
                 std::to_string(errors.size()));
 }
+void wall_impact(Scenario &sc) {
+  auto stack = run_stack(false, {}, "none");
+  auto &helper = *stack->helper;
+  if (!ready(sc, helper)) return;
+  if (!sim::gazebo::teleport(5.3, 0.0, sim::gazebo::kZ, options.spawn_yaw)) {
+    sc.result(false, "wall approach teleport failed");
+    return;
+  }
+  helper.spin_for(2.0);
+  const auto phase = [&](const std::string &name, double vx, double seconds) {
+    const Point start = *helper.truth;
+    double max_x = start[0];
+    const double end = helper.now_s() + seconds;
+    while (helper.now_s() < end) {
+      geometry_msgs::msg::Twist command;
+      command.linear.x = vx * std::cos(helper.truth_yaw);
+      command.linear.y = -vx * std::sin(helper.truth_yaw);
+      helper.command->publish(command);
+      helper.spin_for(0.1);
+      max_x = std::max(max_x, (*helper.truth)[0]);
+    }
+    helper.command->publish(geometry_msgs::msg::Twist{});
+    sc.log(name + ": truth_start=(" + fixed(start[0]) + "," + fixed(start[1]) +
+           "), truth_end=(" + fixed((*helper.truth)[0]) + "," +
+           fixed((*helper.truth)[1]) + "), max_x=" + fixed(max_x));
+    return distance(start, *helper.truth);
+  };
+  const double approach = phase("approach", 0.5, 3.0);
+  phase("settle", 0.0, 1.0);
+  const double pressure = phase("continued pressure", 0.5, 5.0);
+  const double retreat = phase("retreat", -0.5, 3.0);
+  const auto errors = log_errors(stack->log_text());
+  sc.result(approach > 0.15 && pressure < 0.05 && retreat > 0.5 && errors.empty(),
+            "wall diagnostic: approach=" + fixed(approach) +
+            " m, pressure_displacement=" + fixed(pressure) +
+            " m, retreat=" + fixed(retreat) + " m, log_errors=" +
+            std::to_string(errors.size()));
+}
 void noise_correction(Scenario &sc) {
   auto stack = run_stack(true);
   auto &helper = *stack->helper;
@@ -761,25 +817,17 @@ void noise_correction(Scenario &sc) {
   sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner (-1.5,-1.5) before "
          "tracing it");
   const auto edge = helper.parent + "->" + helper.child,
-             metric = truth_scored() ? "truth error" : "|" + edge + " xy|";
+             metric = std::string("stamped truth error");
   std::vector<double> samples;
   const double t0 = helper.now_s();
   size_t i = 0;
   while (helper.now_s() - t0 < 30.0) {
     const auto leg = loop_legs()[i++ % 4];
     helper.drive(leg[0], leg[1], leg[2]);
-    const auto p_now = helper.correction();
-    const auto mag =
-        truth_scored()
-            ? truth_error(helper)
-            : (p_now
-                   ? std::optional<double>(std::hypot((*p_now)[0], (*p_now)[1]))
-                   : std::nullopt);
-    if (mag) {
-      samples.push_back(*mag);
-      sc.log("t=" + elapsed(helper.now_s() - t0) + "s  " + metric + "=" +
-             fixed(*mag) + " m");
-    }
+    const double mag = require_truth_error(helper);
+    samples.push_back(mag);
+    sc.log("t=" + elapsed(helper.now_s() - t0) + "s  " + metric + "=" +
+           fixed(mag) + " m");
   }
   if (samples.size() < 3) {
     sc.result(false, "too few " + metric + " samples (" +
@@ -876,8 +924,7 @@ void cornering(Scenario &sc, const std::string &obstacle, double accel = -1.0) {
     }
     sc.log("actor_driver spawned 3 moving boxes crossing the loop");
   }
-  const auto metric =
-      truth_scored() ? "truth error" : "|" + edge + " - pre-loop " + edge + "|";
+  const std::string metric = "stamped truth error";
   std::vector<double> samples;
   helper.reset_yaw_range();
   const double t0 = helper.now_s();
@@ -886,19 +933,10 @@ void cornering(Scenario &sc, const std::string &obstacle, double accel = -1.0) {
     const auto leg = loop_legs()[i++ % 4];
     helper.drive(leg[0], leg[1], leg[2], accel);
     helper.spin_for(1.0);
-    const auto now = helper.correction();
-    const auto delta =
-        truth_scored()
-            ? truth_error(helper)
-            : (now ? std::optional<double>(distance(xy(*now), xy(*p)))
-                   : std::nullopt);
-    if (delta) {
-      samples.push_back(*delta);
-      const auto truth = truth_scored() ? std::nullopt : truth_error(helper);
-      sc.log("t=" + elapsed(helper.now_s() - t0) + "s  " + metric + "=" +
-             fixed(*delta) + " m" +
-             (truth ? "  ground_truth_error=" + fixed(*truth) + " m" : ""));
-    }
+    const double delta = require_truth_error(helper);
+    samples.push_back(delta);
+    sc.log("t=" + elapsed(helper.now_s() - t0) + "s  " + metric + "=" +
+           fixed(delta) + " m");
   }
   sc.log("over the loop, every message: " + helper.yaw_ranges());
   if (samples.size() < 3) {
@@ -1155,14 +1193,12 @@ void scan_degraded(Scenario &sc) {
     const auto value = loop_legs()[static_cast<size_t>(i) % 4];
     helper.drive(value[0], value[1], value[2]);
     helper.spin_for(1.0);
-    const auto err = truth_error(helper);
-    if (err) {
-      samples.emplace_back(label, *err);
-      std::ostringstream out;
-      out << std::left << std::setw(6) << label << " leg " << i
-          << ": truth error " << fixed(*err) << " m";
-      sc.log(out.str());
-    }
+    const double err = require_truth_error(helper);
+    samples.emplace_back(label, err);
+    std::ostringstream out;
+    out << std::left << std::setw(6) << label << " leg " << i
+        << ": truth error " << fixed(err) << " m";
+    sc.log(out.str());
   };
   bool blanked = false;
   try {
@@ -1342,6 +1378,8 @@ TEST_P(DriftSuite, Scenario) {
   try {
     if (name == "baseline") {
       baseline(sc);
+    } else if (name == "wall_impact") {
+      wall_impact(sc);
     } else if (name == "noise_correction") {
       noise_correction(sc);
     } else if (name == "jerk_with_motion") {
@@ -1595,6 +1633,17 @@ void parse_options(int &argc, char **argv) {
       options.suite = value();
     } else if (arg == "--backend") {
       options.backend = value();
+    } else if (arg == "--amcl-sigma-hit") {
+      options.amcl_sigma_hit = std::stod(value());
+      if (!std::isfinite(options.amcl_sigma_hit) || options.amcl_sigma_hit <= 0.0) {
+        throw std::invalid_argument("amcl-sigma-hit must be finite and positive");
+      }
+    } else if (arg == "--slam-input-frame") {
+      options.slam_input_frame = value();
+    } else if (arg == "--map-file") {
+      options.map_file = value();
+    } else if (arg == "--load-map") {
+      options.load_map = true;
     } else if (arg == "--scenario") {
       options.scenario = value();
     } else if (arg == "--real-time-factor") {
@@ -1628,6 +1677,10 @@ void parse_options(int &argc, char **argv) {
     }
   }
   argc = write;
+  if (options.backend == "slam") options.load_map = true;
+  if (options.load_map && options.map_file.empty()) {
+    throw std::invalid_argument("saved-graph tests require --map-file");
+  }
   if (!options.scenario.empty()) {
     if (std::find(scenario_names.begin(), scenario_names.end(),
                   options.scenario) == scenario_names.end()) {

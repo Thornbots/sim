@@ -63,7 +63,7 @@ def _stack(context):
     # foxglove: this launch's own bridge (_foxglove) covers the whole run.
     sim_args = {'gui': gui, 'rviz': gui, 'foxglove': 'false',
                 'real_time_factor': config['real_time_factor']}
-    if config['backend'] == 'amcl':
+    if config['backend'] in ('amcl', 'slam') or _is_true(context, 'load_map'):
         sim_args['x'] = AMCL_SPAWN_X
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
     sim = IncludeLaunchDescription(
@@ -77,14 +77,16 @@ def _stack(context):
                   'blue_start_x': '4.625', 'blue_start_y': '0.0',
                   'real_hardware': 'false', 'localization_mode': backend,
                   'use_rf2o': config['use_rf2o'],
+                  'slam_input_frame': config['slam_input_frame'],
+                  'amcl_sigma_hit': config['amcl_sigma_hit'],
                   # Blank-map SLAM starts at its own (0, 0) boot origin.
-                  'load_map': 'false' if backend == 'mapping' else 'true',
+                  'load_map': config['load_map'] if backend == 'mapping' else 'true',
                   'enable_target_tracker': 'false', 'enable_target_selector': 'false',
                   'enable_cv_target_bridge': 'false'}
-    if backend == 'slam':
-        # slam_toolbox's localization mode needs a .posegraph, and none ships.
-        raise RuntimeError('backend:=slam needs a saved pose graph; none ships '
-                           '(sentry_localization README.md map_file)')
+    if config['map_file']:
+        robot_args['map_file'] = config['map_file']
+    if (backend == 'slam' or _is_true(context, 'load_map')) and not config['map_file']:
+        raise RuntimeError('Saved-graph tests require map_file:=<saved pose graph basename>')
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
@@ -114,9 +116,16 @@ def _tests(context):
     if suite == 'ekf':
         cmd.append('--run-on-demand')
     if suite == 'drift':
+        if config['slam_input_frame']:
+            cmd += ['--slam-input-frame', config['slam_input_frame']]
+        cmd += ['--amcl-sigma-hit', config['amcl_sigma_hit']]
         cmd += ['--backend', config['backend'],
                 '--use-rf2o' if _is_true(context, 'use_rf2o') else '--no-use-rf2o']
-        if config['backend'] == 'amcl':
+        if config['map_file']:
+            cmd += ['--map-file', config['map_file']]
+        if _is_true(context, 'load_map'):
+            cmd.append('--load-map')
+        if config['backend'] in ('amcl', 'slam') or _is_true(context, 'load_map'):
             cmd += ['--spawn-x', AMCL_SPAWN_X]
         if config['scenario']:
             cmd += ['--scenario', config['scenario']]
@@ -166,6 +175,14 @@ def generate_launch_description():
                               description='skip the gz GUI and rviz2'),
         DeclareLaunchArgument('real_time_factor', default_value='0',
                               description='sim speed cap; 0 = as fast as it runs'),
+        DeclareLaunchArgument('map_file', default_value='',
+                              description='Saved occupancy map/pose graph basename'),
+        DeclareLaunchArgument('load_map', default_value='false',
+                              description='mapping: refine map_file instead of starting blank'),
+        DeclareLaunchArgument('amcl_sigma_hit', default_value='0.08',
+                              description='AMCL likelihood-field width in metres'),
+        DeclareLaunchArgument('slam_input_frame', default_value='',
+                              description='SLAM scan-prior frame; empty uses navigation odometry'),
         DeclareLaunchArgument('backend', default_value='amcl',
                               choices=['slam', 'mapping', 'amcl', 'none'],
                               description='who owns map->nav_odom (drift suite)'),
