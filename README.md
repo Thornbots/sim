@@ -1897,3 +1897,9 @@ no-return structure without a ROS installation or changing the bags. Use
 `--topic /scan` for filtered scans. It needs isolated Python dependencies
 `mcap==1.6.0`, `mcap-ros2-support==0.6.0`, `numpy==2.5.4`. Missing output bins
 do not identify whether acquisition or angle compensation lost the return.
+The same command joins capture headers to the nearest `headlink` joint state
+within 50 ms and reports match ages, unmatched counts and sensor-sector missing
+fractions in four head-yaw quadrants. Override `--joint-topic`, `--head-joint`
+or `--max-joint-age` for another recording. Sectors use each scan's angular
+metadata; a change in angular geometry within a bag is rejected. Missing joint
+states leave the control unmatched rather than inferring a stationary head.
