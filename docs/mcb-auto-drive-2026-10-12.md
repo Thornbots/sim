@@ -1,5 +1,9 @@
 # Firmware auto-drive in the MCB stages — 2026-10-12
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Driving stages select firmware `SimpleAutoDriveCommand` through DBUS. The ghost
 environment publishes no velocity or reference route for our robot. Renode is
 the default; hosted execution is an explicit fixture. Design and model limits

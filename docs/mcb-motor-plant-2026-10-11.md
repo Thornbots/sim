@@ -1,5 +1,9 @@
 # MCB motor plant validation, 2026-10-11
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Host: `blaises-mini`, Mac arm64, Jazzy `thornbots-mac` container, Mesa software
 rendering. Tests used the checked-out sentry hosted release built with GCC 14.
 The [MCB emulator](../README.md#mcb-emulator) owns usage, design and model limits.

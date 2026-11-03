@@ -63,7 +63,7 @@ add_executable(bench_world src/bench_world.cpp)
 target_compile_features(bench_world PUBLIC cxx_std_17)
 target_link_libraries(bench_world Eigen3::Eigen)
 ament_target_dependencies(bench_world
-  rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs
+  rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs std_srvs
   visualization_msgs)
 install(TARGETS bench_world DESTINATION lib/${PROJECT_NAME})
 
@@ -157,7 +157,7 @@ foreach(suite shot_hit estimation e2e)
     target_link_libraries(${suite}_suite pose_history)
   endif()
   ament_target_dependencies(${suite}_suite
-    rclcpp rcl_interfaces nav_msgs std_msgs visualization_msgs dji_serial_bridge
+    rclcpp rcl_interfaces nav_msgs std_msgs std_srvs visualization_msgs dji_serial_bridge
     diagnostic_msgs tf2_ros ament_index_cpp)
   install(TARGETS ${suite}_suite DESTINATION lib/${PROJECT_NAME})
 endforeach()

@@ -1,5 +1,9 @@
 # Parked ingress verification — 2026-10-31
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 The [parked diagnostic](../README.md#launch-sim-by-hand) now boots at the blue
 team start, uses firmware SimpleAutoDrive through the modeled remote to reach
 center, then parks for its original shooting cells. This report records the
