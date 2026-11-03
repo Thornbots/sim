@@ -97,9 +97,23 @@ std::string opponent_urdf(const std::string & name)
   if (document.Parse(xml.c_str()) != tinyxml2::XML_SUCCESS || !document.RootElement()) {
     throw std::runtime_error("could not parse opponent URDF");
   }
-  // Match opponents.py: render collision shapes, then fix all chassis joints.
+  // Render collision shapes, then fix all chassis joints. The head and gun keep
+  // their CAD visuals: their hulls are 0.35-0.48 m wide in the lidar plane,
+  // the CAD 0.16-0.33 m. The chassis hull reaches the plane (CAD stays below
+  // 0.32 m), so it stays hidden from lidar (README "Both robot models").
   visit_elements(document.RootElement(), [&document](tinyxml2::XMLElement * element) {
+    if (std::strcmp(element->Name(), "gazebo") == 0 && element->Attribute("reference", "root")) {
+      auto * visual = element->FirstChildElement("visual");
+      if (auto * flags = visual ? visual->FirstChildElement("visibility_flags") : nullptr) {
+        flags->SetText("0xFFFFFFFE");
+      }
+      return;
+    }
     if (std::strcmp(element->Name(), "link") != 0 || !element->FirstChildElement("collision")) {
+      return;
+    }
+    const auto * link = element->Attribute("name");
+    if (link && (std::strcmp(link, "head") == 0 || std::strcmp(link, "head_pitch") == 0)) {
       return;
     }
     while (auto * visual = element->FirstChildElement("visual")) {element->DeleteChild(visual);}

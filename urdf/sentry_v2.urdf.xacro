@@ -22,10 +22,11 @@
   <xacro:property name="name" value="$(arg name)"/>
   <xacro:include filename="$(find sim)/urdf/sentry_v2/sentry_v2.urdf"/>
 
-  <!-- Colour (gz only; the generated URDF has no materials, so rviz draws it
-       grey), and hidden from the lidar: visibility_mask 0x01 below renders
-       none of the robot, and lidar_self_filter models the blind sector
-       instead, as on hardware. -->
+  <!-- Only our model is hidden from the lidar; opponent copies render with
+       the field's default flags. lidar_self_filter models our blind sector,
+       as on hardware. Colour is gz-only (the generated URDF has no material). -->
+  <xacro:property name="is_opponent" value="$(arg opponent)"/>
+  <xacro:property name="lidar_visibility" value="${'0xFFFFFFFF' if is_opponent else '0xFFFFFFFE'}"/>
   <xacro:macro name="body_visual" params="link rgb">
     <gazebo reference="${link}">
       <visual>
@@ -34,7 +35,7 @@
           <diffuse>${rgb} 1</diffuse>
           <specular>0.3 0.3 0.3 1</specular>
         </material>
-        <visibility_flags>0xFFFFFFFE</visibility_flags>
+        <visibility_flags>${lidar_visibility}</visibility_flags>
       </visual>
     </gazebo>
   </xacro:macro>
