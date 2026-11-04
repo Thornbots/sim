@@ -14,6 +14,7 @@
   <xacro:arg name="mcb_game_stage" default="4"/>
   <xacro:arg name="mcb_device_link" default="/tmp/mcb_emulator_pty"/>
   <xacro:arg name="uart_relay_fixture" default="false"/>
+  <xacro:arg name="uart_deterministic" default="false"/>
   <xacro:arg name="uart_baud" default="115200"/>
   <xacro:arg name="mcb_read_delay_ms" default="0"/>
   <xacro:arg name="mcb_auto_fire" default="true"/>
@@ -212,6 +213,7 @@
         <game_stage>$(arg mcb_game_stage)</game_stage>
         <device_link>$(arg mcb_device_link)</device_link>
         <uart_relay_fixture>$(arg uart_relay_fixture)</uart_relay_fixture>
+        <uart_deterministic>$(arg uart_deterministic)</uart_deterministic>
         <uart_baud>$(arg uart_baud)</uart_baud>
         <mcb_read_delay_ms>$(arg mcb_read_delay_ms)</mcb_read_delay_ms>
         <auto_fire>$(arg mcb_auto_fire)</auto_fire>

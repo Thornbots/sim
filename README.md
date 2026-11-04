@@ -1351,6 +1351,20 @@ metadata or bridge publication acknowledgment. Bridge stamps therefore include
 grid and scheduling error, and this fixture does not establish deterministic UART
 lockstep. The suite does not accept these overrides until it forwards them.
 
+`run_tests:=false uart_deterministic:=true` enables the experimental bridge
+metadata and per-frame acknowledgment hold. It requires lockstep. Frame
+capture uses the firmware cycle in which the first byte was observed; an
+unattributed byte, malformed frame or bad acknowledgment fails the session.
+This mode is not yet accepted for scored runs: see the
+[hosted diagnostic](docs/uart-coordination-2026-11-03.md) for the remaining checks.
+With the hosted firmware built, exercise the plugin, PTY, bridge and ack faults
+in an isolated container from the workspace root:
+
+```sh
+python3 src/sim/test/test_uart_plugin_integration.py \
+  /workspaces/isaac_ros-dev/src/firmware/MCBV3/MCB-project/build/sim/scons-release/MCB-project.elf
+```
+
 By default this gates MCB acknowledgments, not the complete hit path: UART is
 not modeled in sim time, and the other
 CV/localization chains and wall-time bring-up remain asynchronous. It does not

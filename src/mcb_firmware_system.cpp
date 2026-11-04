@@ -1,10 +1,12 @@
 // Copyright 2026 Thornbots. SPDX-License-Identifier: Apache-2.0
 #include <array>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <string>
 #include <ament_index_cpp/get_package_prefix.hpp>
 #include <gz/plugin/Register.hh>
+#include <gz/msgs/clock.pb.h>
 #include <gz/sim/Link.hh>
 #include <gz/sim/Model.hh>
 #include <gz/sim/System.hh>
@@ -12,8 +14,12 @@
 #include <gz/sim/components/Inertial.hh>
 #include <gz/sim/components/JointPosition.hh>
 #include <gz/sim/components/JointVelocity.hh>
+#include <gz/transport/Node.hh>
 #include <geometry_msgs/msg/twist.hpp>
+#include <dji_serial_bridge/msg/sim_frame_metadata.hpp>
+#include <dji_serial_bridge/msg/sim_frame_ack.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rosgraph_msgs/msg/clock.hpp>
 #include <std_msgs/msg/header.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "sim/mcb_firmware.hpp"
@@ -23,7 +29,8 @@
 namespace sim {
 class McbFirmwareSystem : public gz::sim::System,
                           public gz::sim::ISystemConfigure,
-                          public gz::sim::ISystemPreUpdate {
+                          public gz::sim::ISystemPreUpdate,
+                          public gz::sim::ISystemPostUpdate {
 public:
   void Configure(const gz::sim::Entity &entity,
                  const std::shared_ptr<const sdf::Element> &sdf,
@@ -111,17 +118,58 @@ public:
     if (backend != "hosted" && backend != "renode") throw std::runtime_error("Unknown MCB backend: " + backend);
     const auto adapter = backend == "renode" ?
         ament_index_cpp::get_package_prefix("sim") + "/lib/sim/mcb_type_c" : "";
-    if (sdf->Get<bool>("uart_relay_fixture", false).first) {
+    coordinated_ = sdf->Get<bool>("uart_deterministic", false).first;
+    if (coordinated_) {
+      clock_pub_ = gz_node_.Advertise<gz::msgs::Clock>("/clock");
+      clock_sub_ = node_->create_subscription<rosgraph_msgs::msg::Clock>(
+          "/clock", rclcpp::ClockQoS(), [this](rosgraph_msgs::msg::Clock::ConstSharedPtr msg) {
+            const auto &stamp = msg->clock;
+            if (stamp.sec >= 0 && stamp.nanosec < 1'000'000'000u)
+              clock_ns_ = static_cast<int64_t>(stamp.sec) * 1'000'000'000 + stamp.nanosec;
+          });
+      ready_sub_ = node_->create_subscription<std_msgs::msg::Header>(
+          "/dji_serial_bridge/sim_clock_ready", rclcpp::QoS(10).reliable(),
+          [this](std_msgs::msg::Header::ConstSharedPtr msg) {
+            const auto &stamp = msg->stamp;
+            if (stamp.sec >= 0 && stamp.nanosec < 1'000'000'000u)
+              ready_ns_ = static_cast<int64_t>(stamp.sec) * 1'000'000'000 + stamp.nanosec;
+          });
+      metadata_ = node_->create_publisher<dji_serial_bridge::msg::SimFrameMetadata>(
+          "/dji_serial_bridge/sim_frame_metadata", rclcpp::QoS(32).reliable());
+      ack_ = node_->create_subscription<dji_serial_bridge::msg::SimFrameAck>(
+          "/dji_serial_bridge/sim_frame_ack", rclcpp::QoS(32).reliable(),
+          [this](dji_serial_bridge::msg::SimFrameAck::ConstSharedPtr msg) {
+            const auto &stamp = msg->header.stamp;
+            const int64_t publication_ns = static_cast<int64_t>(stamp.sec) * 1'000'000'000 + stamp.nanosec;
+            if (!msg->published || pending_.empty() ||
+                pending_.front().id != msg->frame_id || stamp.sec < 0 ||
+                stamp.nanosec >= 1'000'000'000u || publication_ns != pending_.front().delivery_ns) {
+              failure_ = "invalid UART acknowledgment: " + msg->reason;
+              return;
+            }
+            pending_.pop_front();
+          });
+    }
+    if (coordinated_ || sdf->Get<bool>("uart_relay_fixture", false).first) {
       relay_ = std::make_unique<UartRelay>(pty_->master(),
           sdf->Get<unsigned int>("uart_baud", 115200).first,
           sdf->Get<unsigned int>("uart_baud", 115200).first,
-          static_cast<int64_t>(sdf->Get<int>("mcb_read_delay_ms", 0).first) * 1'000'000);
-      RCLCPP_WARN(node_->get_logger(), "UART relay fixture: timestamps and publication are not lockstep");
+          static_cast<int64_t>(sdf->Get<int>("mcb_read_delay_ms", 0).first) * 1'000'000,
+          coordinated_);
+      if (!coordinated_) RCLCPP_WARN(node_->get_logger(), "UART relay fixture: timestamps and publication are not lockstep");
     }
     firmware_ = std::make_unique<mcb_firmware::Firmware>(relay_ ? relay_->child_fd() : pty_->master(),
         sdf->Get<std::string>("firmware_binary", "").first, drive_,
         sdf->Get<bool>("auto_fire", true).first, adapter);
     if (relay_) relay_->close_child();
+    if (coordinated_) {
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      while (metadata_->get_subscription_count() == 0 || ack_->get_publisher_count() == 0) {
+        if (std::chrono::steady_clock::now() >= deadline)
+          throw std::runtime_error("UART bridge coordination discovery timeout");
+        executor_->spin_once(std::chrono::milliseconds(10));
+      }
+    }
     RCLCPP_INFO(node_->get_logger(), "MCB physical motor system: %s, drive=%s",
                 firmware_->binary().c_str(), drive_.c_str());
   }
@@ -138,6 +186,24 @@ public:
     if (info.paused) return;
     current_time_ = std::chrono::duration<double>(info.simTime).count();
     executor_->spin_some();
+    if (!failure_.empty()) throw std::runtime_error(failure_);
+    if (coordinated_ && !pending_.empty())
+      throw std::runtime_error("UART advanced with acknowledgment pending");
+    if (coordinated_ && !clock_ready_) {
+      const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
+      if (held == 0) return;
+      gz::msgs::Clock clock;
+      clock.mutable_sim()->set_sec(held / 1'000'000'000);
+      clock.mutable_sim()->set_nsec(held % 1'000'000'000);
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      while (ready_ns_ != held || clock_ns_ != held) {
+        if (std::chrono::steady_clock::now() >= deadline)
+          throw std::runtime_error("UART bridge clock discovery timeout");
+        if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART delivery clock publication failed");
+        executor_->spin_once(std::chrono::milliseconds(10));
+      }
+      clock_ready_ = true;
+    }
     const auto pos = body_.WorldPose(ecm);
     const auto vel = body_.WorldLinearVelocity(ecm);
     const auto rate = body_.WorldAngularVelocity(ecm);
@@ -184,6 +250,18 @@ public:
     if (relay_) relay_->before_step(uart_time);
     const auto output = firmware_->step(1, readings, referee_, feedback, external_, imu);
     if (relay_) relay_->after_step(uart_time);
+    if (coordinated_) {
+      for (const auto &frame : relay_->take_delivered()) {
+        if (pending_.size() >= 32) throw std::runtime_error("UART acknowledgment queue overflow");
+        pending_.push_back({frame.id, uart_time});
+        dji_serial_bridge::msg::SimFrameMetadata metadata;
+        metadata.header.stamp = rclcpp::Time(frame.capture_ns, RCL_ROS_TIME);
+        metadata.delivery_time = rclcpp::Time(uart_time, RCL_ROS_TIME);
+        metadata.frame_id = frame.id;
+        metadata.frame = frame.bytes;
+        metadata_->publish(metadata);
+      }
+    }
     plant_.commands = output.motors;
     const auto effort = plant_.gimbal_effort(yv->Data()[0], pv->Data()[0]);
     for (const auto &pair : {std::make_pair(yaw_, effort[0]), std::make_pair(pitch_, effort[1])}) {
@@ -224,7 +302,34 @@ public:
     }
   }
 
+  void PostUpdate(const gz::sim::UpdateInfo &info, const gz::sim::EntityComponentManager &) override {
+    if (!coordinated_ || info.paused) return;
+    if (pending_.empty() && failure_.empty()) return;
+    const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
+    gz::msgs::Clock clock;
+    clock.mutable_sim()->set_sec(held / 1'000'000'000);
+    clock.mutable_sim()->set_nsec(held % 1'000'000'000);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    while (failure_.empty() && (!pending_.empty() || clock_ns_ < held)) {
+      if (std::chrono::steady_clock::now() >= deadline)
+        throw std::runtime_error("UART acknowledgment or ROS clock timeout: pending=" +
+            std::to_string(pending_.size()) + " clock=" + std::to_string(clock_ns_) +
+            " held=" + std::to_string(held));
+      if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART delivery clock publication failed");
+      executor_->spin_once(std::chrono::milliseconds(10));
+    }
+    if (!failure_.empty()) throw std::runtime_error(failure_);
+    if (clock_ns_ != held) throw std::runtime_error("ROS clock overshot UART hold");
+  }
+
 private:
+  gz::transport::Node gz_node_;
+  gz::transport::Node::Publisher clock_pub_;
+  rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr ready_sub_;
+  int64_t clock_ns_ = 0;
+  int64_t ready_ns_ = 0;
+  bool clock_ready_ = false;
   gz::sim::Link body_{gz::sim::kNullEntity};
   gz::sim::Link head_{gz::sim::kNullEntity};
   gz::sim::Entity yaw_ = gz::sim::kNullEntity, pitch_ = gz::sim::kNullEntity;
@@ -235,7 +340,12 @@ private:
   std::array<double, 3> external_{};
   double current_time_ = 0, command_time_ = 0;
   std::string drive_, backend_;
-  bool auto_fire_ = true;
+  bool auto_fire_ = true, coordinated_ = false;
+  struct PendingAck { uint64_t id; int64_t delivery_ns; };
+  std::deque<PendingAck> pending_;
+  std::string failure_;
+  rclcpp::Publisher<dji_serial_bridge::msg::SimFrameMetadata>::SharedPtr metadata_;
+  rclcpp::Subscription<dji_serial_bridge::msg::SimFrameAck>::SharedPtr ack_;
   double mass_ = 0;
   std::shared_ptr<rclcpp::Context> context_;
   rclcpp::Node::SharedPtr node_;
@@ -251,4 +361,5 @@ private:
 };
 }  // namespace sim
 GZ_ADD_PLUGIN(::sim::McbFirmwareSystem, gz::sim::System,
-              gz::sim::ISystemConfigure, gz::sim::ISystemPreUpdate)
+              gz::sim::ISystemConfigure, gz::sim::ISystemPreUpdate,
+              gz::sim::ISystemPostUpdate)

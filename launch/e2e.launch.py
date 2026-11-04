@@ -62,6 +62,8 @@ def _sim(context):
     if int(config['uart_baud']) not in (9600, 19200, 38400, 57600, 115200, 230400,
                                         460800, 921600, 2000000, 4000000):
         raise ValueError('uart_baud must be supported by dji_serial_bridge')
+    if _is_true(context, 'uart_deterministic') and not _is_true(context, 'lockstep'):
+        raise ValueError('uart_deterministic requires lockstep')
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
     spawn = {'x': '4.625', 'y': '0.0', 'yaw': str(SPAWN_YAW)}
@@ -76,6 +78,7 @@ def _sim(context):
                           'camera': 'false', 'pose_emulator': 'false',
                           'mcb_physics': 'true',
                           'uart_relay_fixture': config['uart_relay_fixture'],
+                          'uart_deterministic': config['uart_deterministic'],
                           'uart_baud': config['uart_baud'],
                           'mcb_read_delay_ms': config['mcb_read_delay_ms'],
                           'mcb_device_link': config['mcb_device_link'],
@@ -94,8 +97,10 @@ def _is_true(context, name):
 
 def _tests(context):
     config = context.launch_configurations
-    if _is_true(context, 'uart_relay_fixture') or config['uart_baud'] != '115200' or config['mcb_read_delay_ms'] != '0':
-        raise RuntimeError('UART fixture/baud overrides require run_tests:=false; suite does not forward them')
+    if (_is_true(context, 'uart_deterministic') or _is_true(context, 'uart_relay_fixture') or
+            config['uart_baud'] != '115200' or config['mcb_read_delay_ms'] != '0'):
+        raise RuntimeError('UART fixture/baud overrides require run_tests:=false; '
+                           'suite does not forward them')
     cmd = ['ros2', 'run', 'sim', 'e2e_suite', '--stage', config['stage'],
            '--backend', config['backend']]
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
@@ -171,9 +176,13 @@ def generate_launch_description():
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
+        additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': os.path.join(
+            get_package_share_directory('thornbots_pkg'), 'config', 'fastdds_udp_only.xml')},
         parameters=[{'use_sim_time': True,
                      'device': LaunchConfiguration('mcb_device_link'),
                      'baudrate': LaunchConfiguration('uart_baud'),
+                     'sim_frame_metadata': ParameterValue(
+                         LaunchConfiguration('uart_deterministic'), value_type=bool),
                      'debug_log': False}])
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
@@ -201,6 +210,8 @@ def generate_launch_description():
         LaunchConfiguration('mcb_device_link'),
         PythonExpression(["'600' if '", LaunchConfiguration('backend'),
                           "' == 'renode' else '30'"]),
+        PythonExpression(["'device_only' if '", LaunchConfiguration('uart_deterministic'),
+                          "'.lower() in ('true', '1', 'yes') else 'frame'"]),
     ],
         output='screen')
     uart_start = RegisterEventHandler(OnProcessExit(
@@ -251,8 +262,10 @@ def generate_launch_description():
                 + [TimerAction(period=ROBOT_DELAY_S, actions=[robot])])
 
     return LaunchDescription([
+        DeclareLaunchArgument('uart_deterministic', default_value='false',
+                              description='Experimental coordinated UART; requires lockstep'),
         DeclareLaunchArgument('uart_relay_fixture', default_value='false',
-                              description='Experimental transport only; no deterministic timestamps/acks'),
+                              description='Transport without deterministic timestamps or acks'),
         DeclareLaunchArgument('uart_baud', default_value='115200'),
         DeclareLaunchArgument('mcb_read_delay_ms', default_value='0'),
         DeclareLaunchArgument('stage', default_value='mcb_parked',
