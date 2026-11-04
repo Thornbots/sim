@@ -137,6 +137,20 @@ TEST_F(DetectorTest, EpochZeroWaitsForTruthAndAcknowledgesScheduledTick)
   EXPECT_EQ(acks.front(), 17000000u);
   EXPECT_EQ(outputs.front(), 17000000u);
   EXPECT_EQ(detection_counts.front(), 0u);
+  pose(ours, "sentry", 34000000);
+  pose(theirs, "opponent_0", 34000000);
+  time(33000000);
+  EXPECT_FALSE(wait([this] {return acks.size() > 1;}, 100ms));
+  time(34000000);
+  ASSERT_TRUE(wait([this] {return acks.size() == 2 && outputs.size() == 2;}));
+  EXPECT_EQ(acks.back(), 34000000u);
+  EXPECT_EQ(outputs.back(), 34000000u);
+  pose(ours, "sentry", 50000000);
+  pose(theirs, "opponent_0", 50000000);
+  time(50000000);
+  ASSERT_TRUE(wait([this] {return acks.size() == 3 && outputs.size() == 3;}));
+  EXPECT_EQ(acks.back(), 50000000u);
+  EXPECT_EQ(outputs.back(), 50000000u);
 }
 
 TEST_F(DetectorTest, DelayedStartAndLateReadySubscriber)

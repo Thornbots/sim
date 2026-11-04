@@ -502,7 +502,7 @@ Its optional `deterministic_epoch_zero` mode requires `use_sim_time` and an
 observed `/clock` at zero while the clock is held there. It publishes a
 reliable transient-local `~/ready` header only after its 1 ms timer is
 initialized at zero; a nonzero first clock or a clock that advances during
-initialization fails closed. Capture stamps are `round(index * 1000 / rate_hz)`
+initialization fails closed. Capture stamps are `ceil(index * 1000 / rate_hz)`
 milliseconds (index starts at one). After all model poses cover a tick, it
 publishes the detection array, including empty arrays, then a `~/consumed`
 header with the same stamp. Missing truth does not produce an acknowledgment;

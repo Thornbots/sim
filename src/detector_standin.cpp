@@ -227,7 +227,7 @@ private:
     last_clock_ns_ = current;
     while (true) {
       const int64_t scheduled = static_cast<int64_t>(
-        std::llround(static_cast<double>(next_tick_) * 1000.0 / rate_hz_)) * 1000000;
+        std::ceil(static_cast<double>(next_tick_) * 1000.0 / rate_hz_)) * 1000000;
       if (scheduled > current) {
         break;
       }
