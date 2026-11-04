@@ -18,6 +18,7 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "sim/mcb_firmware.hpp"
 #include "sim/mcb_sensors.hpp"
+#include "sim/uart_relay.hpp"
 
 namespace sim {
 class McbFirmwareSystem : public gz::sim::System,
@@ -110,15 +111,24 @@ public:
     if (backend != "hosted" && backend != "renode") throw std::runtime_error("Unknown MCB backend: " + backend);
     const auto adapter = backend == "renode" ?
         ament_index_cpp::get_package_prefix("sim") + "/lib/sim/mcb_type_c" : "";
-    firmware_ = std::make_unique<mcb_firmware::Firmware>(pty_->master(),
+    if (sdf->Get<bool>("uart_relay_fixture", false).first) {
+      relay_ = std::make_unique<UartRelay>(pty_->master(),
+          sdf->Get<unsigned int>("uart_baud", 115200).first,
+          sdf->Get<unsigned int>("uart_baud", 115200).first,
+          static_cast<int64_t>(sdf->Get<int>("mcb_read_delay_ms", 0).first) * 1'000'000);
+      RCLCPP_WARN(node_->get_logger(), "UART relay fixture: timestamps and publication are not lockstep");
+    }
+    firmware_ = std::make_unique<mcb_firmware::Firmware>(relay_ ? relay_->child_fd() : pty_->master(),
         sdf->Get<std::string>("firmware_binary", "").first, drive_,
         sdf->Get<bool>("auto_fire", true).first, adapter);
+    if (relay_) relay_->close_child();
     RCLCPP_INFO(node_->get_logger(), "MCB physical motor system: %s, drive=%s",
                 firmware_->binary().c_str(), drive_.c_str());
   }
 
   ~McbFirmwareSystem() override {
     firmware_.reset();
+    relay_.reset();
     pty_.reset();
     executor_.reset();
     if (context_) context_->shutdown("MCB physics system destroyed");
@@ -170,7 +180,10 @@ public:
         *head_accel + gz::math::Vector3d(0, 0, 9.80665)) / 9.80665;
     const std::array<double, 6> imu{gyro.X(), gyro.Y(), gyro.Z(),
                                   acceleration.X(), acceleration.Y(), acceleration.Z()};
+    const auto uart_time = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
+    if (relay_) relay_->pump(uart_time);
     const auto output = firmware_->step(1, readings, referee_, feedback, external_, imu);
+    if (relay_) relay_->pump(uart_time);
     plant_.commands = output.motors;
     const auto effort = plant_.gimbal_effort(yv->Data()[0], pv->Data()[0]);
     for (const auto &pair : {std::make_pair(yaw_, effort[0]), std::make_pair(pitch_, effort[1])}) {
@@ -232,6 +245,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motors_, setpoints_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr command_;
   std::unique_ptr<mcb_firmware::PtyLink> pty_;
+  std::unique_ptr<UartRelay> relay_;
   std::unique_ptr<mcb_firmware::Firmware> firmware_;
   std::optional<std::array<double, 3>> spawn_;
 };

@@ -324,6 +324,9 @@ def generate_launch_description():
                                   ' mcb_backend:=', LaunchConfiguration('mcb_backend'),
                                   ' mcb_game_stage:=', LaunchConfiguration('mcb_game_stage'),
                                   ' mcb_device_link:=', LaunchConfiguration('mcb_device_link'),
+                                  ' uart_relay_fixture:=', LaunchConfiguration('uart_relay_fixture'),
+                                  ' uart_baud:=', LaunchConfiguration('uart_baud'),
+                                  ' mcb_read_delay_ms:=', LaunchConfiguration('mcb_read_delay_ms'),
                                   ' mcb_auto_fire:=', LaunchConfiguration('mcb_auto_fire'),
                                   ' name:=', robot_name]),
             '-name', robot_name,
@@ -701,6 +704,9 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument('uart_relay_fixture', default_value='false'),
+        DeclareLaunchArgument('uart_baud', default_value='115200'),
+        DeclareLaunchArgument('mcb_read_delay_ms', default_value='0'),
         DeclareLaunchArgument('mcb_physics', default_value='false'),
         DeclareLaunchArgument('mcb_drive', default_value='stop'),
         DeclareLaunchArgument('firmware_binary', default_value=''),

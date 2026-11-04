@@ -1341,12 +1341,18 @@ The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.
 `lockstep:=false` retains the ungated control run.
 
-`sim/uart_wire.hpp` provides a separately tested 8N1 simulation-time byte queue
-for the planned UART relay. It is not connected to the firmware or bridge yet;
-delivery hold points and bridge acknowledgments are still required.
+With `run_tests:=false uart_relay_fixture:=true`, e2e routes the firmware UART
+through a plugin-owned socketpair and independent 8N1 queues to the bridge PTY.
+`uart_baud` configures both directions and the bridge (default 115200);
+`mcb_read_delay_ms` adds receive delay (default 0). Bytes
+are delivered at the first 1 ms physics tick after their wire deadline; queued
+relay writes survive backpressure. This experimental fixture has no frame capture
+metadata or bridge publication acknowledgment. Bridge stamps therefore include
+grid and scheduling error, and this fixture does not establish deterministic UART
+lockstep. The suite does not accept these overrides until it forwards them.
 
-This gates MCB acknowledgments, not the complete hit path: UART is not modeled
-in sim time, and the other
+By default this gates MCB acknowledgments, not the complete hit path: UART is
+not modeled in sim time, and the other
 CV/localization chains and wall-time bring-up remain asynchronous. It does not
 establish identical shot sequences. Live gates are in
 [ROADMAP T17](../docs/ROADMAP.md#a-acceptance-details).
