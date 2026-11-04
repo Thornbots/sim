@@ -33,6 +33,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
     ExecuteProcess,
+    GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
@@ -43,7 +44,7 @@ from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetParameter
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
@@ -79,6 +80,8 @@ def _sim(context):
                           'mcb_physics': 'true',
                           'uart_relay_fixture': config['uart_relay_fixture'],
                           'uart_deterministic': config['uart_deterministic'],
+                          'uart_epoch_zero': config['deterministic_epoch_zero'],
+                          'verify_epoch_zero_spawn': config['deterministic_epoch_zero'],
                           'uart_baud': config['uart_baud'],
                           'mcb_read_delay_ms': config['mcb_read_delay_ms'],
                           'mcb_device_link': config['mcb_device_link'],
@@ -97,7 +100,8 @@ def _is_true(context, name):
 
 def _tests(context):
     config = context.launch_configurations
-    if (_is_true(context, 'uart_deterministic') or _is_true(context, 'uart_relay_fixture') or
+    if (_is_true(context, 'deterministic_epoch_zero') or
+            _is_true(context, 'uart_deterministic') or _is_true(context, 'uart_relay_fixture') or
             config['uart_baud'] != '115200' or config['mcb_read_delay_ms'] != '0'):
         raise RuntimeError('UART fixture/baud overrides require run_tests:=false; '
                            'suite does not forward them')
@@ -141,6 +145,8 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'use_sim_time': True,
+                'deterministic_epoch_zero': ParameterValue(
+                    LaunchConfiguration('deterministic_epoch_zero'), value_type=bool),
                 'robot_description': ParameterValue(
                     Command(['xacro ', xacro_file]), value_type=str),
                 'opponents': opponents,
@@ -167,10 +173,6 @@ def generate_launch_description():
         arguments=[f'/model/{OPPONENT}/path@nav_msgs/msg/Odometry]gz.msgs.Odometry'],
         remappings=[(f'/model/{OPPONENT}/path', path_topic)],
         parameters=[{'use_sim_time': True}])
-    opponent_driver = Node(
-        package='sim', executable='opponent_driver', name='opponent_driver', output='screen',
-        parameters=[{'use_sim_time': True, 'name': OPPONENT}],
-        remappings=[('/target/ground_truth_odom', path_topic)])
     # The hosted firmware parked (DrivetrainStopCommand) on a pty, as
     # auto.launch.py starts the bridge and relay with real_hardware:=true.
     bridge = Node(
@@ -194,6 +196,8 @@ def generate_launch_description():
         launch_arguments={'red_start_x': '-4.625', 'red_start_y': '0.0',
                           'blue_start_x': '4.625', 'blue_start_y': '0.0',
                           'real_hardware': 'false', 'localization_mode': 'amcl',
+                          'deterministic_epoch_zero': LaunchConfiguration(
+                              'deterministic_epoch_zero'),
                           'pose_latency_s': LaunchConfiguration('pose_latency_s'),
                           'gimbal_lag_s': LaunchConfiguration('gimbal_lag_s'),
                           'firmware_latency_s': LaunchConfiguration('firmware_latency_s'),
@@ -217,22 +221,50 @@ def generate_launch_description():
     uart_start = RegisterEventHandler(OnProcessExit(
         target_action=uart_ready,
         on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
-            EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
-    common = [path_bridge, opponent_driver, uart_start, uart_ready]
+            OpaqueFunction(function=lambda context: finish_suite(
+                event, context, 'MCB UART readiness')
+                           if _is_true(context, 'deterministic_epoch_zero') else [
+                               EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))])]))
+    common = [path_bridge, uart_start, uart_ready]
+
     # One board batch ahead avoids outrunning the wall deadline during learning.
-    coordinator = Node(
-        package='sim', executable='lockstep_coordinator', output='screen',
-        parameters=[{'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
-                     'learn_margin_s': ParameterValue(PythonExpression([
-                         "'0.005' if '", LaunchConfiguration('backend'),
-                         "' == 'renode' else '0.05'"]), value_type=float),
-                     'mcb_batch.phase_s': 0.0, 'mcb_batch.acks': ['/mcb_emulator/tick']}],
-        condition=IfCondition(LaunchConfiguration('lockstep')))
+    def coordinator(deterministic, extra_ready, startup_timeout):
+        params = {'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
+                  'learn_margin_s': ParameterValue(PythonExpression([
+                      "'0.005' if '", LaunchConfiguration('backend'),
+                      "' == 'renode' else '0.05'"]), value_type=float),
+                  'mcb_batch.phase_s': 0.0, 'mcb_batch.acks': ['/mcb_emulator/tick']}
+        if deterministic:
+            params.update(strict_startup=True, readiness_topics=[
+                '/detector_standin/ready', '/point_to_cv_target/epoch_zero_ready',
+                '/opponent_driver/ready', '/mcb_emulator/epoch_zero_ready',
+                '/robot_spawn_ready/ready'] + ([extra_ready] if extra_ready else []),
+                startup_timeout_s=startup_timeout)
+        return Node(
+            package='sim', executable='lockstep_coordinator', output='screen',
+            parameters=[params],
+            condition=IfCondition(LaunchConfiguration('lockstep')))
 
     def stack(context):
         stage = context.launch_configurations['stage']
         if stage not in STAGES:
             raise RuntimeError(f"stage must be one of {', '.join(STAGES)}, not '{stage}'")
+        deterministic = _is_true(context, 'deterministic_epoch_zero')
+        if deterministic and (stage != 'mcb_parked' or not _is_true(context, 'lockstep') or
+                              not _is_true(context, 'uart_deterministic') or
+                              _is_true(context, 'uart_relay_fixture') or
+                              context.launch_configurations['backend'] != 'hosted' or
+                              not context.launch_configurations['firmware_binary']):
+            raise RuntimeError('deterministic_epoch_zero requires mcb_parked, lockstep, '
+                               'uart_deterministic without uart_relay_fixture, hosted backend '
+                               'and explicit firmware_binary')
+        opponent_params = {'use_sim_time': True, 'name': OPPONENT}
+        if deterministic:
+            # target_driver starts at offset zero, rotated by -pi/2.
+            opponent_params['initial_position'] = [0.0, -parked_paths['lateral']['center_x']]
+        opponent_driver = Node(
+            package='sim', executable='opponent_driver', name='opponent_driver', output='screen',
+            parameters=[opponent_params], remappings=[('/target/ground_truth_odom', path_topic)])
         extras = []
         if not _is_true(context, 'headless') and display_error() is None:
             extras.append(Node(package='sim', executable='target_state_markers',
@@ -257,11 +289,38 @@ def generate_launch_description():
                     arguments=[f'/model/{name}/path@nav_msgs/msg/Odometry]gz.msgs.Odometry'],
                     remappings=[(f'/model/{name}/path', topic)],
                     parameters=[{'use_sim_time': True}])]
-        return ([coordinator, detector(opponents)] + extras + common
+        extra_ready = context.launch_configurations['epoch_readiness_extra']
+        startup_timeout = float(context.launch_configurations['epoch_startup_timeout_s'])
+        if not math.isfinite(startup_timeout) or startup_timeout <= 0 or startup_timeout > 30:
+            raise ValueError('epoch_startup_timeout_s must be in (0, 30]')
+        if extra_ready and (not deterministic or not extra_ready.startswith('/')):
+            raise ValueError('epoch_readiness_extra requires deterministic mode and an '
+                             'absolute topic')
+        coordination = coordinator(deterministic, extra_ready, startup_timeout)
+        delay = float(context.launch_configurations['epoch_coordinator_delay_s'])
+        if not math.isfinite(delay) or delay < 0 or delay > 10 or (delay and not deterministic):
+            raise ValueError('epoch_coordinator_delay_s requires deterministic mode and 0..10 s')
+        failure = RegisterEventHandler(OnProcessExit(
+            target_action=coordination,
+            on_exit=lambda event, context: finish_suite(event, context, 'lockstep coordinator')
+            if deterministic and event.returncode else []))
+        coordinator_action = (TimerAction(period=delay, actions=[coordination])
+                              if delay else coordination)
+        return ([failure, coordinator_action, detector(opponents), opponent_driver] + extras
+                + common
                 + ([match_environment] if stage in DRIVING else [target_driver])
-                + [TimerAction(period=ROBOT_DELAY_S, actions=[robot])])
+                + ([GroupAction([SetParameter(name='tick_topic', value='/sim/e2e/aim_tick'),
+                                 robot])] if deterministic else
+                   [TimerAction(period=ROBOT_DELAY_S, actions=[robot])]))
 
     return LaunchDescription([
+        DeclareLaunchArgument('deterministic_epoch_zero', default_value='false'),
+        DeclareLaunchArgument('epoch_coordinator_delay_s', default_value='0',
+                              description='Diagnostic startup-order delay, wall seconds'),
+        DeclareLaunchArgument('epoch_readiness_extra', default_value='',
+                              description='Optional additional diagnostic readiness topic'),
+        DeclareLaunchArgument('epoch_startup_timeout_s', default_value='30',
+                              description='Readiness deadline in wall seconds'),
         DeclareLaunchArgument('uart_deterministic', default_value='false',
                               description='Experimental coordinated UART; requires lockstep'),
         DeclareLaunchArgument('uart_relay_fixture', default_value='false',

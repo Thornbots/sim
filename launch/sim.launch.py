@@ -52,6 +52,7 @@ from sim.auto_explore import SPAWN_YAW
 from sim.clock_bridge import clock_bridge_node
 from sim.display import display_error
 from sim.mcb_link import default_mcb_link
+from sim.suite_exit import finish_suite
 
 
 RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
@@ -72,7 +73,8 @@ def _world_with_rtf(context):
             raise RuntimeError('real_time_factor:= needs a <real_time_factor> tag in the world')
         sdf = RTF_TAG.sub(f'<real_time_factor>{rtf}</real_time_factor>', sdf)
     if lockstep:
-        epoch_zero = context.launch_configurations['uart_epoch_zero'].lower() in ('true', '1', 'yes')
+        epoch_zero = context.launch_configurations['uart_epoch_zero'].lower() in (
+            'true', '1', 'yes')
         startup = ('<strict_startup>true</strict_startup>'
                    '<epoch_zero_startup>true</epoch_zero_startup>' if epoch_zero else '')
         max_wait = '30.0' if epoch_zero else '5.0'
@@ -309,7 +311,8 @@ def generate_launch_description():
     )
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
-    clock_bridge = clock_bridge_node(condition=UnlessCondition(LaunchConfiguration('uart_deterministic')))
+    clock_bridge = clock_bridge_node(
+        condition=UnlessCondition(LaunchConfiguration('uart_deterministic')))
     uart_clock_bridge = clock_bridge_node(
         '/sim/uart_clock', condition=IfCondition(LaunchConfiguration('uart_deterministic')))
 
@@ -337,7 +340,8 @@ def generate_launch_description():
                                   ' uart_deterministic:=',
                                   LaunchConfiguration('uart_deterministic'),
                                   ' uart_epoch_zero:=', LaunchConfiguration('uart_epoch_zero'),
-                                  ' uart_epoch_zero_ack:=', LaunchConfiguration('uart_epoch_zero_ack'),
+                                  ' uart_epoch_zero_ack:=',
+                                  LaunchConfiguration('uart_epoch_zero_ack'),
                                   ' uart_baud:=', LaunchConfiguration('uart_baud'),
                                   ' mcb_read_delay_ms:=', LaunchConfiguration('mcb_read_delay_ms'),
                                   ' mcb_auto_fire:=', LaunchConfiguration('mcb_auto_fire'),
@@ -347,7 +351,10 @@ def generate_launch_description():
             '-y', LaunchConfiguration('y'),
             '-z', LaunchConfiguration('z'),
             '-Y', LaunchConfiguration('yaw'),
-            '-allow_renaming', 'true',
+            '-allow_renaming', PythonExpression([
+                "'false' if '",
+                LaunchConfiguration('uart_epoch_zero'),
+                "'.lower() in ('true', '1', 'yes') else 'true'"]),
         ],
     )
     # Keep a short delay before spawning so gz sim's entity-creation service
@@ -359,14 +366,31 @@ def generate_launch_description():
         OnProcessStart(
             target_action=clock_bridge,
             on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
-        )
+        ), condition=UnlessCondition(LaunchConfiguration('uart_epoch_zero'))
     )
     delayed_uart_spawn_robot = RegisterEventHandler(
         OnProcessStart(
             target_action=uart_clock_bridge,
             on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
-        )
+        ), condition=UnlessCondition(LaunchConfiguration('uart_epoch_zero'))
     )
+    robot_spawn_ready = Node(
+        package='sim', executable='robot_spawn_ready', name='robot_spawn_ready', output='screen',
+        condition=IfCondition(LaunchConfiguration('verify_epoch_zero_spawn')),
+        parameters=[{'model': robot_name,
+                     'x': ParameterValue(LaunchConfiguration('x'), value_type=float),
+                     'y': ParameterValue(LaunchConfiguration('y'), value_type=float),
+                     'z': ParameterValue(LaunchConfiguration('z'), value_type=float),
+                     'yaw': ParameterValue(LaunchConfiguration('yaw'), value_type=float)}])
+    spawn_failure = RegisterEventHandler(OnProcessExit(
+        target_action=robot_spawn_ready,
+        on_exit=lambda event, context: finish_suite(event, context, 'robot spawn verification')
+        if event.returncode else []))
+    create_failure = RegisterEventHandler(OnProcessExit(
+        target_action=spawn_robot,
+        on_exit=lambda event, context: finish_suite(event, context, 'robot creation')
+        if event.returncode and context.launch_configurations['uart_epoch_zero'].lower() in
+        ('true', '1', 'yes') else []))
     gz_gui = RegisterEventHandler(
         OnProcessExit(
             target_action=spawn_robot,
@@ -726,6 +750,7 @@ def generate_launch_description():
         DeclareLaunchArgument('uart_relay_fixture', default_value='false'),
         DeclareLaunchArgument('uart_deterministic', default_value='false'),
         DeclareLaunchArgument('uart_epoch_zero', default_value='false'),
+        DeclareLaunchArgument('verify_epoch_zero_spawn', default_value='false'),
         DeclareLaunchArgument('uart_epoch_zero_ack', default_value='/detector_standin/ready'),
         DeclareLaunchArgument('uart_baud', default_value='115200'),
         DeclareLaunchArgument('mcb_read_delay_ms', default_value='0'),
@@ -790,6 +815,12 @@ def generate_launch_description():
         camera_depth_info_bridge,
         delayed_spawn_robot,
         delayed_uart_spawn_robot,
+        create_failure,
+        OpaqueFunction(function=lambda context: [spawn_robot] if
+                       context.launch_configurations['uart_epoch_zero'].lower() in
+                       ('true', '1', 'yes') else []),
+        spawn_failure,
+        robot_spawn_ready,
         gz_gui,
         pose_emulator,
         target_driver,

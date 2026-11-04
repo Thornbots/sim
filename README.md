@@ -1427,7 +1427,25 @@ that topic before releasing physics; use `lockstep:=true` to load the
 epoch-zero gate. Starting unpaused, a nonzero clock or
 acknowledgment, or a missing acknowledgment within 30 seconds fails closed.
 Positive clock publication remains one message per physics step. This option
-requires `uart_deterministic:=true`; it is not yet wired into e2e startup.
+requires `uart_deterministic:=true`.
+
+For the parked E2E diagnostic, build the hosted firmware above and run:
+
+```sh
+ros2 launch sim e2e.launch.py run_tests:=false backend:=hosted \
+  firmware_binary:=/workspaces/isaac_ros-dev/src/firmware/MCBV3/MCB-project/build/sim/scons-release/MCB-project.elf \
+  uart_deterministic:=true deterministic_epoch_zero:=true
+```
+
+The paused gate waits for the robot and opponent scene checks, detector and aim
+timer initialization, and MCB bootstrap before the first 5 ms release. Robot
+creation is immediate and its scene verifier has a 25 s wall deadline. The
+diagnostic requires the parked stage, lockstep, hosted backend and an explicit
+firmware binary; scored runs and other stages reject it. Optional
+`epoch_coordinator_delay_s`, `epoch_readiness_extra` and
+`epoch_startup_timeout_s` exercise startup order and missing-readiness failure.
+The [parked startup evidence](docs/e2e-epoch-zero-2026-11-04.md) records the
+observed first stamps and the remaining downstream gates.
 This mode is not yet accepted for scored runs: see the
 [hosted diagnostic](docs/uart-coordination-2026-11-03.md) for the remaining checks.
 With the hosted firmware built, exercise the plugin, PTY, bridge and ack faults

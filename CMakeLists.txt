@@ -230,6 +230,12 @@ target_link_libraries(opponent_driver gz-transport::core gz-msgs::core tinyxml2:
 ament_target_dependencies(opponent_driver ament_index_cpp nav_msgs rclcpp)
 install(TARGETS opponent_driver DESTINATION lib/${PROJECT_NAME})
 
+add_executable(robot_spawn_ready src/robot_spawn_ready.cpp)
+target_compile_features(robot_spawn_ready PUBLIC cxx_std_17)
+target_link_libraries(robot_spawn_ready gz-transport::core gz-msgs::core)
+ament_target_dependencies(robot_spawn_ready rclcpp std_msgs)
+install(TARGETS robot_spawn_ready DESTINATION lib/${PROJECT_NAME})
+
 add_executable(match_environment src/match_environment.cpp)
 target_compile_features(match_environment PUBLIC cxx_std_17)
 target_link_libraries(match_environment
