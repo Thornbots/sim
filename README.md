@@ -1336,6 +1336,18 @@ outputs. `lockstep_coordinator` waits for that stamped
 at sim zero; delayed acknowledgment
 arrival never sets the phase. Startup runs free until the first acknowledgment.
 
+The coordinator's opt-in `strict_startup:=true` must be paired with the gate's
+SDF `<strict_startup>true</strict_startup>`. The gate starts held and the
+coordinator releases the earliest positive scheduled deadline, rounded up to
+the physics step. A phase-zero 5 ms chain first holds at 5 ms, allowing firmware
+to run before its first acknowledgment; no acknowledgment at zero is required.
+The coordinator repeats bounded releases during discovery and waits for each
+due acknowledgment without learning or skipping phase. A missing hold or ack
+reports an error and stops the coordinator; the strict gate stops Gazebo on its
+own timeout instead of running free. Set the gate timeout longer than the
+coordinator timeout to preserve its diagnostic. This primitive is not yet wired
+into the e2e launch or the remaining robot and detector readiness gates.
+
 `/sim/lockstep/status` reports holds, per-chain wall wait and timeout counts.
 The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.
@@ -1378,8 +1390,8 @@ establish identical shot sequences. Live gates are in
 [ROADMAP T17](../docs/ROADMAP.md#a-acceptance-details).
 
 The on-demand transport test runs a small gz world in its own process group
-and checks the held clock, zero timer phase after a late first acknowledgment,
-and missing-consumer timeout diagnostics:
+and checks held clock, legacy phase and timeouts, plus strict startup discovery,
+delayed and missing acknowledgments, progression and gate timeout:
 
 ```sh
 ros2 run sim lockstep_suite

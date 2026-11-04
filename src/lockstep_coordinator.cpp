@@ -61,6 +61,7 @@ public:
   : Node("lockstep_coordinator")
   {
     step_ns_ = static_cast<int64_t>(declare_parameter("step_s", 0.001) * 1e9);
+    strict_startup_ = declare_parameter("strict_startup", false);
     max_wait_ = std::chrono::duration<double>(declare_parameter("max_wait_s", 2.0));
     margin_ns_ = static_cast<int64_t>(declare_parameter("learn_margin_s", 0.05) * 1e9);
     log_period_ = std::chrono::duration<double>(declare_parameter("log_period_s", 10.0));
@@ -90,6 +91,9 @@ public:
       }
       chains_.push_back(c);
     }
+    if (strict_startup_ && chains_.empty()) {
+      throw std::invalid_argument("strict lockstep needs at least one chain");
+    }
     status_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticStatus>(
       "/sim/lockstep/status", rclcpp::QoS(1).reliable().transient_local());
     release_pub_ = gz_.Advertise<gz::msgs::Time>(
@@ -114,7 +118,7 @@ public:
     if (thread_.joinable()) {thread_.join();}
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      release(kFreeSec * 1000000000LL);  // let gz shut down without a gate timeout
+      if (!strict_startup_) {release(kFreeSec * 1000000000LL);}
     }
     report(true);
   }
@@ -218,11 +222,24 @@ private:
   void run()
   {
     std::unique_lock<std::mutex> lock(mutex_);
+    const auto fail = [&] {
+        lock.unlock();
+        report(true);
+        rclcpp::shutdown();
+      };
     bool free = true;
+    if (strict_startup_) {
+      for (auto & c : chains_) {
+        c.next_ns = due(c, 0);
+        // A gate held at zero needs a positive release before firmware can tick.
+        while (c.next_ns <= 0) {c.next_ns = due(c, ++c.k);}
+      }
+      free = false;
+    }
     while (!stop_ && rclcpp::ok()) {
       // Startup runs free until every consumer has answered once. Arrival
       // never sets timer phase: the MCB constructs its timer at sim zero.
-      if (std::any_of(acks_.begin(), acks_.end(),
+      if (!strict_startup_ && std::any_of(acks_.begin(), acks_.end(),
           [](const auto & a) {return a->newest_ns == kNever;})) {
         if (released_ns_ == kNever) {release(kFreeSec * 1000000000LL);}
         cv_.wait_for(lock, std::chrono::milliseconds(10));
@@ -249,12 +266,23 @@ private:
       free = false;
       const auto t0 = std::chrono::steady_clock::now();
       if (hold > released_ns_ || released_ns_ >= kFreeSec * 1000000000LL) {release(hold);}
-      if (!wait(lock, [&] {return held_ns_ >= hold;})) {
+      // Repeat the first bounded release until discovery has delivered it.
+      const auto deadline = std::chrono::steady_clock::now() + max_wait_;
+      while (strict_startup_ && held_ns_ < hold && !stop_ &&
+        std::chrono::steady_clock::now() < deadline)
+      {
+        release(hold);
+        cv_.wait_for(lock, std::chrono::milliseconds(10));
+      }
+      const bool reached = strict_startup_ ? held_ns_ >= hold :
+        wait(lock, [&] {return held_ns_ >= hold;});
+      if (!reached) {
         if (stop_) {break;}
         // A gate timeout already ran gz free; otherwise gz is slow or gone.
         ++hold_timeouts_;
         RCLCPP_ERROR(get_logger(), "lockstep timeout: gz not held at %.3f s after %.1f s wall",
           hold * 1e-9, max_wait_.count());
+        if (strict_startup_) {fail(); return;}
         free = true;
         continue;
       }
@@ -264,6 +292,7 @@ private:
         ++hold_timeouts_;
         RCLCPP_ERROR(get_logger(), "lockstep timeout: gz overshot hold %.3f s to %.3f s",
           hold * 1e-9, at * 1e-9);
+        if (strict_startup_) {fail(); return;}
       }
       for (auto & c : chains_) {
         if (c.origin_ns == kNever || c.next_ns > at) {continue;}
@@ -284,6 +313,7 @@ private:
           }
           RCLCPP_ERROR(get_logger(), "lockstep timeout: %s at %.3f s, no ack on%s",
             c.name.c_str(), tick * 1e-9, missing.c_str());
+          if (strict_startup_) {fail(); return;}
         }
         schedule(c, at);
       }
@@ -349,6 +379,7 @@ private:
   int holds_ = 0, gate_timeouts_ = 0, hold_timeouts_ = 0;
   double gz_wait_s_ = 0.0;
   std::atomic<bool> stop_{false};
+  bool strict_startup_ = false;
   std::thread thread_;
   // Destroy transport callbacks before the state they access.
   gz::transport::Node gz_;

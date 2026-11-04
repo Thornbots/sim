@@ -78,23 +78,26 @@ protected:
     gz_.reset();
     std::filesystem::remove(path_);
   }
-  void start(bool hold_at_start) {
+  void start(bool hold_at_start, bool strict = false) {
     std::ofstream(path_) <<
       "<sdf version='1.9'><world name='lockstep_test'><physics type='ode'>"
       "<max_step_size>0.001</max_step_size><real_time_factor>1</real_time_factor>"
       "</physics><plugin filename='" SIM_LOCKSTEP_GATE "' name='sim::LockstepGate'>"
       "<max_wait_s>5.0</max_wait_s><hold_at_start>" <<
-      (hold_at_start ? "true" : "false") << "</hold_at_start></plugin></world></sdf>";
+      (hold_at_start ? "true" : "false") << "</hold_at_start><strict_startup>" <<
+      (strict ? "true" : "false") << "</strict_startup></plugin></world></sdf>";
     server_ = std::make_unique<sim::LaunchTree>(
         std::vector<std::string>{"gz", "sim", "-s", "-r", path_},
         path_ + ".gz.log");
   }
-  void coordinator() {
+  void coordinator(bool strict = false) {
     coordinator_ = std::make_unique<sim::LaunchTree>(
         std::vector<std::string>{
           "ros2", "run", "sim", "lockstep_coordinator", "--ros-args",
           "-p", "chains:=[mcb_batch]", "-p", "mcb_batch.period_s:=0.005",
-          "-p", "mcb_batch.phase_s:=0.0", "-p", "max_wait_s:=0.2",
+          "-p", "mcb_batch.phase_s:=0.0", "-p",
+          std::string("max_wait_s:=") + (strict ? "2.0" : "0.2"),
+          "-p", std::string("strict_startup:=") + (strict ? "true" : "false"),
           "-p", "clock_topic:=/world/lockstep_test/clock",
           "-p", "mcb_batch.acks:=[/lockstep_test/ack]"}, path_ + ".coordinator.log");
   }
@@ -113,6 +116,11 @@ protected:
     m.set_sec(ns / 1000000000);
     m.set_nsec(ns % 1000000000);
     release_.Publish(m);
+  }
+  void ack(int64_t ns) {
+    std_msgs::msg::Header h;
+    h.stamp = rclcpp::Time(ns);
+    ack_->publish(h);
   }
   std::shared_ptr<rclcpp::Node> node_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ack_;
@@ -164,6 +172,52 @@ TEST_F(Lockstep, MissingConsumerAckIsAFatalDiagnostic) {
   send_acks_ = false;
   ASSERT_TRUE(wait([&] {return status_.count("timeouts") && std::stoi(status_["timeouts"]) > 0;}));
   EXPECT_GT(std::stoi(status_.at("chain.mcb_batch.timeouts")), 0);
+}
+
+TEST_F(Lockstep, StrictStartupWaitsAtFirstPositiveTickAndKeepsPhase) {
+  start(true, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  coordinator(true);
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {return ack_->get_subscription_count() > 0;}, 1.8));
+  std::this_thread::sleep_for(50ms);
+  EXPECT_EQ(clock_, 5000000);
+  EXPECT_EQ(held_, 5000000);
+  ack(5000000);
+  ASSERT_TRUE(wait([&] {return held_ == 10000000;}, 1));
+  std::this_thread::sleep_for(30ms);
+  EXPECT_EQ(clock_, 10000000);
+  ack(10000000);
+  ASSERT_TRUE(wait([&] {return held_ == 15000000;}, 1));
+}
+
+TEST_F(Lockstep, StrictCoordinatorBeforeGateFindsFirstRelease) {
+  coordinator(true);
+  start(true, true);
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  EXPECT_EQ(clock_, 5000000);
+}
+
+TEST_F(Lockstep, StrictMissingInitialAckStopsWithoutFreeAdvance) {
+  start(true, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  coordinator(true);
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {
+    return coordinator_->read_log().find("no ack on") != std::string::npos;
+  }, 3)) << coordinator_->read_log();
+  EXPECT_EQ(clock_, 5000000);
+  EXPECT_EQ(held_, 5000000);
+}
+
+TEST_F(Lockstep, StrictGateTimeoutStopsPhysics) {
+  start(true, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  const auto at = clock_.load();
+  ASSERT_TRUE(wait([&] {
+    return server_->read_log().find("stopping strict session") != std::string::npos;
+  }, 7)) << server_->read_log();
+  EXPECT_EQ(clock_, at);
 }
 
 int main(int argc, char **argv) {
