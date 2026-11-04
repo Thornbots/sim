@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add an independently tested simulation-time UART byte queue for the planned
+  lockstep relay; the existing PTY transport is not connected to it yet.
+
 - Move historical localization, sensor and gimbal experiments into dated package history; preserve README anchors and current instructions.
 
 - Clear estimation reset acknowledgements before sending the reset request,

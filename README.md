@@ -1341,6 +1341,10 @@ The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.
 `lockstep:=false` retains the ungated control run.
 
+`sim/uart_wire.hpp` provides a separately tested 8N1 simulation-time byte queue
+for the planned UART relay. It is not connected to the firmware or bridge yet;
+delivery hold points and bridge acknowledgments are still required.
+
 This gates MCB acknowledgments, not the complete hit path: UART is not modeled
 in sim time, and the other
 CV/localization chains and wall-time bring-up remain asynchronous. It does not
