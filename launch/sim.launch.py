@@ -72,9 +72,13 @@ def _world_with_rtf(context):
             raise RuntimeError('real_time_factor:= needs a <real_time_factor> tag in the world')
         sdf = RTF_TAG.sub(f'<real_time_factor>{rtf}</real_time_factor>', sdf)
     if lockstep:
+        epoch_zero = context.launch_configurations['uart_epoch_zero'].lower() in ('true', '1', 'yes')
+        startup = ('<strict_startup>true</strict_startup>'
+                   '<epoch_zero_startup>true</epoch_zero_startup>' if epoch_zero else '')
+        max_wait = '30.0' if epoch_zero else '5.0'
         sdf = sdf.replace('</world>',
                           '<plugin filename="lockstep_gate" name="sim::LockstepGate">'
-                          '<max_wait_s>5.0</max_wait_s></plugin></world>', 1)
+                          f'<max_wait_s>{max_wait}</max_wait_s>{startup}</plugin></world>', 1)
     with tempfile.NamedTemporaryFile(mode='w', prefix='sim_world_', suffix='.sdf',
                                      delete=False) as f:
         path = f.name
@@ -298,7 +302,9 @@ def generate_launch_description():
             PathJoinSubstitution([FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])
         ),
         launch_arguments={
-            'gz_args': [world, ' -r -s'],  # -r: run, not paused; -s: server only
+            'gz_args': [world, PythonExpression(["' -s' if '",
+                        LaunchConfiguration('uart_epoch_zero'),
+                        "'.lower() in ('true', '1', 'yes') else ' -r -s'"])],
         }.items(),
     )
 
@@ -330,6 +336,8 @@ def generate_launch_description():
                                   LaunchConfiguration('uart_relay_fixture'),
                                   ' uart_deterministic:=',
                                   LaunchConfiguration('uart_deterministic'),
+                                  ' uart_epoch_zero:=', LaunchConfiguration('uart_epoch_zero'),
+                                  ' uart_epoch_zero_ack:=', LaunchConfiguration('uart_epoch_zero_ack'),
                                   ' uart_baud:=', LaunchConfiguration('uart_baud'),
                                   ' mcb_read_delay_ms:=', LaunchConfiguration('mcb_read_delay_ms'),
                                   ' mcb_auto_fire:=', LaunchConfiguration('mcb_auto_fire'),
@@ -717,6 +725,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('uart_relay_fixture', default_value='false'),
         DeclareLaunchArgument('uart_deterministic', default_value='false'),
+        DeclareLaunchArgument('uart_epoch_zero', default_value='false'),
+        DeclareLaunchArgument('uart_epoch_zero_ack', default_value='/detector_standin/ready'),
         DeclareLaunchArgument('uart_baud', default_value='115200'),
         DeclareLaunchArgument('mcb_read_delay_ms', default_value='0'),
         DeclareLaunchArgument('mcb_physics', default_value='false'),

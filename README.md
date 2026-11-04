@@ -1417,6 +1417,17 @@ Gazebo's native `/clock` remains separate for the lockstep coordinator. The
 plugin waits for the exact ROS clock and frame acknowledgments in `PostUpdate`
 without republishing time. Clock discovery or acknowledgment loss fails within
 the wall-time limits instead of advancing physics.
+For a paused epoch-zero startup, `sim.launch.py` additionally accepts
+`uart_epoch_zero:=true`. It starts Gazebo paused and retransmits only clock zero
+at 50 ms wall intervals until the plugin and bridge have actually received it
+and the transient-local zero Header on `uart_epoch_zero_ack` (default
+`/detector_standin/ready`) arrives. The plugin then publishes the latched
+`/mcb_emulator/epoch_zero_ready` Header. A strict coordinator must wait for
+that topic before releasing physics; use `lockstep:=true` to load the
+epoch-zero gate. Starting unpaused, a nonzero clock or
+acknowledgment, or a missing acknowledgment within 30 seconds fails closed.
+Positive clock publication remains one message per physics step. This option
+requires `uart_deterministic:=true`; it is not yet wired into e2e startup.
 This mode is not yet accepted for scored runs: see the
 [hosted diagnostic](docs/uart-coordination-2026-11-03.md) for the remaining checks.
 With the hosted firmware built, exercise the plugin, PTY, bridge and ack faults
@@ -1424,6 +1435,8 @@ in an isolated container from the workspace root:
 
 ```sh
 python3 src/sim/test/test_uart_plugin_integration.py \
+  /workspaces/isaac_ros-dev/src/firmware/MCBV3/MCB-project/build/sim/scons-release/MCB-project.elf
+python3 src/sim/test/test_uart_epoch_zero.py \
   /workspaces/isaac_ros-dev/src/firmware/MCBV3/MCB-project/build/sim/scons-release/MCB-project.elf
 ```
 

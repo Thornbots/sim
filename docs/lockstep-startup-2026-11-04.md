@@ -35,3 +35,22 @@ passed. This is startup-primitive validation. The E2E launch still needs to
 connect robot, detector, opponent and plugin readiness to one startup epoch;
 scored consumption gates, Renode validation and whole-match acceptance remain
 open. No scored campaign was run.
+
+## Coordinated UART clock bootstrap
+
+In a fresh isolated Mac arm64 container, the explicit hosted firmware target,
+bridge and sim built. The real paused Gazebo MCB plugin, UART bridge,
+`ros_gz_bridge` and deterministic detector reached readiness with the detector
+started before the plugin and after repeated zero publications. A separate
+bridge observed Gazebo's native clock at zero, and the MCB tick topic remained
+empty through readiness. Missing detector readiness timed out; an injected
+nonzero ROS clock failed both before and after readiness while paused. The
+detector component's five tests and the bridge PTY test passed. The seven
+existing actual-plugin acknowledgment
+cases passed with the explicit hosted ELF, including timeout and invalid acks.
+The relay's seven and assembler's two tests passed with the ELF supplied, and
+all 18 lockstep gate/coordinator tests passed again in 60.317 seconds.
+
+These checks establish the bootstrap primitive, not the remaining e2e launch
+or robot readiness wiring. The checked-out board ELF was unavailable; no
+Renode or scored T17 run was made.

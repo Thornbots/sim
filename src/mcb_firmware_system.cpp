@@ -119,13 +119,22 @@ public:
     const auto adapter = backend == "renode" ?
         ament_index_cpp::get_package_prefix("sim") + "/lib/sim/mcb_type_c" : "";
     coordinated_ = sdf->Get<bool>("uart_deterministic", false).first;
+    epoch_zero_ = sdf->Get<bool>("uart_epoch_zero", false).first;
+    if (epoch_zero_ && !coordinated_) throw std::runtime_error("UART epoch zero requires coordination");
     if (coordinated_) {
       clock_pub_ = gz_node_.Advertise<gz::msgs::Clock>("/sim/uart_clock");
       clock_sub_ = node_->create_subscription<rosgraph_msgs::msg::Clock>(
           "/clock", rclcpp::ClockQoS(), [this](rosgraph_msgs::msg::Clock::ConstSharedPtr msg) {
             const auto &stamp = msg->clock;
-            if (stamp.sec >= 0 && stamp.nanosec < 1'000'000'000u)
-              clock_ns_ = static_cast<int64_t>(stamp.sec) * 1'000'000'000 + stamp.nanosec;
+            if (stamp.sec < 0 || stamp.nanosec >= 1'000'000'000u) {
+              failure_ = "invalid ROS clock";
+              return;
+            }
+            const auto value = static_cast<int64_t>(stamp.sec) * 1'000'000'000 + stamp.nanosec;
+            if (epoch_zero_ && ((clock_seen_ && value < clock_ns_) || (!physics_started_ && value != 0)))
+              failure_ = "UART epoch zero missed or ROS clock moved backwards";
+            clock_ns_ = value;
+            clock_seen_ = true;
           });
       ready_sub_ = node_->create_subscription<std_msgs::msg::Header>(
           "/dji_serial_bridge/sim_clock_ready", rclcpp::QoS(1).reliable().transient_local(),
@@ -134,6 +143,26 @@ public:
             if (stamp.sec >= 0 && stamp.nanosec < 1'000'000'000u)
               ready_ns_ = static_cast<int64_t>(stamp.sec) * 1'000'000'000 + stamp.nanosec;
           });
+      if (epoch_zero_) {
+        bootstrap_pub_ = node_->create_publisher<std_msgs::msg::Header>(
+            "~/epoch_zero_ready", rclcpp::QoS(1).reliable().transient_local());
+        observed_sub_ = node_->create_subscription<std_msgs::msg::Header>(
+            "/dji_serial_bridge/sim_clock_observed", rclcpp::QoS(1).reliable().transient_local(),
+            [this](std_msgs::msg::Header::ConstSharedPtr msg) {
+              if (bootstrap_done_) return;
+              if (msg->stamp.sec != 0 || msg->stamp.nanosec != 0)
+                failure_ = "UART bridge missed epoch zero";
+              else bridge_zero_seen_ = true;
+            });
+        detector_sub_ = node_->create_subscription<std_msgs::msg::Header>(
+            sdf->Get<std::string>("uart_epoch_zero_ack", "/detector_standin/ready").first,
+            rclcpp::QoS(1).reliable().transient_local(),
+            [this](std_msgs::msg::Header::ConstSharedPtr msg) {
+              if (msg->stamp.sec != 0 || msg->stamp.nanosec != 0)
+                failure_ = "UART epoch zero acknowledgment is nonzero";
+              else detector_zero_seen_ = true;
+            });
+      }
       metadata_ = node_->create_publisher<dji_serial_bridge::msg::SimFrameMetadata>(
           "/dji_serial_bridge/sim_frame_metadata", rclcpp::QoS(32).reliable());
       ack_ = node_->create_subscription<dji_serial_bridge::msg::SimFrameAck>(
@@ -185,10 +214,40 @@ public:
   }
 
   void PreUpdate(const gz::sim::UpdateInfo &info, gz::sim::EntityComponentManager &ecm) override {
-    if (info.paused) return;
+    if (epoch_zero_ && !bootstrap_done_) {
+      executor_->spin_some();
+      if (!failure_.empty()) throw std::runtime_error(failure_);
+      const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
+      if (!info.paused || held != 0) throw std::runtime_error("UART epoch zero missed");
+      const auto now = std::chrono::steady_clock::now();
+      if (!bootstrap_started_) {
+        bootstrap_started_ = true;
+        bootstrap_deadline_ = now + std::chrono::seconds(30);
+      }
+      if (now >= bootstrap_deadline_) throw std::runtime_error("UART epoch zero acknowledgment timeout");
+      if (clock_seen_ && bridge_zero_seen_ && detector_zero_seen_) {
+        bootstrap_done_ = true;
+        clock_ready_ = true;
+        bootstrap_pub_->publish(std_msgs::msg::Header{});
+      } else if (now >= bootstrap_next_) {
+        gz::msgs::Clock clock;
+        clock.mutable_sim();
+        if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART epoch zero publication failed");
+        bootstrap_next_ = now + std::chrono::milliseconds(50);
+      }
+      return;
+    }
+    if (info.paused) {
+      if (epoch_zero_) {
+        executor_->spin_some();
+        if (!failure_.empty()) throw std::runtime_error(failure_);
+      }
+      return;
+    }
     current_time_ = std::chrono::duration<double>(info.simTime).count();
     executor_->spin_some();
     if (!failure_.empty()) throw std::runtime_error(failure_);
+    physics_started_ = true;
     if (coordinated_ && !pending_.empty())
       throw std::runtime_error("UART advanced with acknowledgment pending");
     if (coordinated_) {
@@ -325,9 +384,14 @@ private:
   gz::transport::Node::Publisher clock_pub_;
   rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr ready_sub_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr observed_sub_, detector_sub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr bootstrap_pub_;
   int64_t clock_ns_ = 0;
   int64_t ready_ns_ = -1;
   bool clock_ready_ = false;
+  bool epoch_zero_ = false, bootstrap_started_ = false, bootstrap_done_ = false, physics_started_ = false;
+  bool clock_seen_ = false, bridge_zero_seen_ = false, detector_zero_seen_ = false;
+  std::chrono::steady_clock::time_point bootstrap_deadline_, bootstrap_next_{};
   gz::sim::Link body_{gz::sim::kNullEntity};
   gz::sim::Link head_{gz::sim::kNullEntity};
   gz::sim::Entity yaw_ = gz::sim::kNullEntity, pitch_ = gz::sim::kNullEntity;
