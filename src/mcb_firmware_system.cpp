@@ -120,7 +120,7 @@ public:
         ament_index_cpp::get_package_prefix("sim") + "/lib/sim/mcb_type_c" : "";
     coordinated_ = sdf->Get<bool>("uart_deterministic", false).first;
     if (coordinated_) {
-      clock_pub_ = gz_node_.Advertise<gz::msgs::Clock>("/clock");
+      clock_pub_ = gz_node_.Advertise<gz::msgs::Clock>("/sim/uart_clock");
       clock_sub_ = node_->create_subscription<rosgraph_msgs::msg::Clock>(
           "/clock", rclcpp::ClockQoS(), [this](rosgraph_msgs::msg::Clock::ConstSharedPtr msg) {
             const auto &stamp = msg->clock;
@@ -128,7 +128,7 @@ public:
               clock_ns_ = static_cast<int64_t>(stamp.sec) * 1'000'000'000 + stamp.nanosec;
           });
       ready_sub_ = node_->create_subscription<std_msgs::msg::Header>(
-          "/dji_serial_bridge/sim_clock_ready", rclcpp::QoS(10).reliable(),
+          "/dji_serial_bridge/sim_clock_ready", rclcpp::QoS(1).reliable().transient_local(),
           [this](std_msgs::msg::Header::ConstSharedPtr msg) {
             const auto &stamp = msg->stamp;
             if (stamp.sec >= 0 && stamp.nanosec < 1'000'000'000u)
@@ -164,7 +164,9 @@ public:
     if (relay_) relay_->close_child();
     if (coordinated_) {
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-      while (metadata_->get_subscription_count() == 0 || ack_->get_publisher_count() == 0) {
+      while (metadata_->get_subscription_count() == 0 || ack_->get_publisher_count() == 0 ||
+             ready_sub_->get_publisher_count() == 0 || clock_sub_->get_publisher_count() == 0 ||
+             !clock_pub_.HasConnections() || ready_ns_ < 0) {
         if (std::chrono::steady_clock::now() >= deadline)
           throw std::runtime_error("UART bridge coordination discovery timeout");
         executor_->spin_once(std::chrono::milliseconds(10));
@@ -189,17 +191,17 @@ public:
     if (!failure_.empty()) throw std::runtime_error(failure_);
     if (coordinated_ && !pending_.empty())
       throw std::runtime_error("UART advanced with acknowledgment pending");
-    if (coordinated_ && !clock_ready_) {
+    if (coordinated_) {
       const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
       if (held == 0) return;
       gz::msgs::Clock clock;
       clock.mutable_sim()->set_sec(held / 1'000'000'000);
       clock.mutable_sim()->set_nsec(held % 1'000'000'000);
+      if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART delivery clock publication failed");
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-      while (ready_ns_ != held || clock_ns_ != held) {
+      while (!clock_ready_ && (ready_ns_ != held || clock_ns_ != held)) {
         if (std::chrono::steady_clock::now() >= deadline)
           throw std::runtime_error("UART bridge clock discovery timeout");
-        if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART delivery clock publication failed");
         executor_->spin_once(std::chrono::milliseconds(10));
       }
       clock_ready_ = true;
@@ -306,16 +308,12 @@ public:
     if (!coordinated_ || info.paused) return;
     if (pending_.empty() && failure_.empty()) return;
     const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
-    gz::msgs::Clock clock;
-    clock.mutable_sim()->set_sec(held / 1'000'000'000);
-    clock.mutable_sim()->set_nsec(held % 1'000'000'000);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
     while (failure_.empty() && (!pending_.empty() || clock_ns_ < held)) {
       if (std::chrono::steady_clock::now() >= deadline)
         throw std::runtime_error("UART acknowledgment or ROS clock timeout: pending=" +
             std::to_string(pending_.size()) + " clock=" + std::to_string(clock_ns_) +
             " held=" + std::to_string(held));
-      if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART delivery clock publication failed");
       executor_->spin_once(std::chrono::milliseconds(10));
     }
     if (!failure_.empty()) throw std::runtime_error(failure_);
@@ -328,7 +326,7 @@ private:
   rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr ready_sub_;
   int64_t clock_ns_ = 0;
-  int64_t ready_ns_ = 0;
+  int64_t ready_ns_ = -1;
   bool clock_ready_ = false;
   gz::sim::Link body_{gz::sim::kNullEntity};
   gz::sim::Link head_{gz::sim::kNullEntity};

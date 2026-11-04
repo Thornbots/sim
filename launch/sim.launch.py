@@ -39,7 +39,7 @@ from launch.actions import (
     SetLaunchConfiguration,
     TimerAction,
 )
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit, OnProcessStart, OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
@@ -303,7 +303,9 @@ def generate_launch_description():
     )
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
-    clock_bridge = clock_bridge_node()
+    clock_bridge = clock_bridge_node(condition=UnlessCondition(LaunchConfiguration('uart_deterministic')))
+    uart_clock_bridge = clock_bridge_node(
+        '/sim/uart_clock', condition=IfCondition(LaunchConfiguration('uart_deterministic')))
 
     # --- Spawn the robot into the running world.
     # NOTE: deliberately -string (raw URDF text), NOT -topic
@@ -348,6 +350,12 @@ def generate_launch_description():
     delayed_spawn_robot = RegisterEventHandler(
         OnProcessStart(
             target_action=clock_bridge,
+            on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
+        )
+    )
+    delayed_uart_spawn_robot = RegisterEventHandler(
+        OnProcessStart(
+            target_action=uart_clock_bridge,
             on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
         )
     )
@@ -756,6 +764,7 @@ def generate_launch_description():
         OpaqueFunction(function=_world_with_rtf),
         gz_sim,
         clock_bridge,
+        uart_clock_bridge,
         scan_bridge,
         lidar_scan,
         joint_state_bridge,
@@ -770,6 +779,7 @@ def generate_launch_description():
         camera_color_info_bridge,
         camera_depth_info_bridge,
         delayed_spawn_robot,
+        delayed_uart_spawn_robot,
         gz_gui,
         pose_emulator,
         target_driver,

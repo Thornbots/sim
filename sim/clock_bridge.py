@@ -20,13 +20,15 @@ from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
 
 
-def clock_bridge_node():
+def clock_bridge_node(topic='/clock', condition=None):
     return Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
         name='clock_bridge',
         output='screen',
-        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        arguments=[topic + '@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        remappings=[(topic, '/clock')],
+        condition=condition,
         parameters=[{'use_sim_time': True}],
         # A departed reader's SHM port can block all future clock publication.
         # Reuse the robot's UDP-only profile, including its discovery peers.

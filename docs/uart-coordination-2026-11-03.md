@@ -39,3 +39,24 @@ readiness before firmware starts. The bridge pairs the exact frame and capture
 stamp and waits for its delivery time; the plugin checks the ack identity and
 publication stamp. Earlier runs exposed clock discovery races; these checks do
 not establish scored-stage acceptance or whole-match repeatability.
+
+Timing review follow-up: an isolated Mac arm64 container built both packages
+and the checked-out hosted firmware. The bridge now matches on serial,
+metadata and clock callbacks; its wall timer only detects timeouts. A
+transient startup readiness message confirms that its clock subscription has
+matched before the first coordinated clock emission. The MCB plugin publishes
+one `/sim/uart_clock` per physics step, bridged to ROS `/clock`; Gazebo's
+native `/clock` remains the lockstep coordinator's separate input. The plugin
+does not republish held time. An initial run before the subscription-match
+handshake failed before its first frame; the handshake was added before
+the following checks.
+
+The real-PTY bridge test passed with frames and metadata on either side of
+the delivery clock. With an explicit hosted ELF, the actual-plugin proxy
+suite passed twice for success, missing acknowledgment, wrong ID, early, stale, future
+and duplicate acknowledgments. The success case held for 250 ms, then observed
+20 exact delivery acknowledgments and 18 capture-stamped poses; observed ROS
+clock samples were strictly increasing in every case. The assembler and relay
+gtests also passed with the firmware binary supplied, and the existing
+lockstep suite passed all three gate, phase and timeout tests. These checks are unscored;
+T17, S2 and match campaigns remain open, and no Renode hardware ELF was available.

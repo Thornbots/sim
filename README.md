@@ -1355,6 +1355,12 @@ lockstep. The suite does not accept these overrides until it forwards them.
 metadata and per-frame acknowledgment hold. It requires lockstep. Frame
 capture uses the firmware cycle in which the first byte was observed; an
 unattributed byte, malformed frame or bad acknowledgment fails the session.
+The MCB plugin emits one `/sim/uart_clock` Gazebo message per 1 ms step before
+firmware work. In this mode the clock bridge routes that topic to ROS `/clock`;
+Gazebo's native `/clock` remains separate for the lockstep coordinator. The
+plugin waits for the exact ROS clock and frame acknowledgments in `PostUpdate`
+without republishing time. Clock discovery or acknowledgment loss fails within
+the wall-time limits instead of advancing physics.
 This mode is not yet accepted for scored runs: see the
 [hosted diagnostic](docs/uart-coordination-2026-11-03.md) for the remaining checks.
 With the hosted firmware built, exercise the plugin, PTY, bridge and ack faults

@@ -127,9 +127,18 @@ def run_case(mode, firmware):
                         forwarded += 1
                     return len(acks) >= 20 and len(poses) >= 3 and ns(clocks[-1].clock) > held
                 spin_until(progressed, 10, 'clock did not resume')
+                spin_until(lambda: all(any(m.frame_id == a.frame_id for m in metadata)
+                                       for a in acks), 2, 'metadata observation lag')
+                by_id = {m.frame_id: m for m in metadata}
+                assert len({a.frame_id for a in acks}) == len(acks), acks
+                assert all(a.published and a.frame_id in by_id and
+                           ns(a.header.stamp) == ns(by_id[a.frame_id].delivery_time)
+                           for a in acks), (acks, metadata)
                 pose_stamps = {ns(m.header.stamp) for m in metadata if len(m.frame) >= 7 and
                                int.from_bytes(m.frame[5:7], 'little') == 2}
                 assert all(ns(p.header.stamp) in pose_stamps for p in poses), (poses, metadata)
+        observed = [ns(c.clock) for c in clocks]
+        assert all(a < b for a, b in zip(observed, observed[1:])), observed
         print(f'{mode}: PASS held={held} frames={len(acks)} poses={len(poses)}', flush=True)
     finally:
         rows = subprocess.check_output(['ps', '-eo', 'pid=,ppid=,pgid='], text=True)
