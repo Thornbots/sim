@@ -29,6 +29,8 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <stdexcept>
 #include <string>
 
 #include <gz/common/Console.hh>
@@ -72,6 +74,10 @@ public:
     max_wait_ = std::chrono::duration<double>(sdf->Get<double>("max_wait_s", 2.0).first);
     // Held at 0 until the first release, or free until then.
     strict_startup_ = sdf->Get<bool>("strict_startup", false).first;
+    epoch_zero_pending_ = sdf->Get<bool>("epoch_zero_startup", false).first;
+    if (epoch_zero_pending_ && !strict_startup_) {
+      throw std::invalid_argument("epoch_zero_startup requires strict_startup");
+    }
     const bool hold_at_start = strict_startup_ || sdf->Get<bool>("hold_at_start", false).first;
     released_ns_ = hold_at_start ? 0 : kFree;
     node_.Subscribe(release, &LockstepGate::OnRelease, this);
@@ -81,11 +87,38 @@ public:
 
   void PostUpdate(const gz::sim::UpdateInfo & info, const gz::sim::EntityComponentManager &) override
   {
-    if (info.paused) {
-      return;
-    }
     const int64_t t = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     std::unique_lock<std::mutex> lock(mutex_);
+    // Paused updates must return so scene/create services can finish startup.
+    if (epoch_zero_pending_) {
+      if (!info.paused || t != 0) {
+        gzerr << "LockstepGate: epoch zero startup requires a paused world at zero; stopping"
+              << std::endl;
+        timeout_pub_.Publish(to_msg(t));
+        events_->Emit<gz::sim::events::Stop>();
+        return;
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if (!startup_deadline_) {
+        startup_deadline_ = now +
+          std::chrono::duration_cast<std::chrono::steady_clock::duration>(max_wait_);
+      }
+      if (now >= *startup_deadline_) {
+        gzerr << "LockstepGate: lockstep timeout held at epoch zero; stopping strict session"
+              << std::endl;
+        timeout_pub_.Publish(to_msg(0));
+        events_->Emit<gz::sim::events::Stop>();
+        return;
+      }
+      if (released_ns_ > 0) {
+        epoch_zero_pending_ = false;
+        events_->Emit<gz::sim::events::Pause>(false);
+      } else {
+        held_pub_.Publish(to_msg(0));
+      }
+      return;
+    }
+    if (info.paused) {return;}
     if (t < released_ns_) {
       return;
     }
@@ -133,6 +166,8 @@ private:
   int64_t released_ns_ = kFree;
   int timeouts_ = 0;
   bool strict_startup_ = false;
+  bool epoch_zero_pending_ = false;
+  std::optional<std::chrono::steady_clock::time_point> startup_deadline_;
   gz::sim::EventManager * events_ = nullptr;
   // Destroy transport callbacks before the mutex and release state.
   gz::transport::Node node_;

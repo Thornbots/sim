@@ -26,12 +26,20 @@
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <gtest/gtest.h>
 #include <gz/msgs/clock.pb.h>
+#include <gz/msgs/boolean.pb.h>
+#include <gz/msgs/empty.pb.h>
+#include <gz/msgs/entity_factory.pb.h>
+#include <gz/msgs/scene.pb.h>
 #include <gz/msgs/time.pb.h>
 #include <gz/transport/Node.hh>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/header.hpp>
 
 using namespace std::chrono_literals;
+
+// Strict readiness topics: transient-local Header, stamp 0 when ready.
+constexpr char kReadyA[] = "/lockstep_test/ready_a";
+constexpr char kReadyB[] = "/lockstep_test/ready_b";
 
 class Lockstep : public testing::Test {
 protected:
@@ -49,6 +57,11 @@ protected:
       held_ = m.sec() * 1000000000LL + m.nsec();
       ++holds_;
       if (held_ % 5000000 != 0) off_phase_ = true;
+    });
+    gz_->Subscribe<gz::msgs::Time>("/sim/lockstep/release", [this](const auto &m) {
+      const int64_t ns = m.sec() * 1000000000LL + m.nsec();
+      ++releases_;
+      if (ns > 0 && first_release_ < 0) {first_release_ = ns;}
     });
     gz_->Subscribe<gz::msgs::Clock>("/world/lockstep_test/clock", [this](const auto &m) {
       const int64_t ns = m.sim().sec() * 1000000000LL + m.sim().nsec();
@@ -78,29 +91,60 @@ protected:
     gz_.reset();
     std::filesystem::remove(path_);
   }
-  void start(bool hold_at_start, bool strict = false) {
+  void start(bool hold_at_start, bool strict = false, double gate_wait_s = 5.0,
+             bool epoch_zero_startup = false, bool force_running = false) {
     std::ofstream(path_) <<
       "<sdf version='1.9'><world name='lockstep_test'><physics type='ode'>"
       "<max_step_size>0.001</max_step_size><real_time_factor>1</real_time_factor>"
       "</physics><plugin filename='" SIM_LOCKSTEP_GATE "' name='sim::LockstepGate'>"
-      "<max_wait_s>5.0</max_wait_s><hold_at_start>" <<
+      "<max_wait_s>" << gate_wait_s << "</max_wait_s><hold_at_start>" <<
       (hold_at_start ? "true" : "false") << "</hold_at_start><strict_startup>" <<
-      (strict ? "true" : "false") << "</strict_startup></plugin></world></sdf>";
-    server_ = std::make_unique<sim::LaunchTree>(
-        std::vector<std::string>{"gz", "sim", "-s", "-r", path_},
-        path_ + ".gz.log");
+      (strict ? "true" : "false") << "</strict_startup><epoch_zero_startup>" <<
+      (epoch_zero_startup ? "true" : "false") << "</epoch_zero_startup></plugin>" <<
+      (epoch_zero_startup ?
+      "<plugin filename='gz-sim-user-commands-system' name='gz::sim::systems::UserCommands'/>"
+      "<plugin filename='gz-sim-scene-broadcaster-system' name='gz::sim::systems::SceneBroadcaster'/>"
+      : "") << "</world></sdf>";
+    std::vector<std::string> cmd = {"gz", "sim", "-s"};
+    if (!epoch_zero_startup || force_running) {cmd.push_back("-r");}
+    cmd.push_back(path_);
+    server_ = std::make_unique<sim::LaunchTree>(cmd, path_ + ".gz.log");
   }
-  void coordinator(bool strict = false) {
-    coordinator_ = std::make_unique<sim::LaunchTree>(
-        std::vector<std::string>{
-          "ros2", "run", "sim", "lockstep_coordinator", "--ros-args",
-          "-p", "chains:=[mcb_batch]", "-p", "mcb_batch.period_s:=0.005",
-          "-p", "mcb_batch.phase_s:=0.0", "-p",
-          std::string("max_wait_s:=") + (strict ? "2.0" : "0.2"),
-          "-p", std::string("strict_startup:=") + (strict ? "true" : "false"),
-          "-p", "clock_topic:=/world/lockstep_test/clock",
-          "-p", "mcb_batch.acks:=[/lockstep_test/ack]"}, path_ + ".coordinator.log");
+  void coordinator(bool strict = false, std::vector<std::string> extra = {}) {
+    std::vector<std::string> cmd = {
+      "ros2", "run", "sim", "lockstep_coordinator", "--ros-args",
+      "-p", "chains:=[mcb_batch]", "-p", "mcb_batch.period_s:=0.005",
+      "-p", "mcb_batch.phase_s:=0.0", "-p",
+      std::string("max_wait_s:=") + (strict ? "2.0" : "0.2"),
+      "-p", std::string("strict_startup:=") + (strict ? "true" : "false"),
+      "-p", "clock_topic:=/world/lockstep_test/clock",
+      "-p", "mcb_batch.acks:=[/lockstep_test/ack]"};
+    cmd.insert(cmd.end(), extra.begin(), extra.end());
+    coordinator_ = std::make_unique<sim::LaunchTree>(cmd, path_ + ".coordinator.log");
   }
+  // A ready publisher's last sample is latched, so it also reaches late subscribers.
+  void ready(const std::string &topic, int64_t ns = 0) {
+    auto &pub = ready_pubs_[topic];
+    if (!pub) {
+      pub = node_->create_publisher<std_msgs::msg::Header>(
+          topic, rclcpp::QoS(1).reliable().transient_local());
+    }
+    std_msgs::msg::Header h;
+    h.stamp = rclcpp::Time(ns);
+    pub->publish(h);
+  }
+  static std::vector<std::string> readiness(const std::vector<std::string> &topics,
+                                            double timeout_s) {
+    std::string list = "[";
+    for (size_t i = 0; i < topics.size(); ++i) {list += (i ? "," : "") + topics[i];}
+    list += "]";
+    return {"-p", "readiness_topics:=" + list, "-p",
+      "startup_timeout_s:=" + std::to_string(timeout_s)};
+  }
+  bool log_has(const std::string &needle) {
+    return coordinator_ && coordinator_->read_log().find(needle) != std::string::npos;
+  }
+  bool exited() {return !coordinator_ || !coordinator_->alive();}
   template<typename Predicate>
   bool wait(Predicate pred, double seconds = 5) {
     const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
@@ -129,6 +173,9 @@ protected:
   std::atomic<int64_t> held_{-1}, clock_{-1};
   std::atomic<int> holds_{0};
   std::atomic<bool> send_acks_{false}, off_phase_{false};
+  std::atomic<int> releases_{0};          // every /sim/lockstep/release seen
+  std::atomic<int64_t> first_release_{-1};  // first positive release
+  std::map<std::string, rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr> ready_pubs_;
   std::string path_;
   std::unique_ptr<sim::LaunchTree> server_, coordinator_;
   std::unique_ptr<gz::transport::Node> gz_;
@@ -218,6 +265,190 @@ TEST_F(Lockstep, StrictGateTimeoutStopsPhysics) {
     return server_->read_log().find("stopping strict session") != std::string::npos;
   }, 7)) << server_->read_log();
   EXPECT_EQ(clock_, at);
+}
+
+// Per-tick timeout 2 s, gate 10 s, startup 8 s: B arrives after 3 s, which only startup_timeout_s covers.
+TEST_F(Lockstep, ReadinessStaggeredHoldsEpochZeroUntilEveryTopicIsReady) {
+  start(true, true, 10.0, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  ready(kReadyA);  // latched before the coordinator exists
+  coordinator(true, readiness({kReadyA, kReadyB}, 8.0));
+  ASSERT_TRUE(wait([&] {return log_has(std::string("readiness on ") + kReadyA);}, 10))
+    << coordinator_->read_log();
+  ready(kReadyA);  // duplicate valid readiness is idempotent; B is still missing
+  ready(kReadyA);
+  const auto since = std::chrono::steady_clock::now();
+  ASSERT_TRUE(wait([&] {return std::chrono::steady_clock::now() - since >= 3s;}, 10));
+  EXPECT_EQ(releases_, 0);
+  EXPECT_EQ(first_release_, -1);
+  EXPECT_LE(held_, 0);
+  EXPECT_LE(clock_, 0);
+  // Creating and observing a model must work while the barrier holds physics at zero.
+  gz::msgs::EntityFactory model;
+  model.set_sdf("<sdf version='1.9'><model name='startup_model'><static>true</static>"
+                "<link name='link'/></model></sdf>");
+  gz::msgs::Boolean created;
+  bool result = false;
+  ASSERT_TRUE(gz_->Request("/world/lockstep_test/create", model, 1000u, created, result));
+  ASSERT_TRUE(result && created.data());
+  ASSERT_TRUE(wait([&] {
+    gz::msgs::Empty query;
+    gz::msgs::Scene scene;
+    bool ok = false;
+    if (!gz_->Request("/world/lockstep_test/scene/info", query, 500u, scene, ok) || !ok) {
+      return false;
+    }
+    for (const auto & m : scene.model()) {if (m.name() == "startup_model") {return true;}}
+    return false;
+  }, 2));
+  EXPECT_EQ(held_, 0);
+  EXPECT_EQ(clock_, 0);
+  ready(kReadyB);
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  std::this_thread::sleep_for(50ms);
+  EXPECT_EQ(first_release_, 5000000);
+  EXPECT_EQ(clock_, 5000000);
+  ASSERT_TRUE(wait([&] {return ack_->get_subscription_count() > 0;}, 2));
+  ack(5000000);
+  ASSERT_TRUE(wait([&] {return held_ == 10000000;}, 2)) << coordinator_->read_log();
+  std::this_thread::sleep_for(30ms);
+  EXPECT_EQ(clock_, 10000000);
+  ASSERT_TRUE(wait([&] {return status_.count("timeouts") && status_["timeouts"] == "0";}, 3))
+    << coordinator_->read_log();
+}
+
+TEST_F(Lockstep, ReadinessLatchedBeforeCoordinatorAndGateReleasesFirstTickThenAcks) {
+  ready(kReadyA);
+  ready(kReadyB);
+  coordinator(true, readiness({kReadyA, kReadyB}, 30.0));
+  start(true, true, 10.0, true);
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 15)) << coordinator_->read_log();
+  std::this_thread::sleep_for(50ms);
+  EXPECT_EQ(first_release_, 5000000);
+  EXPECT_EQ(clock_, 5000000);
+  ASSERT_TRUE(wait([&] {return ack_->get_subscription_count() > 0;}, 2));
+  ack(5000000);
+  ASSERT_TRUE(wait([&] {return held_ == 10000000;}, 2)) << coordinator_->read_log();
+  std::this_thread::sleep_for(30ms);
+  EXPECT_EQ(clock_, 10000000);
+  ack(10000000);
+  ASSERT_TRUE(wait([&] {return held_ == 15000000;}, 2)) << coordinator_->read_log();
+  EXPECT_EQ(coordinator_->read_log().find("startup failed"), std::string::npos);
+}
+
+TEST_F(Lockstep, ReadinessArrivingAfterGateAndCoordinatorDiscoveryStillGatesFirstTick) {
+  start(true, true, 10.0, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  coordinator(true, readiness({kReadyA, kReadyB}, 8.0));
+  ASSERT_TRUE(wait([&] {return log_has(std::string("waiting for readiness on ") + kReadyB);}, 10))
+    << coordinator_->read_log();
+  const auto since = std::chrono::steady_clock::now();
+  ASSERT_TRUE(wait([&] {return std::chrono::steady_clock::now() - since >= 1s;}, 5));
+  EXPECT_EQ(releases_, 0);
+  EXPECT_LE(held_, 0);
+  ready(kReadyA);
+  ready(kReadyB);
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  EXPECT_EQ(first_release_, 5000000);
+}
+
+TEST_F(Lockstep, ReadinessMissingFailsClosedWithinStartupTimeout) {
+  start(true, true, 5.0, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  ready(kReadyA);
+  coordinator(true, readiness({kReadyA, kReadyB}, 2.0));
+  ASSERT_TRUE(wait([&] {return log_has("startup failed: startup timeout");}, 10))
+    << coordinator_->read_log();
+  EXPECT_TRUE(log_has(std::string("missing readiness on ") + kReadyB)) << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {return exited();}, 10)) << coordinator_->read_log();
+  EXPECT_EQ(first_release_, -1);
+  EXPECT_EQ(releases_, 0);
+  EXPECT_LE(held_, 0);
+  EXPECT_LE(clock_, 0);
+  ASSERT_TRUE(wait([&] {return status_["startup_error"].find("missing readiness") !=
+    std::string::npos;}, 5));
+  EXPECT_EQ(status_["startup_failures"], "1");
+  EXPECT_NE(status_["readiness.missing"].find("ready_b"), std::string::npos);
+}
+
+TEST_F(Lockstep, ReadinessNonzeroStampFailsClosedBeforeRelease) {
+  start(true, true, 5.0, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  ready(kReadyA, 5000000);
+  coordinator(true, readiness({kReadyA}, 4.0));
+  ASSERT_TRUE(wait([&] {return exited();}, 10)) << coordinator_->read_log();
+  EXPECT_TRUE(log_has(std::string("invalid readiness on ") + kReadyA + ": stamp 5000000 ns, expected 0"))
+    << coordinator_->read_log();
+  EXPECT_TRUE(log_has("startup failed: invalid readiness")) << coordinator_->read_log();
+  EXPECT_EQ(first_release_, -1);
+  EXPECT_LE(held_, 0);
+  EXPECT_LE(clock_, 0);
+}
+
+TEST_F(Lockstep, ReadinessNonzeroAfterBarrierFailsClosed) {
+  ready(kReadyA);
+  ready(kReadyB);
+  coordinator(true, readiness({kReadyA, kReadyB}, 30.0));
+  start(true, true, 10.0, true);
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 15)) << coordinator_->read_log();
+  ready(kReadyA, 5000000);  // a later nonzero stamp is never idempotent
+  ASSERT_TRUE(wait([&] {return log_has(std::string("startup failed: invalid readiness on ") + kReadyA);}, 10))
+    << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {return exited();}, 10)) << coordinator_->read_log();
+  EXPECT_EQ(held_, 5000000);
+}
+
+TEST_F(Lockstep, ReadinessWithoutGateCannotReleasePhysics) {
+  ready(kReadyA);
+  coordinator(true, readiness({kReadyA}, 1.0));
+  ASSERT_TRUE(wait([&] {return exited();}, 5)) << coordinator_->read_log();
+  EXPECT_TRUE(log_has("gz not held at epoch zero")) << coordinator_->read_log();
+  EXPECT_EQ(first_release_, -1);
+}
+
+TEST_F(Lockstep, ReadinessRunningWorldIsRejectedBeforeRelease) {
+  start(true, true, 5.0);  // Existing running startup first holds at 1 ms.
+  ASSERT_TRUE(wait([&] {return held_ > 0;}, 15));
+  ready(kReadyA);
+  coordinator(true, readiness({kReadyA}, 3.0));
+  ASSERT_TRUE(wait([&] {return exited();}, 5)) << coordinator_->read_log();
+  EXPECT_TRUE(log_has("gz advanced before the readiness barrier")) << coordinator_->read_log();
+  EXPECT_EQ(first_release_, -1);
+}
+
+TEST_F(Lockstep, ReadinessGateTimeoutFailsClosedAtZero) {
+  coordinator(true, readiness({kReadyA}, 15.0));
+  start(true, true, 2.0, true);
+  ASSERT_TRUE(wait([&] {return held_ == 0;}, 15));
+  ASSERT_TRUE(wait([&] {return exited();}, 5)) << coordinator_->read_log();
+  EXPECT_TRUE(log_has("gate timed out before readiness")) << coordinator_->read_log();
+  EXPECT_EQ(first_release_, -1);
+  EXPECT_LE(clock_, 0);
+}
+
+TEST_F(Lockstep, EpochZeroGateRejectsRunningStartup) {
+  start(true, true, 5.0, true, true);
+  ASSERT_TRUE(wait([&] {return !server_->alive();}, 15)) << server_->read_log();
+  EXPECT_NE(server_->read_log().find("requires a paused world at zero"), std::string::npos);
+  EXPECT_EQ(first_release_, -1);
+}
+
+TEST_F(Lockstep, ReadinessConfigurationIsRejectedAtConstruction) {
+  coordinator(true, readiness({kReadyA, kReadyA}, 8.0));
+  ASSERT_TRUE(wait([&] {return exited();}, 15)) << coordinator_->read_log();
+  EXPECT_TRUE(log_has("readiness topics must be nonempty and unique")) << coordinator_->read_log();
+  coordinator(true, readiness({kReadyA, "lockstep_test/ready_a"}, 8.0));
+  ASSERT_TRUE(wait([&] {return exited();}, 15)) << coordinator_->read_log();
+  EXPECT_TRUE(log_has("readiness topics must be nonempty and unique")) << coordinator_->read_log();
+  coordinator(true, {"-p", "readiness_topics:=['']"});
+  ASSERT_TRUE(wait([&] {return exited();}, 15)) << coordinator_->read_log();
+  EXPECT_TRUE(log_has("readiness topics must be nonempty and unique")) << coordinator_->read_log();
+  coordinator(false, readiness({kReadyA}, 8.0));
+  ASSERT_TRUE(wait([&] {return exited();}, 15)) << coordinator_->read_log();
+  EXPECT_TRUE(log_has("readiness_topics needs strict_startup")) << coordinator_->read_log();
+  coordinator(true, readiness({kReadyA}, 0.0));
+  ASSERT_TRUE(wait([&] {return exited();}, 15)) << coordinator_->read_log();
+  EXPECT_TRUE(log_has("startup_timeout_s must be positive")) << coordinator_->read_log();
 }
 
 int main(int argc, char **argv) {

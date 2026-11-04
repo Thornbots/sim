@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add optional epoch-zero `readiness_topics` to strict lockstep startup.
+  The coordinator holds until every latched readiness message has stamp zero
+  and Gazebo confirms a gate hold at zero; a separate bounded startup timeout
+  reports missing topics. Invalid readiness and gate failures stop startup.
+  E2E launch integration remains open.
+
 - Add an opt-in `initial_position` startup to `opponent_driver`: it spawns
   the opponent once, publishes a transient-local `~/ready` only after the
   paused world is confirmed at sim time zero, and exits 1 on collision, wrong

@@ -1346,6 +1346,8 @@ snapshot before track I; it does not establish board accuracy. Board boot,
 UART/CAN and gz validation are in the [Type C report](docs/mcb-type-c-2026-10-11.md)
 and [board auto-drive report](docs/mcb-auto-drive-2026-10-12.md).
 
+#### Lockstep startup
+
 `e2e.launch.py` defaults to `lockstep:=true`. The gz `LockstepGate` holds
 in `PostUpdate` at each 5 ms MCB acknowledgment deadline. The gz MCB system publishes
 `/mcb_emulator/tick` after each 1 ms firmware tick and application of its motor
@@ -1363,13 +1365,37 @@ The coordinator repeats bounded releases during discovery and waits for each
 due acknowledgment without learning or skipping phase. A missing hold or ack
 reports an error and stops the coordinator; the strict gate stops Gazebo on its
 own timeout instead of running free. Set the gate timeout longer than the
-coordinator timeout to preserve its diagnostic. This primitive is not yet wired
-into the e2e launch or the remaining robot and detector readiness gates.
+coordinator timeout to preserve its diagnostic.
+
+For an exact epoch-zero barrier, start Gazebo paused (omit `-r`) with the
+strict gate's SDF `<epoch_zero_startup>true</epoch_zero_startup>`. The gate
+reports a hold at zero while returning from paused updates, so scene and
+create services can initialize models. It unpauses Gazebo only after a positive
+release; starting this mode in a running or nonzero world fails closed.
+The ordinary strict gate first holds after a physics step and cannot prove
+epoch-zero initialization by itself.
+
+Strict startup can also require `readiness_topics`, a list of distinct ROS
+topics carrying reliable, transient-local `std_msgs/Header` messages. Each
+publisher confirms initialization at simulation epoch zero with stamp zero.
+The coordinator waits for every topic and an actual gate hold at zero before
+the first positive release. Readiness may arrive before discovery; duplicate
+zero messages are harmless. A nonzero readiness stamp, advance before the
+barrier, gate failure or missing readiness stops the coordinator without a
+positive release. `startup_timeout_s` bounds this wait independently of
+`max_wait_s`, which still bounds each subsequent tick. Set the strict gate's
+timeout longer than both waits to preserve coordinator diagnostics. Status
+includes the missing topics and startup failure reason. These primitives are
+not yet wired into the e2e launch or the remaining robot readiness gates.
+The [startup investigation](docs/lockstep-startup-2026-11-04.md) records the
+real Gazebo validation and remaining integration limits.
 
 `/sim/lockstep/status` reports holds, per-chain wall wait and timeout counts.
 The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.
 `lockstep:=false` retains the ungated control run.
+
+#### Coordinated UART fixtures
 
 With `run_tests:=false uart_relay_fixture:=true`, e2e routes the firmware UART
 through a plugin-owned socketpair and independent 8N1 queues to the bridge PTY.
