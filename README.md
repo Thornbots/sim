@@ -498,6 +498,16 @@ MCB emulator: the compiled sentry firmware (see Notes "MCB emulator") on a
 pty, with `dji_serial_bridge` and `mcb_relay` on the other end, the real CV
 chain from `target_selector` to `point_to_cv_target`, and no camera:
 `detector_standin` feeds gz truth in place of YOLO and `roi_depth_node`.
+Its optional `deterministic_epoch_zero` mode requires `use_sim_time` and an
+observed `/clock` at zero while the clock is held there. It publishes a
+reliable transient-local `~/ready` header only after its 1 ms timer is
+initialized at zero; a nonzero first clock or a clock that advances during
+initialization fails closed. Capture stamps are `round(index * 1000 / rate_hz)`
+milliseconds (index starts at one). After all model poses cover a tick, it
+publishes the detection array, including empty arrays, then a `~/consumed`
+header with the same stamp. Missing truth does not produce an acknowledgment;
+queue overflow or expired truth fails the deterministic detector visibly.
+The mode is off by default and is not yet wired into e2e launch or its gate.
 Shots are the ones the firmware fires, each falling under gravity since the
 firmware pitches up for it. All three stages use the robot's no-patrol
 `point_to_cv_target` behavior: last-enemy and hit holds, then a look toward

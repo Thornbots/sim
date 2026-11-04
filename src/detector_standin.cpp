@@ -39,6 +39,8 @@
 #include <gz/transport/Node.hh>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <rosgraph_msgs/msg/clock.hpp>
+#include <std_msgs/msg/header.hpp>
 #include <urdf/model.h>
 
 #include "sim/panel_view.hpp"
@@ -139,17 +141,31 @@ public:
 
     pub_ = create_publisher<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", 10);
-    // The D435's depth rate, on the sim clock.
-    timer_ = create_timer(
-      std::chrono::duration<double>(1.0 / declare_parameter("rate_hz", 60.0)),
-      [this]() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        pending_.push_back(now());
-        if (pending_.size() > kMaxPending) {
-          pending_.pop_front();
-        }
-        drain();
-      });
+    rate_hz_ = declare_parameter("rate_hz", 60.0);
+    deterministic_ = declare_parameter("deterministic_epoch_zero", false);
+    if (deterministic_) {
+      if (!std::isfinite(rate_hz_) || rate_hz_ <= 0.0 || rate_hz_ > 1000.0) {
+        throw std::invalid_argument("deterministic rate_hz must be in (0, 1000]");
+      }
+      if (!get_parameter("use_sim_time").as_bool()) {
+        throw std::invalid_argument("deterministic_epoch_zero requires use_sim_time");
+      }
+      ready_pub_ = create_publisher<std_msgs::msg::Header>(
+        "~/ready", rclcpp::QoS(1).reliable().transient_local());
+      consumed_pub_ = create_publisher<std_msgs::msg::Header>("~/consumed", 10);
+      clock_sub_ = create_subscription<rosgraph_msgs::msg::Clock>(
+        "/clock", rclcpp::ClockQoS(),
+        [this](rosgraph_msgs::msg::Clock::ConstSharedPtr msg) {init_clock(*msg);});
+    } else {
+      timer_ = create_timer(std::chrono::duration<double>(1.0 / rate_hz_), [this]() {
+          std::lock_guard<std::mutex> lock(mutex_);
+          pending_.push_back(now());
+          if (pending_.size() > kMaxPending) {
+            pending_.pop_front();
+          }
+          drain();
+        });
+    }
 
     std::vector<std::string> models = opponents_;
     models.push_back(our_model_);
@@ -167,6 +183,66 @@ public:
 private:
   static constexpr size_t kMaxPending = 10;
   static constexpr size_t kMaxHistory = 250;  // 1 s at gz's 250 Hz
+
+  void fail(const char * reason)
+  {
+    failed_ = true;
+    if (timer_) {
+      timer_->cancel();
+    }
+    RCLCPP_ERROR(get_logger(), "deterministic detector failed: %s", reason);
+  }
+
+  void init_clock(const rosgraph_msgs::msg::Clock & msg)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (failed_ || timer_) {
+      return;
+    }
+    if (msg.clock.sec != 0 || msg.clock.nanosec != 0 || now().nanoseconds() != 0) {
+      fail("epoch zero missed");
+      return;
+    }
+    timer_ = create_timer(std::chrono::milliseconds(1), [this]() {tick();});
+    if (now().nanoseconds() != 0) {
+      fail("clock advanced while initializing timer");
+      return;
+    }
+    std_msgs::msg::Header ready;
+    ready.frame_id = frame_id_;
+    ready_pub_->publish(ready);
+  }
+
+  void tick()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (failed_) {
+      return;
+    }
+    const auto current = now().nanoseconds();
+    if (current < last_clock_ns_) {
+      fail("clock moved backwards");
+      return;
+    }
+    last_clock_ns_ = current;
+    while (true) {
+      const int64_t scheduled = static_cast<int64_t>(
+        std::llround(static_cast<double>(next_tick_) * 1000.0 / rate_hz_)) * 1000000;
+      if (scheduled > current) {
+        break;
+      }
+      if (pending_.size() == kMaxPending) {
+        fail("pending tick queue overflow");
+        return;
+      }
+      pending_.emplace_back(scheduled, RCL_ROS_TIME);
+      ++next_tick_;
+      drain();
+      if (failed_) {
+        return;
+      }
+    }
+  }
 
   void on_pose(const std::string & name, const gz::msgs::Pose_V & m)
   {
@@ -224,6 +300,9 @@ private:
   // Answers every pending tick whose stamp all the poses have reached.
   void drain()
   {
+    if (failed_) {
+      return;
+    }
     while (!pending_.empty()) {
       const rclcpp::Time stamp = pending_.front();
       const double t = stamp.seconds();
@@ -238,6 +317,15 @@ private:
       }
       if (at == At::kOk) {
         publish(stamp, ours, theirs);
+        if (deterministic_) {
+          std_msgs::msg::Header consumed;
+          consumed.stamp = stamp;
+          consumed.frame_id = frame_id_;
+          consumed_pub_->publish(consumed);
+        }
+      } else if (deterministic_) {
+        fail("truth history no longer covers a pending tick");
+        return;
       }
       pending_.pop_front();
     }
@@ -323,6 +411,11 @@ private:
   gz::transport::Node gz_;
   rclcpp::Publisher<dji_serial_bridge::msg::PanelDetectionArray>::SharedPtr pub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  bool deterministic_ = false, failed_ = false;
+  double rate_hz_ = 60.0;
+  int64_t next_tick_ = 1, last_clock_ns_ = 0;
+  rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ready_pub_, consumed_pub_;
 };
 
 }  // namespace sim

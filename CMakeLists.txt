@@ -279,7 +279,7 @@ target_compile_features(detector_standin PUBLIC cxx_std_17)
 target_include_directories(detector_standin PRIVATE include)
 target_link_libraries(detector_standin Eigen3::Eigen gz-transport::core gz-msgs::core)
 ament_target_dependencies(detector_standin
-  dji_serial_bridge geometry_msgs rclcpp rclcpp_components urdf)
+  dji_serial_bridge geometry_msgs rclcpp rclcpp_components rosgraph_msgs std_msgs urdf)
 rclcpp_components_register_node(detector_standin
   PLUGIN "sim::DetectorStandin"
   EXECUTABLE detector_standin_node)
@@ -344,6 +344,13 @@ if(BUILD_TESTING)
   # the run itself, and its [tool:pytest] deselects the integration suites.
   set(ENV{PYTEST_ADDOPTS} "-p no:anyio")
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_detector_standin test/cpp/test_detector_standin.cpp TIMEOUT 60)
+  find_package(class_loader REQUIRED)
+  target_compile_definitions(test_detector_standin PRIVATE DETECTOR_LIBRARY="$<TARGET_FILE:detector_standin>")
+  add_dependencies(test_detector_standin detector_standin)
+  target_link_libraries(test_detector_standin gz-transport::core gz-msgs::core)
+  ament_target_dependencies(test_detector_standin
+    class_loader dji_serial_bridge rclcpp rclcpp_components rosgraph_msgs std_msgs)
   ament_add_gtest(test_lidar_scan test/cpp/test_lidar_scan.cpp)
   target_include_directories(test_lidar_scan PRIVATE include)
   target_compile_definitions(test_lidar_scan PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
