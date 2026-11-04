@@ -36,11 +36,21 @@ public:
   void close_child() { if (child_ >= 0) close(child_); child_ = -1; }
 
   void pump(int64_t now_ns) {
+    before_step(now_ns);
+    after_step(now_ns);
+  }
+  // Observe Jetson input only before the firmware cycle. Input arriving while
+  // it runs cannot have existed at that cycle's simulation time.
+  void before_step(int64_t now_ns) {
     if (now_ns > INT64_MAX - delay_) throw std::overflow_error("UART relay time overflow");
     receive(socket_, to_pty_, now_ns, true);
     receive(pty_, to_firmware_, now_ns + delay_, false);
     deliver(pty_, to_pty_, now_ns, false);
     deliver(socket_, to_firmware_, now_ns, true);
+  }
+  void after_step(int64_t now_ns) {
+    receive(socket_, to_pty_, now_ns, true);
+    deliver(pty_, to_pty_, now_ns, false);
   }
 private:
   static void fail(const char *what) { throw std::system_error(errno, std::generic_category(), what); }

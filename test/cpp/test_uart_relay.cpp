@@ -58,6 +58,28 @@ TEST(UartRelay, RetainsBacklogWhenDestinationIsFull) {
   close(pair[1]);
 }
 
+TEST(UartRelay, InputArrivingDuringFirmwareStepStartsAtNextObservation) {
+  int master, slave;
+  ASSERT_EQ(openpty(&master, &slave, nullptr, nullptr, nullptr), 0);
+  termios settings{};
+  ASSERT_EQ(tcgetattr(slave, &settings), 0);
+  cfmakeraw(&settings);
+  ASSERT_EQ(tcsetattr(slave, TCSANOW, &settings), 0);
+  ASSERT_EQ(fcntl(master, F_SETFL, O_NONBLOCK), 0);
+  sim::UartRelay relay(master, 10000, 10000);
+  relay.before_step(0);
+  ASSERT_EQ(write(slave, "x", 1), 1);
+  relay.after_step(0);
+  relay.before_step(1'000'000);
+  char byte;
+  EXPECT_EQ(read(relay.child_fd(), &byte, 1), -1);
+  relay.before_step(2'000'000);
+  ASSERT_EQ(read(relay.child_fd(), &byte, 1), 1);
+  EXPECT_EQ(byte, 'x');
+  close(master);
+  close(slave);
+}
+
 TEST(UartRelay, FirmwareProducesFramesThroughSocketAndPty) {
   const char *binary = std::getenv("T17_FIRMWARE_BINARY");
   if (!binary) GTEST_SKIP() << "set T17_FIRMWARE_BINARY to exercise a firmware backend";

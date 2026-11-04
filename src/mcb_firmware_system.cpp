@@ -181,9 +181,9 @@ public:
     const std::array<double, 6> imu{gyro.X(), gyro.Y(), gyro.Z(),
                                   acceleration.X(), acceleration.Y(), acceleration.Z()};
     const auto uart_time = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
-    if (relay_) relay_->pump(uart_time);
+    if (relay_) relay_->before_step(uart_time);
     const auto output = firmware_->step(1, readings, referee_, feedback, external_, imu);
-    if (relay_) relay_->pump(uart_time);
+    if (relay_) relay_->after_step(uart_time);
     plant_.commands = output.motors;
     const auto effort = plant_.gimbal_effort(yv->Data()[0], pv->Data()[0]);
     for (const auto &pair : {std::make_pair(yaw_, effort[0]), std::make_pair(pitch_, effort[1])}) {

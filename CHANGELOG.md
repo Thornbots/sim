@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- Add an independently tested simulation-time UART byte queue for the planned
-  lockstep relay; the existing PTY transport is not connected to it yet.
+- Observe Jetson UART input only before a firmware cycle, so bytes arriving
+  during that cycle cannot be delivered as if they had arrived earlier.
+
+- Add an opt-in simulation-time UART relay fixture. Verified frame capture
+  stamps and publication acknowledgments are still required for lockstep.
 
 - Move historical localization, sensor and gimbal experiments into dated package history; preserve README anchors and current instructions.
 
