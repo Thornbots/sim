@@ -508,6 +508,14 @@ publishes the detection array, including empty arrays, then a `~/consumed`
 header with the same stamp. Missing truth does not produce an acknowledgment;
 queue overflow or expired truth fails the deterministic detector visibly.
 The mode is off by default and is not yet wired into e2e launch or its gate.
+`opponent_driver` has a matching opt-in mode: setting `initial_position`
+(two finite coordinates, required with `use_sim_time`; `startup_timeout_s`
+defaults to 30) spawns `opponent_0` at that pose and publishes a
+transient-local `~/ready` header only when `/world/<name>/stats` shows the
+world paused at sim time zero, before and after one model with that name
+and pose is confirmed. A collision, wrong pose, nonzero epoch or timeout logs
+an error and exits 1. Without `initial_position` the odometry-seeded spawn
+runs unchanged. Not yet wired into e2e launch.
 Shots are the ones the firmware fires, each falling under gravity since the
 firmware pitches up for it. All three stages use the robot's no-patrol
 `point_to_cv_target` behavior: last-enemy and hit holds, then a look toward

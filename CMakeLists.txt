@@ -432,6 +432,14 @@ if(BUILD_TESTING)
   ament_add_gtest(test_pose_history test/cpp/test_pose_history.cpp)
   target_include_directories(test_pose_history PRIVATE include)
   target_link_libraries(test_pose_history pose_history Eigen3::Eigen)
+  # Real gz server on the paused field plus the opponent_driver executable.
+  ament_add_gtest(test_opponent_startup test/cpp/test_opponent_startup.cpp TIMEOUT 1500)
+  add_dependencies(test_opponent_startup opponent_driver)
+  target_compile_definitions(test_opponent_startup PRIVATE
+    SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    OPPONENT_DRIVER_EXE="$<TARGET_FILE:opponent_driver>")
+  target_link_libraries(test_opponent_startup suite_support gz-transport::core gz-msgs::core)
+  ament_target_dependencies(test_opponent_startup rclcpp std_msgs)
   foreach(lint copyright flake8 pep257)
     ament_add_pytest_test(sim_${lint} test/test_${lint}.py TIMEOUT 120
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add an opt-in `initial_position` startup to `opponent_driver`: it spawns
+  the opponent once, publishes a transient-local `~/ready` only after the
+  paused world is confirmed at sim time zero, and exits 1 on collision, wrong
+  pose, nonzero epoch or timeout. The legacy odometry spawn is unchanged.
+  `test_opponent_startup` runs it against the real paused ARCC field.
+  E2E launch does not use it yet.
+
 - Observe Jetson UART input only before a firmware cycle, so bytes arriving
   during that cycle cannot be delivered as if they had arrived earlier.
 
