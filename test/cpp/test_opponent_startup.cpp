@@ -36,9 +36,9 @@ namespace
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
 
-const std::string kWorld = "/world/ARCC_Field_2026/";
-const std::string kWorldFile = std::string(SIM_SOURCE_DIR) + "/world/ARCC_Field_2026.sdf";
-const std::string kModel = "opponent_0";
+constexpr char kWorld[] = "/world/ARCC_Field_2026/";
+constexpr char kWorldFile[] = SIM_SOURCE_DIR "/world/ARCC_Field_2026.sdf";
+constexpr char kModel[] = "opponent_0";
 const double kZ = -0.0115;
 
 struct Stats
@@ -61,7 +61,7 @@ protected:
     rclcpp::init(0, nullptr);
     observer_ = std::make_shared<rclcpp::Node>("opponent_startup_test");
     ready_sub_ = make_ready_sub();
-    stats_ok_ = node_->Subscribe<gz::msgs::WorldStatistics>(kWorld + "stats",
+    stats_ok_ = node_->Subscribe<gz::msgs::WorldStatistics>(std::string(kWorld) + "stats",
       [this](const gz::msgs::WorldStatistics & msg) {
         std::lock_guard<std::mutex> lock(stats_.mutex);
         stats_.seen = true;
@@ -125,7 +125,7 @@ protected:
     gz::msgs::Empty request;
     gz::msgs::Scene reply;
     bool result = false;
-    if (!node_->Request(kWorld + "scene/info", request, 1000u, reply, result) || !result) {
+    if (!node_->Request(std::string(kWorld) + "scene/info", request, 1000u, reply, result) || !result) {
       return std::nullopt;
     }
     return reply;
@@ -169,7 +169,7 @@ protected:
     request.mutable_pose()->mutable_orientation()->set_w(1.0);
     gz::msgs::Boolean reply;
     bool result = false;
-    return node_->Request(kWorld + "create", request, 3000u, reply, result) && result;
+    return node_->Request(std::string(kWorld) + "create", request, 3000u, reply, result) && result;
   }
 
   bool wait_for_world(std::chrono::duration<double> timeout)
