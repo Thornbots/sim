@@ -15,10 +15,9 @@
   `test_opponent_startup` runs it against the real paused ARCC field.
   E2E launch does not use it yet.
 
-- Observe Jetson UART input only before a firmware cycle, so bytes arriving
-  during that cycle cannot be delivered as if they had arrived earlier.
-
-- Add an opt-in simulation-time UART relay fixture. Verified frame capture
+- Add an opt-in simulation-time UART relay fixture; Jetson UART input is
+  observed only before a firmware cycle, so bytes arriving during that cycle
+  are not delivered as if they had arrived earlier. Verified frame capture
   stamps and publication acknowledgments are still required for lockstep.
 
 - Move historical localization, sensor and gimbal experiments into dated package history; preserve README anchors and current instructions.
@@ -43,7 +42,7 @@
   `panel_up_m`, and `crossing_panel` for ballistic stages) in `shots.jsonl`.
   Hosted MCB firmware tests expect the barrel-offset yaw from MCBV3.
 - Bound E2E referee parameter requests by a two-second steady-clock deadline.
-  Lost responses now release the pending request and resend current match
-  state; three consecutive timeouts fail explicitly. This prevents a lost
-  bring-up response from leaving driving stages in `drive=stop`. Physical
-  robot control is unaffected.
+  Lost responses release the pending request and resend current match state;
+  three consecutive timeouts fail explicitly, so a lost bring-up response no
+  longer leaves driving stages in `drive=stop`. Physical robot control is
+  unaffected.

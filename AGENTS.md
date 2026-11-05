@@ -49,9 +49,9 @@ The links below are execution rules and reference contracts, not a second backlo
 - `odom_stuck` intentionally checks liveness, not recovered localization:
   [scenarios](README.md#scenarios). Never invert rf2o's warping to retune a regression.
 - Scored-stage detection limits: [tests](README.md#run-the-tests).
-- [Board-stage verification](docs/mcb-auto-drive-2026-10-12.md); motor-plant limits live in
-  [MCB emulator](README.md#mcb-emulator).
-  [Model limits](README.md#sentry_v2urdfxacro-motion-model).
+- [Board-stage verification](docs/mcb-auto-drive-2026-10-12.md); limits:
+  [motor plant](README.md#mcb-emulator),
+  [motion model](README.md#sentry_v2urdfxacro-motion-model).
 - Check [gz spawn quirks](README.md#simlaunchpy-spawn_robot-uses--string) when diagnosing spawn/clock failures.
 - Changes shared with `target_driver`, `cv_target_emulator`, `cv_head_aim` or
   `pose_emulator` may also need `src/bench_world.cpp`; it has its own lockstep implementation.
