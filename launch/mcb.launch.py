@@ -65,7 +65,8 @@ def stack(context):
                      "'600' if '", LaunchConfiguration('backend'), "' == 'renode' else '30'"])])
     start_uart = RegisterEventHandler(OnProcessExit(
         target_action=ready,
-        on_exit=lambda event, context: [bridge, relay, waypoint_nav] if event.returncode == 0 else [
+        on_exit=lambda event, context: [
+            bridge, relay, waypoint_nav] if event.returncode == 0 else [
             EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
     return [sim, start_uart, ready,
             TimerAction(period=8.0, actions=[robot])]

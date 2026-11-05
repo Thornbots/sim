@@ -231,7 +231,8 @@ def generate_launch_description():
         output='screen')
     uart_start = RegisterEventHandler(OnProcessExit(
         target_action=uart_ready,
-        on_exit=lambda event, context: [bridge, mcb_relay, waypoint_nav] if event.returncode == 0 else [
+        on_exit=lambda event, context: [
+            bridge, mcb_relay, waypoint_nav] if event.returncode == 0 else [
             OpaqueFunction(function=lambda context: finish_suite(
                 event, context, 'MCB UART readiness')
                            if _is_true(context, 'deterministic_epoch_zero') else [
