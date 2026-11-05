@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Sentry aiming moved to the MCB: `CV_TARGET` is a 13-byte idle look point and
+  `TARGET_STATE` (id 7, 80 bytes) carries the tracked armor model; the emulator's
+  protocol, firmware/bridge tests, E2E harness and bench launches follow it with no
+  old-format fallback. The aiming and estimation benches run `mcb_aim_standin`,
+  which compiles the firmware's `AimPlanner.cpp` from the checkout (skipped
+  without it) instead of `point_to_cv_target`; `cv_head_aim` follows its aim.
+  E2E no longer passes `gimbal_lag_s`, `chase_*`, `firmware_latency_s` or `v_muzzle`,
+  and its aim-point diagnostics and Jetson fire-request shots are gone. Aiming
+  bench floors re-measured ([measurement](docs/mcb-aim-planner-2026-11-04.md)).
+  `e2e.launch.py` restores the south idle look for `mcb_parked`.
+
 - Add optional epoch-zero `readiness_topics` to strict lockstep startup.
   The coordinator holds until every latched readiness message has stamp zero
   and Gazebo confirms a gate hold at zero; a separate bounded startup timeout

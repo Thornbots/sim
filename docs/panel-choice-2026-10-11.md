@@ -80,7 +80,8 @@ projectile exits. In `test/e2e/e2e_harness.cpp`, `Scorer` subscribes to
 `/mcb_emulator/shot` and queues the MCB shot at `t + .05`, where `t` is the
 indexer-request stamp published by `src/mcb_emulator_node.cpp`. That inline
 50 ms delay is separate from the aiming bench's `cv_bench.hpp::kFireLatency`
-and the Jetson's `firmware_latency_s` planning parameter. A request measured
+and the Jetson's `firmware_latency_s` planning parameter (both since removed;
+see [the MCB aim planner measurement](mcb-aim-planner-2026-11-04.md)). A request measured
 at 70-79 ms therefore starts its E2E modeled flight at 120-129 ms after
 receipt, rather than 150 ms. This is a source-derived E2E timing implication,
 not a measured live projectile exit. Hardware calibration remains open;
