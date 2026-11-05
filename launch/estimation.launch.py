@@ -42,7 +42,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from sim.display import display_error
-from sim.suite_exit import finish_suite
+from sim.suite_exit import finish_suite, suite_command
 
 
 def _is_true(context, name):
@@ -120,7 +120,7 @@ def _stack(context):
 
 def _tests(context):
     cfg = context.launch_configurations
-    cmd = ['ros2', 'run', 'sim', 'estimation_suite', '--external-stack',
+    cmd = [*suite_command('estimation_suite'), '--external-stack',
            '--panel-layout', cfg['panel_layout'], '--target-path', cfg['target_path'],
            '--shooter-speed', cfg['shooter_speed'], '--chassis-spin', cfg['chassis_spin'],
            '--camera-latency', cfg['camera_latency_s']]

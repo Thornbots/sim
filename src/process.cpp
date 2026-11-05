@@ -52,14 +52,54 @@ void parent_death(pid_t parent) {
   static_cast<void>(parent);
 #endif
 }
+// kill(-group, 0) also succeeds for zombies, which are not leftovers.
+bool group_has_live_member(pid_t group) {
+  if (kill(-group, 0) != 0) {
+    return false;
+  }
+  std::string listing;
+  try {
+    listing = capture({"ps", "-eo", "pgid=,stat="});
+  } catch (const std::exception &) {
+    return true;
+  }
+  std::istringstream input(listing);
+  pid_t pgid;
+  std::string stat;
+  while (input >> pgid >> stat) {
+    if (pgid == group && stat.find('Z') == std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
 } // namespace
+void die_with_parent(int sig) {
+  signal(SIGINT, SIG_DFL);
+  signal(SIGTERM, SIG_DFL);
+#ifdef __linux__
+  const auto parent = getppid();
+  prctl(PR_SET_PDEATHSIG, sig);
+  if (getppid() != parent) {
+    raise(sig);
+  }
+#else
+  static_cast<void>(sig);
+#endif
+}
 LaunchTree::LaunchTree(std::vector<std::string> command, std::string logfile)
     : LaunchTree("stack", std::move(command), std::move(logfile)) {}
 LaunchTree::LaunchTree(std::string name, std::vector<std::string> command,
-                       std::string logfile)
-    : name_(std::move(name)), logfile_(std::move(logfile)) {
+                       std::string logfile, bool signal_group)
+    : name_(std::move(name)), logfile_(std::move(logfile)),
+      signal_group_(signal_group) {
   if (command.empty()) {
     throw std::invalid_argument("empty launch command");
+  }
+  // The `ros2 run` wrapper ignores a lone SIGINT and relies on the tty's
+  // group delivery, so only a group signal reaches its node.
+  if (command.size() > 1 && command[0] == "ros2" && command[1] == "run") {
+    signal_group_ = true;
   }
   auto args = arguments(command);
   const int log =
@@ -109,23 +149,28 @@ void LaunchTree::stop(double timeout, const std::function<void()> &progress) {
     return;
   }
   std::exception_ptr progress_error;
+  const auto run_progress = [&]() {
+    if (progress && !progress_error) {
+      try {
+        progress();
+      } catch (...) {
+        progress_error = std::current_exception();
+      }
+    }
+  };
   if (alive()) {
-    std::cout << '[' << name_ << "] sending SIGINT to process group " << group_
-              << "..." << std::endl;
-    kill(-group_, SIGINT);
+    std::cout << '[' << name_ << "] sending SIGINT to "
+              << (signal_group_ ? "process group " : "launch leader ")
+              << (signal_group_ ? group_ : pid_) << "..." << std::endl;
+    kill(signal_group_ ? -group_ : pid_, SIGINT);
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::duration<double>(timeout);
     while (alive() && std::chrono::steady_clock::now() < deadline) {
-      if (progress && !progress_error) {
-        try {
-          progress();
-        } catch (...) {
-          progress_error = std::current_exception();
-        }
-      }
+      run_progress();
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (alive()) {
+      clean_ = false;
       std::cout << '[' << name_ << "] did not exit within " << timeout
                 << "s, SIGKILLing process group " << group_ << '.' << std::endl;
       kill(-group_, SIGKILL);
@@ -137,7 +182,15 @@ void LaunchTree::stop(double timeout, const std::function<void()> &progress) {
       std::cout << '[' << name_ << "] exited cleanly." << std::endl;
     }
   }
-  if (kill(-group_, 0) == 0) {
+  // Reparented members are reaped by init; give it a moment before judging.
+  const auto reap = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (group_has_live_member(group_) &&
+         std::chrono::steady_clock::now() < reap) {
+    run_progress();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  if (group_has_live_member(group_)) {
+    clean_ = false;
     std::cout << '[' << name_ << "] processes outlived the launch in group "
               << group_ << "; SIGKILLing them." << std::endl;
     kill(-group_, SIGKILL);

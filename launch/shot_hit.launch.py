@@ -46,7 +46,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from sim.display import display_error
-from sim.suite_exit import finish_suite
+from sim.suite_exit import finish_suite, suite_command
 
 
 def _is_true(context, name):
@@ -142,7 +142,7 @@ def _point_stack(context, harness, headless):
 
 
 def _tests(context):
-    cmd = ['ros2', 'run', 'sim', 'shot_hit_suite', '--external-stack',
+    cmd = [*suite_command('shot_hit_suite'), '--external-stack',
            '--panel-layout', context.launch_configurations['panel_layout'],
            '--target-path', context.launch_configurations['target_path'],
            '--shooter-speed', context.launch_configurations['shooter_speed']]

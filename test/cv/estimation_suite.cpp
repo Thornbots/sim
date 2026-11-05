@@ -306,6 +306,7 @@ INSTANTIATE_TEST_SUITE_P(Cells, EstimationSuite,
                            return cb::gtest_name(info.param.name);
                          });
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   cb::options.stage = "estimation";
   cb::parse_options(argc, argv);
   if (!cb::options.headless) {

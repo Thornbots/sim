@@ -277,7 +277,8 @@ robot back to spawn, removes anything a scenario spawned, and resets
 sim up fresh for every scenario instead, the old behaviour and the control when
 a verdict looks off. `spawn_yaw_deg:=5` turns the chassis that far off the spawn heading at every
 reset; the real robot drifts 1-5 deg. Both
-shut down when the tests finish, and Ctrl-C stops everything, stacks included.
+shut down when the tests finish, and Ctrl-C stops everything, stacks included
+(under `run_suite.sh`, per the [shutdown contract](#startup-and-shutdown-contract)).
 Each shared-sim robot startup gets one 30-second wait for its complete TF chain;
 a failure ends that case without restarting the robot. Startup diagnostics name
 the raw `odom->root`, navigation `nav_odom->odom` and backend `map->nav_odom`
@@ -302,10 +303,50 @@ either. `--show-args` on either launch lists the rest.
 launches: it refuses to start over a running stack, tees the output to
 `/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.cpp` on it. It exits 0
 only when GTest passed and the checker trusts the run. The localization and
-MCB E2E suites also check that `gz` is available before launch:
+MCB E2E suites also check that `gz` is available before launch, and every
+suite that something else could leave running needs `sim` built and sourced
+(`guarded_exec`, below):
 
 ```bash
 src/sim/tools/run_suite.sh localization_drift scenario:=odom_stuck
+```
+
+#### Startup and shutdown contract
+
+One command starts a suite and one signal ends it, with no TTY and nothing
+outside the launch tree to clean up:
+
+- `run_suite.sh` runs the launch in its own process group behind
+  `guarded_exec`, which resets signal dispositions and asks the kernel for a
+  SIGINT when the shell dies. Ctrl-C, SIGTERM and SIGHUP on the script, and
+  SIGKILL of the shell, each reach the launch leader as one SIGINT. The launch
+  forwards it once to each child, so nodes exit 0 instead of -2.
+- `launch/e2e.launch.py`, `estimation.launch.py` and `shot_hit.launch.py` start
+  their GTest binary directly, not through `ros2 run`, whose Python wrapper
+  ignores a lone SIGINT. The suites call `sim::die_with_parent()`.
+- gz sim starts as the launch's direct child
+  ([`sim/gz_process.py`](sim/gz_process.py)). `ros_gz_sim`'s own launch file
+  runs it under `sh -c`, which dies on SIGINT/SIGTERM and orphans the server.
+- `sim::LaunchTree::stop()` sends SIGINT to the leader only (a group for
+  Renode and `ros2 run`), then expects the whole group to be gone. A member
+  that survives is SIGKILLed and reported (`clean()` is false, the E2E suite
+  fails, the checker rejects the log).
+- The firmware process has its own process group on purpose, so a group SIGINT
+  cannot kill it mid-tick; it exits when gz closes its stdin.
+- The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero node
+  exit, including -2.
+
+`tools/lifecycle_check.sh` is the acceptance test. For each of `mcb_parked`,
+`mcb_drive`, `mcb_match` and `tracking` it ends a run by completion, Ctrl-C
+(`int`), SIGTERM, SIGHUP and a SIGKILLed shell, then asserts that the shell is
+gone within a bound, that no process, gz topic, MCB pty link or temporary world
+is left, and that no log shows SIGKILL, SIGTERM escalation, a died process or
+an unclean-exit note. A completed run whose own score gate failed counts as
+completed and is reported separately. Run it in your container after building:
+
+```bash
+src/sim/tools/lifecycle_check.sh --repeat 3 --out /tmp/lifecycle      # BACKEND=renode for the board
+src/sim/tools/lifecycle_check.sh mcb_parked:kill tracking:int         # selected cases
 ```
 
 ## Build

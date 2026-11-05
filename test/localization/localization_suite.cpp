@@ -1675,6 +1675,7 @@ void parse_options(int &argc, char **argv) {
 }
 } // namespace
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   try {
     parse_options(argc, argv);
   } catch (const std::exception &e) {

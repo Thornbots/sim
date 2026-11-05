@@ -602,6 +602,7 @@ INSTANTIATE_TEST_SUITE_P(Cells, ShotSuite, testing::ValuesIn(cb::cells(false)),
                            return cb::gtest_name(info.param.name);
                          });
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   if (argc == 2 && std::string(argv[1]) == "--print-launch-constants") {
     std::cout << cb::Json{{"MUZZLE_SPEED", cb::kMuzzleSpeed},
                           {"POINT_SHOOTER", {0., 0., .4}},

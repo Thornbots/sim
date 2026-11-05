@@ -93,7 +93,7 @@ public:
     process_ = std::make_unique<sim::LaunchTree>("renode",
         std::vector<std::string>{(root / "renode").string(), "--disable-gui", "--plain",
                                   "--port", "-1", script.string()},
-        (directory_ / "renode.log").string());
+        (directory_ / "renode.log").string(), true);
     for (int attempt = 0; attempt < 100; ++attempt) {
       if (!process_->alive()) throw std::runtime_error(process_->read_log());
       if (sim::type_c::listening(std::stoul(port))) {
