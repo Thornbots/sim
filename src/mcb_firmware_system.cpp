@@ -352,7 +352,7 @@ public:
       for (size_t i = 0; i < 10; ++i) {
         motors.position.push_back(plant_.angle[i]);
         motors.velocity.push_back(plant_.speed[i]);
-        motors.effort.push_back(plant_.current[i] * (i == 1 ? 0.741 : 0.02299));
+        motors.effort.push_back(plant_.rotor_torque(i));
       }
       motors_->publish(motors);
     }

@@ -180,6 +180,16 @@ TEST_F(McbFirmware, BothTeamsRoundTripFieldDisplacementVelocityAndHeading) {
     EXPECT_NEAR(poses.back().head_yaw, hw::kStartYaw + 0.2, 0.01);
   }
 }
+TEST_F(McbFirmware, PosePitchRoundTripsTheGazeboJointThroughMotorFeedback) {
+  ref.game_stage = 1;
+  for (const double pitch : {0.0, -0.2, 0.2, 0.0}) {
+    std::array<double, 10> readings{};
+    readings[8] = pitch;
+    const auto poses = messages<wire::Pose>(run(100, {}, readings));
+    ASSERT_FALSE(poses.empty());
+    EXPECT_NEAR(poses.back().head_pitch, pitch, 2 * hw::kPi / 8192 / 3);
+  }
+}
 TEST_F(McbFirmware, AimsAndFires) {
   const auto result = run(
       1000,
@@ -237,15 +247,16 @@ TEST_F(McbFirmware, ANewerAimDoesNotCancelAPendingShot) {
   EXPECT_GE(result.shots.front() - start, 25U);
   EXPECT_LT(result.shots.front() - start, 35U);
 }
-TEST_F(McbFirmware, ChamberExitFollowsEachShotRequestByTheTimedLatency) {
+TEST_F(McbFirmware, FirstChamberExitHasTimedLatencyWithoutEmptyingTheNext) {
   sim::mcb_motor::Plant plant;
   sim::mcb_motor::ProjectileExit exit;
   const std::array<double, 10> readings{};
   std::vector<uint32_t> requested, exited;
+  double peak_balls = 0;
   const auto packet = wire::frame(wire::CvTarget{
       3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire});
-  for (int ms = 0; ms < 4600; ++ms) {
-    if (ms >= 3000 && (ms - 3000) % 500 == 0) {  // three single shots, settling between
+  for (int ms = 0; ms < 3400; ++ms) {
+    if (ms == 3000) {  // one request from a freshly homed, loaded chamber
       ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
                 static_cast<ssize_t>(packet.size()));
     }
@@ -254,16 +265,85 @@ TEST_F(McbFirmware, ChamberExitFollowsEachShotRequestByTheTimedLatency) {
     plant.commands = output.motors;
     requested.insert(requested.end(), output.shots.begin(), output.shots.end());
     for (uint32_t i = exit.update(feedback[2]); i > 0; --i) exited.push_back(firmware->time_ms());
+    peak_balls = std::max(peak_balls, -plant.angle[2] / (2 * hw::kPi * exit.kShaftTurnsPerBall));
     if (ms == 2999) {
       ASSERT_TRUE(exited.empty()) << "pre-indexing fired a ball";
       ASSERT_TRUE(requested.empty());
     }
   }
-  ASSERT_GE(requested.size(), 3U);
-  ASSERT_EQ(exited.size(), requested.size());
-  for (size_t i = 0; i < requested.size(); ++i) {
-    EXPECT_NEAR(static_cast<double>(exited[i] - requested[i]), 20.0, 3.0) << "shot " << i;
+  ASSERT_EQ(requested.size(), 1U);
+  ASSERT_EQ(exited.size(), 1U);
+  EXPECT_NEAR(static_cast<double>(exited.front()) - requested.front(), 20.0, 3.0);
+  // Correct output-shaft dynamics must not empty the following chamber while
+  // settling at 1.20. The motor test independently retains overshoot counting.
+  EXPECT_GE(peak_balls, 1 + exit.kRestAt - exit.kRestTolerance);
+  EXPECT_LT(peak_balls, 1 + exit.kRestAt + exit.kExitTravel);
+  RecordProperty("peak_chambers", peak_balls);
+  RecordProperty("first_exit_delay_ms", exited.front() - requested.front());
+  RecordProperty("exit_travel_chambers", exit.kExitTravel);
+}
+TEST_F(McbFirmware, SettledSingleFeedsEachKeepTheMeasuredExitLatency) {
+  sim::mcb_motor::Plant plant;
+  sim::mcb_motor::ProjectileExit exit;
+  std::vector<uint32_t> requests, exits;
+  const auto packet = wire::frame(wire::CvTarget{
+      3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire});
+  for (int ms = 0; ms < 4400; ++ms) {
+    if (ms >= 3000 && (ms - 3000) % 500 == 0) {
+      ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
+                static_cast<ssize_t>(packet.size()));
+    }
+    const auto feedback = plant.feedback({}, 0, 0, 0, .001);
+    const auto output = firmware->step(1, {}, ref, feedback);
+    plant.commands = output.motors;
+    requests.insert(requests.end(), output.shots.begin(), output.shots.end());
+    for (auto n = exit.update(feedback[2]); n > 0; --n) exits.push_back(firmware->time_ms());
+    if (ms == 2999) {
+      ASSERT_TRUE(requests.empty());
+      ASSERT_TRUE(exits.empty()) << "pre-indexing fired a ball";
+    }
   }
+  ASSERT_EQ(requests.size(), 3U);
+  ASSERT_EQ(exits.size(), requests.size());
+  for (size_t i = 0; i < exits.size(); ++i)
+    EXPECT_NEAR(static_cast<double>(exits[i]) - requests[i], 20.0, 3.0) << "shot " << i;
+}
+TEST_F(McbFirmware, ContinuousFeedExitsFollowPhysicalChambersWithoutSettling) {
+  namespace motor = sim::mcb_motor;
+  motor::Plant plant;
+  motor::ProjectileExit exit;
+  std::vector<double> exit_positions;
+  std::vector<uint32_t> requests, exits;
+  const auto packet = wire::frame(wire::CvTarget{
+      3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire});
+  for (int ms = 0; ms < 7000; ++ms) {
+    if (ms >= 3000 && ms % 25 == 0) {
+      ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
+                static_cast<ssize_t>(packet.size()));
+    }
+    const auto feedback = plant.feedback({}, 0, 0, 0, 0.001);
+    const auto output = firmware->step(1, {}, ref, feedback);
+    plant.commands = output.motors;
+    requests.insert(requests.end(), output.shots.begin(), output.shots.end());
+    for (auto n = exit.update(feedback[2]); n > 0; --n) {
+      exits.push_back(firmware->time_ms());
+      exit_positions.push_back(-plant.angle[2] / (2 * motor::kPi * exit.kShaftTurnsPerBall));
+    }
+    if (ms == 2999) {
+      ASSERT_TRUE(exits.empty()) << "pre-indexing fired a ball";
+      ASSERT_TRUE(requests.empty());
+    }
+  }
+  ASSERT_GE(requests.size(), 50U);  // firmware rate-limits the 40 Hz fire input
+  ASSERT_GE(exits.size(), 10U);  // the old rest-only detector reports just one
+  EXPECT_NEAR(static_cast<double>(exits.front()) - requests.front(), 20.0, 3.0);
+  for (size_t i = 0; i < exit_positions.size(); ++i) {
+    const double chamber = exit.kRestAt + exit.kExitTravel + i;
+    EXPECT_GE(exit_positions[i], chamber - 1.0 / 8192 / exit.kShaftTurnsPerBall);
+    EXPECT_LT(exit_positions[i], chamber + 0.1);  // one 1 ms plant step at speed
+  }
+  RecordProperty("fire_requests", requests.size());
+  RecordProperty("physical_exits", exits.size());
 }
 TEST_F(McbFirmware, PhysicalCanSpeedChangesFirmwareMotorOutputs) {
   firmware->set_mode(3);
