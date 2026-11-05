@@ -55,12 +55,17 @@ def stack(context):
                           'use_rf2o': 'false', 'idle_direction': 'hold'}.items())
     relay = Node(package='thornbots_pkg', executable='mcb_relay', output='screen',
                  parameters=[{'use_sim_time': True}])
+    # NAV_GOALs for drive:=simple/auto; auto.launch.py starts it only on real hardware.
+    waypoint_nav = Node(package='thornbots_nav', executable='waypoint_nav', output='screen',
+                        parameters=[os.path.join(get_package_share_directory('thornbots_nav'),
+                                                 'config', 'route.yaml'),
+                                    {'use_sim_time': True}])
     ready = Node(package='sim', executable='mcb_ready', output='screen',
                  arguments=[LaunchConfiguration('device_link'), PythonExpression([
                      "'600' if '", LaunchConfiguration('backend'), "' == 'renode' else '30'"])])
     start_uart = RegisterEventHandler(OnProcessExit(
         target_action=ready,
-        on_exit=lambda event, context: [bridge, relay] if event.returncode == 0 else [
+        on_exit=lambda event, context: [bridge, relay, waypoint_nav] if event.returncode == 0 else [
             EmitEvent(event=Shutdown(reason='MCB UART readiness failed'))]))
     return [sim, start_uart, ready,
             TimerAction(period=8.0, actions=[robot])]

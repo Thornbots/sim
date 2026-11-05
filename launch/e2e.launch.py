@@ -194,6 +194,11 @@ def generate_launch_description():
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
         parameters=[{'use_sim_time': True}])
+    # auto.launch.py starts waypoint_nav only with real_hardware:=true, like the relay.
+    waypoint_nav = Node(
+        package='thornbots_nav', executable='waypoint_nav', name='waypoint_nav', output='screen',
+        parameters=[os.path.join(get_package_share_directory('thornbots_nav'), 'config',
+                                 'route.yaml'), {'use_sim_time': True}])
 
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -226,7 +231,7 @@ def generate_launch_description():
         output='screen')
     uart_start = RegisterEventHandler(OnProcessExit(
         target_action=uart_ready,
-        on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
+        on_exit=lambda event, context: [bridge, mcb_relay, waypoint_nav] if event.returncode == 0 else [
             OpaqueFunction(function=lambda context: finish_suite(
                 event, context, 'MCB UART readiness')
                            if _is_true(context, 'deterministic_epoch_zero') else [
