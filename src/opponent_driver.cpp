@@ -236,7 +236,7 @@ private:
         std::chrono::duration_cast<std::chrono::steady_clock::duration>(
           std::chrono::duration<double>(timeout));
       const bool subscribed = node.Subscribe<gz::msgs::WorldStatistics>(
-        std::string(kWorld) + "stats",
+        sim::field::world_path("stats"),
         [&world](const gz::msgs::WorldStatistics & msg) {
           std::lock_guard<std::mutex> lock(world.mutex);
           ++world.count;
@@ -252,7 +252,7 @@ private:
         gz::msgs::Empty query;
         gz::msgs::Scene scene;
         bool result = false;
-        if (!node.Request(std::string(kWorld) + "scene/info", query, 500u, scene, result) ||
+        if (!node.Request(sim::field::world_path("scene/info"), query, 500u, scene, result) ||
           !result) {
           std::this_thread::sleep_for(std::chrono::milliseconds(50));
           continue;
@@ -295,7 +295,7 @@ private:
         request.mutable_pose()->mutable_orientation()->set_w(std::cos(initial_yaw_ / 2));
         gz::msgs::Boolean reply;
         // A timed-out reply may still have spawned; the next scene/info decides.
-        node.Request(std::string(kWorld) + "create", request, 500u, reply, result);
+        node.Request(sim::field::world_path("create"), request, 500u, reply, result);
         after = world.latest_count();
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
       }

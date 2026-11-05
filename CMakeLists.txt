@@ -234,6 +234,7 @@ install(TARGETS opponent_driver DESTINATION lib/${PROJECT_NAME})
 
 add_executable(robot_spawn_ready src/robot_spawn_ready.cpp)
 target_compile_features(robot_spawn_ready PUBLIC cxx_std_17)
+target_include_directories(robot_spawn_ready PRIVATE include)
 target_link_libraries(robot_spawn_ready gz-transport::core gz-msgs::core)
 ament_target_dependencies(robot_spawn_ready rclcpp std_msgs)
 install(TARGETS robot_spawn_ready DESTINATION lib/${PROJECT_NAME})

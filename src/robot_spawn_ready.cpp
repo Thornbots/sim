@@ -10,6 +10,7 @@
 #include "gz/msgs/world_stats.pb.h"
 #include "gz/transport/Node.hh"
 #include "rclcpp/rclcpp.hpp"
+#include "sim/field.hpp"
 #include "std_msgs/msg/header.hpp"
 
 int main(int argc, char ** argv)
@@ -36,7 +37,7 @@ int main(int argc, char ** argv)
   bool valid = false;
   // Destroy transport callbacks before the state they capture.
   gz::transport::Node gz;
-  gz.Subscribe<gz::msgs::WorldStatistics>("/world/ARCC_Field_2026/stats",
+  gz.Subscribe<gz::msgs::WorldStatistics>(sim::field::world_path("stats"),
     [&](const gz::msgs::WorldStatistics & msg) {
       std::lock_guard<std::mutex> lock(mutex);
       ++count;
@@ -69,7 +70,7 @@ int main(int argc, char ** argv)
     gz::msgs::Empty request;
     gz::msgs::Scene scene;
     bool result = false;
-    if (gz.Request("/world/ARCC_Field_2026/scene/info", request, 500u, scene, result) && result) {
+    if (gz.Request(sim::field::world_path("scene/info"), request, 500u, scene, result) && result) {
       int matches = 0;
       bool correct = false;
       for (const auto & model : scene.model()) {
