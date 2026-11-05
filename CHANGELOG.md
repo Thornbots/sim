@@ -54,6 +54,8 @@
   `lockstep:=false` keeps the legacy PTY). The scored harness exercises it with
   the hosted fixture and the Renode board.
 
+- Check for Gazebo before starting any MCB E2E suite through `run_suite.sh`.
+
 - Sentry aiming moved to the MCB: `CV_TARGET` is a 13-byte idle look point and
   `TARGET_STATE` (id 7, 80 bytes) carries the tracked armor model; the emulator's
   protocol, firmware/bridge tests, E2E harness and bench launches follow it with no

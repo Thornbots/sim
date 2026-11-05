@@ -27,7 +27,7 @@ if [ -n "$LIVE" ]; then
     echo "run_suite.sh: a stack is already running; stop it first (kill_launch.sh -l)." >&2
     exit 1
 fi
-if [[ "$SUITE" == localization_drift || "$SUITE" == ekf ]] && ! command -v gz >/dev/null; then
+if [[ "$SUITE" == localization_drift || "$SUITE" == ekf || "$SUITE" == mcb_* ]] && ! command -v gz >/dev/null; then
     echo "run_suite.sh: no gz in this container; run install-sim.sh first." >&2
     exit 1
 fi

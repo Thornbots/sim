@@ -301,7 +301,8 @@ either. `--show-args` on either launch lists the rest.
 `tools/run_suite.sh localization_drift|ekf|aim|tracking|mcb_parked|mcb_drive|mcb_match [args]` wraps any of these
 launches: it refuses to start over a running stack, tees the output to
 `/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.cpp` on it. It exits 0
-only when GTest passed and the checker trusts the run:
+only when GTest passed and the checker trusts the run. The localization and
+MCB E2E suites also check that `gz` is available before launch:
 
 ```bash
 src/sim/tools/run_suite.sh localization_drift scenario:=odom_stuck
