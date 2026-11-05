@@ -15,6 +15,7 @@
 #include "dji_serial_bridge/msg/cv_target.hpp"
 #include "dji_serial_bridge/msg/ref_sys_status.hpp"
 #include "dji_serial_bridge/msg/robot_pose.hpp"
+#include "dji_serial_bridge/msg/target_state.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sim/mcb_firmware.hpp"
@@ -74,8 +75,9 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
           [&](dji_serial_bridge::msg::RefSysStatus::ConstSharedPtr msg) {
             refs.push_back(*msg);
           });
-  const auto cv = node->create_publisher<dji_serial_bridge::msg::CVTarget>(
-      "/dji_serial_bridge/cv_target", rclcpp::SensorDataQoS());
+  // Aiming and firing ride TARGET_STATE; the MCB plans the shots.
+  const auto cv = node->create_publisher<dji_serial_bridge::msg::TargetState>(
+      "/dji_serial_bridge/target_state", rclcpp::SensorDataQoS());
   const auto reloc = node->create_publisher<geometry_msgs::msg::PointStamped>(
       "/dji_serial_bridge/relocalize", 10);
   sim::LaunchTree bridge("bridge",
@@ -144,17 +146,21 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
   EXPECT_EQ(poses.back().header.frame_id, "odom");
   EXPECT_TRUE(refs.back().is_on_blue_team);
   EXPECT_EQ(refs.back().robot_id, 7);
-  dji_serial_bridge::msg::CVTarget target;
-  target.x = -3;
-  target.y = 1.0;
-  target.z = 0.2;
-  target.fire = true;
-  target.delay_ms = 100;
+  dji_serial_bridge::msg::TargetState target;
+  target.center.x = -3;
+  target.center.y = 1.0;
+  target.center.z = 0.2;
+  target.yaw = 0.0;
+  target.radius = {0.25F, 0.25F};
+  target.confidence = 1.0;
+  target.robot_track_id = 1;
+  target.valid = true;
   auto next_cv = std::chrono::steady_clock::time_point::min();
   ASSERT_TRUE(wait([&] { return shots >= 3; },
                    [&] {
                      if (std::chrono::steady_clock::now() >= next_cv) {
                        target.header.stamp = node->now();
+                       target.detection_stamp = target.header.stamp;
                        cv->publish(target);
                        next_cv = std::chrono::steady_clock::now() +
                                  std::chrono::milliseconds(100);
@@ -173,7 +179,7 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
   EXPECT_NE(bridge.read_log().find("navigation fix:"), std::string::npos);
 }
 
-TEST(McbBridgePty, PacksAllCvFlagCombinationsThroughTheRealBridge) {
+TEST(McbBridgePty, PacksTheIdleLookPointAndItsTwoPermissionBitsThroughTheRealBridge) {
   namespace wire = sim::mcb_protocol;
   const auto directory = std::filesystem::path("/tmp/mcb_flags_test_" + std::to_string(getpid()));
   std::filesystem::create_directories(directory);
@@ -196,16 +202,16 @@ TEST(McbBridgePty, PacksAllCvFlagCombinationsThroughTheRealBridge) {
       "-p", "diag_interval_s:=0"},
       (directory / "bridge.log").string());
   wire::DJISerial parser;
-  for (uint8_t flags = 0; flags < 16; ++flags) {
+  for (uint8_t bits = 0; bits < 4; ++bits) {
+    const uint8_t flags = static_cast<uint8_t>(
+        ((bits & 1) ? wire::kCvTargetFlagTypeCBasedPatrol : 0) |
+        ((bits & 2) ? wire::kCvTargetFlagTurnToHit : 0));
     dji_serial_bridge::msg::CVTarget target;
-    target.x = flags + 1.0F;
+    target.x = bits + 1.0F;
     target.y = 2;
     target.z = 0.2F;
-    target.delay_ms = 150;
-    target.fire = flags & wire::kCvTargetFlagFire;
     target.type_c_based_patrol = flags & wire::kCvTargetFlagTypeCBasedPatrol;
     target.turn_to_hit = flags & wire::kCvTargetFlagTurnToHit;
-    target.patrol = flags & wire::kCvTargetFlagPatrol;
     bool received = false;
     const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (!received && std::chrono::steady_clock::now() < end) {
@@ -218,11 +224,10 @@ TEST(McbBridgePty, PacksAllCvFlagCombinationsThroughTheRealBridge) {
       if (count <= 0) { continue; }
       for (const auto & frame : parser.feed(data, static_cast<size_t>(count))) {
         if (frame.msg_type != wire::kCvTarget) { continue; }
-        ASSERT_EQ(frame.payload.size(), 15U);
+        ASSERT_EQ(frame.payload.size(), 13U);
         const auto packet = wire::unpack<wire::CvTarget>(frame.payload);
         if (packet.x != target.x) { continue; }
         EXPECT_EQ(packet.flags, flags);
-        EXPECT_EQ(packet.delay_ms, 150);
         EXPECT_EQ(packet.y, target.y);
         EXPECT_EQ(packet.z, target.z);
         received = true;

@@ -19,18 +19,20 @@ constexpr uint16_t kRefSys = 3;
 constexpr uint16_t kRelocalize = 4;
 constexpr uint16_t kPing = 5;
 constexpr uint16_t kDebug = 6;
+constexpr uint16_t kTargetState = 7;
 constexpr size_t kDebugMaxPayload = 128;
 constexpr uint8_t kOdomPods = 0;
 constexpr uint8_t kHeadByte = 0xA5;
 constexpr size_t kRxBufferSize = 1024;
 constexpr uint8_t kCrc8Init = 0xFF;
 constexpr uint16_t kCrc16Init = 0xFFFF;
-constexpr uint8_t kCvTargetFlagFire = 0x01;
+// CV_TARGET flags: bits 0 and 3-7 are reserved and sent as 0.
 constexpr uint8_t kCvTargetFlagTypeCBasedPatrol = 0x02;
 constexpr uint8_t kCvTargetFlagTurnToHit = 0x04;
-constexpr uint8_t kCvTargetFlagPatrol = 0x08;
 constexpr uint8_t kCvTargetFlagsDefault =
   kCvTargetFlagTurnToHit | kCvTargetFlagTypeCBasedPatrol;
+constexpr uint8_t kTargetStateFlagValid = 0x01;
+constexpr uint8_t kTargetStateFlagTypeCBasedPatrol = 0x02;
 
 struct NavGoal
 {
@@ -43,12 +45,31 @@ struct NavGoal
 struct CvTarget
 {
   static constexpr uint16_t kType = kCvTarget;
-  static constexpr size_t kSize = 15;
+  static constexpr size_t kSize = 13;
   float x = 0.0F;
   float y = 0.0F;
   float z = 0.0F;
-  uint16_t delay_ms = 0;
   uint8_t flags = kCvTargetFlagsDefault;
+};
+
+// Tracked enemy armor model, the MCB's aiming input (UART_PROTOCOL.md).
+struct TargetState
+{
+  static constexpr uint16_t kType = kTargetState;
+  static constexpr size_t kSize = 80;
+  float center[3] = {0.0F, 0.0F, 0.0F};
+  float velocity[3] = {0.0F, 0.0F, 0.0F};
+  float acceleration[3] = {0.0F, 0.0F, 0.0F};
+  float yaw = 0.0F;
+  float yaw_rate = 0.0F;
+  float radius[2] = {0.25F, 0.25F};
+  float z_offset[2] = {0.0F, 0.0F};
+  float panel[3] = {0.0F, 0.0F, 0.0F};
+  uint16_t state_age_ms = 0;
+  uint16_t detection_age_ms = 0;
+  uint16_t track_id = 1;
+  uint8_t confidence = 255;
+  uint8_t flags = kTargetStateFlagValid;
 };
 
 struct Relocalize
@@ -104,6 +125,7 @@ uint16_t crc16(const uint8_t * data, size_t size, uint16_t init = kCrc16Init);
 
 std::vector<uint8_t> pack(const NavGoal & msg);
 std::vector<uint8_t> pack(const CvTarget & msg);
+std::vector<uint8_t> pack(const TargetState & msg);
 std::vector<uint8_t> pack(const Relocalize & msg);
 std::vector<uint8_t> pack(const Pose & msg);
 std::vector<uint8_t> pack(const RefSys & msg);
@@ -114,6 +136,7 @@ template<typename T>
 T unpack(const std::vector<uint8_t> & data);
 template<> NavGoal unpack<NavGoal>(const std::vector<uint8_t> & data);
 template<> CvTarget unpack<CvTarget>(const std::vector<uint8_t> & data);
+template<> TargetState unpack<TargetState>(const std::vector<uint8_t> & data);
 template<> Relocalize unpack<Relocalize>(const std::vector<uint8_t> & data);
 template<> Pose unpack<Pose>(const std::vector<uint8_t> & data);
 template<> RefSys unpack<RefSys>(const std::vector<uint8_t> & data);

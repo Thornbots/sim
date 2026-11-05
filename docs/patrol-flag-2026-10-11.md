@@ -7,7 +7,7 @@ Statements about draft PRs or remaining work below describe the dated checkpoint
 Linux x86_64, running `isaac_ros_jazzy_container`, isolated ROS overlay and
 fresh hosted sentry source copy. T33 defines bit 3 without adopting firmware
 behavior for it. The maintained wire semantics are the bridge's
-[CV_TARGET flags](../../ros2_dji_serial_bridge/UART_PROTOCOL.md#cv_target-id1--aim-point-and-fire-decision).
+[CV_TARGET flags](../../ros2_dji_serial_bridge/UART_PROTOCOL.md#cv_target-id1--idle-look-point).
 
 ## Build and tests
 
