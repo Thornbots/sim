@@ -12,6 +12,8 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/create_timer.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "rosgraph_msgs/msg/clock.hpp"
+#include "std_msgs/msg/header.hpp"
 
 #include "sim/target_odometry.hpp"
 
@@ -32,9 +34,35 @@ class TargetDriver : public rclcpp::Node {
     declare_parameter("max_accel", 6.0);
     declare_parameter("max_spin_accel", 20.0);
     pub_ = create_publisher<nav_msgs::msg::Odometry>("/target/ground_truth_odom", 10);
-    timer_ = rclcpp::create_timer(
-        this, get_clock(), std::chrono::duration<double>(1.0 / rate),
-        std::bind(&TargetDriver::on_timer, this));
+    auto start_timer = [this, rate] {
+      timer_ = rclcpp::create_timer(this, get_clock(), std::chrono::duration<double>(1.0 / rate),
+                                    std::bind(&TargetDriver::on_timer, this));
+    };
+    if (declare_parameter("deterministic_epoch_zero", false)) {
+      if (!get_parameter("use_sim_time").as_bool() || !std::isfinite(rate) || rate <= 0.0) {
+        throw std::invalid_argument("deterministic target requires sim time and a positive rate");
+      }
+      ready_pub_ = create_publisher<std_msgs::msg::Header>(
+          "~/ready", rclcpp::QoS(1).reliable().transient_local());
+      clock_sub_ = create_subscription<rosgraph_msgs::msg::Clock>(
+          "/clock", rclcpp::ClockQoS(), [this, start_timer](rosgraph_msgs::msg::Clock::ConstSharedPtr msg) {
+            if (timer_ || epoch_failed_) return;
+            if (msg->clock.sec != 0 || msg->clock.nanosec != 0 || now().nanoseconds() != 0) {
+              epoch_failed_ = true;
+              RCLCPP_ERROR(get_logger(), "target driver missed epoch zero");
+              return;
+            }
+            start_timer();
+            if (now().nanoseconds() != 0) {
+              timer_->cancel();
+              epoch_failed_ = true;
+              return;
+            }
+            ready_pub_->publish(std_msgs::msg::Header{});
+          });
+    } else {
+      start_timer();
+    }
     RCLCPP_INFO(get_logger(), "target_driver ready: speed=%.2f m/s, spin=%.2f Hz, frame_id=%s",
                 target_speed_, spin_hz_, frame_id_.c_str());
   }
@@ -83,6 +111,9 @@ class TargetDriver : public rclcpp::Node {
   std::optional<rclcpp::Time> last_time_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  bool epoch_failed_ = false;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ready_pub_;
+  rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
 };
 
 int main(int argc, char ** argv) {
