@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "sim/field.hpp"
 #include "sim/mcb_firmware.hpp"
 #include <gtest/gtest.h>
 #include <cmath>
@@ -175,7 +176,7 @@ TEST_F(McbFirmware, BothTeamsRoundTripFieldDisplacementVelocityAndHeading) {
   for (const int id : {7, 107}) {
     ref.robot_id = id;
     hw::GzHardware hardware;
-    const double start = id > 100 ? 4.625 : -4.625;
+    const double start = (id > 100 ? sim::field::kBlueStart : sim::field::kRedStart)[0];
     hardware.pos = {start, 1.2};
     hardware.vel = {-0.2, 0.4};
     hardware.chassis_yaw = hw::kStartYaw;
@@ -439,37 +440,45 @@ TEST_F(McbFirmware, StageBlocksFire) {
   ref.game_stage = 0;
   EXPECT_TRUE(run(500, state_frame(2, 0, 0.2F)).shots.empty());
 }
-TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
+TEST_F(McbFirmware, SwitchUpFollowsNavGoalsAfterTheStageGate) {
   ref.game_stage = 0;
-  firmware->set_mode(1);
-  const auto waiting = run(300).outputs.back();
+  firmware->set_mode(1);  // remote right switch up schedules AutoDriveCommand
+  const auto doorway = wire::frame(wire::NavGoal{
+      static_cast<float>(sim::field::kRedStart[0]), -0.635F});
+  const auto waiting = run(300, doorway).outputs.back();
   EXPECT_NEAR(std::hypot(waiting.right, waiting.forward), 0.0, 1e-6);
   EXPECT_NEAR(waiting.spin, 0.0, 1e-6);
   run(100, wire::frame(wire::Relocalize{
-      static_cast<float>(-4.625), 0}));
-  auto output = run(200).outputs.back();
-  EXPECT_LT(std::hypot(output.right, output.forward), 0.05);
-  EXPECT_LT(output.spin, -1);
+      static_cast<float>(sim::field::kRedStart[0]),
+      static_cast<float>(sim::field::kRedStart[1])}));
+  auto output = run(200, doorway).outputs.back();
+  EXPECT_LT(std::hypot(output.right, output.forward), 0.05);  // 3v3 before IN_GAME
+  EXPECT_NEAR(output.spin, 0.0, 1e-6);
   ref.game_stage = 4;
-  output = run(300).outputs.back();
+  output = run(300, doorway).outputs.back();
   EXPECT_GT(std::hypot(output.right, output.forward), 0.1);
-  EXPECT_LT(output.spin, -1);
+  // The Starting Zone doorway is narrower than the spin sweep: travel holds a quarter turn.
+  EXPECT_NEAR(output.spin, 0.0, 0.5);
 }
 TEST_F(McbFirmware, AutoDriveWaitsForAbsoluteRelocalization) {
   firmware->set_mode(2);
   const auto goal = wire::frame(wire::NavGoal{
-      static_cast<float>(-4.625 + 1), -1});
+      static_cast<float>(sim::field::kRedStart[0] + 1),
+      static_cast<float>(sim::field::kRedStart[1] - 1)});
   const auto waiting = run(300, goal).outputs.back();
   EXPECT_NEAR(waiting.right, 0.0, 1e-6);
   EXPECT_NEAR(waiting.forward, 0.0, 1e-6);
   run(100, wire::frame(wire::Relocalize{
-      static_cast<float>(-4.625), 0}));
-  const auto output =
-      run(300, wire::frame(wire::NavGoal{
-                   static_cast<float>(-4.625 + 1), -1}))
-          .outputs.back();
+      static_cast<float>(sim::field::kRedStart[0]),
+      static_cast<float>(sim::field::kRedStart[1])}));
+  auto output = run(300, goal).outputs.back();
   EXPECT_GT(output.right, 0);
   EXPECT_LT(output.forward, 0);
+  EXPECT_NEAR(output.spin, 0.0, 0.5);
+  // A goal at the robot's own position: it has arrived, so it spins.
+  output = run(300, wire::frame(wire::NavGoal{
+      static_cast<float>(sim::field::kRedStart[0]),
+      static_cast<float>(sim::field::kRedStart[1])})).outputs.back();
   EXPECT_GT(output.spin, 1);
 }
 } // namespace

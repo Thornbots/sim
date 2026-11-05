@@ -13,6 +13,7 @@
 // limitations under the License.
 #include <gtest/gtest.h>
 #include "sim/mcb_motor.hpp"
+#include "sim/field.hpp"
 #include "sim/mcb_sensors.hpp"
 namespace motor = sim::mcb_motor;
 
@@ -140,7 +141,7 @@ TEST(McbMotor, LoadedIndexerHomesAgainstAStopAndCanAdvanceForward) {
 }
 
 TEST(BootTranslation, BothTeamsStartAtZeroAndKeepFieldDisplacementAxes) {
-  for (double start : {-4.625, 4.625}) {
+  for (double start : {sim::field::kRedStart[0], sim::field::kBlueStart[0]}) {
     SCOPED_TRACE(start);
     sim::BootTranslation origin;
     origin.observe(start, 0.0);

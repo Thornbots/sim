@@ -29,6 +29,7 @@
 #include "dji_serial_bridge/msg/robot_pose.hpp"
 #include "dji_serial_bridge/msg/ref_sys_status.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sim/field.hpp"
 #include "sim/mcb_firmware.hpp"
 #include "sim/process.hpp"
 #include "tf2_ros/buffer.h"
@@ -54,7 +55,7 @@ protected:
   fixture::Firmware::Output output{};
   fixture::Referee referee;
   fixture::GzHardware hardware;
-  std::array<double, 2> redStart{-4.625, 0.0}, blueStart{4.625, 0.0};
+  std::array<double, 2> redStart = sim::field::kRedStart, blueStart = sim::field::kBlueStart;
   std::shared_ptr<rclcpp::Node> node;
   std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor;
   std::unique_ptr<tf2_ros::Buffer> buffer;
@@ -395,8 +396,9 @@ protected:
 
 class TeamBoot : public MmmSuite, public testing::WithParamInterface<int> {};
 TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
-  redStart = {-4.45, 0.20};
-  blueStart = {4.10, -0.35};
+  // Unmirrored, non-default points inside each Starting Zone.
+  redStart = {-5.0, -2.6};
+  blueStart = {5.4, -3.35};
   referee.robot_id = GetParam();
   driveSim = false;
   holdRef = true;
@@ -479,7 +481,9 @@ TEST_P(TeamBoot, BlankMappingStartsAtMapZero) {
   ASSERT_TRUE(wait([&] { return firstMapPose.has_value() && navOdom.has_value(); }));
   EXPECT_NEAR(firstMapPose->pose.pose.position.x, 0.0, 1e-6);
   EXPECT_NEAR(firstMapPose->pose.pose.position.y, 0.0, 1e-6);
-  EXPECT_NEAR(navOdom->pose.pose.position.x, GetParam() > 100 ? 4.625 : -4.625, 0.02);
+  const auto start = GetParam() > 100 ? sim::field::kBlueStart : sim::field::kRedStart;
+  EXPECT_NEAR(navOdom->pose.pose.position.x, start[0], 0.02);
+  EXPECT_NEAR(navOdom->pose.pose.position.y, start[1], 0.02);
   report["mapping_first_map_xy"] = {firstMapPose->pose.pose.position.x,
     firstMapPose->pose.pose.position.y};
 }
