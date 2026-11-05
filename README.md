@@ -1475,8 +1475,11 @@ metadata or bridge publication acknowledgment. Bridge stamps therefore include
 grid and scheduling error, and this fixture does not establish deterministic UART
 lockstep. The suite does not accept these overrides until it forwards them.
 
-`run_tests:=false uart_deterministic:=true` enables the experimental bridge
-metadata and per-frame acknowledgment hold. It requires lockstep. Frame
+`uart_deterministic` (default `auto`, which follows `lockstep`, so every scored
+stage on either backend) enables the bridge metadata and per-frame acknowledgment
+hold; `true` without lockstep is rejected. The suite forwards no UART override.
+In this mode the bridge's Jetson-to-MCB busy gate runs on the same sim-clock wire
+([bridge](../ros2_dji_serial_bridge/README.md#simulation-capture-metadata)). Frame
 capture uses the firmware cycle in which the first byte was observed; an
 unattributed byte, malformed frame or bad acknowledgment fails the session.
 The MCB plugin emits one `/sim/uart_clock` Gazebo message per 1 ms step before
@@ -1530,10 +1533,10 @@ python3 src/sim/test/test_uart_epoch_zero.py \
   /workspaces/isaac_ros-dev/src/firmware/MCBV3/MCB-project/build/sim/scons-release/MCB-project.elf
 ```
 
-By default this gates MCB acknowledgments, not the complete hit path: UART is
-not modeled in sim time, and the other
-CV/localization chains and wall-time bring-up remain asynchronous. It does not
-establish identical shot sequences. Live gates are in
+Lockstep gates the MCB batch and, with the default coordinated UART, every
+MCB-to-Jetson frame in sim time (bytes x 10 / `uart_baud`). The other
+CV/localization chains and wall-time bring-up remain asynchronous, so this does
+not establish identical shot sequences. Live gates are in
 [ROADMAP T17](../docs/ROADMAP.md#a-acceptance-details).
 
 The on-demand transport test runs a small gz world in its own process group
