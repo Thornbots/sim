@@ -42,12 +42,12 @@
 #include "gz/transport/Node.hh"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "sim/field.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "tinyxml2.h"
 
 namespace
 {
-constexpr const char * kWorld = "/world/ARCC_Field_2026/";
 
 std::string xacro_opponent(const std::string & name)
 {
@@ -236,7 +236,7 @@ private:
         std::chrono::duration_cast<std::chrono::steady_clock::duration>(
           std::chrono::duration<double>(timeout));
       const bool subscribed = node.Subscribe<gz::msgs::WorldStatistics>(
-        std::string(kWorld) + "stats",
+        sim::field::world_path("stats"),
         [&world](const gz::msgs::WorldStatistics & msg) {
           std::lock_guard<std::mutex> lock(world.mutex);
           ++world.count;
@@ -252,7 +252,7 @@ private:
         gz::msgs::Empty query;
         gz::msgs::Scene scene;
         bool result = false;
-        if (!node.Request(std::string(kWorld) + "scene/info", query, 500u, scene, result) ||
+        if (!node.Request(sim::field::world_path("scene/info"), query, 500u, scene, result) ||
           !result) {
           std::this_thread::sleep_for(std::chrono::milliseconds(50));
           continue;
@@ -295,7 +295,7 @@ private:
         request.mutable_pose()->mutable_orientation()->set_w(std::cos(initial_yaw_ / 2));
         gz::msgs::Boolean reply;
         // A timed-out reply may still have spawned; the next scene/info decides.
-        node.Request(std::string(kWorld) + "create", request, 500u, reply, result);
+        node.Request(sim::field::world_path("create"), request, 500u, reply, result);
         after = world.latest_count();
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
       }
@@ -313,7 +313,7 @@ private:
     gz::msgs::Empty request;
     gz::msgs::Scene reply;
     bool result = false;
-    if (!gz_node_->Request(std::string(kWorld) + "scene/info", request, 2000u, reply, result) ||
+    if (!gz_node_->Request(sim::field::world_path("scene/info"), request, 2000u, reply, result) ||
       !result) {return std::nullopt;}
     std::vector<std::string> names;
     for (const auto & model : reply.model()) {names.push_back(model.name());}
@@ -345,7 +345,7 @@ private:
       gz::msgs::Boolean reply;
       bool result = false;
       // A create reply may time out after spawning; scene/info decides completion.
-      gz_node_->Request(std::string(kWorld) + "create", request, 2000u, reply, result);
+      gz_node_->Request(sim::field::world_path("create"), request, 2000u, reply, result);
       names = model_names();
     }
     if (present(names)) {

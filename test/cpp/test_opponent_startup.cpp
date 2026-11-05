@@ -48,8 +48,8 @@ namespace
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
 
-constexpr char kWorld[] = "/world/ARCC_Field_2026/";
-constexpr char kWorldFile[] = SIM_SOURCE_DIR "/world/ARCC_Field_2026.sdf";
+constexpr char kWorld[] = "/world/field/";
+constexpr char kWorldFile[] = SIM_SOURCE_DIR "/world/ARCC_S2_3v3.sdf";
 constexpr char kModel[] = "opponent_0";
 const double kZ = -0.0115;
 

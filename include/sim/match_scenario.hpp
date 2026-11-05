@@ -29,8 +29,16 @@ const std::map<std::string, Route> &routes();
 const std::map<std::string, std::string> &teams();
 const std::map<std::string, double> &route_delays();
 constexpr double kRouteAccel = 2.0, kRouteSpeed = 2.0;
-// Estimated field-centre fight zone, not a firmware waypoint or navigation target.
-constexpr double kCenterHalfWidth = 1.8, kCenterHalfHeight = 1.2;
+// Blue's end of the firmware route (red mirrors x): just south of the Central
+// Wall's tip, with open floor south of it for the parked target paths.
+constexpr Point kCenter{0.6, -1.8};
+// Estimated centre fight zone around (0, kCenterZoneY), south of the Central
+// Wall; not a firmware waypoint or navigation target.
+constexpr double kCenterZoneY = -2.3, kCenterHalfWidth = 1.8, kCenterHalfHeight = 1.0;
+// Chassis footprints for route clearance: spin sweep, and the square chassis
+// held at a quarter-turn heading through the Starting Zone doorway.
+constexpr double kSpinRadius = 0.42, kSquareHalf = 0.32;
+bool in_center_zone(double x, double y);
 double leg_duration(double length, double speed = kRouteSpeed,
                     double accel = kRouteAccel);
 double route_duration(const Route &points, double speed = kRouteSpeed);

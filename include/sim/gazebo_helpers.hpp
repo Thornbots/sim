@@ -29,6 +29,8 @@
 #include <optional>
 #include <string>
 #include <vector>
+
+#include "sim/field.hpp"
 namespace sim::gazebo {
 constexpr double kSpawnYaw = 1.57079632679489661923;
 constexpr double kZ = 0.03;
@@ -45,7 +47,7 @@ template <typename Request>
 bool request(const std::string &service, const Request &request) {
   gz::msgs::Boolean reply;
   bool result = false;
-  return node().Request("/world/ARCC_Field_2026/" + service, request, 2000u,
+  return node().Request(field::world_path(service), request, 2000u,
                         reply, result) &&
          result && reply.data();
 }
@@ -91,7 +93,7 @@ inline bool remove_model(const std::string &name) {
 inline std::optional<std::vector<std::string>> model_names() {
   gz::msgs::Scene reply;
   bool result = false;
-  if (!node().Request("/world/ARCC_Field_2026/scene/info", gz::msgs::Empty{},
+  if (!node().Request(field::world_path("scene/info"), gz::msgs::Empty{},
                       2000u, reply, result) ||
       !result) {
     return std::nullopt;

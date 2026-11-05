@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <sdf version="1.9">
-  <world name="Spooky_Scrim_2v2">
+  <world name="field">
     <physics type="ode">
       <max_step_size>0.001</max_step_size>
       <real_time_factor>10</real_time_factor>

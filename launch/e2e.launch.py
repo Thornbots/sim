@@ -21,10 +21,12 @@ parked; mcb_drive drives from spawn to center; mcb_match adds a 2v2 fight.
 Tests own their stack process group; run_tests:=false launches only the stack.
 See README.md for design rationale and ../../docs/E2E_PLAN.md for acceptance criteria.
 """
+import atexit
 import json
 import math
 import os
 import subprocess
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -44,10 +46,11 @@ from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node, SetParameter
+from launch_ros.actions import Node, SetParameter, SetParametersFromFile
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
+from sim.field import BLUE_START, team_start_args
 from sim.mcb_link import default_mcb_link
 from sim.suite_exit import finish_suite
 
@@ -67,7 +70,7 @@ def _sim(context):
         raise ValueError('uart_deterministic requires lockstep')
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
-    spawn = {'x': '4.625', 'y': '0.0', 'yaw': str(SPAWN_YAW)}
+    spawn = {'x': str(BLUE_START[0]), 'y': str(BLUE_START[1]), 'yaw': str(SPAWN_YAW)}
     view = 'e2e-parked' if config['stage'] == 'mcb_parked' else 'e2e'
     share = get_package_share_directory('sim')
     return [IncludeLaunchDescription(
@@ -191,12 +194,16 @@ def generate_launch_description():
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
         parameters=[{'use_sim_time': True}])
+    # auto.launch.py starts waypoint_nav only with real_hardware:=true, like the relay.
+    waypoint_nav = Node(
+        package='thornbots_nav', executable='waypoint_nav', name='waypoint_nav', output='screen',
+        parameters=[os.path.join(get_package_share_directory('thornbots_nav'), 'config',
+                                 'route.yaml'), {'use_sim_time': True}])
 
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        launch_arguments={'red_start_x': '-4.625', 'red_start_y': '0.0',
-                          'blue_start_x': '4.625', 'blue_start_y': '0.0',
+        launch_arguments={**team_start_args(),
                           'real_hardware': 'false', 'localization_mode': 'amcl',
                           'deterministic_epoch_zero': LaunchConfiguration(
                               'deterministic_epoch_zero'),
@@ -224,7 +231,8 @@ def generate_launch_description():
         output='screen')
     uart_start = RegisterEventHandler(OnProcessExit(
         target_action=uart_ready,
-        on_exit=lambda event, context: [bridge, mcb_relay] if event.returncode == 0 else [
+        on_exit=lambda event, context: [
+            bridge, mcb_relay, waypoint_nav] if event.returncode == 0 else [
             OpaqueFunction(function=lambda context: finish_suite(
                 event, context, 'MCB UART readiness')
                            if _is_true(context, 'deterministic_epoch_zero') else [
@@ -302,6 +310,15 @@ def generate_launch_description():
                     arguments=[f'/model/{name}/path@nav_msgs/msg/Odometry]gz.msgs.Odometry'],
                     remappings=[(f'/model/{name}/path', topic)],
                     parameters=[{'use_sim_time': True}])]
+        robot_bringup = robot
+        if stage == 'mcb_parked':
+            # Jazzy's global SetParameter stringifies arrays as Python tuples.
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as params:
+                json.dump({'point_to_cv_target': {'ros__parameters': {
+                    'idle_zone': parked_paths['idle_zone']}}}, params)
+            atexit.register(os.unlink, params.name)
+            robot_bringup = GroupAction([
+                SetParametersFromFile(params.name), robot])
         extra_ready = context.launch_configurations['epoch_readiness_extra']
         startup_timeout = float(context.launch_configurations['epoch_startup_timeout_s'])
         if not math.isfinite(startup_timeout) or startup_timeout <= 0 or startup_timeout > 30:
@@ -323,8 +340,8 @@ def generate_launch_description():
                 + common
                 + ([match_environment] if stage in DRIVING else [target_driver])
                 + ([GroupAction([SetParameter(name='tick_topic', value='/sim/e2e/aim_tick'),
-                                 robot])] if deterministic else
-                   [TimerAction(period=ROBOT_DELAY_S, actions=[robot])]))
+                                 robot_bringup])] if deterministic else
+                   [TimerAction(period=ROBOT_DELAY_S, actions=[robot_bringup])]))
 
     return LaunchDescription([
         DeclareLaunchArgument('deterministic_epoch_zero', default_value='false'),

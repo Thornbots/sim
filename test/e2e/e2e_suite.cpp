@@ -163,7 +163,8 @@ public:
                             previous->root.block<2, 1>(0, 3)).norm() / .2;
       cb::append_json(trace, {{"t", scorer->now_s()}, {"truth_xy", {x, y}},
                               {"speed_m_s", speed}});
-      if (std::hypot(x, y) < 1.0 && speed < .08) {
+      const auto &c = sim::match_scenario::kCenter;
+      if (std::hypot(x - c[0], y - c[1]) < 1.0 && speed < .08) {
         if (!settled) settled = scorer->now_s();
         if (scorer->now_s() - *settled >= 1) { arrived = true; break; }
       } else {
@@ -479,6 +480,9 @@ int main(int argc, char **argv) {
       paths["initial_positions"][name] = sample.position;
       paths["initial_yaws"][name] = sample.yaw;
     }
+    const auto &center = sim::match_scenario::kCenter;
+    paths["idle_zone"] = {center[0], center[1] -
+        sim::match_scenario::parked_paths().at("lateral").center_x};
     std::cout << paths.dump() << std::endl;
     return 0;
   }
