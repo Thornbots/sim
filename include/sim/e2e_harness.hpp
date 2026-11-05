@@ -69,7 +69,7 @@ private:
   Offsets offsets_;
   gz::transport::Node gz_;
   tf2_ros::TransformListener listener_;
-  std::deque<std::pair<double, Vec>> aims_, mcb_poses_;
+  std::deque<std::pair<double, Vec>> mcb_poses_;
   std::deque<std::pair<double, bool>> state_validity_;
   std::deque<dji_serial_bridge::msg::TargetState> state_history_;
   std::deque<std::pair<double, size_t>> detections_;
@@ -99,8 +99,6 @@ private:
   std::optional<Matrix> world_T_odom(double t);
   Vec muzzle_velocity(const std::string &name, double t);
   Json pose_errors(double t);
-  Json aim_split(double t, const Vec &origin, const Vec &direction, int panel,
-                 std::shared_ptr<PoseHistory> history = {});
   std::optional<Json> judge(double t);
   std::optional<Json> judge_match(const std::string &kind, double t);
   void judge_state(const dji_serial_bridge::msg::TargetState &m);

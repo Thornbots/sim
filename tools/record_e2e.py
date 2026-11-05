@@ -63,7 +63,6 @@ def capture(args):
     command = ['ros2', 'launch', 'sim', 'e2e.launch.py', 'stage:=' + args.stage,
                'backend:=' + args.backend, 'real_time_factor:=0.25', 'foxglove:=false',
                'log_dir:=' + str(directory)]
-    command += ['chase_settle_s:=' + str(args.chase_settle_s)]
     if args.stage == 'mcb_parked':
         command += ['speeds:=' + args.speeds, 'paths:=' + args.paths,
                     'duration:=' + str(args.duration)]
@@ -258,7 +257,6 @@ def main():
     capture_parser.add_argument('--speeds', default='0 1')
     capture_parser.add_argument('--paths', default='lateral')
     capture_parser.add_argument('--duration', type=float, default=35)
-    capture_parser.add_argument('--chase-settle-s', type=float, default=.025)
     render_parser = commands.add_parser('render')
     render_parser.add_argument('directory')
     render_parser.add_argument('output')
