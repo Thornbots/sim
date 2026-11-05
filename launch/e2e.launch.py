@@ -66,7 +66,7 @@ def _sim(context):
     if int(config['uart_baud']) not in (9600, 19200, 38400, 57600, 115200, 230400,
                                         460800, 921600, 2000000, 4000000):
         raise ValueError('uart_baud must be supported by dji_serial_bridge')
-    if _is_true(context, 'uart_deterministic') and not _is_true(context, 'lockstep'):
+    if _uart_coordinated(context) and not _is_true(context, 'lockstep'):
         raise ValueError('uart_deterministic requires lockstep')
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
@@ -82,7 +82,7 @@ def _sim(context):
                           'camera': 'false', 'pose_emulator': 'false',
                           'mcb_physics': 'true',
                           'uart_relay_fixture': config['uart_relay_fixture'],
-                          'uart_deterministic': config['uart_deterministic'],
+                          'uart_deterministic': 'true' if _uart_coordinated(context) else 'false',
                           'uart_epoch_zero': config['deterministic_epoch_zero'],
                           'verify_epoch_zero_spawn': config['deterministic_epoch_zero'],
                           'uart_baud': config['uart_baud'],
@@ -101,10 +101,24 @@ def _is_true(context, name):
     return context.launch_configurations[name].lower() in ('true', '1', 'yes')
 
 
+def _uart_coordinated(context):
+    """
+    Return whether UART is coordinated (sim-time wire, per-frame acks).
+
+    The default follows lockstep, which the gate needs; an explicit true/false
+    overrides, and true without lockstep is rejected.
+    """
+    value = context.launch_configurations['uart_deterministic'].lower()
+    if value in ('', 'auto'):
+        return _is_true(context, 'lockstep')
+    return value in ('true', '1', 'yes')
+
+
 def _tests(context):
     config = context.launch_configurations
     if (_is_true(context, 'deterministic_epoch_zero') or
-            _is_true(context, 'uart_deterministic') or _is_true(context, 'uart_relay_fixture') or
+            context.launch_configurations['uart_deterministic'] not in ('', 'auto') or
+            _is_true(context, 'uart_relay_fixture') or
             config['uart_baud'] != '115200' or config['mcb_read_delay_ms'] != '0'):
         raise RuntimeError('UART fixture/baud overrides require run_tests:=false; '
                            'suite does not forward them')
@@ -135,6 +149,11 @@ def generate_launch_description():
         ['ros2', 'run', 'sim', 'e2e_suite', '--print-launch-constants'],
         check=True, capture_output=True, text=True).stdout
     parked_paths = json.loads(constants)
+    # Mirrors _uart_coordinated for substitutions: auto follows lockstep.
+    coordinated = PythonExpression([
+        "str(('", LaunchConfiguration('uart_deterministic'), "'.lower() in ('', 'auto') and '",
+        LaunchConfiguration('lockstep'), "'.lower() in ('true', '1', 'yes')) or '",
+        LaunchConfiguration('uart_deterministic'), "'.lower() in ('true', '1', 'yes')).lower()"])
     share = get_package_share_directory('sim')
     xacro_file = os.path.join(share, 'urdf', 'sentry_v2.urdf.xacro')
 
@@ -184,8 +203,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True,
                      'device': LaunchConfiguration('mcb_device_link'),
                      'baudrate': LaunchConfiguration('uart_baud'),
-                     'sim_frame_metadata': ParameterValue(
-                         LaunchConfiguration('uart_deterministic'), value_type=bool),
+                     'sim_frame_metadata': ParameterValue(coordinated, value_type=bool),
                      'debug_log': False}])
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
@@ -216,8 +234,7 @@ def generate_launch_description():
         LaunchConfiguration('mcb_device_link'),
         PythonExpression(["'600' if '", LaunchConfiguration('backend'),
                           "' == 'renode' else '30'"]),
-        PythonExpression(["'device_only' if '", LaunchConfiguration('uart_deterministic'),
-                          "'.lower() in ('true', '1', 'yes') else 'frame'"]),
+        PythonExpression(["'device_only' if '", coordinated, "' == 'true' else 'frame'"]),
     ],
         output='screen')
     uart_start = RegisterEventHandler(OnProcessExit(
@@ -257,7 +274,7 @@ def generate_launch_description():
             raise RuntimeError(f"stage must be one of {', '.join(STAGES)}, not '{stage}'")
         deterministic = _is_true(context, 'deterministic_epoch_zero')
         if deterministic and (not _is_true(context, 'lockstep') or
-                              not _is_true(context, 'uart_deterministic') or
+                              not _uart_coordinated(context) or
                               _is_true(context, 'uart_relay_fixture') or
                               context.launch_configurations['backend'] != 'hosted' or
                               not context.launch_configurations['firmware_binary']):
@@ -342,8 +359,9 @@ def generate_launch_description():
                               description='Optional additional diagnostic readiness topic'),
         DeclareLaunchArgument('epoch_startup_timeout_s', default_value='30',
                               description='Readiness deadline in wall seconds'),
-        DeclareLaunchArgument('uart_deterministic', default_value='false',
-                              description='Experimental coordinated UART; requires lockstep'),
+        DeclareLaunchArgument('uart_deterministic', default_value='auto',
+                              description='Coordinated sim-time UART (bytes x 10 / baud, '
+                                          'per-frame acks); auto follows lockstep'),
         DeclareLaunchArgument('uart_relay_fixture', default_value='false',
                               description='Transport without deterministic timestamps or acks'),
         DeclareLaunchArgument('uart_baud', default_value='115200'),
