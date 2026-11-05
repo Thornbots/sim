@@ -569,8 +569,9 @@ It then enables aim/fire and waits for a valid `/cv/target_state` before the
 first cell
 (non-firing idle frames keep `/cv/target` fresh without one). Starting it at
 the launch's moving defaults left unscored motion dependent on wall-time
-bring-up speed. Both parked fixtures set the idle-look enemy zone toward
-their -y paths; driving stages retain the field's -x enemy zone. The parked scoring gates
+bring-up speed. The parked fixture overrides the aimer's `idle_zone` toward
+its south-side lane without changing team starts. Driving stages keep the
+opposing team's start as their idle look point. The parked scoring gates
 and firmware control laws are unchanged.
 Each requested cell sets its speed/spin and settles for three sim seconds
 before scoring.
@@ -1013,8 +1014,12 @@ The suite runs them in this order.
    per phase. The blackout legs pass under 0.5 m, the rest under `kMaxDelta`
    (0.4 m). See [blackout measurements](docs/simulation-history-2026-11-02.md#scan-blackout-measurements) for the earlier threshold comparison.
 
-10. `parked_push` runs with `odom_slip_ratio` 1, so `/odom` reads still
-   whatever the chassis does: a robot shoved with its wheels held. After 20 s
+10. `parked_push` drives to the northern straight's midpoint with healthy
+   wheel odometry, then sets `odom_slip_ratio` 1, so `/odom` reads still
+   whatever the chassis does: a robot shoved with its wheels held. This
+   fixes the small-motion fixture to a straight section of the Season 2
+   field's loop; centimetre-scale scan drift at the loop centre remains the
+   [T39 limitation](../docs/ROADMAP.md#h-slam-at-amcls-level). After 20 s
    parked it commands 1 cm/s for 4 s, then holds 5 s. It passes when truth
    moved 0.025-0.05 m and `parent->root` moved within 0.015 m of it.
    With rf2o enabled, `/scan_odom` must also track the displacement within
@@ -1033,8 +1038,9 @@ Side High Ground (x = 3, y < -1), partly on the flat Bumpy Road; corners clear
 both by 0.45 m centre-to-face (0.15 m past the chassis). No clear 3 m square
 fits beside the Central Wall. Each leg is `2 / --speed` seconds (0.5 s at the
 4.0 m/s default), and `reposition()` drives to the start corner first.
-`actor_driver` gets its default paths scaled by 2/3 around the same centre.
-Thresholds were calibrated on the former 3 m loop; [loop geometry trials](docs/simulation-history-2026-11-02.md#loop-geometry-trials) record it and why `drive()` closes the loop on truth.
+`actor_driver` gets its default paths translated to the same centre without
+scaling: their outer ends must remain beyond its full robot/box clearance from
+the loop. Thresholds were calibrated on the former 3 m loop; [loop geometry trials](docs/simulation-history-2026-11-02.md#loop-geometry-trials) record it and why `drive()` closes the loop on truth.
 `cornering` and `scan_degraded` dwell 1.0s after each leg so scan and TF settle;
 nobody has validated 1.0s, so change it if the delta won't get under the
 threshold.
@@ -1174,13 +1180,15 @@ and `DRIVE_SPEED`, because the robot dwells stopped at each corner and its
 velocity alone says nothing about the next leg. A blocked box steps to the
 nearest clear spot on its path, forward or back.
 
-The default paths run from the loop's middle, 1.1 m from every edge, across
-the -x, +y and +x edges. `closest box` logs the nearest box-centre distance.
-See the [actor avoidance trial](docs/simulation-history-2026-11-02.md#actor-avoidance-trial) for the earlier collision.
+The default paths cross the -x, +y and +x edges. On the original 3 m loop
+their inner ends are clear; on the 2 m loop their outer ends provide the
+refuge instead. Shrinking those paths with the loop leaves no spawn point
+satisfying the unchanged 1.01 m clearance. `closest box` logs the nearest
+box-centre distance. See the [actor avoidance trial](docs/simulation-history-2026-11-02.md#actor-avoidance-trial) for the earlier collision.
 
 Moves go through `sim.launch.py`'s `set_pose_bridge`, gz's `set_pose` as a
-ROS `SetEntityPose` service, one async call per box per tick. See the [actor transport trial](docs/simulation-history-2026-11-02.md#actor-transport-trial) for the former per-call process cost. The localization suite passes these paths scaled and
-moved to its loop (`loop_points`); actors have no collision, so only the robot's
+ROS `SetEntityPose` service, one async call per box per tick. See the [actor transport trial](docs/simulation-history-2026-11-02.md#actor-transport-trial) for the former per-call process cost. The localization suite translates these paths to its
+loop (`loop_points`); actors have no collision, so only the robot's
 clearance matters.
 
 ### sim.launch.py: spawn_robot uses -string

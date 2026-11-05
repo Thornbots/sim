@@ -480,6 +480,9 @@ int main(int argc, char **argv) {
       paths["initial_positions"][name] = sample.position;
       paths["initial_yaws"][name] = sample.yaw;
     }
+    const auto &center = sim::match_scenario::kCenter;
+    paths["idle_zone"] = {center[0], center[1] -
+        sim::match_scenario::parked_paths().at("lateral").center_x};
     std::cout << paths.dump() << std::endl;
     return 0;
   }

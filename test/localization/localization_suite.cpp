@@ -827,15 +827,13 @@ void spawn_box() {
   }
   spawned.push_back(name);
 }
-// actor_driver's default paths, scaled from its 3 m origin loop to this one.
+// Keep the actors' metre-scale escape ends outside the smaller drive loop.
 const std::vector<double> kActorPaths{-0.2, -0.4, -2.1, -0.4, -0.4, 0.2,
                                      -0.4, 2.3,  0.2,  0.4,  2.1, 0.4};
-// x/y pairs in loop half-sides (or 3 m-loop metres) to a world-frame ROS list.
-std::string loop_points(const std::vector<double> &unit) {
-  const bool half_sides = unit.size() == 8;
+// Translate scaled loop-relative x/y pairs to a world-frame ROS list.
+std::string loop_points(const std::vector<double> &unit, double scale) {
   std::string out = "[";
   for (size_t i = 0; i < unit.size(); ++i) {
-    const double scale = half_sides ? kLoopSide / 2 : kLoopSide / 3.0;
     out += (i ? ", " : "") + fixed(sim::field::kLoopCentre[i % 2] + scale * unit[i]);
   }
   return out + "]";
@@ -852,8 +850,8 @@ bool start_actor(Helper &helper) {
           "ros2", "run", "sim", "actor_driver", "--ros-args", "-p",
           "use_sim_time:=true", "-p", "count:=3", "-p",
           "name_prefix:=moving_actor", "-p",
-          "route:=" + loop_points({-1, 1, -1, -1, 1, -1, 1, 1}), "-p",
-          "paths:=" + loop_points(kActorPaths), "-p",
+          "route:=" + loop_points({-1, 1, -1, -1, 1, -1, 1, 1}, kLoopSide / 2), "-p",
+          "paths:=" + loop_points(kActorPaths, 1.0), "-p",
           "route_speed:=" + fixed(options.speed, 1)},
       std::string(kLogDir) + "/actor_driver_" + std::to_string(actor_runs) + ".log");
   const auto end = Clock::now() + std::chrono::seconds(60);
@@ -1268,11 +1266,17 @@ Stats stats(const std::vector<double> &samples) {
 // scans, which anchor a parked pose, against hiding a shove. Either
 // way the still wheel prior reads it a little short (README).
 void parked_push(Scenario &sc) {
-  auto stack = run_stack(false, {rclcpp::Parameter("odom_slip_ratio", 1.0)});
+  auto stack = run_stack(false, {rclcpp::Parameter("odom_slip_ratio", 0.0)});
   auto &helper = *stack->helper;
   if (!ready(sc, helper)) {
     return;
   }
+  // Use the northern straight's midpoint for the centimetre-scale fixture.
+  // Enable held-wheel slip only after driving there with healthy odometry.
+  helper.drive(0.0, options.speed, kLoopSide / 2 / options.speed);
+  helper.set_params("/pose_emulator/set_parameters",
+                    {rclcpp::Parameter("odom_slip_ratio", 1.0)});
+  helper.trigger("/pose_emulator/reset");
   std::optional<Pose> p;
   if (!correction_ready(sc, helper, p)) {
     return;

@@ -21,10 +21,12 @@ parked; mcb_drive drives from spawn to center; mcb_match adds a 2v2 fight.
 Tests own their stack process group; run_tests:=false launches only the stack.
 See README.md for design rationale and ../../docs/E2E_PLAN.md for acceptance criteria.
 """
+import atexit
 import json
 import math
 import os
 import subprocess
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -44,7 +46,7 @@ from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node, SetParameter
+from launch_ros.actions import Node, SetParameter, SetParametersFromFile
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
@@ -302,6 +304,15 @@ def generate_launch_description():
                     arguments=[f'/model/{name}/path@nav_msgs/msg/Odometry]gz.msgs.Odometry'],
                     remappings=[(f'/model/{name}/path', topic)],
                     parameters=[{'use_sim_time': True}])]
+        robot_bringup = robot
+        if stage == 'mcb_parked':
+            # Jazzy's global SetParameter stringifies arrays as Python tuples.
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as params:
+                json.dump({'point_to_cv_target': {'ros__parameters': {
+                    'idle_zone': parked_paths['idle_zone']}}}, params)
+            atexit.register(os.unlink, params.name)
+            robot_bringup = GroupAction([
+                SetParametersFromFile(params.name), robot])
         extra_ready = context.launch_configurations['epoch_readiness_extra']
         startup_timeout = float(context.launch_configurations['epoch_startup_timeout_s'])
         if not math.isfinite(startup_timeout) or startup_timeout <= 0 or startup_timeout > 30:
@@ -323,8 +334,8 @@ def generate_launch_description():
                 + common
                 + ([match_environment] if stage in DRIVING else [target_driver])
                 + ([GroupAction([SetParameter(name='tick_topic', value='/sim/e2e/aim_tick'),
-                                 robot])] if deterministic else
-                   [TimerAction(period=ROBOT_DELAY_S, actions=[robot])]))
+                                 robot_bringup])] if deterministic else
+                   [TimerAction(period=ROBOT_DELAY_S, actions=[robot_bringup])]))
 
     return LaunchDescription([
         DeclareLaunchArgument('deterministic_epoch_zero', default_value='false'),
