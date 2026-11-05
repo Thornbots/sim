@@ -68,9 +68,7 @@ MMM_EVIDENCE_DIR=/tmp/team-boot-evidence ros2 run sim mmm_suite --gtest_filter='
 No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
 
 Build first on a fresh container (see Build). Each test starts its own sim and
-`thornbots_pkg` stacks, so stop anything you already have running: ROS topics
-are shared across every process on the machine, and a stack left running
-corrupts the measurements.
+`thornbots_pkg` stacks, so stop anything you already have running.
 
 The localization suite runs `amcl` with the EKF by default, like
 `auto.launch.py` (`backend:=` picks another). Its ten scenarios
@@ -362,14 +360,19 @@ does not start Gazebo or a bench stack:
 ```bash
 colcon test --packages-select sim
 colcon test-result --test-result-base build/sim --verbose
+ros2 launch sim localization_tests.launch.py
+ros2 launch sim shot_hit.launch.py
+ros2 launch sim estimation.launch.py
+ros2 launch sim e2e.launch.py
 ```
 
-Launch the integration suites as shown under Run the tests and
-[Launch sim by hand](#launch-sim-by-hand).
+The on-demand EKF ground-truth tier runs after an `ekf.yaml` or rf2o change:
+`ros2 launch sim localization_tests.launch.py suite:=ekf`.
 
 An integration run ends with a `suite timing` table: wall seconds per case
 in sim start, bring-up, reset, settle, scored and teardown, and the RTF.
-A GUI run also opens the gz and rviz windows where a display opens, and runs
+Every bench serves Foxglove on port 8765 (`foxglove:=false` to skip). A GUI
+run also opens the gz and rviz windows where a display opens, and runs
 without them where none does. The CV benches fail a case whose stack lost
 a node.
 Before trusting a run's numbers, check its launch log, which `ros2 launch`
@@ -392,6 +395,14 @@ ros2 run sim rf2o_quality record /tmp/q.jsonl   # Ctrl-C when the suite ends
 ros2 run sim rf2o_quality summary /tmp/q.jsonl
 ```
 
+The drift suite starts gz-sim once and a fresh `thornbots_pkg` stack for each
+scenario, resetting the sim between them (see "Run the tests");
+`restart_sim:=true` restarts gz per scenario instead. The aiming bench launches
+its stack once for all its cases, through `shot_hit.launch.py
+run_tests:=false` when GTest starts it. ROS topics are shared
+across every process on the machine, so a stack you left running will corrupt
+the measurements.
+
 `clock_bridge.launch.py` owns Gazebo-to-ROS time publication and is included by
 `sim.launch.py`. It uses the existing robot UDP-only DDS profile: a departed
 reader's Fast DDS shared-memory port must not block the global clock callback.
@@ -407,6 +418,7 @@ the noise model. `gtest_args:=` forwards native GTest options on the
 localization launch. All suite launches retain `pytest_args:=` as a
 compatibility argument carrying native flags such as `--gtest_filter=*flat*`.
 
+`headless:=true` turns off the gz GUI and rviz2, which are on by default.
 `speed:=` changes the 4.0 m/s loop speed, but nobody has re-validated the
 thresholds at other speeds.
 `sentry_localization` copies its config, launch and map files into `install/`
@@ -446,9 +458,10 @@ robot spawns with no camera sensor, so gz renders nothing for it. The
 `camera` link and its TF stay, since the emulators and tracker place
 detections through that frame.
 
-The optional `sentry_v2` camera is depth only, 640x480 at 60 Hz, for manual
-depth-pipeline checks; no suite enables it (the match stages use
-`detector_standin`). It publishes the robot's D435 topics: `/depth/image_rect_raw` (16UC1 millimetres, 0 for no
+The optional `sentry_v2` camera is depth only, 640x480 at 60 Hz. It is
+available for manual depth-pipeline checks; no current suite enables it.
+The match stages instead feed 3D truth through `detector_standin`. The optional
+camera publishes the robot's D435 topics: `/depth/image_rect_raw` (16UC1 millimetres, 0 for no
 data), `/depth/camera_info` and `/color/camera_info` (one lens, one set of
 intrinsics), and a latched identity `/extrinsics/depth_to_color`. The gz
 bridge and `depth_camera_emulator`, which converts gz's 32FC1 metres, run
@@ -708,8 +721,9 @@ and main floor are at z = 0 (within 20 nm of STL float precision).
 The inner walls enclose 12 x 8 m; the outer bounds in world coordinates are
 x = ±6.168884 m, y = ±4.168884 m, z = -0.025..0.498612 m.
 
-The earlier mesh differed in outer bounds (12.61 x 8.73 m), height and an
-approximately 8 cm lateral offset; that is no reason to rescale the 12 x 8 m
+The earlier mesh had larger outer bounds (12.61 x 8.73 m), taller geometry
+(1.41883 m before its z offset), and an approximately 8 cm lateral offset.
+These are export differences, not a reason to rescale the new 12 x 8 m
 interior. The coarse export does not establish precise RFID zone boundaries.
 The ROS 1 launch files alongside the export are provenance; gz loads the SDF.
 
@@ -727,7 +741,9 @@ valid fixture REF_SYS when testing AMCL.
 
 All MCB E2E stages, including the parked diagnostic, spawn at blue's field
 start so referee-based AMCL seeding matches the world. Match routes retain
-their field coordinates.
+their field coordinates. The parked diagnostic drives to center before its
+cells and translates its original -y target paths with the settled shooter,
+preserving the former world-centre shooter geometry.
 The [parked ingress verification](docs/mcb-parked-ingress-2026-10-31.md)
 compares repeated hosted cells with the nightly baseline and records the board attempt.
 See the [boot-heading verification](docs/boot-heading-2026-10-30.md) for
@@ -1056,7 +1072,9 @@ noise reset clears drift/slip state while preserving the boot origin.
 It sends what the MCB sends: `head_yaw` in the world (gz's joint is relative
 to the chassis), velocity in the world (gz's twist is in the chassis frame),
 and the chassis's heading as `chassis_yaw`, which the firmware doesn't send
-yet. `sentry_v2` picks up ~1 deg of chassis yaw in hard corners.
+yet. `sentry_v2` picks up ~1 deg of chassis yaw in hard corners; before
+2026-09-29 `/dji_serial_bridge/pose` passed the relative joint and chassis-frame velocity
+through, so the lidar's TF heading was off by that yaw.
 
 Sim ground truth has no wheel drift, so nothing would exercise `map->nav_odom`
 correction. These params add it. Drift and jitter apply only while
@@ -1197,7 +1215,7 @@ Visible half-width at 3m is `3.0*tan(1.5184/2)` ~ 2.85m, so the outer panels
 (0.3m out) keep ~0.15m margin with the head straight ahead. `max_accel`
 (6 m/s^2) brakes the target to a stop at each end and ramps any change of
 `target_speed`, and `max_spin_accel` (20 rad/s^2) does the same for `spin_hz`;
-both are estimates.
+both are estimates. It used to reverse and change speed instantly.
 
 `cv_target_emulator` computes camera pose by chaining `sentry_v2`'s fixed joint
 offsets (root -> fastened_2 -> body -> headlink(yaw) -> head ->
@@ -1209,9 +1227,11 @@ axis, 5.7 cm above it and 1.8 cm right of the muzzle.
 
 See the [camera transform sign trial](docs/simulation-history-2026-11-02.md#camera-transform-sign-trial) for the old model debugging evidence.
 
-`headlink` is a continuous joint, matching the free-spinning real gimbal.
-`headpitch` keeps a +-0.6 rad limit, carried over from the old model as a
-placeholder.
+`headlink` has been a continuous joint since 2026-07-28, matching the
+free-spinning real gimbal. It used to be `revolute` with a +-pi limit;
+`cv_head_aim` pegging at exactly +-3.14159 turned out to be its own software
+clamp. `headpitch` keeps a +-0.6 rad limit, carried over from the old model
+as a placeholder.
 
 Target positions use REP-103 (x forward, y left, z up), not the optical frame
 a real driver reports. Mislabelling optical as REP-103 would rotate every
@@ -1607,8 +1627,8 @@ pipes emit only `MCB3`, with no start coordinates before the first tick output.
 Raw POSE therefore starts at zero at any spawn, independently of firmware routes.
 Sim's Jetson launch fixtures explicitly pass `red_start_x`, `red_start_y`,
 `blue_start_x`, `blue_start_y` matching their ARCC spawn configuration
-(starts in [the world frame](#the-world-frame)). These overrides remain
-independent of Jetson's real-field defaults.
+(red `(-4.625, 0)`, blue `(4.625, 0)`). These overrides remain independent of
+Jetson's real-field defaults.
 
 `McbFirmwareSystem` owns the firmware process and PTY inside gz. It reads
 pose, twist and gimbal joints from the ECM, runs one firmware cycle per 1 ms
@@ -1771,9 +1791,10 @@ score (paths under `MCB-project/src/`):
   moving and -12 at either end. The normal switch schedules this command,
   not the NAV_GOAL reader; `mcb.launch.py backend:=hosted drive:=auto` selects that reader
   explicitly. RMUL 3v3 waypoint advancement waits for IN_GAME, while the
-  simple route can still spin before the game. Its waypoints and spin
-  requests come from the checked-out firmware; the simulator controls the
-  surrounding ghosts and referee inputs.
+  simple route can still spin before the game. The `mcb_drive` and
+  `mcb_match` stages arm the firmware's own simple auto-drive after bring-up.
+  Its waypoints and spin requests come from the checked-out firmware;
+  the simulator controls the surrounding ghosts and referee inputs.
 
 [October 3 parked results](docs/mcb-parked-results-2026-10-03.md) record the earlier experiments.
 
@@ -1792,9 +1813,10 @@ requests; its own controller emits CAN motor commands applied as forces in gz.
 no chassis velocity or reference route for our robot. The later navigation publisher is maintained as
 [NAV-publisher](../docs/ROADMAP.md#additional-mini-work).
 
-Backend selection is as for every E2E stage (`renode` default, `hosted` the
-faster fixture); both follow the same stop/simple and aim/fire remote
-selections. Startup holds drive in centred manual mode. At stage arm the right switch selects auto-drive;
+`backend:=renode` is the default and uses the normal board ELF.
+`backend:=hosted` explicitly selects the faster fixture, whose remote switches
+now follow the same stop/simple and aim/fire selections. Startup holds drive
+in centred manual mode. At stage arm the right switch selects auto-drive;
 the left stays MID until every robot's truth root enters the estimated
 field-centre fight zone, then switches UP to enable automatic aim/fire.
 Referee stage is IN_GAME so the firmware can advance waypoints during approach.
@@ -1826,9 +1848,9 @@ translated and rotated, every robot reached the configured centre zone,
 stamped localization data existed, and a low hit rate named a measured failing
 hop, as allowed in E2E_PLAN. `mcb_drive` also fails when its native total hit
 count is zero, even with complete diagnostics; per-segment diagnostics remain
-available. These checks establish diagnostic completion, not combat accuracy:
-floors need repeated valid runs, and current moving runs expose tracking and
-gimbal misses.
+available. These checks establish diagnostic completion, not combat accuracy.
+It does **not** mean combat accuracy passed: floors need repeated valid
+runs, and current moving runs expose tracking and gimbal misses.
 The spawn coordinates are sim configuration, not surveyed starting zones.
 [Board-stage verification](docs/mcb-auto-drive-2026-10-12.md) records clean
 parked, drive and match runs, the focused CAN/gz check, and accuracy limits.
