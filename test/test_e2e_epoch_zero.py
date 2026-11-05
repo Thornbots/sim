@@ -85,6 +85,8 @@ def main():
         second = run(sys.argv[1], 6)
         assert first == second, (first, second)
         assert first[0] == [17000000, 34000000], first
+        assert first[1] == [25000000, 50000000], first
+        assert first[2] == [1000000, 2000000], first
         missing_ready(sys.argv[1])
     finally:
         rclpy.shutdown()

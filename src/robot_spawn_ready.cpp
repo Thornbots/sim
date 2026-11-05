@@ -24,10 +24,11 @@ int main(int argc, char ** argv)
   const auto timeout = node->declare_parameter("startup_timeout_s", 25.0);
   auto pub = node->create_publisher<std_msgs::msg::Header>(
     "~/ready", rclcpp::QoS(1).reliable().transient_local());
-  gz::transport::Node gz;
   std::mutex mutex;
   uint64_t count = 0;
   bool valid = false;
+  // Destroy transport callbacks before the state they capture.
+  gz::transport::Node gz;
   gz.Subscribe<gz::msgs::WorldStatistics>("/world/ARCC_Field_2026/stats",
     [&](const gz::msgs::WorldStatistics & msg) {
       std::lock_guard<std::mutex> lock(mutex);
