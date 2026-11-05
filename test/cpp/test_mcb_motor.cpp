@@ -24,7 +24,7 @@ TEST(McbMotor, ProjectileExitCountsOneBallPerFeedFromRest) {
   const auto go = [&](double to, int settle = 20) {
     const double step = (to > at ? 1 : -1) / 64.0;
     while ((to - at) * step > 0) {
-      at += step;
+      at += std::copysign(std::min(std::abs(step), std::abs(to - at)), step);
       shots += exit.update(motor::packet(-at * exit.kShaftTurnsPerBall * 2 * motor::kPi, 0, 0));
     }
     for (int i = 0; i < settle; ++i)
@@ -32,7 +32,6 @@ TEST(McbMotor, ProjectileExitCountsOneBallPerFeedFromRest) {
   };
   go(0.2);  // pre-indexing from home fires nothing
   EXPECT_EQ(shots, 0u);
-  go(1.25, 0);  // a feed with overshoot past the next rest
   go(1.2);
   EXPECT_EQ(shots, 1u);
   go(0.9);  // unjam back and return
@@ -40,6 +39,15 @@ TEST(McbMotor, ProjectileExitCountsOneBallPerFeedFromRest) {
   EXPECT_EQ(shots, 1u);
   go(2.2);
   EXPECT_EQ(shots, 2u);
+  go(6.2, 0);  // continuous feed must not require a rest between chambers
+  EXPECT_EQ(shots, 6u);
+  go(4.2);
+  go(6.2);  // returning through emptied chambers does not reload them
+  EXPECT_EQ(shots, 6u);
+  go(7.25, 0);  // crossing the next exit plane physically releases another ball
+  EXPECT_EQ(shots, 8u);
+  go(7.2);
+  EXPECT_EQ(shots, 8u);  // settling back cannot undo that exit
 }
 
 TEST(McbMotor, EncodesDjiSignedFeedbackAndWrapsEncoder) {

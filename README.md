@@ -1647,8 +1647,8 @@ not counted again. This observes physical indexing, rather than reading or
 instrumenting firmware counters. A loaded-cartridge reverse stop supplies
 the CAN stall current used by the firmware's indexer homing routine; its
 geometry and load remain estimates, with no finite ammunition model.
-The hosted backend reports issued-shot counters; the board backend reports
-modeled physical exits. The [indexer recovery investigation](docs/mcb-indexer-recovery-2026-10-12.md)
+Both backends score modeled physical exits; hosted firmware also exposes
+issued-shot counters for debugging. The [indexer recovery investigation](docs/mcb-indexer-recovery-2026-10-12.md)
 explains why those observations must be distinguished.
 
 #### Shared motor plant and UART transport
@@ -1682,7 +1682,10 @@ signed shaft-RPM, current and temperature feedback for all ten motors. The
 firmware's own CAN parser, encoder interface and controllers consume it. Yaw
 and drivetrain commands are M3508 current units; pitch uses GM6020 voltage
 and a back-EMF/resistance model. Gear ratios and motor constants follow the
-sentry firmware. The chassis uses an omni-wheel force/velocity projection with
+sentry firmware. Pitch encoder packets include the inverted motor's gearbox
+angle and firmware zero offset; a hosted UART regression round-trips positive,
+negative and zero Gazebo joint angles through the real encoder parser to POSE.
+The chassis uses an omni-wheel force/velocity projection with
 estimated per-wheel traction, capped using the total model mass read from gz
 inertials; wheel speeds assume rolling without slip.
 Flywheel, indexer and odometry-motor rotors have estimated inertia and load;
@@ -1702,7 +1705,7 @@ yaw/rate by eight 1 ms ticks to match the firmware predictor; the board path
 runs the full IMU filter, which owns sample age. CAN feedback stays current.
 The hosted E2E profile uses zero residual yaw lag after setpoint-rate
 filtering and the robot-timed 20 ms indexing delay (the chamber-exit point
-`ProjectileExit::kExitAt` is placed to match). Spinning uses alignment gating on the
+`ProjectileExit::kExitTravel` is placed to match the first feed from rest). Spinning uses alignment gating on the
 steady center-to-shooter line; chasing each rotating panel is opt-in through
 nonnegative `chase_settle_s` (the previous fixture used 25 ms windows). These
 are model calibrations; board gimbal timing remains uncalibrated.
@@ -1716,6 +1719,11 @@ scorer launches at that stamp and adds no firing-delay estimate. Flag-only
 diagnostics use the requested exit delay from CV_TARGET, without adding a
 second indexer-latency estimate. Hosted
 firmware request counters remain debug outputs, not physical shots.
+The exit counter follows successive chamber planes without requiring a stop
+between feeds. Its forward high-water mark prevents reverse unjamming from
+counting an emptied chamber again. The estimated indexer plant can overshoot
+the next exit plane while braking, so physical exits need not match firmware
+request counts or retain the first feed's latency during continuous firing.
 
 `/mcb_emulator/gimbal_setpoint` publishes hosted firmware desired field yaw and pitch
 at 100 Hz for command-versus-achieved diagnostics; it carries the physics

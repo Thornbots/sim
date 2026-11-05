@@ -14,6 +14,8 @@ constexpr double kWheelRadius = 0.094902;
 constexpr double kTrack = 0.50038;
 constexpr double kYawRatio = 32319.0 / 748.0;
 constexpr double kPitchRatio = 3.0;
+// Sentry's encoder offset in GimbalSubsystemConstants.hpp; verified through POSE.
+constexpr double kPitchOffset = 0.18;
 using Feedback = std::array<std::array<uint8_t, 8>, 10>;
 using Commands = std::array<int16_t, 10>;
 
@@ -22,13 +24,13 @@ struct ProjectileExit {
   static constexpr double kShaftTurnsPerBall = 36.0 / 8;
   // A ball leaves kExitTravel into a feed that starts from the firmware's
   // pre-indexed rest (n + kRestAt balls, INITIAL_INDEX_OFFSET): ~22 ms after
-  // the request, near the robot's timed 20 ms (2026-10-28). One per feed, so
-  // overshoot doesn't count twice; the plant's acceleration is an estimate.
+  // the request, near the robot's timed 20 ms (2026-10-28). Subsequent exits
+  // are one chamber apart. Braking overshoot past an exit also releases a ball.
   static constexpr double kRestAt = 0.20, kRestTolerance = 0.1, kExitTravel = 0.045;
   static constexpr int kStillCounts = 2, kStillUpdates = 10;  // encoder counts, updates
   int previous = 0, still = 0;
   double turns = 0;
-  std::optional<double> rest;  // armed: where the shaft last settled, in balls
+  std::optional<double> next_exit;  // forward high-water mark; reverse travel cannot reload a ball
   uint32_t update(const std::array<uint8_t, 8> &feedback) {
     const int encoder = static_cast<int>(feedback[0]) << 8 | feedback[1];
     const int delta = (encoder - previous + 12288) % 8192 - 4096;
@@ -39,14 +41,15 @@ struct ProjectileExit {
     still = std::abs(delta) <= kStillCounts ? still + 1 : 0;
     if (still >= kStillUpdates) {
       const double phase = balls - std::floor(balls);
-      rest = std::abs(phase - kRestAt) <= kRestTolerance ? std::optional<double>(balls)
-                                                          : std::nullopt;
+      if (!next_exit && std::abs(phase - kRestAt) <= kRestTolerance)
+        next_exit = std::floor(balls) + kRestAt + kExitTravel;
     }
-    if (rest && balls - *rest >= kExitTravel) {
-      rest.reset();
-      return 1;
+    uint32_t exits = 0;
+    while (next_exit && balls >= *next_exit) {
+      ++exits;
+      *next_exit += 1.0;
     }
-    return 0;
+    return exits;
   }
 };
 
@@ -73,7 +76,7 @@ struct Plant {
                     double forward, double left, double spin, double dt) {
     angle[0] = readings[6] * kYawRatio;
     speed[0] = readings[7] * kYawRatio;
-    angle[1] = -(readings[8] - 1.62) * kPitchRatio;
+    angle[1] = -(readings[8] + kPitchOffset) * kPitchRatio;
     speed[1] = -readings[9] * kPitchRatio;
     const double right = -left;
     const double scale = kDriveRatio / kWheelRadius;
