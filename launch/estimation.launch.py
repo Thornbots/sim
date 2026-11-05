@@ -19,14 +19,14 @@ Estimation bench: target_tracker's TargetState against the truth, no gz.
 bench_world (C++, one lockstep loop) is the clock, the phantom target, our
 chassis and head, /dji_serial_bridge/pose, the head controller and the detections off our
 head's camera. target_selector and target_tracker build the TargetState, and
-point_to_cv_target aims the head through bench_world's controller.
+mcb_aim_standin (the firmware's planner) aims the head through bench_world's controller.
 Nothing fires. The C++ estimation harness scores each state at its stamp.
 Stops when the tests finish; Ctrl-C stops everything. `run_tests:=false`
 brings up the stack alone.
 """
 import os
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -54,7 +54,16 @@ def cv_node(executable, package='thornbots_pkg', **params):
                 output='screen', parameters=[{'use_sim_time': True, **params}])
 
 
+def _require_aim_standin():
+    # Built from the firmware checkout's AimPlanner; absent without it.
+    exe = os.path.join(get_package_prefix('sim'), 'lib', 'sim', 'mcb_aim_standin')
+    if not os.path.exists(exe):
+        raise RuntimeError('mcb_aim_standin is missing: build sim with firmware/MCBV3 '
+                           'checked out (README "MCB aim stand-in")')
+
+
 def _stack(context):
+    _require_aim_standin()
     cfg = context.launch_configurations
     headless = _is_true(context, 'headless') or display_error() is not None
     camera_latency = float(cfg['camera_latency_s'])
@@ -92,9 +101,10 @@ def _stack(context):
         Node(package='sim', executable='bench_world', name='bench_world', output='screen',
              parameters=[world]),
         robot_tf, cv_node('target_selector'), cv_node('target_tracker', **tracker),
-        cv_node('point_to_cv_target', red_start_x=0.0, red_start_y=0.0,
-                blue_start_x=0.0, blue_start_y=0.0, tick_topic='/cv/target/tick',
-                state_ack_topic='/cv/target/state_ack', idle_direction='hold'),
+        # The MCB's planner stands in: aim only, nothing fires, and the head's
+        # own lag is real, so the firmware's gimbal_lag_s stays in force.
+        cv_node('mcb_aim_standin', package='sim', fire_enabled=False,
+                tick_topic='/cv/target/tick', state_ack_topic='/cv/target/state_ack'),
     ]
     if not headless:
         actions.append(cv_node('target_state_markers', package='sim'))
