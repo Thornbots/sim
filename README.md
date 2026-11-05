@@ -557,7 +557,7 @@ ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:
 ```
 
 `mcb_parked`'s test-owned stack brings up a parked, non-spinning opponent
-and arms firmware `SimpleAutoDriveCommand` through the modeled remote after
+and arms firmware `AutoDriveCommand` through the modeled remote after
 localization bring-up and three stationary sim seconds, with aim/fire disabled.
 It waits for truth within 1 m
 of field center and translation below 0.08 m/s for one sim second (120 sim
@@ -755,11 +755,12 @@ The pose-only fixture supplies no referee data: its caller must supply a
 valid fixture REF_SYS when testing AMCL.
 
 All MCB E2E stages, including the parked diagnostic, spawn at blue's field
-start so referee-based AMCL seeding matches the world. The firmware's
-`ARCC_S2_3V3` route and sim's `sentry` route end at the centre point (0.6, -1.8),
-south of the Central Wall's tip; the centre fight zone is |x| < 1.8,
+start so referee-based AMCL seeding matches the world. The robot stack's
+[waypoint navigation](../nav_pkg/README.md) ends at its pipes point (0, -2.4)
+and sim's scripted `sentry` route at the centre point (0.6, -1.8), both south
+of the Central Wall's tip; the centre fight zone is |x| < 1.8,
 |y + 2.3| < 1.0 (`match_scenario.hpp`). The parked diagnostic settles within
-1 m of that point, then translates its -y target paths with the settled
+1 m of the centre point, then translates its -y target paths with the settled
 shooter into the open floor south of it.
 The [parked ingress verification](docs/mcb-parked-ingress-2026-10-31.md)
 compares repeated hosted cells with the nightly baseline and records the board attempt.
@@ -1522,8 +1523,9 @@ colcon build --packages-select sim --symlink-install
 ros2 launch sim mcb.launch.py backend:=hosted
 ```
 
-Use `drive:=simple` for the firmware's waypoint route or, with
-`backend:=hosted`, `drive:=auto` for NAV_GOAL. The default `stop` parks the
+Use `drive:=simple` (the remote's right switch up) or, with
+`backend:=hosted`, `drive:=auto` (scheduled directly); both follow NAV_GOAL,
+so the robot drives only while something publishes `nav_goal`. The default `stop` parks the
 robot under centred manual drive. With main's firmware the keyboard peek
 release schedules beyblade at boot, so the parked chassis spins. Foxglove serves
 on :8765, and
@@ -1582,8 +1584,9 @@ firmware ingress and shooter-relative target paths. The calibrated gyro starts
 at zero; the hosted fixture
 can supply an arbitrary initial gyro angle directly, which the board cannot.
 `backend:=hosted` explicitly selects the faster native fixture. All E2E stages
-use the firmware's `SimpleAutoDriveCommand` with either backend; they arm it
-after bring-up through the modeled remote, rather than publishing velocities.
+use the firmware's `AutoDriveCommand` with either backend; they arm it
+after bring-up through the modeled remote, and the robot stack's
+`waypoint_nav` supplies its NAV_GOALs, rather than sim publishing velocities.
 
 The Jetson PTY transports actual USART1 bytes. Referee packets enter USART6,
 and DBUS packets enter USART3 (remote absent through the power-on guard and
@@ -1813,19 +1816,17 @@ score (paths under `MCB-project/src/`):
   indexer's 50 ms minimum caps that at 20 Hz, so 40 Hz frames fire every
   other one.
 - Historically, `RELOCALIZE` moved odometry at once, anywhere, any HP
-  (`JetsonSubsystem.cpp:76-81`). The RFID relocalize in
-  `SimpleAutoDriveCommand` is gone; stuck 15 s, it spins in place.
+  (`JetsonSubsystem.cpp:76-81`). The firmware has no onboard route,
+  RFID relocalize or stuck timer any more.
 - With an expired aim it patrols only if the last frame set
   `TYPE_C_BASED_PATROL`. A hit turn with `TURN_TO_HIT` set can override a
   live CV aim; see [firmware coordination](../ros2_dji_serial_bridge/README.md#where-the-firmware-stands).
-- The sentry drives `SimpleAutoDriveCommand`'s ARCC route, spinning -8 rad/s
-  moving and -12 at either end. The normal switch schedules this command,
-  not the NAV_GOAL reader; `mcb.launch.py backend:=hosted drive:=auto` selects that reader
-  explicitly. RMUL 3v3 waypoint advancement waits for IN_GAME, while the
-  simple route can still spin before the game. The `mcb_drive` and
-  `mcb_match` stages arm the firmware's own simple auto-drive after bring-up.
-  Its waypoints and spin requests come from the checked-out firmware;
-  the simulator controls the surrounding ghosts and referee inputs.
+- The sentry follows `waypoint_nav`'s NAV_GOALs through the firmware's
+  `AutoDriveCommand`, which the normal right switch schedules. It holds a
+  field quarter turn while travelling and spins only at a goal; under RMUL
+  3v3 it holds still before the countdown and spins in place during it. The
+  `mcb_drive` and `mcb_match` stages arm it after bring-up; the simulator
+  controls the surrounding ghosts and referee inputs.
 
 [October 3 parked results](docs/mcb-parked-results-2026-10-03.md) record the earlier experiments.
 
@@ -1837,12 +1838,11 @@ ros2 launch sim e2e.launch.py stage:=mcb_drive
 
 The sentry and opponent use the [team starts and boot heading](#the-world-frame).
 After bring-up the scorer
-arms the firmware's own `SimpleAutoDriveCommand` (the sentry's ARCC rough
-route). The selected command generates its waypoints, translations and spin
-requests; its own controller emits CAN motor commands applied as forces in gz.
-`match_environment` supplies only ghost routes and combat inputs. It publishes
-no chassis velocity or reference route for our robot. The later navigation publisher is maintained as
-[NAV-publisher](../docs/ROADMAP.md#additional-mini-work).
+arms the firmware's `AutoDriveCommand`, which follows the robot stack's
+[waypoint navigation](../nav_pkg/README.md); the firmware's own controller
+emits CAN motor commands applied as forces in gz. `match_environment`
+supplies only ghost routes and combat inputs. It publishes no chassis
+velocity or reference route for our robot.
 
 `backend:=renode` is the default and uses the normal board ELF.
 `backend:=hosted` explicitly selects the faster fixture, whose remote switches

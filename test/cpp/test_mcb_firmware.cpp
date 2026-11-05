@@ -424,22 +424,24 @@ TEST_F(McbFirmware, StageBlocksFire) {
                                                   wire::kCvTargetFlagFire}))
                   .shots.empty());
 }
-TEST_F(McbFirmware, SimpleDriveRouteAndStageGate) {
+TEST_F(McbFirmware, SwitchUpFollowsNavGoalsAfterTheStageGate) {
   ref.game_stage = 0;
-  firmware->set_mode(1);
-  const auto waiting = run(300).outputs.back();
+  firmware->set_mode(1);  // remote right switch up schedules AutoDriveCommand
+  const auto doorway = wire::frame(wire::NavGoal{
+      static_cast<float>(sim::field::kRedStart[0]), -0.635F});
+  const auto waiting = run(300, doorway).outputs.back();
   EXPECT_NEAR(std::hypot(waiting.right, waiting.forward), 0.0, 1e-6);
   EXPECT_NEAR(waiting.spin, 0.0, 1e-6);
   run(100, wire::frame(wire::Relocalize{
       static_cast<float>(sim::field::kRedStart[0]),
       static_cast<float>(sim::field::kRedStart[1])}));
-  auto output = run(200).outputs.back();
-  EXPECT_LT(std::hypot(output.right, output.forward), 0.05);
-  EXPECT_LT(output.spin, -1);
+  auto output = run(200, doorway).outputs.back();
+  EXPECT_LT(std::hypot(output.right, output.forward), 0.05);  // 3v3 before IN_GAME
+  EXPECT_NEAR(output.spin, 0.0, 1e-6);
   ref.game_stage = 4;
-  output = run(300).outputs.back();
+  output = run(300, doorway).outputs.back();
   EXPECT_GT(std::hypot(output.right, output.forward), 0.1);
-  // ARCC_S2_3V3's first leg leaves through the Starting Zone doorway square.
+  // The Starting Zone doorway is narrower than the spin sweep: travel holds a quarter turn.
   EXPECT_NEAR(output.spin, 0.0, 0.5);
 }
 TEST_F(McbFirmware, AutoDriveWaitsForAbsoluteRelocalization) {
@@ -453,13 +455,14 @@ TEST_F(McbFirmware, AutoDriveWaitsForAbsoluteRelocalization) {
   run(100, wire::frame(wire::Relocalize{
       static_cast<float>(sim::field::kRedStart[0]),
       static_cast<float>(sim::field::kRedStart[1])}));
-  const auto output =
-      run(300, wire::frame(wire::NavGoal{
-                   static_cast<float>(sim::field::kRedStart[0] + 1),
-      static_cast<float>(sim::field::kRedStart[1] - 1)}))
-          .outputs.back();
+  auto output = run(300, goal).outputs.back();
   EXPECT_GT(output.right, 0);
   EXPECT_LT(output.forward, 0);
+  EXPECT_NEAR(output.spin, 0.0, 0.5);
+  // A goal at the robot's own position: it has arrived, so it spins.
+  output = run(300, wire::frame(wire::NavGoal{
+      static_cast<float>(sim::field::kRedStart[0]),
+      static_cast<float>(sim::field::kRedStart[1])})).outputs.back();
   EXPECT_GT(output.spin, 1);
 }
 } // namespace

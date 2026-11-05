@@ -48,8 +48,9 @@ const std::map<std::string, ParkedPath> &parked_paths() {
 }
 const std::map<std::string, Route> &routes() {
   static const std::map<std::string, Route> data = {
-      // The firmware's ARCC_S2_3V3 route from blue's start: square through the
-      // Starting Zone doorway, then spinning to the centre point.
+      // Scripted fixture shaped like thornbots_nav's route from blue's start
+      // (square through the Starting Zone doorway); it ends at kCenter for the
+      // centre legs, where the real route ends at its pipes point (0, -2.4).
       {"sentry", {{5.25, -3.0}, {5.25, -0.635}, {2.4, -0.635}, kCenter}},
       {"opponent_0", {{-5.25, -3.0}, {-5.25, -0.635}, {-2.4, -0.635}, {-0.9, -2.4}}},
       // Second lane: spawned north of the Side Walls, clear of the doorway lane.
