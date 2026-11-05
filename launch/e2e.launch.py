@@ -189,7 +189,14 @@ def generate_launch_description():
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
-        launch_arguments={'red_start_x': '-4.625', 'red_start_y': '0.0',
+        # Blue's idle look faces the enemy (red) start. The parked cells keep their
+        # opponent south of the sentry, so red's start is moved there for that stage.
+        launch_arguments={'red_start_x': PythonExpression([
+                              "'0.0' if '", LaunchConfiguration('stage'),
+                              "' == 'mcb_parked' else '-4.625'"]),
+                          'red_start_y': PythonExpression([
+                              "'-4.625' if '", LaunchConfiguration('stage'),
+                              "' == 'mcb_parked' else '0.0'"]),
                           'blue_start_x': '4.625', 'blue_start_y': '0.0',
                           'real_hardware': 'false', 'localization_mode': 'amcl',
                           'deterministic_epoch_zero': LaunchConfiguration(
