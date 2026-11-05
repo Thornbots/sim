@@ -507,15 +507,19 @@ milliseconds (index starts at one). After all model poses cover a tick, it
 publishes the detection array, including empty arrays, then a `~/consumed`
 header with the same stamp. Missing truth does not produce an acknowledgment;
 queue overflow or expired truth fails the deterministic detector visibly.
-The mode is off by default and is not yet wired into e2e launch or its gate.
+The mode is off by default; e2e launch enables it for the
+[epoch-zero diagnostic](#coordinated-uart-fixtures).
 `opponent_driver` has a matching opt-in mode: setting `initial_position`
 (two finite coordinates, required with `use_sim_time`; `startup_timeout_s`
-defaults to 30) spawns `opponent_0` at that pose and publishes a
-transient-local `~/ready` header only when `/world/<name>/stats` shows the
-world paused at sim time zero, before and after one model with that name
-and pose is confirmed. A collision, wrong pose, nonzero epoch or timeout logs
-an error and exits 1. Without `initial_position` the odometry-seeded spawn
-runs unchanged. Not yet wired into e2e launch.
+defaults to 30; optional finite `initial_yaw`, default 0) spawns its `name`
+model at that pose and publishes a transient-local `~/ready` header only when
+`/world/<name>/stats` shows the world paused at sim time zero, before and
+after one model with that name and pose is confirmed. A collision, wrong pose
+or yaw, nonzero epoch or timeout logs an error and exits 1. Without
+`initial_position` the odometry-seeded spawn runs unchanged.
+`target_driver` and `match_environment` accept `deterministic_epoch_zero`
+too: each starts its timer only on an observed zero `/clock`, then latches
+`~/ready`.
 Shots are the ones the firmware fires, each falling under gravity since the
 firmware pitches up for it. All three stages use the robot's no-patrol
 `point_to_cv_target` behavior: last-enemy and hit holds, then a look toward
@@ -1429,22 +1433,26 @@ acknowledgment, or a missing acknowledgment within 30 seconds fails closed.
 Positive clock publication remains one message per physics step. This option
 requires `uart_deterministic:=true`.
 
-For the parked E2E diagnostic, build the hosted firmware above and run:
+For the E2E epoch-zero diagnostic, build the hosted firmware above and run
+(any stage):
 
 ```sh
-ros2 launch sim e2e.launch.py run_tests:=false backend:=hosted \
+ros2 launch sim e2e.launch.py run_tests:=false backend:=hosted stage:=mcb_match \
   firmware_binary:=/workspaces/isaac_ros-dev/src/firmware/MCBV3/MCB-project/build/sim/scons-release/MCB-project.elf \
   uart_deterministic:=true deterministic_epoch_zero:=true
 ```
 
 The paused gate waits for the robot and opponent scene checks, detector and aim
-timer initialization, and MCB bootstrap before the first 5 ms release. Robot
-creation is immediate and its scene verifier has a 25 s wall deadline. The
-diagnostic requires the parked stage, lockstep, hosted backend and an explicit
-firmware binary; scored runs and other stages reject it. Optional
+timer initialization, and MCB bootstrap before the first 5 ms release. Parked
+also waits for `target_driver`'s epoch-zero timer; driving and match wait for
+`match_environment`'s. Driving and match spawn every ghost (match: both
+opponents and the ally) at the position and yaw `match_scenario` samples at
+t=0, verified in the paused scene. Robot creation is immediate and its scene
+verifier has a 25 s wall deadline. The diagnostic requires lockstep, the hosted
+backend and an explicit firmware binary; scored runs reject it. Optional
 `epoch_coordinator_delay_s`, `epoch_readiness_extra` and
 `epoch_startup_timeout_s` exercise startup order and missing-readiness failure.
-The [parked startup evidence](docs/e2e-epoch-zero-2026-11-04.md) records the
+The [startup evidence](docs/e2e-epoch-zero-2026-11-04.md) records the
 observed first stamps and the remaining downstream gates.
 This mode is not yet accepted for scored runs: see the
 [hosted diagnostic](docs/uart-coordination-2026-11-03.md) for the remaining checks.

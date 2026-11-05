@@ -1,11 +1,23 @@
 // Copyright 2026 Thornbots
-// Licensed under the Apache License, Version 2.0.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 // Real Gazebo (the paused ARCC field, no sim progression) plus the real
 // opponent_driver executable. Failure cases must exit and must not publish ready.
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
@@ -218,7 +230,8 @@ TEST_F(OpponentStartupTest, CorrectModelReadyOnPausedWorld)
   start_gz(false);
   ASSERT_TRUE(wait_for_world(120s)) << gz_->read_log();
   ASSERT_TRUE(wait_until([this] {return epoch_zero_paused(stats_);}, 30s));
-  start_driver({"-p", "initial_position:=[1.0,2.0]", "-p", "startup_timeout_s:=90.0"});
+  start_driver({"-p", "initial_position:=[1.0,2.0]", "-p", "initial_yaw:=1.5707963267948966",
+    "-p", "startup_timeout_s:=90.0"});
   ASSERT_TRUE(wait_until([this] {return ready_count_ >= 1;}, 120s)) << driver_log();
   EXPECT_EQ(ready_frame_, kModel);
   EXPECT_EQ(model_count(), 1);
@@ -226,6 +239,14 @@ TEST_F(OpponentStartupTest, CorrectModelReadyOnPausedWorld)
   ASSERT_TRUE(xy.has_value());
   EXPECT_NEAR(xy->first, 1.0, 1e-3);
   EXPECT_NEAR(xy->second, 2.0, 1e-3);
+  const auto scene = scene_info();
+  ASSERT_TRUE(scene.has_value());
+  for (const auto & model : scene->model()) {
+    if (model.name() == kModel) {
+      EXPECT_NEAR(model.pose().orientation().z(), std::sqrt(0.5), 1e-4);
+      EXPECT_NEAR(model.pose().orientation().w(), std::sqrt(0.5), 1e-4);
+    }
+  }
   EXPECT_TRUE(epoch_zero_paused(stats_));
   EXPECT_TRUE(driver_->alive());
 }
@@ -266,6 +287,19 @@ TEST_F(OpponentStartupTest, NameCollisionFailsClosed)
   ASSERT_TRUE(wait_for_world(120s)) << gz_->read_log();
   ASSERT_TRUE(spawn_model(kModel, 9.0, 9.0));
   start_driver({"-p", "initial_position:=[1.0,2.0]", "-p", "startup_timeout_s:=20.0"});
+  ASSERT_TRUE(driver_exited_within(60s)) << driver_log();
+  EXPECT_NE(driver_log().find("model name collision or incorrect pose"), std::string::npos);
+  EXPECT_EQ(ready_count_, 0);
+  EXPECT_EQ(model_count(), 1);
+}
+
+TEST_F(OpponentStartupTest, WrongYawFailsClosed)
+{
+  start_gz(false);
+  ASSERT_TRUE(wait_for_world(120s)) << gz_->read_log();
+  ASSERT_TRUE(spawn_model(kModel, 1.0, 2.0));
+  start_driver({"-p", "initial_position:=[1.0,2.0]", "-p", "initial_yaw:=1.5707963267948966",
+    "-p", "startup_timeout_s:=20.0"});
   ASSERT_TRUE(driver_exited_within(60s)) << driver_log();
   EXPECT_NE(driver_log().find("model name collision or incorrect pose"), std::string::npos);
   EXPECT_EQ(ready_count_, 0);

@@ -151,12 +151,13 @@ public:
   {
     name_ = declare_parameter<std::string>("name", "opponent_0");
     z_ = declare_parameter("z", -0.0115);
+    initial_yaw_ = declare_parameter("initial_yaw", 0.0);
     const auto initial = declare_parameter<std::vector<double>>(
       "initial_position", std::vector<double>{});
     const double timeout = declare_parameter("startup_timeout_s", 30.0);
     if (!initial.empty()) {
       if (initial.size() != 2 || !std::isfinite(initial[0]) || !std::isfinite(initial[1]) ||
-        !std::isfinite(z_) || !std::isfinite(timeout) || timeout <= 0.0 ||
+        !std::isfinite(z_) || !std::isfinite(initial_yaw_) || !std::isfinite(timeout) || timeout <= 0.0 ||
         !get_parameter("use_sim_time").as_bool())
       {
         throw std::invalid_argument(
@@ -263,10 +264,12 @@ private:
           ++matches;
           const auto & p = model.pose().position();
           const auto & q = model.pose().orientation();
+          const double dot = q.z() * std::sin(initial_yaw_ / 2) +
+            q.w() * std::cos(initial_yaw_ / 2);
           correct = std::abs(p.x() - start_->first) < 1e-4 &&
             std::abs(p.y() - start_->second) < 1e-4 && std::abs(p.z() - z_) < 1e-4 &&
             std::abs(q.x()) < 1e-4 && std::abs(q.y()) < 1e-4 &&
-            std::abs(q.z()) < 1e-4 && std::abs(std::abs(q.w()) - 1.0) < 1e-4;
+            std::abs(std::abs(dot) - 1.0) < 1e-4;
         }
         if (matches) {
           if (matches != 1 || !correct) {
@@ -288,7 +291,8 @@ private:
         request.mutable_pose()->mutable_position()->set_x(start_->first);
         request.mutable_pose()->mutable_position()->set_y(start_->second);
         request.mutable_pose()->mutable_position()->set_z(z_);
-        request.mutable_pose()->mutable_orientation()->set_w(1.0);
+        request.mutable_pose()->mutable_orientation()->set_z(std::sin(initial_yaw_ / 2));
+        request.mutable_pose()->mutable_orientation()->set_w(std::cos(initial_yaw_ / 2));
         gz::msgs::Boolean reply;
         // A timed-out reply may still have spawned; the next scene/info decides.
         node.Request(std::string(kWorld) + "create", request, 500u, reply, result);
@@ -352,7 +356,7 @@ private:
   }
 
   std::string name_;
-  double z_;
+  double z_, initial_yaw_;
   std::optional<std::pair<double, double>> start_;
   std::unique_ptr<gz::transport::Node> gz_node_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;

@@ -43,6 +43,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "rosgraph_msgs/msg/clock.hpp"
 #include "sim/combat.hpp"
 #include "sim/cv_head_aim_core.hpp"
 #include "sim/match_scenario.hpp"
@@ -253,8 +254,31 @@ public:
         [this](const std::vector<rclcpp::Parameter> &params) {
           return on_params(params);
         });
-    timer_ =
-        create_timer(std::chrono::duration<double>(0.01), [this] { tick(); });
+    if (declare_parameter("deterministic_epoch_zero", false)) {
+      if (!get_parameter("use_sim_time").as_bool()) {
+        throw std::invalid_argument("deterministic_epoch_zero requires use_sim_time");
+      }
+      ready_pub_ = create_publisher<std_msgs::msg::Header>(
+          "~/ready", rclcpp::QoS(1).reliable().transient_local());
+      clock_sub_ = create_subscription<rosgraph_msgs::msg::Clock>(
+          "/clock", rclcpp::ClockQoS(), [this](rosgraph_msgs::msg::Clock::ConstSharedPtr msg) {
+            if (timer_ || epoch_failed_) return;
+            if (msg->clock.sec != 0 || msg->clock.nanosec != 0 || now().nanoseconds() != 0) {
+              epoch_failed_ = true;
+              RCLCPP_ERROR(get_logger(), "match environment missed epoch zero");
+              return;
+            }
+            timer_ = create_timer(std::chrono::duration<double>(0.01), [this] { tick(); });
+            if (now().nanoseconds() != 0) {
+              timer_->cancel();
+              epoch_failed_ = true;
+              return;
+            }
+            ready_pub_->publish(std_msgs::msg::Header{});
+          });
+    } else {
+      timer_ = create_timer(std::chrono::duration<double>(0.01), [this] { tick(); });
+    }
     RCLCPP_INFO(get_logger(), "spawn-to-center scenario: %.2f sim seconds",
                 match_duration(stage_));
   }
@@ -498,6 +522,9 @@ private:
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr
       param_callback_;
   rclcpp::TimerBase::SharedPtr timer_;
+  bool epoch_failed_ = false;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ready_pub_;
+  rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
   std::unique_ptr<gz::transport::Node> gz_;
   std::vector<Matrix4> armor_offsets_;
   std::map<std::string, std::array<gz::transport::Node::Publisher, 2>>

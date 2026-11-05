@@ -474,6 +474,11 @@ int main(int argc, char **argv) {
                      {"center_x", path.center_x},
                      {"half_width", path.half_width}};
     }
+    for (const auto &name : {"opponent_0", "opponent_1", "ally_0"}) {
+      const auto sample = sim::match_scenario::sample_robot(name, 0.0, "mcb_match");
+      paths["initial_positions"][name] = sample.position;
+      paths["initial_yaws"][name] = sample.yaw;
+    }
     std::cout << paths.dump() << std::endl;
     return 0;
   }

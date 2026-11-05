@@ -158,6 +158,8 @@ def generate_launch_description():
         package='sim', executable='target_driver', name='target_driver', output='screen',
         parameters=[{
             'use_sim_time': True,
+            'deterministic_epoch_zero': ParameterValue(
+                LaunchConfiguration('deterministic_epoch_zero'), value_type=bool),
             'target_speed': ParameterValue(LaunchConfiguration('target_speed'), value_type=float),
             'spin_hz': ParameterValue(LaunchConfiguration('target_spin_hz'), value_type=float),
             'origin_yaw': -math.pi / 2,  # Preserve the field-safe parked paths.
@@ -208,7 +210,9 @@ def generate_launch_description():
 
     match_environment = Node(
         package='sim', executable='match_environment', name='match_environment', output='screen',
-        parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage')}])
+        parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage'),
+                     'deterministic_epoch_zero': ParameterValue(
+                         LaunchConfiguration('deterministic_epoch_zero'), value_type=bool)}])
     # The bridge opens the pty once, so it starts after the emulator makes it.
     uart_ready = Node(package='sim', executable='mcb_ready', arguments=[
         LaunchConfiguration('mcb_device_link'),
@@ -228,7 +232,7 @@ def generate_launch_description():
     common = [path_bridge, uart_start, uart_ready]
 
     # One board batch ahead avoids outrunning the wall deadline during learning.
-    def coordinator(deterministic, extra_ready, startup_timeout):
+    def coordinator(deterministic, stage, extra_ready, startup_timeout):
         params = {'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
                   'learn_margin_s': ParameterValue(PythonExpression([
                       "'0.005' if '", LaunchConfiguration('backend'),
@@ -238,7 +242,10 @@ def generate_launch_description():
             params.update(strict_startup=True, readiness_topics=[
                 '/detector_standin/ready', '/point_to_cv_target/epoch_zero_ready',
                 '/opponent_driver/ready', '/mcb_emulator/epoch_zero_ready',
-                '/robot_spawn_ready/ready'] + ([extra_ready] if extra_ready else []),
+                '/robot_spawn_ready/ready',
+                '/match_environment/ready' if stage in DRIVING else '/target_driver/ready'] +
+                (['/opponent_driver_opponent_1/ready', '/opponent_driver_ally_0/ready']
+                 if stage == 'mcb_match' else []) + ([extra_ready] if extra_ready else []),
                 startup_timeout_s=startup_timeout)
         return Node(
             package='sim', executable='lockstep_coordinator', output='screen',
@@ -250,18 +257,21 @@ def generate_launch_description():
         if stage not in STAGES:
             raise RuntimeError(f"stage must be one of {', '.join(STAGES)}, not '{stage}'")
         deterministic = _is_true(context, 'deterministic_epoch_zero')
-        if deterministic and (stage != 'mcb_parked' or not _is_true(context, 'lockstep') or
+        if deterministic and (not _is_true(context, 'lockstep') or
                               not _is_true(context, 'uart_deterministic') or
                               _is_true(context, 'uart_relay_fixture') or
                               context.launch_configurations['backend'] != 'hosted' or
                               not context.launch_configurations['firmware_binary']):
-            raise RuntimeError('deterministic_epoch_zero requires mcb_parked, lockstep, '
+            raise RuntimeError('deterministic_epoch_zero requires lockstep, '
                                'uart_deterministic without uart_relay_fixture, hosted backend '
                                'and explicit firmware_binary')
         opponent_params = {'use_sim_time': True, 'name': OPPONENT}
         if deterministic:
-            # target_driver starts at offset zero, rotated by -pi/2.
-            opponent_params['initial_position'] = [0.0, -parked_paths['lateral']['center_x']]
+            opponent_params['initial_position'] = (
+                parked_paths['initial_positions'][OPPONENT] if stage in DRIVING else
+                [0.0, -parked_paths['lateral']['center_x']])
+            if stage in DRIVING:
+                opponent_params['initial_yaw'] = parked_paths['initial_yaws'][OPPONENT]
         opponent_driver = Node(
             package='sim', executable='opponent_driver', name='opponent_driver', output='screen',
             parameters=[opponent_params], remappings=[('/target/ground_truth_odom', path_topic)])
@@ -282,7 +292,10 @@ def generate_launch_description():
                 extras += [Node(
                     package='sim', executable='opponent_driver',
                     name=f'opponent_driver_{name}', output='screen',
-                    parameters=[{'use_sim_time': True, 'name': name}],
+                    parameters=[{'use_sim_time': True, 'name': name, **(
+                        {'initial_position': parked_paths['initial_positions'][name],
+                         'initial_yaw': parked_paths['initial_yaws'][name]}
+                        if deterministic else {})}],
                     remappings=[('/target/ground_truth_odom', topic)]), Node(
                     package='ros_gz_bridge', executable='parameter_bridge',
                     name=f'path_bridge_{name}', output='screen',
@@ -296,7 +309,7 @@ def generate_launch_description():
         if extra_ready and (not deterministic or not extra_ready.startswith('/')):
             raise ValueError('epoch_readiness_extra requires deterministic mode and an '
                              'absolute topic')
-        coordination = coordinator(deterministic, extra_ready, startup_timeout)
+        coordination = coordinator(deterministic, stage, extra_ready, startup_timeout)
         delay = float(context.launch_configurations['epoch_coordinator_delay_s'])
         if not math.isfinite(delay) or delay < 0 or delay > 10 or (delay and not deterministic):
             raise ValueError('epoch_coordinator_delay_s requires deterministic mode and 0..10 s')
