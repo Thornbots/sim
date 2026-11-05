@@ -22,3 +22,10 @@ The previously recorded scan-bridge core at `/Users/blaise/ros2_ws/src/sim/core`
 was absent, and no core of its recorded size was found under `ros2_ws`; a
 matching-library scan-bridge backtrace remains open. Raw logs are retained in
 the task worktree at `artifacts/lifecycle-2026-11-05/`.
+
+A second shortened parked diagnostic tested an uncommitted change sending
+SIGINT only to the launch leader, avoiding the group signal before launch
+forwards it. The cell passed, but launch exited with group members still
+present and `LaunchTree` sent SIGKILL. The experiment was reverted; it does
+not satisfy graceful cleanup. Immediate process checks after the fallback
+found no installed nodes, Gazebo or launch process.
