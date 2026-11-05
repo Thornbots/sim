@@ -107,7 +107,6 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         "/model/" + name + "/pose",
         [history, name](const gz::msgs::Pose_V &m) { history->add(name, m); });
   }
-  shots["flag"] = {};
   shots["mcb"] = {};
   subscribe<sensor_msgs::msg::JointState>(
       "/mcb_emulator/gimbal_setpoint", rclcpp::QoS(100), [this](const auto &m) {
@@ -127,7 +126,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         if (visual_pub_->get_subscription_count()) {
           visualization_msgs::msg::Marker point;
           point.header = m.header;
-          point.ns = "aim"; point.id = 0;
+          point.ns = "idle_look"; point.id = 0;
           point.type = visualization_msgs::msg::Marker::SPHERE;
           point.pose.orientation.w = 1.;
           point.pose.position.x = m.x; point.pose.position.y = m.y; point.pose.position.z = m.z;
@@ -140,7 +139,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
             auto muzzle = tf.lookupTransform(point.header.frame_id, "muzzle", tf2::TimePointZero);
             auto ray = point;
             ray.header.stamp = get_clock()->now();
-            ray.ns = "aim_ray"; ray.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            ray.ns = "idle_look_ray"; ray.type = visualization_msgs::msg::Marker::LINE_STRIP;
             ray.pose.position = geometry_msgs::msg::Point{};
             ray.scale.x = .015;
             geometry_msgs::msg::Point origin;
@@ -151,15 +150,6 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
             markers.markers.push_back(ray);
           } catch (const tf2::TransformException &) {}
           visual_pub_->publish(markers);
-        }
-        aims_.push_back({t, {m.x, m.y, m.z}});
-        while (aims_.front().first < t - 3)
-          aims_.pop_front();
-        if (m.fire && scoring && t < score_until) {
-          cb::append_json((std::filesystem::path(log_path).parent_path() /
-                           "fire_requests.jsonl").string(),
-                          {{"t", t}, {"delay_s", m.delay_ms / 1000.}});
-          pending_.push_back({"flag", t + m.delay_ms / 1000.});
         }
       });
   subscribe<dji_serial_bridge::msg::RobotPose>(
@@ -393,70 +383,6 @@ Json Scorer::pose_errors(double t) {
   }
   return out;
 }
-Json Scorer::aim_split(double launch, const Vec &origin, const Vec &direction,
-                       int k, std::shared_ptr<PoseHistory> history) {
-  const double lag = cb::options.gimbal_lag_s.value_or(
-      cb::options.backend == "hosted" ? 0.0 : .05);
-  double t = launch - lag;
-  auto world = world_T_odom(t);
-  if (!world || aims_.empty())
-    return Json::object();
-  std::optional<Vec> aim;
-  for (const auto &a : aims_)
-    if (a.first <= t)
-      aim = a.second;
-  if (!aim)
-    return Json::object();
-  Vec target = transform(*world, *aim), to = (target - origin).normalized();
-  Json out = {
-      {"barrel_off_aim_deg",
-       cb::rounded(180 / cb::kPi *
-                       std::acos(std::clamp(direction.dot(to), -1., 1.)),
-                   2)}};
-  std::string selected = "opponent_0";
-  if (!history && stage == "mcb_match") {
-    for (auto i = state_history_.rbegin(); i != state_history_.rend(); ++i) {
-      const double capture = stamp_s(i->header.stamp);
-      if (capture > t) continue;
-      auto frame = world_T_odom(capture);
-      if (!frame) return out;
-      const Vec center = transform(*frame, {i->center.x, i->center.y, i->center.z});
-      double nearest = INFINITY;
-      for (const auto &entry : histories) {
-        if (entry.first.rfind("opponent_", 0) != 0) continue;
-        auto pose = entry.second->at(capture);
-        if (!pose) continue;
-        const double distance = (center - pose->root.block<3, 1>(0, 3)).head<2>().norm();
-        if (distance < nearest) { nearest = distance; selected = entry.first; }
-      }
-      out["selected_target_association_m"] = nearest;
-      break;
-    }
-  }
-  out["selected_target"] = selected;
-  const double flight = (target - origin).dot(direction) / combat::kMuzzleSpeed;
-  auto theirs = (history ? history : histories.at(selected))->at(launch + flight);
-  const Vec inherited = muzzle_velocity("sentry", launch);
-  const Vec impact_goal = target + inherited * flight;
-  if (theirs) {
-    Vec panel = ((*theirs).root * offsets_.armors[k]).block<3, 1>(0, 3),
-        diff = impact_goal - panel;
-    double closest = INFINITY;
-    Vec closest_error = Vec::Zero();
-    for (const auto &offset : offsets_.armors) {
-      Vec point = (theirs->root * offset).block<3, 1>(0, 3);
-      const Vec error = impact_goal - point;
-      if (error.norm() < closest) { closest = error.norm(); closest_error = error; }
-    }
-    out["aim_closest_panel_m"] = closest;
-    out["aim_minus_closest_panel"] = {closest_error.x(), closest_error.y(), closest_error.z()};
-    out["aim_off_panel_m"] = cb::rounded(diff.norm(), 3);
-    out["aim_minus_panel"] = {cb::rounded(diff.x(), 3),
-                              cb::rounded(diff.y(), 3),
-                              cb::rounded(diff.z(), 3)};
-  }
-  return out;
-}
 std::optional<Json> Scorer::judge(double t) {
   auto ours = histories.at("sentry")->at(t);
   if (!ours || !ours->head)
@@ -521,7 +447,6 @@ std::optional<Json> Scorer::judge(double t) {
     out["panel_right_m"] = b.face->x();
     out["panel_up_m"] = b.face->y();
   }
-  out.update(aim_split(t, origin, b.dir, b.k));
   out["muzzle_velocity_m_s"] = {inherited.x(), inherited.y(), inherited.z()};
   out.update(pose_errors(t));
   return out;
@@ -601,7 +526,7 @@ void Scorer::judge_state(const dji_serial_bridge::msg::TargetState &m) {
 }
 std::optional<Json> Scorer::judge_match(const std::string &kind,
                                         double launch) {
-  std::string shooter = (kind == "mcb" || kind == "flag") ? "sentry" : kind;
+  std::string shooter = kind == "mcb" ? "sentry" : kind;
   double available = INFINITY;
   combat::Histories functions;
   for (const auto &e : histories) {
@@ -645,10 +570,6 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
     out["panel_up_m"] = impact.crossing->y();
   }
   out.update(pose_errors(launch));
-  if (shooter == "sentry")
-    out.update(aim_split(launch, muzzle.block<3, 1>(0, 3),
-                         muzzle.block<3, 1>(0, 0), impact.panel.value_or(0),
-                         nullptr));
   return out;
 }
 void Scorer::fire_tick() {
@@ -718,7 +639,7 @@ void Scorer::fire_tick() {
       impact.panel = shot["panel"].get<int>();
     impact.eligible = shot["eligible"];
     impact.normal_speed = shot["normal_speed"];
-    bool hit = e.first == "flag" ? impact.eligible : referee->apply(impact),
+    bool hit = referee->apply(impact),
          friendly =
              impact.victim &&
              match_scenario::teams().at(shot["shooter"].get<std::string>()) ==
@@ -726,7 +647,7 @@ void Scorer::fire_tick() {
     shot["hit"] = hit;
     shot["friendly_intersection"] = friendly;
     shot["enemy_hit"] = hit && !friendly;
-    if (e.first != "flag" && hit &&
+    if (hit &&
         impact.victim == std::optional<std::string>("sentry"))
       hurt_armor_id = impact.panel.value_or(0);
     Json hp = Json::object();

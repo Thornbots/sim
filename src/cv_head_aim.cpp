@@ -10,7 +10,7 @@
 
 #include <Eigen/Geometry>
 
-#include "dji_serial_bridge/msg/cv_target.hpp"
+#include "geometry_msgs/msg/point_stamped.hpp"
 #include "geometry_msgs/msg/transform.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -46,7 +46,9 @@ public:
   CvHeadAim()
   : Node("cv_head_aim")
   {
-    const auto cv_target_topic = declare_parameter("cv_target_topic", std::string("/cv/target"));
+    // The MCB aim planner's aim (mcb_aim_standin), not the Jetson's idle look point.
+    const auto cv_target_topic = declare_parameter(
+      "aim_topic", std::string("/mcb_aim_standin/aim"));
     const auto raw_odom_topic = declare_parameter("raw_odom_topic", std::string("/sim/raw_odom"));
     const auto joint_states_topic = declare_parameter(
       "joint_states_topic", std::string("/sim/raw_joint_states"));
@@ -72,7 +74,7 @@ public:
     joint_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       joint_states_topic, 10,
       std::bind(&CvHeadAim::on_joint_states, this, std::placeholders::_1));
-    target_sub_ = create_subscription<dji_serial_bridge::msg::CVTarget>(
+    target_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
       cv_target_topic, rclcpp::SensorDataQoS(),
       std::bind(&CvHeadAim::on_cv_target, this, std::placeholders::_1));
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -105,7 +107,7 @@ private:
     have_joint_states_ = true;
   }
 
-  void on_cv_target(dji_serial_bridge::msg::CVTarget::ConstSharedPtr msg)
+  void on_cv_target(geometry_msgs::msg::PointStamped::ConstSharedPtr msg)
   {
     latest_target_ = msg;
   }
@@ -135,7 +137,7 @@ private:
     }
     const auto & target = *latest_target_;
     const Eigen::Vector3d aim_root = to_frame(
-      tf.transform, Eigen::Vector3d(target.x, target.y, target.z));
+      tf.transform, Eigen::Vector3d(target.point.x, target.point.y, target.point.z));
     auto [target_yaw, target_pitch] = sim::cv_head_aim::solve_head_angles(aim_root);
     target_pitch = std::max(kHeadpitchLower, std::min(kHeadpitchUpper, target_pitch));
 
@@ -169,13 +171,13 @@ private:
   double head_pitch_{0.0};
   double root_yaw_{0.0};
   bool have_joint_states_{false};
-  dji_serial_bridge::msg::CVTarget::ConstSharedPtr latest_target_;
+  geometry_msgs::msg::PointStamped::ConstSharedPtr latest_target_;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pan_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pitch_pub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub_;
-  rclcpp::Subscription<dji_serial_bridge::msg::CVTarget>::SharedPtr target_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr target_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::TimerBase::SharedPtr control_timer_;
 };

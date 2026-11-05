@@ -59,6 +59,22 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../firmware/MCBV3/MCB-project/src/hosted/
   install(TARGETS mmm_suite DESTINATION lib/${PROJECT_NAME})
 endif()
 
+# The no-MCB benches plan aim with the firmware's own pure planner, compiled
+# from the checkout (never copied); without it these targets and tests skip.
+set(MCB_AIM_PLANNER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../firmware/MCBV3/MCB-project/src/subsystems/jetson")
+if(EXISTS "${MCB_AIM_PLANNER_DIR}/AimPlanner.cpp")
+  add_library(mcb_aim STATIC src/mcb_aim.cpp "${MCB_AIM_PLANNER_DIR}/AimPlanner.cpp")
+  set_target_properties(mcb_aim PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_compile_features(mcb_aim PUBLIC cxx_std_17)
+  target_include_directories(mcb_aim PUBLIC include "${MCB_AIM_PLANNER_DIR}")
+  add_executable(mcb_aim_standin src/mcb_aim_standin.cpp)
+  target_compile_features(mcb_aim_standin PUBLIC cxx_std_17)
+  target_link_libraries(mcb_aim_standin mcb_aim)
+  ament_target_dependencies(mcb_aim_standin
+    rclcpp dji_serial_bridge geometry_msgs std_msgs)
+  install(TARGETS mcb_aim_standin DESTINATION lib/${PROJECT_NAME})
+endif()
+
 add_executable(bench_world src/bench_world.cpp)
 target_compile_features(bench_world PUBLIC cxx_std_17)
 target_link_libraries(bench_world Eigen3::Eigen)
@@ -158,7 +174,7 @@ foreach(suite shot_hit estimation e2e)
   endif()
   ament_target_dependencies(${suite}_suite
     rclcpp rcl_interfaces nav_msgs std_msgs std_srvs visualization_msgs dji_serial_bridge
-    diagnostic_msgs tf2_ros ament_index_cpp)
+    diagnostic_msgs geometry_msgs tf2_ros ament_index_cpp)
   install(TARGETS ${suite}_suite DESTINATION lib/${PROJECT_NAME})
 endforeach()
 
@@ -374,6 +390,10 @@ if(BUILD_TESTING)
   ament_add_gtest(test_cv_head_aim test/cpp/test_cv_head_aim.cpp)
   target_include_directories(test_cv_head_aim PRIVATE include)
   target_link_libraries(test_cv_head_aim cv_head_aim_core Eigen3::Eigen)
+  if(TARGET mcb_aim)
+    ament_add_gtest(test_mcb_aim test/cpp/test_mcb_aim.cpp)
+    target_link_libraries(test_mcb_aim mcb_aim Eigen3::Eigen)
+  endif()
   ament_add_gtest(test_mcb_protocol test/cpp/test_mcb_protocol.cpp)
   ament_add_gtest(test_uart_frame_assembler test/cpp/test_uart_frame_assembler.cpp)
   target_include_directories(test_uart_frame_assembler PRIVATE include)

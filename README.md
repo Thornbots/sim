@@ -3,8 +3,8 @@
 sim holds the robot's integration tests. The localization drift suite starts a
 `gz sim` model of the ARCC Season 2 3v3 field, spawns the `sentry` robot from
 `urdf/sentry_v2.urdf.xacro`, and runs the real `thornbots_pkg` stack against
-it. The two CV benches run no gz. The aiming bench scores `point_to_cv_target`
-against a perfectly known target; the estimation bench scores how well the tracker
+it. The two CV benches run no gz. The aiming bench scores the MCB's aim planner
+(the firmware's own, see [MCB aim stand-in](#mcb-aim-stand-in)) against a perfectly known target; the estimation bench scores how well the tracker
 turns noisy detections into a target model. The split is documented in the
 [CV interface](../thornbots_pkg/README.md#cv-interface); historical results
 are in [CV bench observations](docs/cv-bench-results-2026-09-28.md).
@@ -95,24 +95,32 @@ blend in `test/cv/shot_hit_suite.cpp`), so falling behind 40 Hz costs points.
 There is no gz, robot or tracker. `sim_clock` publishes `/clock`,
 `point_shooter` puts `root` in `odom` (`POINT_SHOOTER`, 0.4 m up) and
 publishes `/dji_serial_bridge/pose`, `target_driver` moves the phantom target and
-`target_state_truth` publishes its true `TargetState`. Each shot leaves
-`root` toward the newest `/cv/target` aim (an `odom` point) before its exit time, carrying
+`target_state_truth` publishes its true `TargetState`. `mcb_aim_standin` runs the
+firmware's `AimPlanner` on that state. Each shot leaves
+`root` toward the newest stand-in aim (an `odom` point) before its exit time, carrying
 `root`'s velocity: a perfect gimbal that holds each 40 Hz aim until the
-next. So a miss is `point_to_cv_target`'s math and nothing else. It draws the
-target's panels in rviz.
+next. So a miss is the MCB planner's math and nothing else. It draws the
+target's panels in rviz. The bench needs the firmware checkout at build time
+(`mcb_aim_standin` is skipped without it). The
+[2026-11-04 measurement](docs/mcb-aim-planner-2026-11-04.md) compares it with
+the Jetson planner's numbers.
 
 `real_time_factor:=0` (the default) runs it as fast as the stack keeps up.
 `sim_clock` steps sim time 2 ms at a time and stops exactly one period past
-the newest stamp on `/cv/target_state`, `/dji_serial_bridge/pose`, `/cv/target/tick` and the
+the newest stamp on `/cv/target_state`, `/dji_serial_bridge/pose`, the stand-in's `/cv/target/tick` and the
 scorer's `/bench/progress` until that topic publishes, so no node falls
 behind and each 40 Hz tick is stamped on its deadline; a topic with
 no publisher left (the scorer between cases) stops holding it. A fixed
 `real_time_factor` above 0 does not wait. Use `:=1` as the control;
 [dated pacing comparisons](docs/cv-bench-results-2026-09-28.md#clock-pacing-observations-2026-09-25-and-2026-10-01) record the measured tradeoff.
 
-`chase_settle_s` picks `point_to_cv_target`'s spin mode: `>= 0` (the default,
-0) chases the facing panel and fires every tick, `< 0` is shotgating: hold
-the center line and time the fire. `gimbal_lag_s` defaults to 0, the perfect gimbal. Each cell has
+`chase_settle_s` picks the stand-in's spin mode: `>= 0` (the default,
+0) chases the facing panel and fires every tick, `< 0` is the firmware's own
+shotgating: hold the center line and time the fire. `gimbal_lag_s` defaults to 0,
+the perfect gimbal (the firmware's constant is 0.05 s). These two, `chase_margin_s` and
+`panel_switch_margin_rad` are the only planner tuning the stand-in exposes, as
+overrides of `AimTuning`; everything else is the firmware's constant, and the
+firmware itself shotgates. The recorded floors below were measured in chase mode. Each cell has
 its own floor in `FLOORS` (`include/sim/shot_floors_data.hpp`), the lowest score
 over three runs minus 10 points. Forty cells are measured: both layouts on
 lateral, radial and diagonal with a still shooter, and lateral at
@@ -127,8 +135,8 @@ line: the case, whether it hit (the ray crosses a facing panel's canted
 (`off_face_m`), the miss distance from the panel centre split into its
 offset right of, above and ahead of the shot (ahead is along the target's
 travel, so positive means the shot trailed), the panel and incidence angle,
-the target's velocity, the target rotation it arrived in, and the `CVTarget`
-fire fields. Each case also prints the mean of those offsets over its misses.
+the target's velocity, the target rotation it arrived in, and the stand-in's
+plan-to-exit delay (`delay_ms`). Each case also prints the mean of those offsets over its misses.
 `panel_hits.jsonl` holds one line per case with the hits on each panel (front,
 left, back, right) in each target rotation. It is for reading, not scoring.
 `scores.jsonl` holds each case's score. Three runs' worth make the floors:
@@ -145,7 +153,7 @@ ros2 launch sim shot_hit.launch.py
 To compare panel switching with a stationary target initially facing 45 deg,
 set `only_stationary:=true target_yaw_deg:=45`; for a slow turn at 0.2 rad/s,
 use `target_spin_hz:=0.0318309886`. `panel_switch_margin_rad:=` optionally
-overrides the aim node's margin; empty leaves its own default in force. For
+overrides the stand-in's margin; empty leaves the firmware's 0.3 rad in force. For
 three runs at each margin for both scenarios, use distinct log directories:
 
 ```bash
@@ -182,8 +190,8 @@ is the whole world in one lockstep loop: `/clock`, the phantom target through
 the aiming bench's ten cells plus a still one at 45 deg (`stationary45`, two
 panels in view), our chassis and head, `/dji_serial_bridge/pose`, the head controller and
 the detections off our head's camera. `target_selector` and `target_tracker`
-build the `TargetState`, and `point_to_cv_target` aims the head; nothing
-fires. Each case starts with one parameter set (`case_seed`, the cell's
+build the `TargetState`, and `mcb_aim_standin` (aim only, `fire_enabled:=false`)
+aims the head; nothing fires. Each case starts with one parameter set (`case_seed`, the cell's
 CRC): the target at its path start and its yaw (0, a panel square to us,
 except `stationary45`), our chassis at the origin, every schedule and the
 blackout restarted, and detections off for 1 s (`case_hold_s`) while the
@@ -195,14 +203,14 @@ the same noise on every run whatever ran before it or where the head
 pointed; `seed:=` samples another draw. At `real_time_factor:=0` the loop
 waits on the nodes under test. Moving cells can still vary with the
 same seed: zero timeouts alone does not prove repeatability. `/clock` holds at 0 until
-`point_to_cv_target` and `target_tracker` are up, so the aim node's 40 Hz
+`mcb_aim_standin` and `target_tracker` are up, so its 40 Hz
 timer starts at 0 and each case starts on a 0.1 s boundary (`case_align_s`).
 A step's detections go out only once the tracker's `/cv/tracker/clock_ack`
 shows it reads the last `/clock`, since it stamps `TargetState` with `now()`;
 `/clock` then waits for the tracker to echo each one on
-`/cv/tracker/measurement`, and for `/cv/target` on each aim tick. The scorer
+`/cv/tracker/measurement`, and for the stand-in's aim on each aim tick. The scorer
 only paces, up to `pace_slack_s` behind. The loop also waits for
-`point_to_cv_target` to acknowledge model consumption on `/cv/target/state_ack`
+`mcb_aim_standin` to acknowledge model consumption on `/cv/target/state_ack`
 and for a publish tick's indicated aim point to arrive. Separate DDS topics
 can arrive in either order; a publication acknowledgment alone does not
 prove that the next consumer has processed its input. A wait that passes `max_wait_s`
@@ -486,7 +494,7 @@ turn it on, all three `cv_*` degradations apply at the defaults below. Set them
 to zero for a clean run:
 
 ```bash
-spawn_target:=true            # target_driver, cv_target_emulator, cv_head_aim
+spawn_target:=true            # target_driver, cv_target_emulator, mcb_aim_standin, cv_head_aim
 target_speed:=2.0 target_spin_hz:=1.5
 cv_noise_pos_stddev:=0.005    # Gaussian position noise, m, plus D435-like ray noise
 cv_dropout_probability:=0.03  # per-sample detection drop, placeholder
@@ -523,8 +531,9 @@ too: each starts its timer only on an observed zero `/clock`, then latches
 Shots are the ones the firmware fires, each falling under gravity since the
 firmware pitches up for it. All three stages use the robot's no-patrol
 `point_to_cv_target` behavior: last-enemy and hit holds, then a look toward
-the enemy starting zone. Idle frames clear `fire` and keep hit turns permitted;
-firing requires a detection no more than 0.15 s old. The MCB fixture
+the enemy starting zone, sent as idle `CV_TARGET` points only while no target
+state is fresh (they never fire; aiming and firing are the MCB's, from the
+relayed `TargetState`). The MCB fires only on a detection no more than 0.15 s old. The MCB fixture
 (`mcb.launch.py`) and both aiming benches (`shot_hit.launch.py` and
 `estimation.launch.py`) use `idle_direction=hold` for their controlled setups.
 Reacquisition and moving hit rates still vary (ROADMAP T17). The
@@ -688,7 +697,7 @@ python3 src/sim/tools/record_e2e.py render /tmp/demo/parked /tmp/parked.mp4
 Replace the stage with `mcb_drive` or `mcb_match`. Capture defaults to the
 explicit hosted fixture; `--backend renode` selects the normal board ELF.
 Parked capture defaults to lateral speeds 0/1 m/s with 35 scored seconds per
-cell. `--speeds`, `--paths`, `--duration` and `--chase-settle-s` choose the
+cell. `--speeds`, `--paths` and `--duration` choose the
 recorded cells/settings without changing the tests' scoring gates.
 
 RViz and gz share one desktop and capture stream. The tool caps simulation at
@@ -1295,13 +1304,43 @@ on `target_driver`'s constant-acceleration stretches, one step late at each
 switch. `valid` is always true, `confidence` 1, `robot_track_id` 1, `variance`
 zero. `panel_stagger_m` follows the case's layout (`CvStack.set_target`).
 
+### MCB aim stand-in
+
+The aiming and estimation benches run no MCB, but aiming now lives in the
+firmware (`firmware/MCBV3/MCB-project/src/subsystems/jetson/AimPlanner.{hpp,cpp}`,
+[MCBV3 aiming planner](../firmware/MCBV3/README.md#mcbv3-aiming-planner)). sim
+compiles that pure file from the checkout into `mcb_aim` (never copies it;
+CMake skips the library, `mcb_aim_standin`, `test_mcb_aim` and so the two
+benches when the checkout is absent) and `mcb_aim_standin` wraps it:
+
+- Inputs: `/cv/target_state` (ages and confidence quantized as the wire does),
+  `/dji_serial_bridge/pose` (position less velocity times the state's age is the
+  shooter, at `shooter_z`; velocity as given, in `odom`), and the idle
+  `/cv/target` point as the fallback after a state times out (0.2 s validity).
+- Cadence: `AutoAimAndFireCommand`'s sequence (observe on receipt, 0.5 s
+  timeout, a pending request holds its aim and blocks replans, otherwise
+  replan) once per 25 ms period on the sim clock. The firmware free-runs a 1 ms
+  cycle; here a replan after a due request waits for the next period, and the
+  request's stamp is its ideal time, plan time plus `request_delay_ms`.
+- Outputs: `/mcb_aim_standin/aim` (`PointStamped`, odom, stamped at the plan) and
+  `/mcb_aim_standin/fire` (`Vector3Stamped`: stamp = request, `x` = request to
+  chamber exit, 20 ms, `y` = plan to exit). With `tick_topic`/`state_ack_topic`
+  it also owns the bench lockstep tick and ack that `point_to_cv_target` used to
+  publish. `point_to_cv_target` and `mcb_relay` no longer run in either bench.
+- Tuning is `AimTuning`'s defaults, which equal the sentry firmware's
+  (22 m/s, 20 ms latency); `test_mcb_aim` pins both. Exposed overrides:
+  `gimbal_lag_s` (the aiming bench's gimbal is perfect, so 0), `spin_mode`
+  (`firmware`, `chase` or `shotgating`) with `chase_settle_s`/`chase_margin_s`,
+  and `panel_switch_margin_rad`. `fire_enabled:=false` plans without firing
+  (estimation bench, `sim.launch.py spawn_target`).
+
 ### point_shooter
 
 Our chassis on the aiming bench. A second `target_driver`, named
 `shooter_driver`, with no spin and its output remapped to
 `/shooter/ground_truth_odom`, bounces along y at `shooter_speed` with the
 same braking; `point_shooter` republishes each sample at once as `odom->root`
-TF and `/dji_serial_bridge/pose` (`RobotPose`, root-frame velocity), stamped with its sample
+TF and `/dji_serial_bridge/pose` (`RobotPose`, velocity as given), stamped with its sample
 time. No noise or latency, so our motion is as perfectly known as the
 target's. It has no chassis spin: `root` is heading-fixed and the point
 shooter's gimbal is perfect, so a spin changes nothing it scores. The
@@ -1315,12 +1354,13 @@ by measured wall time at 1 kHz.
 
 ### CV head aim
 
-Subscribes `/cv/target` (from `thornbots_pkg`'s `point_to_cv_target`, so run
-`auto.launch.py` alongside `sim.launch.py spawn_target:=true`) and
+Subscribes the [stand-in](#mcb-aim-stand-in)'s aim `/mcb_aim_standin/aim` (so run
+`auto.launch.py` alongside `sim.launch.py spawn_target:=true`; `/cv/target` is only
+the idle look point now, which the stand-in falls back to) and
 `/sim/raw_joint_states`, and publishes `/head_pan_cmd`/`/head_pitch_cmd`: the
 sim's gimbal when the full stack runs in gz. No test scores its shots; the
-aiming bench has its own perfect gimbal. `CVTarget.x/y/z` is an `odom`
-position; each tick it goes into root at the newest `odom->root`, the way
+aiming bench has its own perfect gimbal. The aim is an `odom`
+`PointStamped`; each tick it goes into root at the newest `odom->root`, the way
 the MCB holds it, then through the solve below.
 
 `cv_head_aim_core::solve_head_angles()` attempts to invert the FK chain from root to the
@@ -1348,14 +1388,13 @@ Head yaw is the azimuth, because `headlink` turns about +z, CCW like the MCB's
 Current firmware coordination is maintained in the [bridge README](../ros2_dji_serial_bridge/README.md#where-the-firmware-stands); the [earlier suspicion](docs/simulation-history-2026-11-02.md#firmware-solve-suspicion) was not verification.
 
 Every `control_rate_hz` (30) tick it commands `current + gain *
-wrapped_error`. A timer, not `/cv/target` arrival (40Hz), drives it;
+wrapped_error`. A timer, not aim arrival (40Hz), drives it;
 per-message updates let the setpoint race ahead of the joint in early tuning.
 `gain` is 1.0, the IK angle itself, leaving tracking to gz's joint PID. The [head controller tuning](docs/simulation-history-2026-11-02.md#head-controller-tuning) records the earlier lag and removed sign parameters.
 
-With no `/cv/target` it stops publishing and holds position, without
-re-homing, since a lost target is usually a brief FOV gap. `CVTarget` has no
-confidence; every message is an aim point, non-firing idle points included,
-and the head follows each.
+With no aim it stops publishing and holds position, without
+re-homing, since a lost target is usually a brief FOV gap. Every aim message is
+a point to follow, planned or idle.
 
 ### MCB emulator
 
@@ -1707,7 +1746,8 @@ The hosted E2E profile uses zero residual yaw lag after setpoint-rate
 filtering and the robot-timed 20 ms indexing delay (the chamber-exit point
 `ProjectileExit::kExitTravel` is placed to match the first feed from rest). Spinning uses alignment gating on the
 steady center-to-shooter line; chasing each rotating panel is opt-in through
-nonnegative `chase_settle_s` (the previous fixture used 25 ms windows). These
+nonnegative `chase_settle_s` (the previous fixture used 25 ms windows); the
+planner now lives in the firmware and E2E no longer passes those arguments. These
 are model calibrations; board gimbal timing remains uncalibrated.
 Calibration and rejected treatments are recorded in the
 [accuracy investigation](docs/aim-accuracy-2026-10-12.md), hosted
@@ -1757,18 +1797,22 @@ Run the native control and real-bridge checks without gz:
 colcon test --packages-select sim --ctest-args -R test_mcb
 ```
 
-The compiled-firmware checks also cover non-firing aim hold after target
-expiry, immediate fire after fixture readiness, and delayed indexer requests.
+The compiled-firmware checks also cover idle-point aim hold after expiry,
+`TARGET_STATE` aim and fire (still panel, unconverged fallback, confidence and
+detection-age gates, the 20 ms request-to-exit latency), and that a held state
+outranks the idle point. No old-format fallback: a 15-byte `CV_TARGET` and an
+oversized `TARGET_STATE` are rejected.
 See [firmware observations and timing-model limits](docs/panel-choice-2026-10-11.md#compiled-firmware-checks)
 and the [fresh-build/live UART verification](docs/mcb-hosted-check-2026-10-11.md).
 
-The bit-3 patrol marker is exercised through the real bridge for all sixteen
-flag combinations, then through compiled firmware with the marker clear/set.
-The firmware tests verify aim parsing, fire-bit independence, game-stage fire
-gating, patrol permission after target expiry, and hit-turn permission after
-damage. The marker is informational; current firmware ignores it. See the
-[wire contract](../ros2_dji_serial_bridge/UART_PROTOCOL.md#cv_target-id1--aim-point-and-fire-decision)
-and [2026-10-11 firmware verification](docs/patrol-flag-2026-10-11.md).
+`CV_TARGET` is a 13-byte idle look point whose flags carry only the patrol
+and hit-turn permissions (bits 1 and 2). The real bridge packs all four
+combinations; compiled firmware then checks aim parsing, that idle points never
+request shots, game-stage fire gating, patrol permission after expiry (idle
+and `TARGET_STATE` bit 1) and hit-turn permission after damage. The retired
+fire and patrol bits (0 and 3) are reserved. See the
+[wire contract](../ros2_dji_serial_bridge/UART_PROTOCOL.md#cv_target-id1--idle-look-point)
+and the dated [2026-10-11 firmware verification](docs/patrol-flag-2026-10-11.md).
 
 The native tests skip if the binary is absent; build it first to test the MCB.
 The bridge tests also need ROS and cover disabled/negative diagnostic
@@ -1812,23 +1856,25 @@ MCBV3 file:line, in `../ros2_dji_serial_bridge/README.md` "Where the
 firmware stands". Behaviour that isn't a wire gap but changes what `mcb_parked` can
 score (paths under `MCB-project/src/`):
 
-- It aims at the latest `CvTarget` for 200 ms after it arrives: the field
-  bearing from its odometry less the start's yaw (the IMU's zero), pitch
-  from `Reticle::solveForPitch`, no lead (`AutoAimAndFireCommand.cpp:66-90`).
-  Before the first frame it doesn't aim; `CvTarget{}`'s default flags patrol.
+- It aims from the held `TARGET_STATE` (state age under 0.5 s), planning with
+  `AimPlanner` every 25 ms, then at an idle `CV_TARGET` for 200 ms after it
+  arrives: the field bearing from its odometry less the start's yaw (the IMU's
+  zero), pitch from `Reticle::solveForPitch`. Idle points never fire. Before
+  the first frame it doesn't aim; `CvTarget{}`'s default flags patrol
+  ([wire contract](../ros2_dji_serial_bridge/UART_PROTOCOL.md#target_state-id7--tracked-enemy-armor-model)).
 - Current field-frame aim and pitch-height handling are documented in
   [firmware coordination](../ros2_dji_serial_bridge/README.md#where-the-firmware-stands).
   The old ground-z/pivot-z mismatch is fixed in pinned MCBV3 `nightly`.
-- One `tryShootOnce` per fire frame, `delay_ms - 80` after it arrives; under
-  80 the `uint32` timeout lands in the past and it fires at once. The
-  indexer's 50 ms minimum caps that at 20 Hz, so 40 Hz frames fire every
-  other one.
+- One `tryShootOnce` per planned fire, `request_delay_ms` after the plan
+  (`max(0, alignment + max(latency, min delay) - 20 ms)`); the previous
+  `delay_ms - 80` wire timing (and its 20 Hz cap from the indexer's 50 ms
+  minimum) no longer exists, since no fire request crosses the wire.
 - Historically, `RELOCALIZE` moved odometry at once, anywhere, any HP
   (`JetsonSubsystem.cpp:76-81`). The firmware has no onboard route,
   RFID relocalize or stuck timer any more.
 - With an expired aim it patrols only if the last frame set
-  `TYPE_C_BASED_PATROL`. A hit turn with `TURN_TO_HIT` set can override a
-  live CV aim; see [firmware coordination](../ros2_dji_serial_bridge/README.md#where-the-firmware-stands).
+  `TYPE_C_BASED_PATROL`. A hit turn with `TURN_TO_HIT` set can override an
+  idle point but never a held target state; see [firmware coordination](../ros2_dji_serial_bridge/README.md#where-the-firmware-stands).
 - The sentry follows `waypoint_nav`'s NAV_GOALs through the firmware's
   `AutoDriveCommand`, which the normal right switch schedules. It holds a
   field quarter turn while travelling and spins only at a goal; under RMUL

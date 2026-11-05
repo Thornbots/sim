@@ -17,7 +17,7 @@
 // detections (cv_target_emulator.py). rate 0 is lockstep: /clock holds at 0
 // until the nodes under test are up, detections go out once the tracker's
 // clock reads the last tick, the tracker echoes each before /clock moves on,
-// and point_to_cv_target answers each 30 Hz tick at its own step, so every
+// and mcb_aim_standin answers each 40 Hz tick at its own step, so every
 // run sees the same sim times. case_seed starts a case at the next
 // case_align_s boundary, the noise keyed on (seed, case_seed, frame, panel).
 // see README.md for design rationale
@@ -40,9 +40,9 @@
 
 #include <Eigen/Dense>
 
-#include "dji_serial_bridge/msg/cv_target.hpp"
 #include "dji_serial_bridge/msg/panel_detection_array.hpp"
 #include "dji_serial_bridge/msg/robot_pose.hpp"
+#include "geometry_msgs/msg/point_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -57,7 +57,6 @@ namespace
 {
 using Eigen::Matrix3d;
 using Eigen::Vector3d;
-using dji_serial_bridge::msg::CVTarget;
 using dji_serial_bridge::msg::PanelDetection;
 using dji_serial_bridge::msg::PanelDetectionArray;
 using dji_serial_bridge::msg::RobotPose;
@@ -170,7 +169,7 @@ public:
     substeps_ = std::max(1, static_cast<int>(std::lround(clock_step_s_ / physics_step_s_)));
     pace_slack_s_ = declare_parameter("pace_slack_s", 0.005);  // the scorer's gate only
     max_wait_s_ = declare_parameter("max_wait_s", 0.5);  // wall, per lockstep wait
-    // point_to_cv_target's cv_target_publish_rate_hz; its timer starts at sim time 0.
+    // mcb_aim_standin's replan rate; its timer starts at sim time 0.
     aim_tick_ns_ = static_cast<int64_t>(1e9 / declare_parameter("aim_rate_hz", 40.0));
     // A whole number of aim ticks (4 at 40 Hz), so each case sees the same tick phase.
     case_align_steps_ = std::max<int64_t>(
@@ -275,13 +274,13 @@ public:
           pitch_.cmd = m->data;
         }));
     const auto qos = rclcpp::SensorDataQoS();
-    // Every CVTarget is an aim point; with no target none comes and the head
-    // holds. point_to_cv_target's tick, sent either way, paces the lockstep.
-    subs_.push_back(create_subscription<CVTarget>(
-        "/cv/target", qos, [this](CVTarget::ConstSharedPtr m) {
+    // Every PointStamped from the MCB aim stand-in is an aim point; with no
+    // target none comes and the head holds. Its tick, sent either way, paces the lockstep.
+    subs_.push_back(create_subscription<geometry_msgs::msg::PointStamped>(
+        "/mcb_aim_standin/aim", qos, [this](geometry_msgs::msg::PointStamped::ConstSharedPtr m) {
           {
             std::lock_guard<std::mutex> lock(mutex_);
-            aim_ = Vector3d(m->x, m->y, m->z);
+            aim_ = Vector3d(m->point.x, m->point.y, m->point.z);
           }
           std::lock_guard<std::mutex> lock(gate_mutex_);
           last_point_ns_ = std::max(last_point_ns_, rclcpp::Time(m->header.stamp).nanoseconds());
@@ -365,7 +364,7 @@ private:
     if (has_point) {expected_point_ns_ = stamp_ns;}
     if (!tick_due(stamp_ns) && !warned_phase_) {
       warned_phase_ = true;
-      RCLCPP_WARN(get_logger(), "lockstep: /cv/target/tick at %.3f s is off point_to_cv_target's "
+      RCLCPP_WARN(get_logger(), "lockstep: /cv/target/tick at %.3f s is off the aim stand-in's "
         "phase from sim time 0; runs won't repeat exactly", stamp_ns * 1e-9);
     }
     gate_cv_.notify_all();
@@ -411,7 +410,7 @@ private:
     return true;
   }
 
-  // Hold /clock at 0 until the nodes under test are up, so point_to_cv_target's
+  // Hold /clock at 0 until the nodes under test are up, so mcb_aim_standin's
   // timer starts at 0 (the grace covers its timers, made after its publisher).
   void await_nodes()
   {
@@ -633,7 +632,7 @@ private:
     // starts with the target in view whatever the last case left.
     const std::optional<Vector3d> aim = holding() ? std::optional(target_pos()) : aim_;
     if (!aim) {return;}
-    // /cv/target is an odom point; root never turns here, so root-frame is
+    // the aim is an odom point; root never turns here, so root-frame is
     // a translation, taken at our current pose the way the MCB would.
     auto [yaw, pitch] = solve_head_angles(*aim - Vector3d(xy_.x(), xy_.y(), 0.0));
     pitch = clamp(pitch, -kPitchLimit, kPitchLimit);

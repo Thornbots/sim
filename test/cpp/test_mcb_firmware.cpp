@@ -25,6 +25,32 @@ namespace wire = sim::mcb_protocol;
 double aim_yaw(double dy, double dx) {
   return std::atan2(dy, dx) + std::asin(-0.0019 / std::hypot(dx, dy)) - hw::kStartYaw;
 }
+// A TARGET_STATE for a still armor model: the MCB plans, aims at the panel
+// facing the shooter and decides the shots. Ages are the wire's, at write time.
+std::vector<uint8_t> state_frame(float x, float y, float z,
+                                 uint8_t flags = wire::kTargetStateFlagValid,
+                                 uint8_t confidence = 255,
+                                 uint16_t detection_age_ms = 0,
+                                 uint16_t state_age_ms = 0) {
+  wire::TargetState state;
+  state.center[0] = x;
+  state.center[1] = y;
+  state.center[2] = z;
+  state.panel[0] = x - 0.25F;  // facing the shooter at the origin, as the invalid fallback
+  state.panel[1] = y;
+  state.panel[2] = z;
+  state.confidence = confidence;
+  state.detection_age_ms = detection_age_ms;
+  state.state_age_ms = state_age_ms;
+  state.flags = flags;
+  return wire::frame(state);
+}
+// The panel facing a shooter at the origin: centre less the 0.25 m radius.
+constexpr double kFacingRadius = 0.25;
+// 126 ms old on arrival: fireable at the replan on receipt, stale by the next,
+// and expired 374 ms later, so each frame asks for exactly one shot.
+const auto kSingleShotState =
+    state_frame(3.0F, 1, 0.2F, wire::kTargetStateFlagValid, 255, 126, 126);
 class McbFirmware : public testing::Test {
 protected:
   std::unique_ptr<hw::PtyLink> link;
@@ -109,8 +135,7 @@ TEST_F(McbFirmware, IndexerResumesWhenSetupBecomesInGame) {
   ref.game_stage = 2;
   run(9000);
   ref.game_stage = 4;
-  const auto target = wire::frame(wire::CvTarget{
-      -3.0F, 1, .2F, 100, 1});
+  const auto target = state_frame(-3.0F, 1, .2F);
   const auto result = run(500, target);
   ASSERT_FALSE(result.shots.empty()) << "the firmware never requested indexing";
   EXPECT_TRUE(std::any_of(result.outputs.begin(), result.outputs.end(),
@@ -190,62 +215,57 @@ TEST_F(McbFirmware, PosePitchRoundTripsTheGazeboJointThroughMotorFeedback) {
     EXPECT_NEAR(poses.back().head_pitch, pitch, 2 * hw::kPi / 8192 / 3);
   }
 }
-TEST_F(McbFirmware, AimsAndFires) {
-  const auto result = run(
-      1000,
-      wire::frame(wire::CvTarget{3.0F,
-                                 1, 0.2F, 100, wire::kCvTargetFlagFire}));
-  EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
+TEST_F(McbFirmware, AimsAtTheFacingPanelAndFiresFromATargetState) {
+  const auto result = run(1000, state_frame(3.0F, 1, 0.2F));
+  EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
   EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
-  EXPECT_GE(result.shots.size(), 8U);
+  EXPECT_GE(result.shots.size(), 3U);
 }
-TEST_F(McbFirmware, HoldsNonFiringAimAfterTheTargetExpires) {
-  const auto packet = wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 0, 0});
+TEST_F(McbFirmware, IdleLookPointHoldsAimAfterExpiryAndNeverFires) {
+  const auto packet = wire::frame(wire::CvTarget{3.0F, 1, 0.2F, 0});
   ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
             static_cast<ssize_t>(packet.size()));
-  const auto result = run(500);
+  const auto result = run(150);
   EXPECT_TRUE(result.shots.empty());
   EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
 }
-TEST_F(McbFirmware, ZeroDelayFireRequestsAShotImmediately) {
+TEST_F(McbFirmware, ARequestWaitsForTheExitLessTheIndexerLatency) {
   run(200);  // Let referee, motor feedback and command scheduling become ready.
   const auto start = firmware->time_ms();
-  const auto result = run(100, wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire}));
-  ASSERT_FALSE(result.shots.empty());
-  EXPECT_LT(result.shots.front() - start, 10U);
-}
-TEST_F(McbFirmware, FireDelayAccountsForItsNativeIndexerLatency) {
-  run(200);
-  const auto start = firmware->time_ms();
-  // Sent once: each new aim frame restarts the pending request.
-  const auto packet = wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 150, wire::kCvTargetFlagFire});
+  const auto packet = state_frame(3.0F, 1, 0.2F);
   ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
             static_cast<ssize_t>(packet.size()));
   const auto result = run(200);
   ASSERT_FALSE(result.shots.empty());
-  // 150 ms requested exit minus the robot's 20 ms request-to-exit.
-  EXPECT_GE(result.shots.front() - start, 130U);
-  EXPECT_LT(result.shots.front() - start, 140U);
+  // A still panel's plan: 40 ms modeled exit (the minimum) less the robot's
+  // 20 ms request-to-exit, from the first replan after receipt.
+  EXPECT_GE(result.shots.front() - start, 18U);
+  EXPECT_LT(result.shots.front() - start, 50U);
 }
-TEST_F(McbFirmware, ANewerAimDoesNotCancelAPendingShot) {
+TEST_F(McbFirmware, AHeldStateOutranksTheIdleLookPoint) {
   run(200);
-  const auto send = [&](uint16_t delay_ms, uint8_t flags) {
-    const auto packet = wire::frame(wire::CvTarget{
-        3.0F, 1, 0.2F, delay_ms, flags});
-    ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
-              static_cast<ssize_t>(packet.size()));
-  };
-  const auto start = firmware->time_ms();
-  send(45, wire::kCvTargetFlagFire);  // request 25 ms after receipt
-  run(10);
-  send(0, 0);  // the next 40 Hz frame, not firing
+  const auto state = state_frame(3.0F, 1, 0.2F);
+  ASSERT_EQ(write(link->slave(), state.data(), state.size()),
+            static_cast<ssize_t>(state.size()));
+  run(50);
+  const auto idle = wire::frame(wire::CvTarget{-3.0F, -2, 0.2F, 0});
+  ASSERT_EQ(write(link->slave(), idle.data(), idle.size()),
+            static_cast<ssize_t>(idle.size()));
   const auto result = run(100);
-  ASSERT_EQ(result.shots.size(), 1U);
-  EXPECT_GE(result.shots.front() - start, 25U);
-  EXPECT_LT(result.shots.front() - start, 35U);
+  EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
+}
+TEST_F(McbFirmware, UnconvergedStateAimsAtThePanelAndDoesNotFire) {
+  const auto result = run(500, state_frame(3.0F, 1, 0.2F, 0));
+  EXPECT_TRUE(result.shots.empty());
+  EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
+}
+TEST_F(McbFirmware, LowConfidenceAndStaleDetectionsAimButDoNotFire) {
+  const auto doubtful = run(500, state_frame(3.0F, 1, 0.2F, wire::kTargetStateFlagValid, 100));
+  EXPECT_TRUE(doubtful.shots.empty());
+  EXPECT_NEAR(doubtful.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
+  const auto stale = run(500, state_frame(3.0F, 1, 0.2F, wire::kTargetStateFlagValid, 255, 200));
+  EXPECT_TRUE(stale.shots.empty());
+  EXPECT_NEAR(stale.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
 }
 TEST_F(McbFirmware, FirstChamberExitHasTimedLatencyWithoutEmptyingTheNext) {
   sim::mcb_motor::Plant plant;
@@ -253,8 +273,7 @@ TEST_F(McbFirmware, FirstChamberExitHasTimedLatencyWithoutEmptyingTheNext) {
   const std::array<double, 10> readings{};
   std::vector<uint32_t> requested, exited;
   double peak_balls = 0;
-  const auto packet = wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire});
+  const auto packet = kSingleShotState;
   for (int ms = 0; ms < 3400; ++ms) {
     if (ms == 3000) {  // one request from a freshly homed, loaded chamber
       ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
@@ -286,8 +305,7 @@ TEST_F(McbFirmware, SettledSingleFeedsEachKeepTheMeasuredExitLatency) {
   sim::mcb_motor::Plant plant;
   sim::mcb_motor::ProjectileExit exit;
   std::vector<uint32_t> requests, exits;
-  const auto packet = wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire});
+  const auto packet = kSingleShotState;
   for (int ms = 0; ms < 4400; ++ms) {
     if (ms >= 3000 && (ms - 3000) % 500 == 0) {
       ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
@@ -314,8 +332,7 @@ TEST_F(McbFirmware, ContinuousFeedExitsFollowPhysicalChambersWithoutSettling) {
   motor::ProjectileExit exit;
   std::vector<double> exit_positions;
   std::vector<uint32_t> requests, exits;
-  const auto packet = wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 0, wire::kCvTargetFlagFire});
+  const auto packet = state_frame(3.0F, 1, 0.2F);
   for (int ms = 0; ms < 7000; ++ms) {
     if (ms >= 3000 && ms % 25 == 0) {
       ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
@@ -361,8 +378,7 @@ TEST_F(McbFirmware, PhysicalCanSpeedChangesFirmwareMotorOutputs) {
   EXPECT_GT(moving.motors[8], still.motors[8]);
 }
 TEST_F(McbFirmware, RelocalizationPreservesRawPoseAndHeldAim) {
-  const auto aim = wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 0, 0});
+  const auto aim = wire::frame(wire::CvTarget{3.0F, 1, 0.2F, 0});
   const auto before = run(200, aim);
   const auto after = run(100, wire::frame(wire::Relocalize{1.25F, -0.75F}));
   const auto poses = messages<wire::Pose>(after);
@@ -378,18 +394,23 @@ TEST_F(McbFirmware, RelocalizationPreservesRawPoseAndHeldAim) {
   EXPECT_NEAR(moving_poses.back().y, 0.5, 1e-6);
   EXPECT_NEAR(moving.outputs.back().yaw, aim_yaw(0.5, 2.75), 1e-6);
 }
-TEST_F(McbFirmware, RejectsCorruptCv) {
-  auto packet =
-      wire::frame(wire::CvTarget{2, 0, 0.2F, 100, wire::kCvTargetFlagFire});
+TEST_F(McbFirmware, RejectsCorruptTargetState) {
+  auto packet = state_frame(2, 0, 0.2F);
   packet.back() ^= 0xff;
   EXPECT_TRUE(run(500, packet).shots.empty());
 }
-TEST_F(McbFirmware, RejectsWrongSizedCv) {
-  auto payload =
-      wire::pack(wire::CvTarget{2, 0, 0.2F, 100, wire::kCvTargetFlagFire});
+TEST_F(McbFirmware, RejectsWrongSizedTargetStateAndTheRetiredCvTargetFormat) {
+  auto payload = wire::pack(wire::TargetState{});
   payload.insert(payload.end(), 4, 0);
   EXPECT_TRUE(
-      run(500, wire::encode_frame(wire::kCvTarget, payload)).shots.empty());
+      run(500, wire::encode_frame(wire::kTargetState, payload)).shots.empty());
+  // No old-format fallback: a 15-byte CV_TARGET (x, y, z, delay_ms, flags) is not an aim.
+  auto old = wire::pack(wire::CvTarget{3.0F, 1, 0.2F, 0});
+  old.insert(old.begin() + 12, {100, 0});
+  ASSERT_EQ(old.size(), 15U);
+  const auto result = run(300, wire::encode_frame(wire::kCvTarget, old));
+  EXPECT_TRUE(result.shots.empty());
+  EXPECT_GT(std::abs(hw::wrap(result.outputs.back().yaw - aim_yaw(1.0, 3.0))), 0.1);
 }
 TEST_F(McbFirmware, ReportsZones) {
   ref.restoration_zone = true;
@@ -473,10 +494,9 @@ TEST_F(McbFirmware, LatchesLatestHitUntilRefSysAndConsumesIt) {
 TEST_F(McbFirmware, ClearingTurnToHitFlagCancelsActiveHitTurn) {
   run(200);
   const auto target_x = 3.0F;
-  const auto patrol = wire::kCvTargetFlagPatrol |
-                      wire::kCvTargetFlagTurnToHit;
+  const auto patrol = wire::kCvTargetFlagTurnToHit;
   const auto initial_target = wire::frame(
-      wire::CvTarget{target_x, 1, 0.2F, 0, patrol});
+      wire::CvTarget{target_x, 1, 0.2F, patrol});
   const std::array<double, 10> hit_readings{0, 0, 0, 0, 0.45, 0, 0.05};
   const auto aimed = run(100, initial_target, hit_readings);
   EXPECT_NEAR(aimed.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
@@ -491,7 +511,7 @@ TEST_F(McbFirmware, ClearingTurnToHitFlagCancelsActiveHitTurn) {
   EXPECT_TRUE(hit_turn.shots.empty());
 
   const auto clear_target = wire::frame(
-      wire::CvTarget{target_x, 1, 0.2F, 0, 0});
+      wire::CvTarget{target_x, 1, 0.2F, 0});
   const auto resumed_aim = run(5, clear_target, hit_readings);
   ASSERT_FALSE(resumed_aim.outputs.empty());
   EXPECT_NEAR(resumed_aim.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
@@ -500,9 +520,7 @@ TEST_F(McbFirmware, ClearingTurnToHitFlagCancelsActiveHitTurn) {
 }
 TEST_F(McbFirmware, StageBlocksFire) {
   ref.game_stage = 0;
-  EXPECT_TRUE(run(500, wire::frame(wire::CvTarget{2, 0, 0.2F, 100,
-                                                  wire::kCvTargetFlagFire}))
-                  .shots.empty());
+  EXPECT_TRUE(run(500, state_frame(2, 0, 0.2F)).shots.empty());
 }
 TEST_F(McbFirmware, SwitchUpFollowsNavGoalsAfterTheStageGate) {
   ref.game_stage = 0;
@@ -547,19 +565,19 @@ TEST_F(McbFirmware, AutoDriveWaitsForAbsoluteRelocalization) {
 }
 } // namespace
 
+// CV_TARGET carries only the two permission bits (1 and 2); TARGET_STATE
+// carries the same patrol permission as its bit 1.
 class McbPatrolFlag : public McbFirmware, public testing::WithParamInterface<uint8_t> {};
-TEST_P(McbPatrolFlag, ParsesAimAndOnlyFireBitRequestsShots) {
+TEST_P(McbPatrolFlag, IdleLookPointAimsAndNeverRequestsShots) {
   run(200);
-  const auto result = run(300, wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 100, GetParam()}));
+  const auto result = run(300, wire::frame(wire::CvTarget{3.0F, 1, 0.2F, GetParam()}));
   EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
   EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
-  EXPECT_EQ(result.shots.empty(), (GetParam() & wire::kCvTargetFlagFire) == 0);
+  EXPECT_TRUE(result.shots.empty());
 }
 TEST_P(McbPatrolFlag, PatrolAfterExpiryRequiresItsPermissionBit) {
   run(200);
-  const auto aimed = run(100, wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 100, GetParam()}));
+  const auto aimed = run(100, wire::frame(wire::CvTarget{3.0F, 1, 0.2F, GetParam()}));
   const auto expired = run(500);
   const double swing = std::abs(hw::wrap(expired.outputs.back().yaw - aimed.outputs.back().yaw));
   if (GetParam() & wire::kCvTargetFlagTypeCBasedPatrol) {
@@ -568,10 +586,23 @@ TEST_P(McbPatrolFlag, PatrolAfterExpiryRequiresItsPermissionBit) {
     EXPECT_LT(swing, 1e-5);
   }
 }
+TEST_P(McbPatrolFlag, PatrolAfterATargetStateExpiresRequiresItsPermissionBit) {
+  run(200);
+  const uint8_t flags = wire::kTargetStateFlagValid |
+      (GetParam() & wire::kCvTargetFlagTypeCBasedPatrol);
+  const auto aimed = run(100, state_frame(3.0F, 1, 0.2F, flags));
+  // The state is held until its age reaches 0.5 s, then patrol follows its permission.
+  const auto expired = run(900);
+  const double swing = std::abs(hw::wrap(expired.outputs.back().yaw - aimed.outputs.back().yaw));
+  if (flags & wire::kTargetStateFlagTypeCBasedPatrol) {
+    EXPECT_GT(swing, 0.05);
+  } else {
+    EXPECT_LT(swing, 1e-5);
+  }
+}
 TEST_P(McbPatrolFlag, DamageTurnRequiresItsPermissionBit) {
   run(200);
-  const auto frame = wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 100, GetParam()});
+  const auto frame = wire::frame(wire::CvTarget{3.0F, 1, 0.2F, GetParam()});
   run(100, frame);
   ref.current_hp = 380;
   ref.hurt_armor_id = 1;
@@ -583,11 +614,11 @@ TEST_P(McbPatrolFlag, StageGateStillBlocksFire) {
   run(200);
   ref.game_stage = 0;
   run(100);  // Deliver the next periodic referee frame before asking to fire.
-  const auto result = run(500, wire::frame(wire::CvTarget{
-      3.0F, 1, 0.2F, 100, GetParam()}));
-  EXPECT_TRUE(result.shots.empty());
+  const uint8_t flags = wire::kTargetStateFlagValid |
+      (GetParam() & wire::kCvTargetFlagTypeCBasedPatrol);
+  EXPECT_TRUE(run(500, state_frame(3.0F, 1, 0.2F, flags)).shots.empty());
 }
-INSTANTIATE_TEST_SUITE_P(AllFlags, McbPatrolFlag, testing::Range<uint8_t>(0, 16));
+INSTANTIATE_TEST_SUITE_P(AllFlags, McbPatrolFlag, testing::Values<uint8_t>(0x00, 0x02, 0x04, 0x06));
 
 TEST_F(McbFirmware, ParkedWheelControllerBrakesMotion) {
   sim::mcb_motor::Plant plant;
@@ -614,7 +645,6 @@ TEST_F(McbFirmware, ParkedHoldHasNoPositionTarget) {
 
 TEST_F(McbFirmware, ImmediateFireDuringFirstLatencyIntervalDoesNotWrapTimer) {
   run(60);  // Arm the initial cooldown, still below the indexing latency.
-  const auto result = run(15, wire::frame(wire::CvTarget{
-      3.0F, 1, .2F, 0, 1}));
+  const auto result = run(60, state_frame(3.0F, 1, .2F));
   EXPECT_FALSE(result.shots.empty());
 }

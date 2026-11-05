@@ -61,12 +61,6 @@ public:
                     std::string(cb::options.headless ? "true" : "false"),
                 "stage:=" + cb::options.stage, "backend:=" + cb::options.backend, "target_speed:=0.0",
                 "pose_latency_s:=" + cb::number(cb::options.pose_latency_s),
-                "firmware_latency_s:=" + cb::number(cb::options.firmware_latency_s.value_or(.020)),
-                "gimbal_lag_s:=" + cb::number(cb::options.gimbal_lag_s.value_or(
-                    cb::options.backend == "hosted" ? 0.0 : .05)),
-                "chase_settle_s:=" + cb::number(cb::options.chase_settle_s.value_or(-1.0)),
-                "chase_margin_s:=" + cb::number(cb::options.chase_margin_s.value_or(
-                    cb::options.backend == "hosted" ? .025 : 0.0)),
                 "target_spin_hz:=0.0", "real_time_factor:=" + cb::options.rtf,
                 "lockstep:=" + std::string(cb::options.lockstep ? "true" : "false"),
                 "firmware_fixes:=" + std::string(cb::options.no_firmware_fixes
@@ -120,7 +114,7 @@ public:
             return scorer->target_stamp &&
                    scorer->now_s() - *scorer->target_stamp < .1;
           },
-          60, "a fresh /cv/target aim point");
+          60, "a fresh /cv/target idle look point");
       if (!scorer->driving()) {
         park_at_center();
         wait([&]() { return scorer->state_stamp.has_value(); }, 60,
@@ -203,8 +197,6 @@ public:
         cb::options.log_dir + "/scores.jsonl",
         {{"cell", cell},
          {"duration_s", duration},
-         {"flag_shots", shots.at("flag").size()},
-         {"flag_hit_rate", cb::rounded(ee::hit_rate(shots.at("flag")), 4)},
          {"mcb_shots", shots.at("mcb").size()},
          {"mcb_hit_rate", cb::rounded(ee::hit_rate(shots.at("mcb")), 4)}});
   }
@@ -342,9 +334,8 @@ TEST_P(E2ESuite, MCB) {
   std::vector<cb::Json> all_impacts;
   int allies = 0;
   for (const auto &e : s->shots)
-    if (e.first != "flag")
-      for (const auto &r : e.second)
-        all_impacts.push_back(r);
+    for (const auto &r : e.second)
+      all_impacts.push_back(r);
   if (match) {
     std::stable_sort(all_impacts.begin(), all_impacts.end(),
                      [](const auto &a, const auto &b) {

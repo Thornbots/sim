@@ -13,14 +13,15 @@
 # limitations under the License.
 
 """
-Aiming bench: point_to_cv_target against a perfectly known target, no gz.
+Aiming bench: the MCB's aim planner against a perfectly known target, no gz.
 
 `ros2 launch sim shot_hit.launch.py [speeds:='0.5 1'] [only_stationary:=true]`.
 sim_clock publishes /clock, point_shooter puts root at POINT_SHOOTER
 (bouncing along y at shooter_speed), target_driver moves the phantom target,
-target_state_truth publishes its true TargetState, and the C++ harness sends each
-shot from the shooter toward the newest aim (a perfect gimbal). Every miss is
-point_to_cv_target's. The separate tracking bench scores target estimation.
+target_state_truth publishes its true TargetState, mcb_aim_standin runs the firmware's
+AimPlanner on it, and the C++ harness sends each shot from the shooter toward the newest
+aim (a perfect gimbal). Every miss is the planner's. The separate tracking bench scores
+target estimation.
 Stops when the tests finish; Ctrl-C stops the whole stack. `run_tests:=false`
 brings up the stack alone (the C++ harness does that).
 """
@@ -29,7 +30,7 @@ import os
 import subprocess
 from types import SimpleNamespace
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -52,7 +53,16 @@ def _is_true(context, name):
     return context.launch_configurations[name].lower() in ('true', '1', 'yes')
 
 
+def _require_aim_standin():
+    # Built from the firmware checkout's AimPlanner; absent without it.
+    exe = os.path.join(get_package_prefix('sim'), 'lib', 'sim', 'mcb_aim_standin')
+    if not os.path.exists(exe):
+        raise RuntimeError('mcb_aim_standin is missing: build sim with firmware/MCBV3 '
+                           'checked out (README "MCB aim stand-in")')
+
+
 def _stack(context):
+    _require_aim_standin()
     constants = subprocess.run(
         ['ros2', 'run', 'sim', 'shot_hit_suite', '--print-launch-constants'],
         check=True, capture_output=True, text=True).stdout
@@ -72,21 +82,25 @@ def cv_node(executable, package='thornbots_pkg', **params):
 
 def _aim_node(context, harness):
     cfg = context.launch_configurations
-    params = {'red_start_x': 0.0, 'red_start_y': 0.0,
-              'blue_start_x': 0.0, 'blue_start_y': 0.0,
-              'cv_target_publish_rate_hz': harness.TEST_FIRE_HZ,
-              'tick_topic': '/cv/target/tick', 'idle_direction': 'hold',
-              'gimbal_lag_s': float(cfg['gimbal_lag_s']),
-              'chase_settle_s': float(cfg['chase_settle_s']),
-              'chase_margin_s': float(cfg['chase_margin_s'])}
+    # The firmware's AimPlanner with the bench's overrides: a perfect gimbal
+    # (gimbal_lag_s), and the spin mode the recorded floors were measured in.
+    params = {'tick_topic': '/cv/target/tick', 'state_ack_topic': '/cv/target/state_ack',
+              'shooter_z': harness.POINT_SHOOTER[2],
+              'gimbal_lag_s': float(cfg['gimbal_lag_s'])}
+    settle = float(cfg['chase_settle_s'])
+    if settle >= 0.0:
+        params.update(spin_mode='chase', chase_settle_s=settle,
+                      chase_margin_s=float(cfg['chase_margin_s']))
+    else:
+        params['spin_mode'] = 'shotgating'
     if cfg['panel_switch_margin_rad']:
         params['panel_switch_margin_rad'] = float(cfg['panel_switch_margin_rad'])
-    return cv_node('point_to_cv_target', **params)
+    return cv_node('mcb_aim_standin', package='sim', **params)
 
 
 def _point_stack(context, harness, headless):
     # No world, no robot: a /clock, our chassis as odom->root and /dji_serial_bridge/pose,
-    # the phantom target and its true state, and the aim node. A perfect
+    # the phantom target and its true state, and the aim planner. A perfect
     # gimbal: it holds each 40 Hz aim until the next, with no lag after.
     rate = max(0.0, float(context.launch_configurations['real_time_factor']))
     # rate 0: as fast as every stage below keeps up, each output's stamp
@@ -116,7 +130,6 @@ def _point_stack(context, harness, headless):
         cv_node('target_state_truth', package='sim',
                 model_yaw_jitter_rad=float(context.launch_configurations['model_yaw_jitter_rad'])),
         _aim_node(context, harness),
-        cv_node('mcb_relay'),
     ]
     if not headless:
         actions.append(cv_node('target_state_markers', package='sim'))
@@ -188,15 +201,17 @@ def generate_launch_description():
                               description='our own chassis speed (m/s), bouncing along y '
                                           'through every case; 0 holds it still'),
         DeclareLaunchArgument('gimbal_lag_s', default_value='0.0',
-                              description="point_to_cv_target's gimbal_lag_s; 0 is the "
-                                          'perfect gimbal'),
+                              description="mcb_aim_standin's gimbal_lag_s; 0 is the "
+                                          "perfect gimbal (the firmware's is 0.05)"),
         DeclareLaunchArgument('chase_settle_s', default_value='0.0',
-                              description="point_to_cv_target's spin mode: < 0 shotgating "
-                                          '(timed fire), >= 0 chase the facing panel'),
+                              description="spin mode: < 0 the firmware's shotgating "
+                                          '(timed fire), >= 0 chase the facing panel '
+                                          '(the recorded floors)'),
         DeclareLaunchArgument('chase_margin_s', default_value='0.0',
-                              description="point_to_cv_target's chase_margin_s"),
+                              description="chase mode's chase_margin_s"),
         DeclareLaunchArgument('panel_switch_margin_rad', default_value='',
-                              description='optional point_to_cv_target panel switch margin'),
+                              description='optional panel switch margin; empty keeps '
+                                          "the firmware's"),
         DeclareLaunchArgument('target_yaw_deg', default_value='0',
                               description='target initial yaw in degrees'),
         DeclareLaunchArgument('target_spin_hz', default_value='',

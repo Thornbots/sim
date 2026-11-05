@@ -65,7 +65,7 @@ diagnosis(const std::vector<cv_bench::Json> &route_records,
           const std::string &segment,
           const std::vector<cv_bench::Json> &shots) {
   if (shots.empty())
-    return "target_tracker/point_to_cv_target: no firmware shots during this "
+    return "target_tracker/MCB aim planner: no firmware shots during this "
            "segment";
   std::vector<double> aim, head, barrel;
   for (const auto &r : shots) {
@@ -79,7 +79,7 @@ diagnosis(const std::vector<cv_bench::Json> &route_records,
         r.contains("head_tf_error_deg") && !r["head_tf_error_deg"].is_null())
       head.push_back(r["head_tf_error_deg"]);
   if (!aim.empty() && cv_bench::percentile(aim, 50) > .10)
-    return "target_tracker/point_to_cv_target: median aim error exceeds 0.10 m";
+    return "target_tracker/MCB aim planner: median aim error exceeds 0.10 m";
   if (!head.empty() && cv_bench::percentile(head, 95) > 1)
     return "pose/TF stamps: head_pitch p95 attitude error exceeds 1 degree";
   if (!barrel.empty() && cv_bench::percentile(barrel, 50) > 1)

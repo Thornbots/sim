@@ -157,7 +157,7 @@ public:
   std::shared_ptr<EstimationSampler> sampler;
   std::unique_ptr<sim::LaunchTree> launch;
   std::vector<std::string> nodes{"bench_world", "target_selector",
-                                 "target_tracker", "point_to_cv_target"};
+                                 "target_tracker", "mcb_aim_standin"};
   std::string error;
   void SetUp() override {
     try {

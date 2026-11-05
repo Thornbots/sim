@@ -112,10 +112,6 @@ def _tests(context):
            '--backend', config['backend']]
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
                      ('pose_latency_s', '--pose-latency-s'),
-                     ('gimbal_lag_s', '--gimbal-lag-s'),
-                     ('firmware_latency_s', '--firmware-latency-s'),
-                     ('chase_settle_s', '--chase-settle-s'),
-                     ('chase_margin_s', '--chase-margin-s'),
                      ('real_time_factor', '--real-time-factor'),
                      ('duration', '--e2e-duration'), ('log_dir', '--log-dir')):
         if config[arg]:
@@ -208,11 +204,6 @@ def generate_launch_description():
                           'deterministic_epoch_zero': LaunchConfiguration(
                               'deterministic_epoch_zero'),
                           'pose_latency_s': LaunchConfiguration('pose_latency_s'),
-                          'gimbal_lag_s': LaunchConfiguration('gimbal_lag_s'),
-                          'firmware_latency_s': LaunchConfiguration('firmware_latency_s'),
-                          'chase_settle_s': LaunchConfiguration('chase_settle_s'),
-                          'chase_margin_s': LaunchConfiguration('chase_margin_s'),
-                          'v_muzzle': '22.0',
                           'use_rf2o': 'true', 'load_map': 'true'}.items())
 
     match_environment = Node(
@@ -371,15 +362,6 @@ def generate_launch_description():
         DeclareLaunchArgument('speeds', default_value='',
                               description="opponent speeds, m/s, 0 = stationary, e.g. '0 2'; "
                                           'empty = the harness default'),
-        DeclareLaunchArgument('firmware_latency_s', default_value='0.020',
-                              description='Decision-to-exit firing delay estimate in seconds'),
-        DeclareLaunchArgument('chase_settle_s', default_value='-1.0'),
-        DeclareLaunchArgument('chase_margin_s', default_value=PythonExpression([
-            "'0.025' if '", LaunchConfiguration('backend'), "' == 'hosted' else '0.0'"])),
-        DeclareLaunchArgument('gimbal_lag_s', default_value=PythonExpression([
-            "'0.0' if '", LaunchConfiguration('backend'), "' == 'hosted' else '0.05'"]),
-                              description='Hosted response calibration; board remains '
-                                          'uncalibrated'),
         DeclareLaunchArgument('pose_latency_s', default_value='0.0',
                               description='Capture-time pose transport calibration, seconds'),
         DeclareLaunchArgument('paths', default_value='',

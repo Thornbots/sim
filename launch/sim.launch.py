@@ -707,12 +707,26 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
 
-    # --- Turns thornbots_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd
-    # so the head actually tracks CV detections (see the CV head aim node).
+    # --- The MCB's aim planner, standing in for the firmware this gz robot does
+    # not run (no mcb_physics): the firmware's AimPlanner on /cv/target_state,
+    # falling back to the idle /cv/target look point. cv_head_aim turns its
+    # aim into /head_pan_cmd + /head_pitch_cmd so the head tracks detections.
     # Needs thornbots_pkg's auto.launch.py running alongside this (for
-    # point_to_cv_target -> /cv/target) -- same spawn_target gate as
-    # cv_target_emulator above, since aiming only makes sense once a
-    # target exists to aim at.
+    # target_tracker -> /cv/target_state), and the firmware checkout at build time.
+    # Same spawn_target gate as cv_target_emulator above. Aim only: nothing fires.
+    aim_standin_exe = os.path.join(
+        get_package_prefix('sim'), 'lib', 'sim', 'mcb_aim_standin')
+    mcb_aim_standin = Node(
+        package='sim',
+        executable='mcb_aim_standin',
+        name='mcb_aim_standin',
+        output='screen',
+        parameters=[{'use_sim_time': True, 'fire_enabled': False}],
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('spawn_target'), "'.lower() in ('true', '1', 'yes') and ",
+            str(os.path.exists(aim_standin_exe))])),
+    )
+
     cv_head_aim = Node(
         package='sim',
         executable='cv_head_aim',
@@ -823,6 +837,7 @@ def generate_launch_description():
         pose_emulator,
         target_driver,
         cv_target_emulator,
+        mcb_aim_standin,
         cv_head_aim,
         rviz,
         foxglove,
