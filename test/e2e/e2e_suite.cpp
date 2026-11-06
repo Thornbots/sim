@@ -258,6 +258,9 @@ std::vector<Cell> cases() {
 class E2ESuite : public testing::TestWithParam<Cell> {};
 TEST_P(E2ESuite, MCB) {
   ASSERT_TRUE(environment->error.empty()) << environment->error;
+  // After SIGINT every remaining cell fails at once, so TearDown stops the stack
+  // within the launch's SIGINT window.
+  ASSERT_TRUE(rclcpp::ok()) << "interrupted: ROS shut down";
   auto c = GetParam();
   timing::Case timing_case(
       cb::options.stage == "mcb_parked"
@@ -512,9 +515,6 @@ int main(int argc, char **argv) {
   if (cb::options.fail_fast)
     testing::GTEST_FLAG(fail_fast) = true;
   rclcpp::init(0, nullptr);
-  // An interrupted cell fails; end the run there so TearDown stops the stack
-  // within the launch's SIGINT window instead of failing every remaining cell.
-  rclcpp::on_shutdown([] { testing::GTEST_FLAG(fail_fast) = true; });
   const auto begin = std::chrono::steady_clock::now();
   int result = 1;
   {
