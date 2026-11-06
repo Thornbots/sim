@@ -20,7 +20,8 @@
 // Context::shutdown. Static destruction then tears down the Fast DDS
 // participant under that thread (SIGSEGV in PDP::~PDP, or a glibc mutex
 // assertion), a crash seen in about one shutdown in five. shutdown() blocks
-// on the context lock until the handler thread finishes.
+// on the context lock until the handler thread finishes, and must run before
+// the node is destroyed.
 #include "ros_gz_bridge/ros_gz_bridge.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include <cstdio>
@@ -82,6 +83,9 @@ int main(int argc, char **argv) {
       add(*node, args[i]);
     }
     rclcpp::spin(node);
+    // Before `node` is destroyed: shutdown() blocks until the signal-handler
+    // thread has finished Context::shutdown, so no DDS object is torn down under it.
+    rclcpp::shutdown();
   } catch (const std::exception &e) {
     std::cerr << "gz_bridge: " << e.what() << '\n';
     usage();
