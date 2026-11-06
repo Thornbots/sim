@@ -2,6 +2,8 @@
 #include <array>
 #include <chrono>
 #include <deque>
+#include <mutex>
+#include <thread>
 #include <memory>
 #include <string>
 #include <ament_index_cpp/get_package_prefix.hpp>
@@ -59,6 +61,9 @@ public:
     rclcpp::NodeOptions options;
     options.context(context_).parameter_overrides({rclcpp::Parameter("use_sim_time", true)});
     node_ = std::make_shared<rclcpp::Node>("mcb_emulator", options);
+    // UART coordination is spun by the gz thread inside its hold loops; parameters and
+    // /cmd_vel live on node_, which a thread of its own services even while gz is held.
+    sync_node_ = std::make_shared<rclcpp::Node>("mcb_emulator_sync", options);
     for (const auto &entry : std::vector<std::pair<std::string, int64_t>>{
              {"game_type", 4}, {"game_stage", sdf->Get<int>("game_stage", 4).first},
              {"stage_time_remaining", 300}, {"robot_id", 107}, {"current_hp", 400},
@@ -91,12 +96,10 @@ public:
           }
         }
       }
-      for (const auto &p : params) {
-        referee_.apply(p);
-        if (p.get_name() == "drive") drive_ = p.as_string();
-        if (p.get_name() == "auto_fire") auto_fire_ = p.as_bool();
-      }
-      if (firmware_) firmware_->set_mode(mcb_firmware::control_mode(drive_, auto_fire_));
+      // Only stage: the next PreUpdate applies them, so a change lands on a known step
+      // however late this thread ran.
+      std::lock_guard<std::mutex> lock(control_mutex_);
+      staged_.insert(staged_.end(), params.begin(), params.end());
       result.successful = true;
       return result;
     });
@@ -106,13 +109,17 @@ public:
     setpoints_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/gimbal_setpoint", 100);
     command_ = node_->create_subscription<geometry_msgs::msg::Twist>("/cmd_vel", 10,
       [this](geometry_msgs::msg::Twist::ConstSharedPtr msg) {
-        external_ = {-msg->linear.y, msg->linear.x, msg->angular.z};
-        command_time_ = current_time_;
+        std::lock_guard<std::mutex> lock(control_mutex_);
+        staged_external_ = {-msg->linear.y, msg->linear.x, msg->angular.z};
+        has_staged_external_ = true;
       });
     rclcpp::ExecutorOptions executor_options;
     executor_options.context = context_;
     executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(executor_options);
-    executor_->add_node(node_);
+    executor_->add_node(sync_node_);
+    control_executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(executor_options);
+    control_executor_->add_node(node_);
+    control_thread_ = std::thread([this]() {control_executor_->spin();});
     pty_ = std::make_unique<mcb_firmware::PtyLink>(sdf->Get<std::string>("device_link", "/tmp/mcb_emulator_pty").first);
     const auto backend = sdf->Get<std::string>("backend", "hosted").first;
     if (backend != "hosted" && backend != "renode") throw std::runtime_error("Unknown MCB backend: " + backend);
@@ -123,7 +130,7 @@ public:
     if (epoch_zero_ && !coordinated_) throw std::runtime_error("UART epoch zero requires coordination");
     if (coordinated_) {
       clock_pub_ = gz_node_.Advertise<gz::msgs::Clock>("/sim/uart_clock");
-      clock_sub_ = node_->create_subscription<rosgraph_msgs::msg::Clock>(
+      clock_sub_ = sync_node_->create_subscription<rosgraph_msgs::msg::Clock>(
           "/clock", rclcpp::ClockQoS(), [this](rosgraph_msgs::msg::Clock::ConstSharedPtr msg) {
             const auto &stamp = msg->clock;
             if (stamp.sec < 0 || stamp.nanosec >= 1'000'000'000u) {
@@ -136,7 +143,7 @@ public:
             clock_ns_ = value;
             clock_seen_ = true;
           });
-      ready_sub_ = node_->create_subscription<std_msgs::msg::Header>(
+      ready_sub_ = sync_node_->create_subscription<std_msgs::msg::Header>(
           "/dji_serial_bridge/sim_clock_ready", rclcpp::QoS(1).reliable().transient_local(),
           [this](std_msgs::msg::Header::ConstSharedPtr msg) {
             const auto &stamp = msg->stamp;
@@ -146,7 +153,7 @@ public:
       if (epoch_zero_) {
         bootstrap_pub_ = node_->create_publisher<std_msgs::msg::Header>(
             "~/epoch_zero_ready", rclcpp::QoS(1).reliable().transient_local());
-        observed_sub_ = node_->create_subscription<std_msgs::msg::Header>(
+        observed_sub_ = sync_node_->create_subscription<std_msgs::msg::Header>(
             "/dji_serial_bridge/sim_clock_observed", rclcpp::QoS(1).reliable().transient_local(),
             [this](std_msgs::msg::Header::ConstSharedPtr msg) {
               if (bootstrap_done_) return;
@@ -154,7 +161,7 @@ public:
                 failure_ = "UART bridge missed epoch zero";
               else bridge_zero_seen_ = true;
             });
-        detector_sub_ = node_->create_subscription<std_msgs::msg::Header>(
+        detector_sub_ = sync_node_->create_subscription<std_msgs::msg::Header>(
             sdf->Get<std::string>("uart_epoch_zero_ack", "/detector_standin/ready").first,
             rclcpp::QoS(1).reliable().transient_local(),
             [this](std_msgs::msg::Header::ConstSharedPtr msg) {
@@ -165,7 +172,7 @@ public:
       }
       metadata_ = node_->create_publisher<dji_serial_bridge::msg::SimFrameMetadata>(
           "/dji_serial_bridge/sim_frame_metadata", rclcpp::QoS(32).reliable());
-      ack_ = node_->create_subscription<dji_serial_bridge::msg::SimFrameAck>(
+      ack_ = sync_node_->create_subscription<dji_serial_bridge::msg::SimFrameAck>(
           "/dji_serial_bridge/sim_frame_ack", rclcpp::QoS(32).reliable(),
           [this](dji_serial_bridge::msg::SimFrameAck::ConstSharedPtr msg) {
             const auto &stamp = msg->header.stamp;
@@ -206,6 +213,8 @@ public:
   }
 
   ~McbFirmwareSystem() override {
+    if (control_executor_) control_executor_->cancel();
+    if (control_thread_.joinable()) control_thread_.join();
     firmware_.reset();
     relay_.reset();
     pty_.reset();
@@ -213,7 +222,29 @@ public:
     if (context_) context_->shutdown("MCB physics system destroyed");
   }
 
+  // Apply what the control thread staged since the last step.
+  void commit_control() {
+    std::vector<rclcpp::Parameter> params;
+    {
+      std::lock_guard<std::mutex> lock(control_mutex_);
+      params.swap(staged_);
+      if (has_staged_external_) {
+        external_ = staged_external_;
+        command_time_ = current_time_;
+        has_staged_external_ = false;
+      }
+    }
+    if (params.empty()) return;
+    for (const auto &p : params) {
+      referee_.apply(p);
+      if (p.get_name() == "drive") drive_ = p.as_string();
+      if (p.get_name() == "auto_fire") auto_fire_ = p.as_bool();
+    }
+    if (firmware_) firmware_->set_mode(mcb_firmware::control_mode(drive_, auto_fire_));
+  }
+
   void PreUpdate(const gz::sim::UpdateInfo &info, gz::sim::EntityComponentManager &ecm) override {
+    commit_control();
     if (epoch_zero_ && !bootstrap_done_) {
       executor_->spin_some();
       if (!failure_.empty()) throw std::runtime_error(failure_);
@@ -410,8 +441,13 @@ private:
   rclcpp::Subscription<dji_serial_bridge::msg::SimFrameAck>::SharedPtr ack_;
   double mass_ = 0;
   std::shared_ptr<rclcpp::Context> context_;
-  rclcpp::Node::SharedPtr node_;
-  std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;
+  rclcpp::Node::SharedPtr node_, sync_node_;
+  std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor_, control_executor_;
+  std::thread control_thread_;
+  std::mutex control_mutex_;  // staged_, staged_external_, has_staged_external_
+  std::vector<rclcpp::Parameter> staged_;
+  std::array<double, 3> staged_external_{};
+  bool has_staged_external_ = false;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameters_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr shots_, ticks_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motors_, setpoints_;

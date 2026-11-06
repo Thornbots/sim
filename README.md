@@ -1460,9 +1460,19 @@ real Gazebo validation and remaining integration limits.
 
 Lockstep E2E stages also set `point_to_cv_target`'s `allow_latest_tf:=false`
 ([the robot default stays true](../thornbots_pkg/README.md#point_to_cv_target)):
-its TF reads are stamped 0.1 s before the tick and every miss is counted on
+its TF reads are stamped 0.05 s (0.1 s for `nav_odom->odom`) before the tick and every miss is counted on
 `/point_to_cv_target/latest_tf_fallbacks`. The harness prints the count with the
 lockstep summary and fails the run unless it is 0.
+
+The scored harness is a chain too. `e2e_suite` ticks every 50 ms, 1 ms after the other
+chains' boundaries (`harness_chain:=true`, acked on `/sim/e2e/harness_ack`), and acks tick T
+only once it has made every decision for it, so physics is held at T meanwhile. Bring-up
+ends at a fixed 10 s of sim time, every cell starts on a whole simulated second, and
+a scoring window keeps only shots and states stamped inside it. The MCB plugin serves its
+parameters from a thread of its own and applies a change on the first step after it, so
+the harness's referee and drive changes land on a known step even while physics is held.
+`check_lockstep` prints each chain's holds and wall wait, the longest-holding chain and
+RTF with its summary.
 
 Random draws are keyed, not streamed ([`keyed_noise.hpp`](include/sim/keyed_noise.hpp)):
 `detector_standin`'s ray noise (when enabled) is drawn per (seed, opponent, capture

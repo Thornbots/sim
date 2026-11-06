@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The scored E2E harness is a lockstep chain: it ticks every 50 ms, holds physics at
+  each tick until it has decided, ends bring-up at a fixed 10 s of sim time, starts
+  every cell on a whole simulated second and scores only inside an explicit window.
+  The MCB plugin serves its parameters from its own thread and applies a change on
+  the next step, so harness changes land on known steps. The harness prints each
+  chain's holds and wall wait, the longest-holding chain and RTF.
+
 - Seeded noise is keyed by (seed, robot, stamp[, panel]) instead of one shared
   stream: `detector_standin` ray noise and `match_environment` ghost aim noise
   no longer depend on message arrival order (`keyed_noise.hpp`, unit-tested).
