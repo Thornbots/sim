@@ -24,7 +24,7 @@ int main(int argc, char ** argv)
   const auto yaw = node->declare_parameter("yaw", 0.0);
   const auto timeout = node->declare_parameter("startup_timeout_s", 25.0);
   if (name.empty() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
-    !std::isfinite(yaw) || !std::isfinite(timeout) || timeout <= 0.0 || timeout > 30.0)
+    !std::isfinite(yaw) || !std::isfinite(timeout) || timeout <= 0.0 || timeout > 3600.0)
   {
     RCLCPP_ERROR(node->get_logger(), "invalid robot spawn verification parameters");
     rclcpp::shutdown();

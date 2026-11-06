@@ -1500,29 +1500,34 @@ acknowledgment, or a missing acknowledgment within 30 seconds fails closed.
 Positive clock publication remains one message per physics step. This option
 requires `uart_deterministic:=true`.
 
-For the E2E epoch-zero diagnostic, build the hosted firmware above and run
-(any stage):
+Every lockstep E2E stage starts this way by default
+(`deterministic_epoch_zero:=auto` follows coordinated UART; `false` keeps the
+wall-timed launch, with `ROBOT_DELAY_S` and a spawn timer, for the ungated
+control). Run it directly with, for any stage and either backend:
 
 ```sh
-ros2 launch sim e2e.launch.py run_tests:=false backend:=hosted stage:=mcb_match \
-  firmware_binary:=/workspaces/isaac_ros-dev/src/firmware/MCBV3/MCB-project/build/sim/scons-release/MCB-project.elf \
-  uart_deterministic:=true deterministic_epoch_zero:=true
+ros2 launch sim e2e.launch.py run_tests:=false backend:=hosted stage:=mcb_match
 ```
 
 The paused gate waits for the robot and opponent scene checks, detector and aim
-timer initialization, and MCB bootstrap before the first 5 ms release. Parked
-also waits for `target_driver`'s epoch-zero timer; driving and match wait for
+timer initialization, MCB bootstrap and `startup_barrier` before the first 5 ms
+release. The barrier (`startup_barrier`) publishes zero-stamped readiness once
+every node of the stage's stack is in the ROS graph and has stayed there for
+2 s of wall time; the gate holds simulation at zero meanwhile, so no startup
+step is timed against the simulation clock. Parked also waits for
+`target_driver`'s epoch-zero timer; driving and match wait for
 `match_environment`'s. Driving and match spawn every ghost (match: both
 opponents and the ally) at the position and yaw `match_scenario` samples at
-t=0, verified in the paused scene. Robot creation is immediate and its scene
-verifier has a 25 s wall deadline. The diagnostic requires lockstep, the hosted
-backend and an explicit firmware binary; scored runs reject it. Optional
-`epoch_coordinator_delay_s`, `epoch_readiness_extra` and
-`epoch_startup_timeout_s` exercise startup order and missing-readiness failure.
+t=0, verified in the paused scene. The EKF starts at epoch zero from the
+spawn team's start (`seed_known_team:=blue`, which skips only its wait for
+referee and `/odom` data); the map backend keeps its referee gate, and
+`initial_pose_setter` gives AMCL its start pose by wall-timed retries once TF
+exists, since AMCL is off the hit path. `epoch_startup_timeout_s` defaults to
+90 s hosted and 1200 s for the board, which boots inside robot creation; the gate
+and spawn check wait 60 s longer. Optional `epoch_coordinator_delay_s` and
+`epoch_readiness_extra` exercise startup order and missing-readiness failure.
 The [startup evidence](docs/e2e-epoch-zero-2026-11-04.md) records the
 observed first stamps and the remaining downstream gates.
-This mode is not yet accepted for scored runs: see the
-[hosted diagnostic](docs/uart-coordination-2026-11-03.md) for the remaining checks.
 With the hosted firmware built, exercise the plugin, PTY, bridge and ack faults
 in an isolated container from the workspace root:
 

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Epoch-zero startup is the default for lockstep E2E stages: gz starts paused,
+  the coordinator releases only after detector, aim timer, opponents, MCB, robot
+  spawn and a new `startup_barrier` (every stack node in the graph for 2 s) are
+  ready, and the 8 s robot-start and 2 s spawn wall timers are gone from that
+  path. Hosted, Renode, scored, driving and match stages are all accepted
+  (the earlier hosted-only, explicit-firmware and no-scored restrictions are
+  removed); startup limits are 90 s hosted and 1200 s board. The EKF starts at
+  epoch zero from the spawn start (`seed_known_team`), and `initial_pose_setter`
+  gives AMCL its pose once TF exists.
+
 - Coordinated simulation-time UART is the default for every lockstep E2E stage on
   both backends (`uart_deterministic:=auto` follows `lockstep`; `false` or
   `lockstep:=false` keeps the legacy PTY). The scored harness exercises it with
