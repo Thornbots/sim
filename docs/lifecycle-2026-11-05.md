@@ -167,3 +167,61 @@ after not receiving a heartbeat` appears in one log, about 50 ms after
 noticing the map server that its own process just deactivated. No heartbeat message
 precedes the interrupt, so it is teardown order inside `sentry_localization`'s process
 (a log line; the process exits 0), not an RTF-induced heartbeat loss.
+
+## Startup-time interrupts, the board adapter and final results
+
+Interrupting while the stack is still starting (the common Ctrl-C) found four more faults,
+each reproduced with cores enabled before it was changed:
+
+- **`seeded_ekf`** (sentry_localization): `KeyboardInterrupt` escaped `rclpy.spin_once` while
+  waiting for the seed (exit -2), and `robot_localization`'s `ekf_node`, stopped while it still
+  logs "Waiting for clock to start...", leaves the loop, creates a publisher on the shut-down
+  context and aborts with `RCLError ... context is invalid` (core;
+  [backtrace](lifecycle-evidence-2026-11-05/ekf-node-startup-abort-aarch64.txt)). That is a
+  `robot_localization` bug; the wrapper now supervises the child, forwards stop signals, and
+  absorbs that one abort during a requested stop with its core suppressed
+  ([sentry_localization #42](https://github.com/Thornbots/sentry_localization/pull/42)):
+  12 of 12 stops exit 0 on each path, against exit -2 and -6 before.
+- **`gz_bridge`**: `rclcpp::shutdown()` ran after the node had left scope, so the participant
+  was destroyed under the signal-handler thread (heap corruption in `~DomainParticipantImpl`,
+  2 aborts in 20 early interrupts); it now runs before the node is destroyed.
+- **Board adapter.** The power-on guard is one ~11 s uninterruptible Renode call. gz waited 20 s
+  for the adapter after a boot-time Ctrl-C, longer than launch's SIGINT plus SIGTERM budget,
+  so launch SIGKILLed gz and the adapter and Renode outlived it. The adapter now exits on
+  SIGINT/SIGTERM, gz signals it when closing the firmware, and a clean exit counts as a stop.
+- **`robot_spawn_ready`** exited 1 when stopped before the spawn was verified; it now exits 0.
+
+### Open
+
+- **Fast DDS receive-thread SIGSEGV in a `gz_bridge`, at a boot-time interrupt.** 1 of 20
+  `mcb_drive` boot-time SIGINTs (and one in each of two earlier matrices) killed a bridge
+  (`scan`, `opponent_path`) with SIGSEGV. The core's crashing thread is Fast DDS's own UDP
+  receive thread: `EDPSimpleSUBListener::onNewCacheChangeAdded` → `PDP::removeReaderProxyData` →
+  `StatefulWriter::matched_reader_remove`
+  ([backtrace](lifecycle-evidence-2026-11-05/gz-bridge-fastdds-receive-thread-sigsegv-aarch64.txt)),
+  handling a remote reader's removal while the bridge's own endpoints are being torn down. It is
+  inside libfastrtps 2.14.6, not in sim code, and did not reproduce in 40 drive-stage shutdowns
+  from the leader-only hunt. It is not absorbed or whitelisted: the lifecycle check fails on it.
+  **E-teardown therefore stays open.**
+- ~2 gz server SIGKILLs among the first 88 idle shutdowns were attributed to the lockstep gate
+  wait fixed above; none occurred in the 40 + 40 + 30 shutdowns after it.
+- A bring-up flake (`localized map->root chain` not ready within 30 s under a host load average
+  of about 18) failed 1 of 60 hosted runs before the signal; its shutdown was clean.
+
+### Results on the final code (aarch64 Mac mini, hosted and Renode board backends)
+
+| Check | Result |
+| --- | --- |
+| Unit tests (`test_suite_exit`, `lockstep_suite`) | 28 and 18 passed |
+| Hosted matrix, 100 runs (4 suites x 5 endings x 5), sim `48b6f5f` on nightly with T17 UART and epoch zero | 100 / 100 |
+| Hosted matrix, 60 runs after T17's harness changes | 57 / 60: 2 harness false positives from a concurrent `docker exec` (fixed), 1 bring-up flake above |
+| Hosted regression, 20 runs, final binaries | 20 / 20 (1 suite verdict failed: match combat floor) |
+| Renode matrix (parked complete/int/kill, drive int/kill, match term/kill), twice | 7 / 7 and 7 / 7 |
+| Boot-time interrupts, Renode, 10 runs, then hosted 14 runs (after the adapter fix) | 9 / 10 and 13 / 14 (the SIGSEGV above, both in `mcb_drive`), plus 19 / 20 in the cored repeat |
+| `kill_launch.sh` stop of a standalone `mcb.launch.py` (Renode at 75 s and 15 s, hosted) | 9 / 9 |
+| Leader-SIGINT shutdown hunts: with `gz_bridge`, 24 then 40 (half under CPU load); after the startup fixes, 30 early (8 s) and 40 on the drive stage | 24: 1 gz SIGKILL (the gate wait, fixed afterwards); 40, 30 and 40: no deaths, no cores |
+
+The `lifecycle_check.sh` rows above are 241 runs (100 + 60 + 20 + 14 + 10 + 7 + 7 + 20 + 3), plus the 9
+`kill_launch.sh` stops. The harness found the relay deadlock, the plugin abort, the gate wait, the adapter orphan
+and the estimation-suite exit; each was fixed at its cause. Counts are runs, not rates; the 20-run repeat and
+the boot-time rows are the evidence for the open race, not for its absence.
