@@ -251,6 +251,10 @@ def generate_launch_description():
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
         launch_arguments={**team_start_args(),
                           'real_hardware': 'false', 'localization_mode': 'amcl',
+                          'allow_latest_tf': PythonExpression([
+                              "'false' if '", LaunchConfiguration('deterministic_epoch_zero'),
+                              "' == 'true' else 'true'"]),
+                          'tf_lookup_lag_s': '0.1',
                           'seed_known_team': PythonExpression([
                               "'blue' if '", LaunchConfiguration('deterministic_epoch_zero'),
                               "' == 'true' else 'none'"]),

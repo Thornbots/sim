@@ -40,6 +40,13 @@ void Scorer::check_lockstep() {
             << s.at("chain.mcb_batch.wait_s") << " s" << std::endl;
   if (std::stoll(s.at("timeouts")))
     throw std::runtime_error(s.at("timeouts") + " lockstep timeouts: invalid run");
+  if (!latest_tf_fallbacks_)
+    throw std::runtime_error("lockstep: point_to_cv_target never reported "
+                             "latest-TF fallbacks");
+  std::cout << "latest-TF fallbacks: " << *latest_tf_fallbacks_ << std::endl;
+  if (*latest_tf_fallbacks_)
+    throw std::runtime_error(std::to_string(*latest_tf_fallbacks_) +
+                             " latest-TF fallbacks: invalid run");
 }
 namespace cb = cv_bench;
 template <class Q, class P> Matrix iso(const Q &q, const P &p) {
@@ -96,6 +103,11 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         for (const auto &value : m.values)
           lockstep_status_[value.key] = value.value;
       });
+  // Counted by point_to_cv_target when it runs with allow_latest_tf:=false.
+  subscribe<std_msgs::msg::UInt32>(
+      "/point_to_cv_target/latest_tf_fallbacks",
+      rclcpp::QoS(1).reliable().transient_local(),
+      [this](const auto &m) { latest_tf_fallbacks_ = m.data; });
   for (const auto &name :
        stage == "mcb_match"
            ? std::vector<std::string>{"sentry", "opponent_0", "opponent_1",

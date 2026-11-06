@@ -32,6 +32,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <optional>
 #include <std_msgs/msg/header.hpp>
+#include <std_msgs/msg/u_int32.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/buffer.h>
@@ -81,6 +82,7 @@ private:
   std::map<std::pair<std::string, double>, int> flight_steps_;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions_;
   std::map<std::string, std::string> lockstep_status_;
+  std::optional<uint32_t> latest_tf_fallbacks_;
   rclcpp::TimerBase::SharedPtr fire_timer_, pose_timer_;
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr referee_client_;
   std::optional<
