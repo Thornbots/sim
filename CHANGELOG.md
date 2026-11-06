@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `MCB_UART_TRACE=<file>` logs each Jetson-to-MCB read (sim time, bytes) from the MCB
+  plugin, for finding the first input that differs between runs. T17 measurements and
+  the remaining producer-ack work: [investigation](docs/t17-consistent-runs-2026-11-05.md).
+
 - The scored E2E harness is a lockstep chain: it ticks every 50 ms, holds physics at
   each tick until it has decided, ends bring-up at a fixed 10 s of sim time, starts
   every cell on a whole simulated second and scores only inside an explicit window.
