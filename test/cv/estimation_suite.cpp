@@ -243,6 +243,12 @@ TEST_P(EstimationSuite, Estimation) {
     s->set_params("bench_world", params);
   }
   timing::set_sim_clock([s]() { return s->now_s(); });
+  // The clock holds the sampler node. Every exit from this body (a failed ASSERT after
+  // an interrupt included) must drop it, or the node is destroyed in static
+  // destruction against Fast DDS's singleton and the process hangs or aborts.
+  struct SimClockGuard {
+    ~SimClockGuard() { timing::set_sim_clock({}); }
+  } sim_clock_guard;
   double start = 0;
   {
     timing::Phase phase("reset");

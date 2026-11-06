@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `estimation_suite` and `shot_hit_suite` drop their simulation-clock callback (which holds the sampler
+  node) on every exit from a test body. After an interrupt a failed ASSERT left it in a static, so the
+  node was destroyed at exit against Fast DDS's singleton and the suite hung past launch's 5 s SIGINT
+  window or aborted: `tracking:kill` failed 7 of 155 runs before, 0 of 100 after.
+
 - With remote DDS off (the default) the sim launches now use thornbots_pkg's loopback
   `fastdds_local.xml` and no `ROS_AUTOMATIC_DISCOVERY_RANGE` instead of the `LOCALHOST` range. Under
   `LOCALHOST` a hosted `mcb_parked` cell timed out its first lockstep hold (`cv_target at 0.025 s,

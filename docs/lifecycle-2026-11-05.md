@@ -329,3 +329,17 @@ was this work. What E-launch could own already exists: `e2e_test_core.hpp` throw
 wall seconds or moves backwards, the lockstep gates and `[wait_until]`/wall-cap limits fail the run,
 `check_bench_log` rejects those messages, and every suite prints `suite timing` with its RTF. A minimum-RTF gate
 would need a numeric speed bar that no document defines, so it is D-speed acceptance; nothing was invented here.
+
+### `tracking:kill`: the suite's clock callback outlived the sampler
+
+The first hosted `--repeat 5` run on the final code failed 1 of 100 (`tracking:kill`, `estimation_tests` still
+alive 5 s after SIGINT, launch escalated to SIGTERM); a hunt of `tracking:kill` alone failed 1 of 5, 1 of 30, 3 of 60
+and 2 of 60 (7 of 155, 4.5%), and no other ending of `tracking` failed. The stuck process printed its summary and
+then did not exit. A core of an aborted one shows `main` inside `exit` destroying a `std::function<double()>` in
+`test/cv/estimation_suite.cpp`'s sim-clock static, which owns the sampler `Node` (`~Node`, `~NodeTimeSource`,
+`rcl_subscription_fini`, `__rmw_destroy_subscription`, then `std::terminate`). `timing::set_sim_clock` was cleared
+only on the normal path; after SIGINT the body leaves on a failed ASSERT, so the node survived `TearDown`'s
+`sampler.reset()` to static destruction, against Fast DDS's singleton. This is the `gz_bridge` failure again: an rclcpp
+node must not outlive `main`. A guard now clears the clock on every exit, in `estimation_suite` and in `shot_hit_suite`,
+which has the same pattern. After the change `tracking:kill` ran 100 of 100 clean (7 of 155 before, P(0 of 100) about
+1% at the old rate). The other suites clear the clock in their environment's teardown or capture `this`.
