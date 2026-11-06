@@ -16,8 +16,10 @@
 Remote-DDS and Foxglove switches for the sim launches; both default off.
 
 THORNBOTS_REMOTE_DDS / `remote_dds:=` and THORNBOTS_FOXGLOVE / `foxglove:=`, see
-README.md "Remote DDS and Foxglove". Off means no off-machine DDS: the range is
-LOCALHOST and no profile lists initial peers (a peers profile defeats the range).
+README.md "Remote DDS and Foxglove". Off means no off-machine DDS: thornbots_pkg's
+fastdds_local.xml (SHM and loopback UDP, peers 127.0.0.1 ids 0-31) and no discovery range.
+LOCALHOST is not used: measured 2026-11-06, a 21-node stack under it, with or without this
+profile, timed out its first lockstep hold (`cv_target ... no ack`); without the range it passes.
 """
 import os
 
@@ -35,6 +37,10 @@ _REMOTE = ["'", LaunchConfiguration('remote_dds', default=REMOTE_DDS_DEFAULT),
            "'.lower() in ('1', 'true')"]
 
 
+def _thornbots_config(name):
+    return os.path.join(get_package_share_directory('thornbots_pkg'), 'config', name)
+
+
 def remote_dds_argument():
     return DeclareLaunchArgument(
         'remote_dds', default_value=REMOTE_DDS_DEFAULT,
@@ -46,8 +52,9 @@ def dds_environment():
     """Process environment for everything this launch starts (list of launch actions)."""
     on, off = IfCondition(PythonExpression(_REMOTE)), UnlessCondition(PythonExpression(_REMOTE))
     return [
-        SetEnvironmentVariable('ROS_AUTOMATIC_DISCOVERY_RANGE', 'LOCALHOST', condition=off),
-        UnsetEnvironmentVariable('FASTRTPS_DEFAULT_PROFILES_FILE', condition=off),
+        UnsetEnvironmentVariable('ROS_AUTOMATIC_DISCOVERY_RANGE', condition=off),
+        SetEnvironmentVariable('FASTRTPS_DEFAULT_PROFILES_FILE', _thornbots_config('fastdds_local.xml'),
+                               condition=off),
         UnsetEnvironmentVariable('ROS_AUTOMATIC_DISCOVERY_RANGE', condition=on),
         SetEnvironmentVariable(
             'FASTRTPS_DEFAULT_PROFILES_FILE',
@@ -68,7 +75,7 @@ def udp_env():
     """
     additional_env for a node pinned to UDP-only (no SHM).
 
-    SYSTEM_DEFAULT, not the environment's LOCALHOST, which would add SHM back.
+    SYSTEM_DEFAULT: a discovery range would add SHM back to the UDP-only profile.
     """
     return {'FASTRTPS_DEFAULT_PROFILES_FILE': udp_profile(),
             'ROS_AUTOMATIC_DISCOVERY_RANGE': 'SYSTEM_DEFAULT'}
