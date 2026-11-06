@@ -49,6 +49,8 @@ from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
 from sim.clock_bridge import clock_bridge_node
+from sim.dds_switch import (
+    dds_environment, FOXGLOVE_DEFAULT, remote_dds_argument, udp_env)
 from sim.display import display_error
 from sim.field import BLUE_START, default_world, world_path
 from sim.gz_process import gz_sim_process
@@ -150,8 +152,9 @@ def generate_launch_description():
         description='Set to false to skip launching rviz2'
     )
     foxglove_arg = DeclareLaunchArgument(
-        'foxglove', default_value='true',
-        description='Foxglove bridge on :8765 (launch/foxglove.launch.py)'
+        'foxglove', default_value=FOXGLOVE_DEFAULT,
+        description='Foxglove bridge on :8765 (launch/foxglove.launch.py); '
+        'default $THORNBOTS_FOXGLOVE or false'
     )
     rviz_config_arg = DeclareLaunchArgument(
         'rviz_config', default_value=default_rviz_config,
@@ -751,8 +754,7 @@ def generate_launch_description():
         name='rviz2',
         output='screen',
         arguments=['-d', LaunchConfiguration('rviz_config')],
-        additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': os.path.join(
-            get_package_share_directory('thornbots_pkg'), 'config', 'fastdds_udp_only.xml')},
+        additional_env=udp_env(),
         parameters=[{'use_sim_time': True}],
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
@@ -769,7 +771,7 @@ def generate_launch_description():
         DeclareLaunchArgument('uart_deterministic', default_value='false'),
         DeclareLaunchArgument('lidar_keyed_noise', default_value='false',
                               description='Lidar noise is drawn per (seed, stamp, beam) in '
-                                          'lidar_scan instead of by gz\'s unseeded generator'),
+                                          "lidar_scan instead of by gz's unseeded generator"),
         DeclareLaunchArgument('uart_pose_consumed', default_value='none',
                               description='Header topic that acks each consumed MCB POSE; '
                                           'physics holds at a delivered POSE until then'),
@@ -799,6 +801,7 @@ def generate_launch_description():
         gz_gui_config_arg,
         rviz_arg,
         foxglove_arg,
+        remote_dds_argument(), *dds_environment(),
         rviz_config_arg,
         camera_arg,
         real_time_factor_arg,

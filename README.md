@@ -421,7 +421,9 @@ The on-demand EKF ground-truth tier runs after an `ekf.yaml` or rf2o change:
 
 An integration run ends with a `suite timing` table: wall seconds per case
 in sim start, bring-up, reset, settle, scored and teardown, and the RTF.
-Every bench serves Foxglove on port 8765 (`foxglove:=false` to skip). A GUI
+Foxglove on port 8765 is off by default (`foxglove:=true`, or
+`THORNBOTS_FOXGLOVE=true`, to serve it; benches run from `run_suite.sh` pass
+their own). A GUI
 run also opens the gz and rviz windows where a display opens, and runs
 without them where none does. The CV benches fail a case whose stack lost
 a node.
@@ -497,7 +499,8 @@ ros2 launch sim sim.launch.py x:=1.0 y:=0.5 yaw:=0.0     # spawn pose (z:= too)
 ros2 launch sim sim.launch.py world:=/abs/path/to/other.sdf
 ros2 launch sim sim.launch.py camera:=true               # add the depth camera, as the D435's topics
 ros2 launch sim sim.launch.py model:=sentry              # the old collision-free model
-ros2 launch sim sim.launch.py foxglove:=false            # no Foxglove bridge on :8765
+ros2 launch sim sim.launch.py foxglove:=true             # Foxglove bridge on :8765 (default off)
+ros2 launch sim sim.launch.py remote_dds:=true           # DDS visible off-machine (default off)
 ```
 
 `model:=` picks the robot: `sentry_v2` (the default, from the CAD) or
@@ -678,8 +681,9 @@ it does not shorten their scoring windows.
   the URDF.
 - Our team comes from the MCB emulator's `REF_SYS`, as on the robot.
 
-`sim.launch.py` and every test launch start a Foxglove bridge on port 8765
-(`foxglove:=false` turns it off). To run one next to anything else:
+`sim.launch.py` and every test launch can start a Foxglove bridge on port 8765
+(`foxglove:=true`, default `$THORNBOTS_FOXGLOVE` or off). To run one next to
+anything else:
 
 ```bash
 ros2 launch sim foxglove.launch.py   # port:=8765
@@ -689,6 +693,12 @@ In Foxglove (desktop or browser, any OS), choose "Open connection", then
 "Foxglove WebSocket", then `ws://<this host's tailscale IP>:8765`. It sees
 every topic in the container's DDS domain, and sends only the ones a panel
 subscribes to, so leave image panels closed over a slow link.
+
+`remote_dds:=` (default `$THORNBOTS_REMOTE_DDS` or off) is the DDS counterpart.
+Off keeps DDS on the machine (`LOCALHOST` range, no peers profile, loopback-only
+UDP-only twins); on restores the container profile with the robots' Tailscale
+peers, for cross-machine tests. See `sim/dds_switch.py` and
+[thornbots_pkg](../thornbots_pkg/README.md#remote-dds-and-foxglove).
 
 A fresh Foxglove 3D panel shows none of our displays. `foxglove/` has one
 layout per rviz config, the same displays, fixed frame and view: `config.json`

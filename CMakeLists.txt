@@ -505,6 +505,9 @@ if(BUILD_TESTING)
     OPPONENT_DRIVER_EXE="$<TARGET_FILE:opponent_driver>")
   target_link_libraries(test_opponent_startup suite_support gz-transport::core gz-msgs::core)
   ament_target_dependencies(test_opponent_startup rclcpp std_msgs)
+  ament_add_pytest_test(sim_dds_switch test/test_dds_switch.py TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENV "PYTEST_ADDOPTS=-p no:anyio")
   foreach(lint copyright flake8 pep257)
     ament_add_pytest_test(sim_${lint} test/test_${lint}.py TIMEOUT 120
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

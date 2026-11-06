@@ -49,6 +49,7 @@ from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node, SetParameter, SetParametersFromFile
 from launch_ros.parameter_descriptions import ParameterValue
 from sim.auto_explore import SPAWN_YAW
+from sim.dds_switch import FOXGLOVE_DEFAULT, udp_env
 from sim.display import display_error
 from sim.field import BLUE_START, team_start_args
 from sim.mcb_link import default_mcb_link
@@ -285,8 +286,7 @@ def generate_launch_description():
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
-        additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': os.path.join(
-            get_package_share_directory('thornbots_pkg'), 'config', 'fastdds_udp_only.xml')},
+        additional_env=udp_env(),
         parameters=[{'use_sim_time': True,
                      'device': LaunchConfiguration('mcb_device_link'),
                      'baudrate': LaunchConfiguration('uart_baud'),
@@ -438,9 +438,7 @@ def generate_launch_description():
             extras.append(Node(package='sim', executable='target_state_markers',
                                parameters=[{'use_sim_time': True}]))
             extras.append(Node(package='sim', executable='e2e_map_view',
-                               additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': os.path.join(
-                                   get_package_share_directory('thornbots_pkg'), 'config',
-                                   'fastdds_udp_only.xml')},
+                               additional_env=udp_env(),
                                parameters=[{'use_sim_time': True}]))
         opponents = [OPPONENT]
         if stage == 'mcb_match':
@@ -574,7 +572,7 @@ def generate_launch_description():
                               description="extra gtest args, e.g. '--gtest_fail_fast'"),
         DeclareLaunchArgument('headless', default_value='false',
                               description='skip the gz GUI and rviz2'),
-        DeclareLaunchArgument('foxglove', default_value='true',
+        DeclareLaunchArgument('foxglove', default_value=FOXGLOVE_DEFAULT,
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('real_time_factor', default_value='0',
                               description='sim speed cap; 0 = as fast as it runs'),
