@@ -260,6 +260,11 @@ target_compile_features(startup_barrier PUBLIC cxx_std_17)
 ament_target_dependencies(startup_barrier rclcpp std_msgs)
 install(TARGETS startup_barrier DESTINATION lib/${PROJECT_NAME})
 
+add_executable(scan_odom_gate src/scan_odom_gate.cpp)
+target_compile_features(scan_odom_gate PUBLIC cxx_std_17)
+ament_target_dependencies(scan_odom_gate rclcpp std_msgs nav_msgs diagnostic_msgs)
+install(TARGETS scan_odom_gate DESTINATION lib/${PROJECT_NAME})
+
 add_executable(pose_consumed src/pose_consumed.cpp)
 target_compile_features(pose_consumed PUBLIC cxx_std_17)
 ament_target_dependencies(pose_consumed rclcpp std_msgs nav_msgs tf2_ros dji_serial_bridge)

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `scan_odom_gate` and the `ekf_pre` lockstep chain release rf2o's odometry to the EKF at a
+  fixed hold before an EKF tick instead of at a wall-timed moment, and the E2E stack sets
+  rf2o's `extrinsic_lookahead_s` to 1 ms (`rf2o_extrinsic_lookahead_s`). rf2o's scan odometry
+  is now bit-identical between runs, the EKF's tick membership no longer varies, and the
+  Jetson-to-MCB read stream matches for 800+ lines (was 19). Equal-stamp measurement
+  order inside the stock EKF still varies on about 9% of the ticks that carry a scan
+  result, so `shots.jsonl` is not yet identical. See the
+  [investigation](docs/t17-consistent-runs-2026-11-05.md).
+
 - Every Jetson-side UART producer is a lockstep chain (`producer_chains`, on with epoch-zero
   startup): the coordinator takes any-of (`a|b`) and counted (`~topic`) ack groups, lagged
   and aligned holds (`lag_s`, `align_s`, `start_s`), a boot hold and a per-hold bridge flush;
