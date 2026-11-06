@@ -113,3 +113,57 @@ diagnosis", spin-segment hit rate 0.084 and 0.079 against the 0.1 floor, no
 diagnosis), while the other three `mcb_match` completions passed. In both runs the run
 reached its summary line, and every shutdown assertion passed. The score gate was not
 loosened; it belongs to the [match track](../../docs/ROADMAP.md#a-the-match-test).
+
+## Renode backend and `kill_launch.sh`
+
+A first Renode matrix (sim `48b6f5f`) failed its first run, and every later run then
+failed the precheck because that run left `/tmp/mcb_emulator_pty-*`. The pty was left by
+gz being SIGKILLed, not by Renode: after a completed `mcb_parked` run gz ignored
+launch's SIGINT and SIGTERM for 15 s.
+
+- **Gate wait.** `LockstepGate::PostUpdate` waits for the coordinator's release for up
+  to `max_wait_s` (5 s, or 30 s with epoch-zero startup) and did not look for a stop
+  request. The coordinator exits with the rest of the stack, so a gate that was
+  holding at that moment sat out the wait. Under Renode gz is held 86% of the wall
+  time (552 s of 639 s in the run), so this hit every run; hosted runs are held far
+  less, which is the unexplained gz SIGKILL seen about once in 50 idle shutdowns
+  earlier. The gate now waits in 10 ms slices and emits Stop on SIGINT/SIGTERM,
+  seen through `gz::common::SignalHandler`.
+- **Firmware waits.** The plugin's wait for the board's "MCB3" greeting is a 600 s
+  `poll`; a Ctrl-C during the roughly 100 s board boot could not interrupt it. Reads now
+  poll in 100 ms slices and end on the same stop request.
+- **Direct signals to descendants (the T17 agent's report).** `kill_launch.sh`
+  pidfd-signals every descendant of the launch, not the group. That SIGINT killed the
+  firmware adapter `mcb_type_c`, which sits in its own process group on purpose, and
+  gz aborted on "MCB firmware exited (-2)". `mcb_type_c` now ends its loop and tears
+  down on SIGINT/SIGTERM, and gz treats a firmware that died of SIGINT/SIGTERM as a
+  stop request. A throw there still aborts for any other exit.
+- **Renode ignores SIGINT.** Renode exits within 1 s on SIGINT or SIGTERM while idle,
+  or with a connected idle client (measured), but a SIGINT that arrives while it is
+  executing a command, as `kill_launch.sh` or a dying owner's parent-death signal
+  deliver it, leaves it wedged in a futex wait that ignores SIGINT and SIGTERM. Its
+  .NET runtime also replaces an inherited SIG_IGN with its own handler (`SigCgt` bit 2).
+  `LaunchOptions::emulator()` therefore blocks SIGINT in Renode's signal mask, which
+  the runtime does not override, stops it with SIGTERM after the control client has
+  disconnected, and uses SIGKILL as its parent-death signal: an emulator holds no
+  state to save, and a SIGINT there is what wedges it.
+
+**Standalone launch stop test** (`mcb.launch.py` started with `dexec.sh -d`, stopped with
+`kill_launch.sh <pid>`, 40 s or 75 s after start): before the fixes gz aborted (hosted
+firmware path) or needed SIGKILL (Renode) and an orphaned Renode survived; after,
+3 of 3 Renode runs at 75 s, 3 of 3 at 15 s (during boot calibration) and 3 of 3
+hosted runs left no process, pty link or world, with no abort and no SIGKILL. Nodes
+that receive both `kill_launch.sh`'s direct SIGINT and launch's forwarded one still show
+exit -2: that script's per-descendant design delivers two signals, so use the
+run_suite/`LaunchTree` path when exit codes matter.
+
+**Two log observations in the interrupted Renode drive/match runs.**
+`spawn_to_center` FAILED about 4 s after `[ RUN ]` with "E2E ROS context stopped during
+scoring": that is the signal's effect (the log shows `[ RUN ]`, then launch's `user
+interrupted with ctrl-c`, then the exception within the same second), not an earlier
+failure. `lifecycle_manager_localization: CRITICAL FAILURE: SERVER map_server IS DOWN
+after not receiving a heartbeat` appears in one log, about 50 ms after
+`map_server: Deactivating / Destroying bond` during the same shutdown: Nav2's manager
+noticing the map server that its own process just deactivated. No heartbeat message
+precedes the interrupt, so it is teardown order inside `sentry_localization`'s process
+(a log line; the process exits 0), not an RTF-induced heartbeat loss.
