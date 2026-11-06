@@ -164,3 +164,86 @@ tests (20 pass).
 - So `shots.jsonl` is still not identical; the cause is no longer frame timing. Next: find the
   rf2o difference (compare its inputs per stamp: TF extrinsic, odom prior, scan), then the
   physics state at 14.0 s, with `MCB_UART_TRACE` and `/odom` CSVs from two runs as above.
+
+## 2026-11-06 pass 2: rf2o, the EKF hand-off and what is left
+
+Mac mini (Colima, 6 CPUs), my container `isaac-agent-t17c`, hosted stationary-lateral cell
+(`speeds:=0 paths:=lateral duration:=10`), unthrottled. The lifecycle agent's container was
+running throughout, so no wall or RTF figure here is a clean-machine number. Method: each cell
+records `/odom`, `/scan_raw`, `/scan`, `/scan_odom[/quality]`, the EKF's input and output
+and `/tf` in a bag next to `MCB_UART_TRACE`; two runs are compared message by message. Two
+temporary traces were used and removed: a hex-float log of rf2o's per-scan inputs and state,
+and an instrumented build of `robot_localization` 3.8.3 (tick time, queue size, every
+measurement processed) in an overlay workspace.
+
+### Item 1, rf2o's 1e-13: a tf2 race, not rf2o
+
+- rf2o itself is deterministic: replaying one recorded bag (`/scan`, `/odom`, `/tf`) through a
+  standalone rf2o twice gave 447/447 bit-identical `/scan_odom`. Replaying the bags of two live
+  runs reproduced the live difference exactly, so the difference was in what it was fed.
+- Its hex-float trace showed the first difference in the laser extrinsic (`root` to `laser`,
+  from TF), 1 ulp in the quaternion product, with the scan, prior and state identical. The scan at
+  1.781 s is stamped exactly on a head-TF sample. tf2 returns a sample exactly when it is the
+  newest in the buffer, but when a newer one has arrived it interpolates at ratio 0, which is
+  1 ulp off. rf2o retries on a 10 ms wall timer, so whether the newer sample had arrived varied.
+  That also explains why only every tenth scan (the stamps that land on the 10 ms head grid) was
+  ever affected.
+- Fix: `extrinsic_lookahead_s` (rf2o, default 0 = unchanged robot behavior): the scan also
+  waits until TF is newer than its stamp by this much. The sim sets 1 ms (a first try of
+  15 ms deadlocked at 0.179 s: POSE-grid TF skips every tenth sample, so the next sample can be
+  20 ms away, past the scan chain's 30 ms hold). Two new unit tests. With it rf2o's trace is
+  identical for 158 scans (to 14.2 s) in clean runs and for 256+ once the EKF fix below is in.
+
+### Items 2 and 3 were downstream of the EKF
+
+The remaining divergence was in the EKF, not rf2o or physics:
+
+- Its `/localization/odom` differed from the first tick that held a scan result (1.9e-6 m, then
+  a steady 6e-7 m), and `nav_odom->odom` TF (EKF output against raw `/odom`) followed. The
+  instrumented EKF showed the cause: the rf2o result for the scan at 357 ms was in the 375 ms
+  tick in one run and the 409 ms tick in the other, because the scan chain only holds the clock
+  at scan + 30 ms for rf2o's quality diagnostic, while the result still has to cross
+  `scan_navigation_publisher` to the EKF and EKF ticks fall inside that window.
+- Fix: `scan_odom_gate` (sim) buffers `/scan_odom`, releases it at the `ekf_pre` chain's hold
+  (one step before the first EKF tick at least 30 ms after the scan), and acks only after the
+  navigation adapter's output carries the stamps. Tick membership then matches between runs.
+- Effect: `/odom` and `/scan` were bit-identical for 2336 and 292 messages (about 26 s of sim)
+  instead of about 14 s. The 14 s "physics divergence" was therefore the MCB receiving
+  different RELOCALIZE/CV_TARGET inputs (item 2), not a gz difference; no physics setting
+  was changed. gz thread count, solver and contact settings were not touched.
+
+| Stage | Leading UART lines equal | rf2o trace equal | `/odom` equal to |
+| --- | --- | --- | --- |
+| before (a1, a2) | 19 | 18 messages | 14 s |
+| + lookahead (d1, d2) | 19 | 158 scans | 14 s |
+| + gate (g1, g2) | 807 (to 20.095 s) | 290 scans (to 25.9 s) | 26 s |
+
+### What still differs
+
+- The first UART difference is now a TARGET_STATE frame at 20.095 s, and `shots.jsonl` is
+  still not identical (99 and 97 records in g1 and g2).
+- The cause is equal-stamp ordering inside the stock EKF. `ekf_input` becomes two measurements
+  per message (pose yaw and twist) with the same stamp; `robot_localization`'s queue breaks ties
+  by heap shape, which depends on the order in which `odom0` and `odom1` messages were pushed.
+  40 of the 41 ticks that differ between g1 and g2 carry a scan result, about 9% of those ticks. The
+  two topics arrive over different transports to a single-threaded executor on a loaded host, so
+  the push order is a wall-time race. Effect: 2e-16 in yaw, which reaches RELOCALIZE and
+  TARGET_STATE as ulps.
+- Closing it needs the EKF to say when it has consumed a message (a sim-only patch of
+  `robot_localization` with a received-stamp topic), or distinct stamps for pose and twist
+  (a split `ekf_input` with a node-specific EKF config, a robot-side interface change). Both
+  are larger than a determinism fix and are not done. Everything that is gated before the
+  EKF (UART, rf2o, TF, tick membership) is deterministic now.
+- Not done: the acceptance campaign (three unthrottled, one RTF=1, one gz two-core run). The
+  lifecycle agent's container was up for the whole session, so the RTF=1 and two-core runs were
+  not taken either.
+
+### Regression on the final code
+
+All 12 `mcb_parked` cells passed (375.9 s, 102482 holds, 0 lockstep timeouts, 0 latest-TF
+fallbacks, native checker `bench ok`); `mcb_drive` passed (0 timeouts, 0 fallbacks, `bench ok`);
+`mcb_match` ran with 0 timeouts and 0 fallbacks and failed only its known 10% enemy-hit floor
+(8.3%, "spin: low score without measured diagnosis"), not tuned. One of the seven live runs with the
+instrumented EKF overlay (e2) died at 14 ms of sim time with "UART acknowledgment or ROS clock
+timeout: unconsumed_poses=1"; it did not recur in the five runs after it or in the 14 cells of the regression above, and the
+cause is not found. Startup races of that kind should be watched in the acceptance campaign.

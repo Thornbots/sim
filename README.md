@@ -1498,6 +1498,14 @@ stamp) and are gated on the hold time, not on a clock that may trail. The relay 
 the localization sample's stamp (`message_clock`). `mmm`, whose ping protocol runs on wall
 time, is not launched.
 
+rf2o's result reaches the stock EKF through `scan_odom_gate` (a sim node): it holds each
+`/scan_odom` back and releases it, once the navigation adapter's output carries it, at the
+`ekf_pre` chain's hold, one step before the first EKF tick at least 30 ms after the scan.
+Without it a result reached either of two ticks, depending on wall timing. rf2o also runs
+with `extrinsic_lookahead_s:=0.001` (launch argument `rf2o_extrinsic_lookahead_s`), so a scan
+stamped on a head-TF sample is looked up the same way whether or not the next sample has
+arrived ([rf2o](../rf2o_laser_odometry/README.md#extrinsic-lookahead)).
+
 Run-to-run differences are located with `MCB_UART_TRACE=<file>`, which makes the MCB
 plugin log `<sim ns> <bytes> <hex>` for every Jetson-to-MCB read; diff two runs' traces to see
 the first frame that reached the firmware on a different step. The measurements and the

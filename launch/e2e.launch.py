@@ -125,6 +125,11 @@ PRODUCER_CHAINS = {
     # and TF past the scan stamp, and POSE skips every 100th slot, so wait 30 ms.
     'scan': {'period_s': 0.089, 'phase_s': 0.001, 'start_s': 0.17, 'lag_s': 0.03, 'acks': [
         '/scan_odom/quality#diagnostic_msgs/msg/DiagnosticArray']},
+    # Releases rf2o's results to the EKF one step before the tick that may use them
+    # (scan_odom_gate): the first such hold at least 30 ms after the scan, which is when
+    # the scan chain has held for the match. Without it a result reached either tick.
+    'ekf_pre': {'period_s': EKF_PERIOD_S, 'phase_s': 0.0, 'start_s': 0.1, 'lag_s': 0.0,
+                'acks': ['/sim/e2e/scan_released']},
     # The EKF (stock robot_localization) ticks from a ROS timer created at its first non-zero
     # clock, which `boot_hold_s` makes 1 ms. EKF_PERIOD_S is a whole number of milliseconds so
     # every tick lands on one clock value. Its odometry is stamped with its newest
@@ -323,6 +328,16 @@ def generate_launch_description():
                           'ekf_frequency_hz': PythonExpression([
                               "'", repr(1.0 / EKF_PERIOD_S), "' if '",
                               LaunchConfiguration('producer_chains'), "' == 'true' else ''"]),
+                          # tf2 returns a sample exactly or slerps at ratio 0 (1 ulp off) by
+                          # whether the next one has arrived; wait for a newer sample (at most
+                          # 20 ms later, since POSE-grid TF skips every 100th slot; the scan
+                          # chain holds 30 ms).
+                          'scan_navigation_odom_topic': PythonExpression([
+                              "'/scan_odom/gated' if '", LaunchConfiguration('producer_chains'),
+                              "' == 'true' else '/scan_odom'"]),
+                          'rf2o_extrinsic_lookahead_s': PythonExpression([
+                              "'0.001' if '", LaunchConfiguration('producer_chains'),
+                              "' == 'true' else ''"]),
                           'seed_known_team': PythonExpression([
                               "'blue' if '", LaunchConfiguration('deterministic_epoch_zero'),
                               "' == 'true' else 'none'"]),
@@ -491,6 +506,8 @@ def generate_launch_description():
         if producers:
             extras.append(Node(package='sim', executable='pose_consumed', output='screen',
                                parameters=[{'relay_topic': '/sim/e2e/relay_odom'}]))
+            extras.append(Node(package='sim', executable='scan_odom_gate', output='screen',
+                               parameters=[{'period_s': EKF_PERIOD_S}]))
         return ([failure, coordinator_action, detector(opponents), opponent_driver] + extras
                 + ([barrier, pose_setter] if barrier else []) + common
                 + ([match_environment] if stage in DRIVING else [target_driver])
