@@ -90,6 +90,10 @@ def _sim(context):
                           'uart_relay_fixture': config['uart_relay_fixture'],
                           'uart_deterministic': 'true' if _uart_coordinated(context) else 'false',
                           'uart_epoch_zero': config['deterministic_epoch_zero'],
+                          'lidar_keyed_noise': 'true' if _is_true(
+                              context, 'producer_chains') else 'false',
+                          'uart_pose_consumed': '/sim/e2e/pose_consumed' if _is_true(
+                              context, 'producer_chains') else 'none',
                           'verify_epoch_zero_spawn': config['deterministic_epoch_zero'],
                           'uart_baud': config['uart_baud'],
                           'mcb_read_delay_ms': config['mcb_read_delay_ms'],
@@ -106,6 +110,48 @@ def _sim(context):
 
 def _is_true(context, name):
     return context.launch_configurations[name].lower() in ('true', '1', 'yes')
+
+
+# Lockstep chains for the Jetson-side producers whose frames reach the firmware, and the
+# data they consume. `acks` are groups (`a|b`: any one); `lag_s`/`align_s` hold after the
+# tick (see lockstep_coordinator.cpp). Topic names: `<topic>#<type>` acks any message
+# whose first field is a Header. Rates are the nodes' own timers and sources.
+ODOM = 'nav_msgs/msg/Odometry'
+EKF_PERIOD_S = 0.034  # simulation only: 29.4 Hz for the stock 30 Hz, a whole number of ms
+PRODUCER_CHAINS = {
+    # rf2o's verdict on a lidar scan: its quality diagnostic, one per scan even when the
+    # match fails (no odometry then). gz runs the 11.2 Hz lidar on whole milliseconds, 89 ms
+    # apart from 1 ms past a whole step, and rf2o grades from the second scan. It needs /odom
+    # and TF past the scan stamp, and POSE skips every 100th slot, so wait 30 ms.
+    'scan': {'period_s': 0.089, 'phase_s': 0.001, 'start_s': 0.17, 'lag_s': 0.03, 'acks': [
+        '/scan_odom/quality#diagnostic_msgs/msg/DiagnosticArray']},
+    # The EKF (stock robot_localization) ticks from a ROS timer created at its first non-zero
+    # clock, which `boot_hold_s` makes 1 ms. EKF_PERIOD_S is a whole number of milliseconds so
+    # every tick lands on one clock value. Its odometry is stamped with its newest
+    # measurement and the relay's clock can trail the EKF's, so the ack is a count: one
+    # relay frame or mark per tick.
+    'ekf': {'period_s': EKF_PERIOD_S, 'phase_s': 0.001, 'start_s': 0.002, 'lag_s': 0.0,
+            'acks': ['~/dji_serial_bridge/tx_ack/relocalize|~/sim/e2e/relocalize_none']},
+    # point_to_cv_target's 40 Hz idle look.
+    'cv_target': {'period_s': 0.025, 'phase_s': 0.0, 'lag_s': 0.0, 'acks': [
+        '/dji_serial_bridge/tx_ack/cv_target|/sim/e2e/cv_target_none']},
+    # detector_standin's 60 Hz frame through selector and tracker to TARGET_STATE; the
+    # tracker needs TF 10 ms past the capture (pose_latency_s) and gz poses on a 4 ms grid.
+    'detector': {'period_s': 1.0 / 60.0, 'phase_s': 0.0, 'lag_s': 0.025, 'align_s': 0.004,
+                 'acks': ['/dji_serial_bridge/tx_ack/target_state|/sim/e2e/target_state_none']},
+    # waypoint_nav's 10 Hz NAV_GOAL, held 1 ms after its tick so the EKF chain (same
+    # instant every third tick) has been released first.
+    'nav': {'period_s': 0.1, 'phase_s': 0.0, 'lag_s': 0.0, 'acks': [
+        '/dji_serial_bridge/tx_ack/nav_goal|/sim/e2e/nav_goal_none']},
+}
+# Marks set on the robot launch; mcb_relay and waypoint_nav start here and are set above.
+PRODUCER_MARKS = {
+    # The detector chain holds at tick + 25 ms rounded to the 4 ms gz pose grid.
+    'process_delay_s': 0.025,
+    'process_align_s': 0.004,
+    'cv_target_none_topic': '/sim/e2e/cv_target_none',
+    'target_state_none_topic': '/sim/e2e/target_state_none',
+}
 
 
 def _resolve_modes(context):
@@ -125,6 +171,9 @@ def _resolve_modes(context):
     epoch_on = (uart_on and not _is_true(context, 'uart_relay_fixture')
                 if epoch in ('', 'auto') else epoch in ('true', '1', 'yes'))
     config['deterministic_epoch_zero'] = 'true' if epoch_on else 'false'
+    chains = config['producer_chains'].lower()
+    config['producer_chains'] = 'true' if (
+        epoch_on and chains in ('', 'auto', 'true', '1', 'yes')) else 'false'
 
 
 def _uart_coordinated(context):
@@ -227,6 +276,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}])
     # The hosted firmware parked (DrivetrainStopCommand) on a pty, as
     # auto.launch.py starts the bridge and relay with real_hardware:=true.
+    marks = LaunchConfiguration('producer_chains')
     bridge = Node(
         package='dji_serial_bridge', executable='dji_serial_bridge_node',
         name='dji_serial_bridge', output='screen',
@@ -236,15 +286,25 @@ def generate_launch_description():
                      'device': LaunchConfiguration('mcb_device_link'),
                      'baudrate': LaunchConfiguration('uart_baud'),
                      'sim_frame_metadata': ParameterValue(coordinated, value_type=bool),
+                     'sim_tx_queue': ParameterValue(LaunchConfiguration('producer_chains'),
+                                                    value_type=bool),
                      'debug_log': False}])
     mcb_relay = Node(
         package='thornbots_pkg', executable='mcb_relay', name='mcb_relay', output='screen',
-        parameters=[{'use_sim_time': True}])
+        parameters=[{'use_sim_time': True,
+                     'relocalize_none_topic': PythonExpression([
+                         "'/sim/e2e/relocalize_none' if '", marks, "' == 'true' else ''"]),
+                     'message_clock': ParameterValue(marks, value_type=bool),
+                     'raw_odom_ack_topic': PythonExpression([
+                         "'/sim/e2e/relay_odom' if '", marks, "' == 'true' else ''"])}])
     # auto.launch.py starts waypoint_nav only with real_hardware:=true, like the relay.
     waypoint_nav = Node(
         package='thornbots_nav', executable='waypoint_nav', name='waypoint_nav', output='screen',
         parameters=[os.path.join(get_package_share_directory('thornbots_nav'), 'config',
-                                 'route.yaml'), {'use_sim_time': True}])
+                                 'route.yaml'), {'use_sim_time': True,
+                                                 'nav_goal_none_topic': PythonExpression([
+                                                     "'/sim/e2e/nav_goal_none' if '", marks,
+                                                     "' == 'true' else ''"])}])
 
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -256,6 +316,13 @@ def generate_launch_description():
                               "' == 'true' else 'true'"]),
                           'tf_lookup_lag_s': '0.05',
                           'nav_tf_lookup_lag_s': '0.1',
+                          # Its wall-clock ping protocol writes UART frames at wall-timed moments.
+                          'enable_mmm': PythonExpression([
+                              "'false' if '", LaunchConfiguration('producer_chains'),
+                              "' == 'true' else 'true'"]),
+                          'ekf_frequency_hz': PythonExpression([
+                              "'", repr(1.0 / EKF_PERIOD_S), "' if '",
+                              LaunchConfiguration('producer_chains'), "' == 'true' else ''"]),
                           'seed_known_team': PythonExpression([
                               "'blue' if '", LaunchConfiguration('deterministic_epoch_zero'),
                               "' == 'true' else 'none'"]),
@@ -288,7 +355,8 @@ def generate_launch_description():
     common = [path_bridge, uart_start, uart_ready]
 
     # One board batch ahead avoids outrunning the wall deadline during learning.
-    def coordinator(deterministic, stage, extra_ready, startup_timeout, harness_chain):
+    def coordinator(deterministic, stage, extra_ready, startup_timeout, harness_chain,
+                    producers):
         params = {'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
                   'learn_margin_s': ParameterValue(PythonExpression([
                       "'0.005' if '", LaunchConfiguration('backend'),
@@ -300,6 +368,19 @@ def generate_launch_description():
             params['chains'] = ['mcb_batch', 'harness']
             params.update({'harness.period_s': 0.05, 'harness.phase_s': 0.001,
                            'harness.acks': ['/sim/e2e/harness_ack']})
+        if producers:
+            params['boot_hold_s'] = 0.001
+            params['flush_topic'] = '/dji_serial_bridge/sim_tx_flush'
+            params['flushed_topic'] = '/dji_serial_bridge/sim_tx_flushed'
+        if producers:
+            for name, chain in PRODUCER_CHAINS.items():
+                params['chains'] = params['chains'] + [name]
+                params[f'{name}.period_s'] = chain['period_s']
+                params[f'{name}.phase_s'] = chain['phase_s']
+                params[f'{name}.lag_s'] = chain['lag_s']
+                params[f'{name}.align_s'] = chain.get('align_s', 0.0)
+                params[f'{name}.start_s'] = chain.get('start_s', 0.0)
+                params[f'{name}.acks'] = chain['acks']
         if deterministic:
             params.update(strict_startup=True, readiness_topics=[
                 '/detector_standin/ready', '/point_to_cv_target/epoch_zero_ready',
@@ -384,8 +465,9 @@ def generate_launch_description():
         harness_chain = _is_true(context, 'harness_chain')
         if harness_chain and not deterministic:
             raise ValueError('harness_chain requires epoch-zero startup')
+        producers = _is_true(context, 'producer_chains')
         coordination = coordinator(deterministic, stage, extra_ready, startup_timeout,
-                                   harness_chain)
+                                   harness_chain, producers)
         delay = float(context.launch_configurations['epoch_coordinator_delay_s'])
         if not math.isfinite(delay) or delay < 0 or delay > 10 or (delay and not deterministic):
             raise ValueError('epoch_coordinator_delay_s requires deterministic mode and 0..10 s')
@@ -406,10 +488,15 @@ def generate_launch_description():
             output='screen',
             parameters=[{'x': BLUE_START[0], 'y': BLUE_START[1], 'yaw': 0.0}],
         ) if deterministic else None
+        if producers:
+            extras.append(Node(package='sim', executable='pose_consumed', output='screen',
+                               parameters=[{'relay_topic': '/sim/e2e/relay_odom'}]))
         return ([failure, coordinator_action, detector(opponents), opponent_driver] + extras
                 + ([barrier, pose_setter] if barrier else []) + common
                 + ([match_environment] if stage in DRIVING else [target_driver])
                 + ([GroupAction([SetParameter(name='tick_topic', value='/sim/e2e/aim_tick'),
+                                 *[SetParameter(name=k, value=v) for k, v in
+                                   (PRODUCER_MARKS.items() if producers else [])],
                                  robot_bringup])] if deterministic else
                    [TimerAction(period=ROBOT_DELAY_S, actions=[robot_bringup])]))
 
@@ -423,6 +510,10 @@ def generate_launch_description():
         DeclareLaunchArgument('deterministic_epoch_zero', default_value='auto',
                               description='Paused-at-zero startup behind a readiness barrier; '
                                           'auto follows coordinated UART'),
+        DeclareLaunchArgument('producer_chains', default_value='auto',
+                              description='Lockstep chains for the Jetson-side producers, so '
+                                          'every Jetson-to-MCB frame lands on a fixed step; '
+                                          'auto follows epoch-zero startup'),
         DeclareLaunchArgument('harness_chain', default_value='false',
                               description='The E2E harness acks a 50 ms tick that holds physics'),
         DeclareLaunchArgument('epoch_coordinator_delay_s', default_value='0',

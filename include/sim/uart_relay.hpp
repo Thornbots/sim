@@ -25,7 +25,7 @@ public:
   : pty_(pty), to_pty_(mcb_baud), to_firmware_(jetson_baud), delay_(read_delay_ns),
     capture_frames_(capture_frames) {
     if (delay_ < 0) throw std::invalid_argument("negative UART read delay");
-    // Diagnostic: MCB_UART_TRACE=<file> logs "<sim ns> <bytes>" for each Jetson read.
+    // Diagnostic: MCB_UART_TRACE=<file> logs "<sim ns> <bytes> <hex>" for each Jetson read.
     if (const char *path = std::getenv("MCB_UART_TRACE")) trace_ = std::fopen(path, "w");
     int sockets[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) < 0) fail("socketpair");
@@ -57,9 +57,12 @@ public:
     if (now_ns > INT64_MAX - delay_) throw std::overflow_error("UART relay time overflow");
     receive_firmware(now_ns, false);
     size_t got = 0;
-    receive(pty_, to_firmware_, now_ns + delay_, false, &got);
+    std::vector<uint8_t> bytes;
+    receive(pty_, to_firmware_, now_ns + delay_, false, &got, trace_ ? &bytes : nullptr);
     if (trace_ && got) {
-      std::fprintf(trace_, "%" PRId64 " %zu\n", now_ns, got);
+      std::fprintf(trace_, "%" PRId64 " %zu ", now_ns, got);
+      for (uint8_t b : bytes) std::fprintf(trace_, "%02x", b);
+      std::fprintf(trace_, "\n");
       std::fflush(trace_);
     }
     deliver_to_pty(now_ns);
@@ -108,13 +111,15 @@ private:
       fail("UART relay write");
   }
   static void fail(const char *what) { throw std::system_error(errno, std::generic_category(), what); }
-  static void receive(int fd, UartWire &wire, int64_t time, bool socket, size_t *total = nullptr) {
+  static void receive(int fd, UartWire &wire, int64_t time, bool socket, size_t *total = nullptr,
+                      std::vector<uint8_t> *capture = nullptr) {
     uint8_t buffer[4096];
     for (;;) {
       const auto n = ::read(fd, buffer, sizeof(buffer));
       if (n > 0) {
         wire.enqueue(time, std::vector<uint8_t>(buffer, buffer + n));
         if (total) *total += static_cast<size_t>(n);
+        if (capture) capture->insert(capture->end(), buffer, buffer + n);
       } else if (n == 0) {
         if (socket) throw std::runtime_error("firmware UART disconnected");
         return;

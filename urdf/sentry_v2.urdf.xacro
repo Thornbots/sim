@@ -17,6 +17,9 @@
   <xacro:arg name="uart_deterministic" default="false"/>
   <xacro:arg name="uart_epoch_zero" default="false"/>
   <xacro:arg name="uart_epoch_zero_ack" default="/detector_standin/ready"/>
+  <xacro:arg name="uart_pose_consumed" default="none"/>
+  <!-- false: gz adds no lidar noise; lidar_scan adds the same noise keyed by (seed, stamp, beam). -->
+  <xacro:arg name="lidar_noise" default="true"/>
   <xacro:arg name="uart_baud" default="115200"/>
   <xacro:arg name="mcb_read_delay_ms" default="0"/>
   <xacro:arg name="mcb_auto_fire" default="true"/>
@@ -105,11 +108,13 @@
           <max>12.0</max>
           <resolution>0.015000</resolution>
         </range>
+        <xacro:if value="$(arg lidar_noise)">
         <noise>
           <type>gaussian</type>
           <mean>0.0</mean>
           <stddev>0.01</stddev>
         </noise>
+        </xacro:if>
         <visibility_mask>0x01</visibility_mask>
       </lidar>
     </sensor>
@@ -218,6 +223,7 @@
         <uart_deterministic>$(arg uart_deterministic)</uart_deterministic>
         <uart_epoch_zero>$(arg uart_epoch_zero)</uart_epoch_zero>
         <uart_epoch_zero_ack>$(arg uart_epoch_zero_ack)</uart_epoch_zero_ack>
+        <uart_pose_consumed>$(arg uart_pose_consumed)</uart_pose_consumed>
         <uart_baud>$(arg uart_baud)</uart_baud>
         <mcb_read_delay_ms>$(arg mcb_read_delay_ms)</mcb_read_delay_ms>
         <auto_fire>$(arg mcb_auto_fire)</auto_fire>

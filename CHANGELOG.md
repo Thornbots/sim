@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Every Jetson-side UART producer is a lockstep chain (`producer_chains`, on with epoch-zero
+  startup): the coordinator takes any-of (`a|b`) and counted (`~topic`) ack groups, lagged
+  and aligned holds (`lag_s`, `align_s`, `start_s`), a boot hold and a per-hold bridge flush;
+  the MCB plugin holds at a delivered POSE until `pose_consumed` reports it; `lidar_scan`
+  draws lidar noise keyed by (seed, stamp, beam) instead of gz's unseeded generator;
+  `mmm` is not launched. `MCB_UART_TRACE` now also logs the bytes. See the
+  [investigation](docs/t17-consistent-runs-2026-11-05.md).
+
 - `MCB_UART_TRACE=<file>` logs each Jetson-to-MCB read (sim time, bytes) from the MCB
   plugin, for finding the first input that differs between runs. T17 measurements and
   the remaining producer-ack work: [investigation](docs/t17-consistent-runs-2026-11-05.md).

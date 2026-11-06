@@ -260,6 +260,11 @@ target_compile_features(startup_barrier PUBLIC cxx_std_17)
 ament_target_dependencies(startup_barrier rclcpp std_msgs)
 install(TARGETS startup_barrier DESTINATION lib/${PROJECT_NAME})
 
+add_executable(pose_consumed src/pose_consumed.cpp)
+target_compile_features(pose_consumed PUBLIC cxx_std_17)
+ament_target_dependencies(pose_consumed rclcpp std_msgs nav_msgs tf2_ros dji_serial_bridge)
+install(TARGETS pose_consumed DESTINATION lib/${PROJECT_NAME})
+
 add_executable(initial_pose_setter src/initial_pose_setter.cpp)
 target_compile_features(initial_pose_setter PUBLIC cxx_std_17)
 ament_target_dependencies(initial_pose_setter rclcpp geometry_msgs)
