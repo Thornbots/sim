@@ -228,3 +228,30 @@ The `lifecycle_check.sh` rows above are 308 runs (100 + 60 + 20 + 14 + 10 + 7 + 
 `kill_launch.sh` stops. The harness found the relay deadlock, the plugin abort, the gate wait, the adapter orphan
 and the estimation-suite exit; each was fixed at its cause. Counts are runs, not rates; the 20-run repeat and
 the boot-time rows are the evidence for the open race, not for its absence.
+
+## Independent review of sim #68 (estimation reset and pacing)
+
+Reviewed from the merged diff by a different agent than the author, then exercised by the lifecycle matrix.
+
+- **Reset ordering.** `start_case()` enables pacing (`/bench/pacing` true, which clears the world's
+  `progress_`) and only then sends the `bench_world` reset. Sim time in `bench_world` only moves
+  forward (`case_t0_ = t_`), so a progress sample from the previous cell can only be older than the
+  world, never ahead of it: the world waits for the scorer rather than free-running, and no stale high
+  stamp can hold the pacing gate open for a cell. Clearing the sampler before the request keeps
+  `/bench/case` whichever order the response and the callback arrive in. No defect found.
+- **Handoff.** An inactive `/bench/pacing` makes the world ignore delayed `/bench/progress` samples, and
+  `PacingGuard` pauses on every exit path, including failures. A missing or rejected handoff throws
+  and fails the run. The `no_pacer` read of `progress_` under the mutex fixed a data race.
+- **Minor, not changed.** `set_pacing()` creates a service client per call (cheap, destroyed on
+  return); between cells with no pacer the world sleeps one step per iteration, which is outside the
+  scored span.
+- **Interrupt behaviour** was the one real gap: after SIGINT every remaining cell ran to its own
+  failure (`pacing cleanup: could not create client`), outlasting launch's 5 s SIGINT window; fixed
+  here with an `rclcpp::ok()` assertion at the top of each test body.
+- **Evidence.** The default tracking sweep (12 cells, native log checker accepted) completed 5 times in
+  the 100-run hosted matrix and was interrupted by SIGINT, SIGTERM, SIGHUP and a killed shell 5 times each
+  in it, with a clean exit every time; none of those completed sweeps showed a pacing timeout or a
+  lockstep timeout (the later matrices ran the same tracking cases, with one SIGTERM-escalation failure
+  fixed above).
+
+This review covers #68 only. RTF and D-speed acceptance are not part of it.
