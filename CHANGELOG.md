@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- E2E lockstep stages run `point_to_cv_target` with `allow_latest_tf:=false`:
+  its TF reads are stamped, not the newest to arrive, and each miss is counted on
+  `/point_to_cv_target/latest_tf_fallbacks`; the harness fails a run with any.
+
 - Epoch-zero startup is the default for lockstep E2E stages: gz starts paused,
   the coordinator releases only after detector, aim timer, opponents, MCB, robot
   spawn and a new `startup_barrier` (every stack node in the graph for 2 s) are

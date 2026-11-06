@@ -1458,6 +1458,12 @@ not yet wired into the e2e launch or the remaining robot readiness gates.
 The [startup investigation](docs/lockstep-startup-2026-11-04.md) records the
 real Gazebo validation and remaining integration limits.
 
+Lockstep E2E stages also set `point_to_cv_target`'s `allow_latest_tf:=false`
+([the robot default stays true](../thornbots_pkg/README.md#point_to_cv_target)):
+its TF reads are stamped 0.1 s before the tick and every miss is counted on
+`/point_to_cv_target/latest_tf_fallbacks`. The harness prints the count with the
+lockstep summary and fails the run unless it is 0.
+
 `/sim/lockstep/status` reports holds, per-chain wall wait and timeout counts.
 The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.
