@@ -92,6 +92,12 @@ int main(int argc, char ** argv)
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
+  if (!rclcpp::ok()) {
+    // SIGINT/SIGTERM before the spawn was verified is a stop request, not a failure.
+    RCLCPP_INFO(node->get_logger(), "stopped before the robot spawn was verified");
+    rclcpp::shutdown();
+    return 0;
+  }
   RCLCPP_ERROR(node->get_logger(), "robot spawn verification failed or timed out");
   rclcpp::shutdown();
   return 1;
