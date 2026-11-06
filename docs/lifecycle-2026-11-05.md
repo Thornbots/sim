@@ -97,3 +97,19 @@ the interrupted suite, or an unclean-exit note.
   diagnosis), which is the match track's gate and was not loosened.
 - Before the rebase onto T17 and the gz_bridge change, intermediate matrices passed
   parked, drive, match and tracking endings once each and found the relay deadlock.
+
+**Final hosted matrix** (sim `48b6f5f` on nightly with T17's UART and epoch-zero defaults,
+workspace dependency pins current): **100 of 100 runs passed** (5 repeats of 20:
+`mcb_parked`, `mcb_drive`, `mcb_match` and the default `tracking` sweep, each by
+completion, SIGINT, SIGTERM, SIGHUP and SIGKILL of the shell). Every interrupted run
+ended 1 s after the signal (`tracking` 6 s total) with no leftover process, gz topic,
+pty link or temporary world, and no SIGKILL, SIGTERM escalation, died process or
+unclean-exit note. Fault-finding runs before this one are listed above.
+
+Two of the 100 completions (runs 11 and 91, both `mcb_match:complete`) ended with the
+suite's own verdict failed. This is the known match combat-floor variance, not a
+lifecycle fault: both fail `e2e_suite.cpp:410` ("spin: low score without measured
+diagnosis", spin-segment hit rate 0.084 and 0.079 against the 0.1 floor, no
+diagnosis), while the other three `mcb_match` completions passed. In both runs the run
+reached its summary line, and every shutdown assertion passed. The score gate was not
+loosened; it belongs to the [match track](../../docs/ROADMAP.md#a-the-match-test).
