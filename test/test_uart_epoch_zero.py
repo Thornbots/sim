@@ -145,8 +145,10 @@ def run_case(firmware, mode):
 def main():
     if len(sys.argv) != 2 or not os.access(sys.argv[1], os.X_OK):
         raise SystemExit('pass explicit hosted firmware executable')
+    # Loopback-only UDP: no Tailscale peers, and no SHM (LOCALHOST would add it).
     os.environ['FASTRTPS_DEFAULT_PROFILES_FILE'] = os.path.join(
-        get_package_share_directory('thornbots_pkg'), 'config', 'fastdds_udp_only.xml')
+        get_package_share_directory('thornbots_pkg'), 'config', 'fastdds_udp_only_local.xml')
+    os.environ['ROS_AUTOMATIC_DISCOVERY_RANGE'] = 'SYSTEM_DEFAULT'
     rclpy.init()
     try:
         for mode in ('early', 'late', 'nonzero', 'after_ready', 'timeout'):

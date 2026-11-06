@@ -9,7 +9,7 @@ Read [tests](README.md#run-the-tests), [build](README.md#build) and
 
 - [Run approval and live-session rules](../AGENTS.md#containers-and-runs)
   cover integration suites and benches; registered unit/lint tests launch no stack.
-- Keep GUI enabled unless headless was requested; Foxglove is the main viewer.
+- Keep GUI enabled unless headless was requested; Foxglove is the main viewer but off by default (`foxglove:=true`).
   Launch long runs through `dexec.sh -d`; use `kill_launch.sh`, never `pkill`.
 - Also check for orphaned installed nodes (`ps -eo pid,ppid,cmd | grep install/`).
   Keep gz stacks in their own process group, outside the GTest launch, and

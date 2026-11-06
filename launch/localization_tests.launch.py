@@ -36,6 +36,7 @@ from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from sim.dds_switch import FOXGLOVE_DEFAULT, udp_env
 from sim.display import display_error
 from sim.field import BLUE_START, LOOP_CENTRE, team_start_args
 from sim.suite_exit import finish_suite
@@ -131,11 +132,9 @@ def _tests(context):
 
     # Keep the long-lived fixture and restarted team waiters on one UDP profile;
     # their REF_SYS delivery must not depend on reused Fast DDS SHM channels.
-    udp_profile = os.path.join(get_package_share_directory('thornbots_pkg'),
-                               'config', 'fastdds_udp_only.xml')
     # A scenario's teardown can take ~15s before its process group is stopped.
     tests = ExecuteProcess(cmd=cmd, name='localization_tests', output='screen',
-                           additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': udp_profile},
+                           additional_env=udp_env(),
                            sigterm_timeout='30')
     done = RegisterEventHandler(OnProcessExit(
         target_action=tests,
@@ -188,7 +187,7 @@ def generate_launch_description():
                               description='ekf suite; empty = the suite default'),
         DeclareLaunchArgument('ekf_seconds', default_value='',
                               description='ekf suite; empty = the suite default'),
-        DeclareLaunchArgument('foxglove', default_value='true',
+        DeclareLaunchArgument('foxglove', default_value=FOXGLOVE_DEFAULT,
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('gtest_args', default_value='',
                               description='extra GoogleTest arguments'),

@@ -41,6 +41,7 @@ from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from sim.dds_switch import FOXGLOVE_DEFAULT
 from sim.display import display_error
 from sim.suite_exit import finish_suite, suite_command
 
@@ -215,7 +216,7 @@ def generate_launch_description():
         DeclareLaunchArgument('log_dir', default_value='',
                               description='where estimation.jsonl and '
                                           'estimation_states.jsonl go'),
-        DeclareLaunchArgument('foxglove', default_value='true',
+        DeclareLaunchArgument('foxglove', default_value=FOXGLOVE_DEFAULT,
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('pytest_args', default_value='',
                               description="extra gtest args, e.g. '--gtest_filter=*flat*'"),

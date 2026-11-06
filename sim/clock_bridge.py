@@ -13,11 +13,9 @@
 # limitations under the License.
 
 """Bridge Gazebo time without sharing subscriber SHM port lifetimes."""
-import os
-
-from ament_index_python.packages import get_package_share_directory
-
 from launch_ros.actions import Node
+
+from sim.dds_switch import udp_env
 
 
 def clock_bridge_node(topic='/clock', condition=None):
@@ -31,7 +29,6 @@ def clock_bridge_node(topic='/clock', condition=None):
         condition=condition,
         parameters=[{'use_sim_time': True}],
         # A departed reader's SHM port can block all future clock publication.
-        # Reuse the robot's UDP-only profile, including its discovery peers.
-        additional_env={'FASTRTPS_DEFAULT_PROFILES_FILE': os.path.join(
-            get_package_share_directory('thornbots_pkg'), 'config', 'fastdds_udp_only.xml')},
+        # Reuse the robot's UDP-only profile (peers only with remote DDS on).
+        additional_env=udp_env(),
     )

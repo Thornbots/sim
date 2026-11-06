@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The sim launches' `foxglove` argument now defaults to `$THORNBOTS_FOXGLOVE` or false (was true), and
+  a new `remote_dds` argument (`$THORNBOTS_REMOTE_DDS` or false) keeps DDS on the machine: `LOCALHOST`
+  range, no profile with Tailscale peers, and the pinned UDP-only nodes on loopback-only twins
+  (`sim/dds_switch.py`). Pass `foxglove:=true` to watch a run; `remote_dds:=true` for cross-machine tests.
+
 - `scan_odom_gate` and the `ekf_pre` lockstep chain release rf2o's odometry to the EKF at a
   fixed hold before an EKF tick instead of at a wall-timed moment, and the E2E stack sets
   rf2o's `extrinsic_lookahead_s` to 1 ms (`rf2o_extrinsic_lookahead_s`). rf2o's scan odometry
