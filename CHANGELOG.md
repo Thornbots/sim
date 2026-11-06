@@ -56,6 +56,18 @@
 
 - Check for Gazebo before starting any MCB E2E suite through `run_suite.sh`.
 
+- Sim runs now end with one SIGINT per process and leave nothing behind, on completion,
+  Ctrl-C, SIGTERM, SIGHUP and a SIGKILLed shell ([contract](README.md#startup-and-shutdown-contract),
+  [evidence](docs/lifecycle-2026-11-05.md)). gz sim starts as the launch's direct child (`ros_gz_sim`
+  ran it under `sh -c` and orphaned the server); `LaunchTree::stop()` signals the leader instead of
+  the group, so nodes exit 0 instead of -2, and reports a SIGKILLed survivor (`clean()`), which fails
+  the E2E suite; `gz_bridge` replaces `parameter_bridge`, which exited without `rclcpp::shutdown()` and
+  crashed in Fast DDS teardown about one run in five; `head_slider_relay` no longer deadlocks on
+  shutdown; `McbFirmwareSystem` stops quietly instead of throwing when gz is stopping; `run_suite.sh`
+  forwards INT/TERM/HUP behind `guarded_exec`, and the E2E, estimation and aim launches run their
+  suite directly. The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero exit.
+  `tools/lifecycle_check.sh` is the acceptance test.
+
 - Sentry aiming moved to the MCB: `CV_TARGET` is a 13-byte idle look point and
   `TARGET_STATE` (id 7, 80 bytes) carries the tracked armor model; the emulator's
   protocol, firmware/bridge tests, E2E harness and bench launches follow it with no

@@ -16,7 +16,11 @@
 #include <gz/sim/components/Inertial.hh>
 #include <gz/sim/components/JointPosition.hh>
 #include <gz/sim/components/JointVelocity.hh>
+#include <gz/common/SignalHandler.hh>
+#include <gz/sim/Events.hh>
+#include <gz/sim/EventManager.hh>
 #include <gz/transport/Node.hh>
+#include <atomic>
 #include <geometry_msgs/msg/twist.hpp>
 #include <dji_serial_bridge/msg/sim_frame_metadata.hpp>
 #include <dji_serial_bridge/msg/sim_frame_ack.hpp>
@@ -36,7 +40,11 @@ class McbFirmwareSystem : public gz::sim::System,
 public:
   void Configure(const gz::sim::Entity &entity,
                  const std::shared_ptr<const sdf::Element> &sdf,
-                 gz::sim::EntityComponentManager &ecm, gz::sim::EventManager &) override {
+                 gz::sim::EntityComponentManager &ecm, gz::sim::EventManager &events) override {
+    events_ = &events;
+    // Launch stops the UART bridge and coordinator at the same moment as gz;
+    // a missing acknowledgment then is shutdown, not a lockstep failure.
+    signals_.AddCallback([stopping = stopping_](int) { *stopping = true; });
     gz::sim::Model model(entity);
     body_ = gz::sim::Link(model.CanonicalLink(ecm));
     body_.EnableVelocityChecks(ecm);
@@ -416,6 +424,10 @@ public:
     const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
     while (failure_.empty() && (!pending_.empty() || !consume_pending_.empty() || clock_ns_ < held)) {
+      if (*stopping_) {
+        events_->Emit<gz::sim::events::Stop>();
+        return;
+      }
       if (std::chrono::steady_clock::now() >= deadline)
         throw std::runtime_error("UART acknowledgment or ROS clock timeout: pending=" +
             std::to_string(pending_.size()) + " clock=" + std::to_string(clock_ns_) +
@@ -428,6 +440,9 @@ public:
   }
 
 private:
+  gz::common::SignalHandler signals_;
+  std::shared_ptr<std::atomic<bool>> stopping_ = std::make_shared<std::atomic<bool>>(false);
+  gz::sim::EventManager *events_ = nullptr;
   gz::transport::Node gz_node_;
   gz::transport::Node::Publisher clock_pub_;
   rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
