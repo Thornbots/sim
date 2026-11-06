@@ -13,6 +13,13 @@
   range, no profile with Tailscale peers, and the pinned UDP-only nodes on loopback-only twins
   (`sim/dds_switch.py`). Pass `foxglove:=true` to watch a run; `remote_dds:=true` for cross-machine tests.
 
+- `gz_bridge` frees its ROS context before `main` returns and initialises rcutils logging before
+  installing the signal handler. `ros_gz_bridge`'s node is referenced from its own handles,
+  services and timer, so the Fast DDS participant and rmw's graph-listener thread outlived `main` and were
+  destroyed against each other in static destruction (about 2% of early interrupts killed a bridge
+  with SIGSEGV, SIGABRT or "pure virtual method called"). `tools/bridge_teardown_stress.py` repeats
+  the interrupt. See the [investigation](docs/lifecycle-2026-11-05.md#2026-11-06-the-fast-dds-bridge-race-and-the-rtf-gate).
+
 - `scan_odom_gate` and the `ekf_pre` lockstep chain release rf2o's odometry to the EKF at a
   fixed hold before an EKF tick instead of at a wall-timed moment, and the E2E stack sets
   rf2o's `extrinsic_lookahead_s` to 1 ms (`rf2o_extrinsic_lookahead_s`). rf2o's scan odometry

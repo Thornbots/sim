@@ -255,3 +255,66 @@ Reviewed from the merged diff by a different agent than the author, then exercis
   fixed above).
 
 This review covers #68 only. RTF and D-speed acceptance are not part of it.
+
+## 2026-11-06: the Fast DDS bridge race and the RTF gate
+
+Mac mini (aarch64), isolated container, Jazzy, `libfastrtps` 2.14.6, `ros_gz_bridge` 1.0.24.
+
+### Upstream check
+
+- Apt offers `ros-jazzy-fastrtps` 2.14.7 (2026-09-11) and no later 2.14.x; 2.14 is the last v2 minor.
+  The 2.14.6 to 2.14.7 diff (25 commits) touches no code in `StatefulWriter`, `RTPSParticipantImpl`
+  endpoint removal or `EDP::unpairReaderProxy`. Its relevant fixes are `RTPSParticipantAttributes` data
+  races (#6370) and thread-safe `on_xxx_matched` (#6371/#6382, listener pointer re-reads in
+  `DataWriterImpl`/`DataReaderImpl`). It is not a fix for this crash, and no issue or PR names
+  `StatefulWriter::matched_reader_remove`. The nearest open report is
+  [Fast-DDS #3303](https://github.com/eProsima/Fast-DDS/issues/3303) (a discovery thread reaching an
+  entity another thread is deleting, listener-pointer variant, open since 2023). So the image was not
+  changed and nothing was filed upstream: the cores below show the process destroys the participant
+  against a thread that is still running, which is ours to avoid.
+- `unpairReaderProxy` takes `endpoints_list_mutex` shared and `deleteUserEndpoint` takes it exclusive, so
+  the receive thread cannot reach a writer that is being deleted. The writer was already gone because the
+  participant was being destroyed.
+
+### Reproducer and what the cores show
+
+`tools/bridge_teardown_stress.py` (first run as a scratch variant with four sim-style bridges and three rclpy
+peers) interrupts everything back to back after a random delay, as launch does. Stock `gz_bridge`,
+delay 0.2 to 4 s: **3 of 150 iterations** killed a bridge (SIGABRT "pure virtual method called" twice,
+SIGSEGV once). Cores (GDB) show `main` inside `exit` to `~DomainParticipantFactory` to
+`~DomainParticipantImpl` (deleting a `DataReader`, joining the shared-memory or resource-event threads)
+while a second thread, a plain `std::thread` in `librmw_fastrtps_shared_cpp`, was inside
+`rmw_fastrtps_shared_cpp::_take` to `DataReaderImpl::take` on the reader being deleted (rmw's
+graph-listener thread, which takes from `ros_discovery_info`). The listener thread is joined only by
+`rcl_context_fini`, which never ran.
+
+Why it never ran: `context.use_count()` was 3 at exit, and the `RosGzBridge` node was still referenced
+(use_count 2 to 3) after `spin()`, `remove_node` and releasing our pointer. The node is referenced from its
+own handles, services and heartbeat timer, so it is never destroyed; neither does stock
+`parameter_bridge` destroy it. The global context therefore lives until static destruction, where Fast DDS's
+singleton destroys the participant under rmw's live thread. The original 2.14.6 backtrace
+(`matched_reader_remove` on the UDP receive thread) is consistent with the same teardown seen from another
+thread; its core is gone, so that is inferred from the matching failure rate and fix, not shown.
+
+### Fix
+
+`gz_bridge` owns its `rclcpp::Context` and installs the signal handlers itself; `release()` (a subclass
+clearing the protected `handles_`, `services_` and `heartbeat_timer_`) drops the self-references, the node is
+destroyed, `context.reset()` runs `rcl_context_fini` on the main thread (use_count 1) and the participant is
+deleted before `main` returns. Initialising rcutils logging before `install_signal_handlers()` closes a
+second window: an interrupt within about 50 ms of start made the handler thread and `main` both run
+`rcutils_logging_initialize` (SIGSEGV in `rcutils_hash_map_init`, 1 of 300).
+
+| Build (same harness, delays in s) | Iterations | Bridge deaths |
+| --- | --- | --- |
+| Stock `gz_bridge` (`rclcpp::shutdown()` only), 0.2 to 4 | 150 | 3 iterations |
+| Owned context only (node still leaked), 0.2 to 4 | 150, then 200 | 3, then 3 iterations (4 bridges) |
+| + `release()`, 0.2 to 4 | 200 | 0 |
+| + `release()`, 0.05 to 2 | 300 | 1 (the logging window above) |
+| + `release()`, 0.2 to 6 | 300 | 0 |
+| + early logging init (final), 0.02 to 1 | 300 | 0 |
+
+A further 300 iterations of the final build were lost to the 09:10 Colima hang and are not counted. The
+harness's rclpy peers exited 1 in 4 iterations when interrupted before their node existed; peers are not
+counted. Owned-context-only is a negative result worth keeping: destroying the context alone does not help
+while the node is leaked.
