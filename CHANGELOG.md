@@ -66,7 +66,11 @@
   shutdown; `McbFirmwareSystem` stops quietly instead of throwing when gz is stopping; `run_suite.sh`
   forwards INT/TERM/HUP behind `guarded_exec`, and the E2E, estimation and aim launches run their
   suite directly. The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero exit.
-  `tools/lifecycle_check.sh` is the acceptance test.
+  `tools/lifecycle_check.sh` is the acceptance test. The board adapter exits at once on SIGINT/SIGTERM and Renode, which
+  wedges if SIGINTed mid-command, has SIGINT blocked and is stopped with SIGTERM; the gz lockstep gate, the firmware
+  waits and `robot_spawn_ready` yield to a stop request, so `kill_launch.sh` and a Ctrl-C during the roughly 100 s
+  board boot stop the stack. Open: a Fast DDS 2.14.6 receive-thread race that still kills a `gz_bridge` in roughly
+  one early interrupt in twenty.
 
 - Sentry aiming moved to the MCB: `CV_TARGET` is a 13-byte idle look point and
   `TARGET_STATE` (id 7, 80 bytes) carries the tracked armor model; the emulator's

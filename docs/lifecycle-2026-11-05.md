@@ -203,6 +203,7 @@ each reproduced with cores enabled before it was changed:
   inside libfastrtps 2.14.6, not in sim code, and did not reproduce in 40 drive-stage shutdowns
   from the leader-only hunt. It is not absorbed or whitelisted: the lifecycle check fails on it.
   **E-teardown therefore stays open.**
+- The same Fast DDS race also killed a `gz_bridge` in one of 20 merged-code hosted runs (`mcb_parked:int`, 3 s into the test), so it is not confined to boot-time interrupts.
 - ~2 gz server SIGKILLs among the first 88 idle shutdowns were attributed to the lockstep gate
   wait fixed above; none occurred in the 40 + 40 + 30 shutdowns after it.
 - A bring-up flake (`localized map->root chain` not ready within 30 s under a host load average
@@ -219,9 +220,11 @@ each reproduced with cores enabled before it was changed:
 | Renode matrix (parked complete/int/kill, drive int/kill, match term/kill), twice | 7 / 7 and 7 / 7 |
 | Boot-time interrupts, Renode, 10 runs, then hosted 14 runs (after the adapter fix) | 9 / 10 and 13 / 14 (the SIGSEGV above, both in `mcb_drive`), plus 19 / 20 in the cored repeat |
 | `kill_launch.sh` stop of a standalone `mcb.launch.py` (Renode at 75 s and 15 s, hosted) | 9 / 9 |
+| On the merged code (T17 producer chains and rf2o gate, sentry_localization #42, final sim): hosted, 40 runs after the last fix | 40 / 40 |
+| The same merged code, before the per-test `rclcpp::ok()` assertion and harness fix | hosted 17 / 20 (a `gz_bridge` SIGSEGV from the open race, a `docker exec` false positive, the estimation suite needing SIGTERM); Renode matrix 7 / 7; `seeded_ekf` stops 12 / 12 on both paths |
 | Leader-SIGINT shutdown hunts: with `gz_bridge`, 24 then 40 (half under CPU load); after the startup fixes, 30 early (8 s) and 40 on the drive stage | 24: 1 gz SIGKILL (the gate wait, fixed afterwards); 40, 30 and 40: no deaths, no cores |
 
-The `lifecycle_check.sh` rows above are 241 runs (100 + 60 + 20 + 14 + 10 + 7 + 7 + 20 + 3), plus the 9
+The `lifecycle_check.sh` rows above are 308 runs (100 + 60 + 20 + 14 + 10 + 7 + 7 + 20 + 3 + 20 + 7 + 40), plus the 9
 `kill_launch.sh` stops. The harness found the relay deadlock, the plugin abort, the gate wait, the adapter orphan
 and the estimation-suite exit; each was fixed at its cause. Counts are runs, not rates; the 20-run repeat and
 the boot-time rows are the evidence for the open race, not for its absence.
