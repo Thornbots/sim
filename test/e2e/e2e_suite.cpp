@@ -23,6 +23,7 @@ namespace ee = sim::e2e;
 namespace timing = sim::suite_timing;
 class Environment : public testing::Environment {
 public:
+  static constexpr double kBringupS = 10.0;
   std::shared_ptr<ee::Scorer> scorer;
   std::shared_ptr<sim::SimTimeNode> control;
   std::unique_ptr<sim::LaunchTree> launch;
@@ -63,9 +64,12 @@ public:
                 "pose_latency_s:=" + cb::number(cb::options.pose_latency_s),
                 "target_spin_hz:=0.0", "real_time_factor:=" + cb::options.rtf,
                 "lockstep:=" + std::string(cb::options.lockstep ? "true" : "false"),
+                "harness_chain:=" + std::string(cb::options.lockstep ? "true" : "false"),
                 "firmware_fixes:=" + std::string(cb::options.no_firmware_fixes
                                                      ? "false"
-                                                     : "true")},
+                                                     : "true"),
+                "epoch_readiness_extra:=" +
+                    std::string(cb::options.lockstep ? "/sim/e2e/harness_ready" : "")},
             cb::options.log_dir + "/stack.log");
       auto wait = [&](std::function<bool()> predicate, double timeout,
                       const std::string &description) {
@@ -104,6 +108,10 @@ public:
               return true;
             },
             120, "all four robot truth streams");
+      // Bring-up ends at a fixed sim time, so what AMCL's start or the host's speed
+      // does to when the chain appears cannot move where the cells start.
+      wait([&]() { return scorer->now_s() >= kBringupS; }, 300,
+           "the fixed bring-up time");
       wait(
           [&]() {
             return scorer->tf.canTransform("map", "root", tf2::TimePointZero);
@@ -115,6 +123,7 @@ public:
                    scorer->now_s() - *scorer->target_stamp < .1;
           },
           60, "a fresh /cv/target idle look point");
+      scorer->align(1.0);
       if (!scorer->driving()) {
         park_at_center();
         wait([&]() { return scorer->state_stamp.has_value(); }, 60,
@@ -126,6 +135,8 @@ public:
   }
   void TearDown() override {
     timing::Phase phase("teardown");
+    if (scorer)
+      scorer->retire();
     if (launch)
       launch->stop();
     timing::set_sim_clock({});
@@ -148,10 +159,10 @@ public:
       scorer->spin_for(.2);
       if (launch && !launch->alive())
         throw std::runtime_error("E2E stack exited during parked ingress");
-      auto pose = scorer->histories.at("sentry")->at(scorer->now_s() - .01);
+      auto pose = scorer->histories.at("sentry")->at(scorer->now_s() - .1);
       if (!pose) continue;
       const double x = pose->root(0, 3), y = pose->root(1, 3);
-      const auto previous = scorer->histories.at("sentry")->at(scorer->now_s() - .21);
+      const auto previous = scorer->histories.at("sentry")->at(scorer->now_s() - .3);
       if (!previous) continue;
       const double speed = (pose->root.block<2, 1>(0, 3) -
                             previous->root.block<2, 1>(0, 3)).norm() / .2;
@@ -170,7 +181,7 @@ public:
     if (!arrived)
       throw std::runtime_error("firmware parked ingress did not settle at center");
     scorer->spin_for(3);
-    const auto pose = scorer->histories.at("sentry")->at(scorer->now_s() - .01);
+    const auto pose = scorer->histories.at("sentry")->at(scorer->now_s() - .1);
     if (!pose) throw std::runtime_error("missing parked chassis truth");
     parked_x = pose->root(0, 3);
     parked_y = pose->root(1, 3);
@@ -257,6 +268,7 @@ TEST_P(E2ESuite, MCB) {
     double duration = cb::options.duration ? cb::options.duration : 20;
     std::cout << "\n=== " << c.name << ", spin " << std::fixed
               << std::setprecision(2) << c.spin << " Hz ===\n";
+    s->align(1.0);  // every cell starts on a whole simulated second
     {
       timing::Phase phase("reset");
       environment->set_target(c.speed, c.spin, c.path);
@@ -267,6 +279,7 @@ TEST_P(E2ESuite, MCB) {
       s->spin_for(3);
     }
     s->reset();
+    s->score_until = s->now_s() + duration + .5;
     s->spin_for(duration + .5);
     s->scoring = false;
     s->check_nodes(environment->nodes);
@@ -311,6 +324,7 @@ TEST_P(E2ESuite, MCB) {
     EXPECT_GE(ee::hit_rate(mcb), .1) << c.name;
     return;
   }
+  s->align(1.0);
   s->reset();
   environment->control->set_params("match_environment",
                                    {rclcpp::Parameter("active", true)});

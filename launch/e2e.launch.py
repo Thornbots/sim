@@ -254,7 +254,8 @@ def generate_launch_description():
                           'allow_latest_tf': PythonExpression([
                               "'false' if '", LaunchConfiguration('deterministic_epoch_zero'),
                               "' == 'true' else 'true'"]),
-                          'tf_lookup_lag_s': '0.1',
+                          'tf_lookup_lag_s': '0.05',
+                          'nav_tf_lookup_lag_s': '0.1',
                           'seed_known_team': PythonExpression([
                               "'blue' if '", LaunchConfiguration('deterministic_epoch_zero'),
                               "' == 'true' else 'none'"]),
@@ -287,12 +288,18 @@ def generate_launch_description():
     common = [path_bridge, uart_start, uart_ready]
 
     # One board batch ahead avoids outrunning the wall deadline during learning.
-    def coordinator(deterministic, stage, extra_ready, startup_timeout):
+    def coordinator(deterministic, stage, extra_ready, startup_timeout, harness_chain):
         params = {'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
                   'learn_margin_s': ParameterValue(PythonExpression([
                       "'0.005' if '", LaunchConfiguration('backend'),
                       "' == 'renode' else '0.05'"]), value_type=float),
                   'mcb_batch.phase_s': 0.0, 'mcb_batch.acks': ['/mcb_emulator/tick']}
+        if harness_chain:
+            # The scorer decides on a 50 ms tick, 1 ms after the other chains' ticks, so
+            # that anything it sets is seen by the first tick after, never half of one.
+            params['chains'] = ['mcb_batch', 'harness']
+            params.update({'harness.period_s': 0.05, 'harness.phase_s': 0.001,
+                           'harness.acks': ['/sim/e2e/harness_ack']})
         if deterministic:
             params.update(strict_startup=True, readiness_topics=[
                 '/detector_standin/ready', '/point_to_cv_target/epoch_zero_ready',
@@ -374,7 +381,11 @@ def generate_launch_description():
         if extra_ready and (not deterministic or not extra_ready.startswith('/')):
             raise ValueError('epoch_readiness_extra requires deterministic mode and an '
                              'absolute topic')
-        coordination = coordinator(deterministic, stage, extra_ready, startup_timeout)
+        harness_chain = _is_true(context, 'harness_chain')
+        if harness_chain and not deterministic:
+            raise ValueError('harness_chain requires epoch-zero startup')
+        coordination = coordinator(deterministic, stage, extra_ready, startup_timeout,
+                                   harness_chain)
         delay = float(context.launch_configurations['epoch_coordinator_delay_s'])
         if not math.isfinite(delay) or delay < 0 or delay > 10 or (delay and not deterministic):
             raise ValueError('epoch_coordinator_delay_s requires deterministic mode and 0..10 s')
@@ -412,6 +423,8 @@ def generate_launch_description():
         DeclareLaunchArgument('deterministic_epoch_zero', default_value='auto',
                               description='Paused-at-zero startup behind a readiness barrier; '
                                           'auto follows coordinated UART'),
+        DeclareLaunchArgument('harness_chain', default_value='false',
+                              description='The E2E harness acks a 50 ms tick that holds physics'),
         DeclareLaunchArgument('epoch_coordinator_delay_s', default_value='0',
                               description='Diagnostic startup-order delay, wall seconds'),
         DeclareLaunchArgument('epoch_readiness_extra', default_value='',

@@ -38,6 +38,28 @@ void Scorer::check_lockstep() {
             << " sim s, " << s.at("timeouts") << " lockstep timeouts; gz wait "
             << s.at("gz_step_wait_s") << " s, MCB wait "
             << s.at("chain.mcb_batch.wait_s") << " s" << std::endl;
+  // Per chain: its holds and the wall time physics waited on its acks; the longest
+  // wait names the hop that sets the speed. RTF is sim over wall time.
+  std::string longest;
+  double longest_s = -1;
+  std::cout << "lockstep chains:";
+  for (const auto &[key, value] : s) {
+    const std::string tail = ".wait_s";
+    if (key.rfind("chain.", 0) != 0 || key.size() <= tail.size() ||
+        key.compare(key.size() - tail.size(), tail.size(), tail) != 0)
+      continue;
+    const std::string name = key.substr(6, key.size() - 6 - tail.size());
+    const double wait = std::stod(value);
+    std::cout << ' ' << name << " holds=" << s.at("chain." + name + ".holds")
+              << " wait=" << value << "s";
+    if (wait > longest_s) {
+      longest_s = wait;
+      longest = name;
+    }
+  }
+  std::cout << "\nlockstep longest-holding chain: " << longest << " (" << longest_s
+            << " s); RTF " << std::stod(s.at("sim_s")) / std::stod(s.at("wall_s"))
+            << std::endl;
   if (std::stoll(s.at("timeouts")))
     throw std::runtime_error(s.at("timeouts") + " lockstep timeouts: invalid run");
   if (!latest_tf_fallbacks_)
@@ -180,22 +202,34 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           state_history_.push_back(m);
           while (state_history_.size() > 300) state_history_.pop_front();
           state_stamp = stamp_s(m.header.stamp);
-          if (scoring)
+          if (scoring && stamp_s(m.header.stamp) >= score_from_)
             pending_states_.push_back(m);
         }
       });
   subscribe<std_msgs::msg::Header>("/mcb_emulator/shot", rclcpp::QoS(100),
                                    [this](const auto &m) {
                                      double t = stamp_s(m.stamp);
-                                     if (scoring && t < score_until)
+                                     if (scoring && t >= score_from_ && t < score_until)
                                        pending_.push_back({"mcb", t});
                                    });
-  pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
-      if (scoring)
-        pending_poses_.push_back(now_s());
+  // The 50 ms harness chain. In lockstep the coordinator holds physics at each tick
+  // until step() releases it, so everything the harness decides happens on a tick.
+  // Ticks fall kPhaseMs after each 50 ms boundary: the one-shot is the first, and the
+  // periodic timer it starts is anchored there.
+  start_timer_ = create_timer(std::chrono::milliseconds(kPhaseMs), [this]() {
+    start_timer_->cancel();
+    tick_ns_ = get_clock()->now().nanoseconds();
+    tick_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
+      tick_ns_ = get_clock()->now().nanoseconds();
     });
-  fire_timer_ =
-      create_timer(std::chrono::milliseconds(100), [this]() { fire_tick(); });
+  });
+  if (cv_bench::options.lockstep && !cv_bench::options.external) {
+    ack_pub_ = create_publisher<std_msgs::msg::Header>(
+        "/sim/e2e/harness_ack", rclcpp::QoS(100).reliable());
+    ready_pub_ = create_publisher<std_msgs::msg::Header>(
+        "/sim/e2e/harness_ready", rclcpp::QoS(1).reliable().transient_local());
+    ready_pub_->publish(std_msgs::msg::Header{});  // stamp zero: the epoch barrier's
+  }
   if (stage == "mcb_match") {
     for (const auto &name : {"opponent_0", "opponent_1", "ally_0"}) {
       shots[name] = {};
@@ -203,7 +237,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           std::string("/sim/match/") + name + "/shot", rclcpp::QoS(100),
           [this, name](const auto &m) {
             double t = stamp_s(m.stamp);
-            if (scoring && t < score_until)
+            if (scoring && t >= score_from_ && t < score_until)
               pending_.push_back({name, t + .05});
           });
     }
@@ -239,14 +273,72 @@ void Scorer::spin_for(double seconds) {
       [this]() {
         if (!rclcpp::ok())
           throw std::runtime_error("E2E ROS context stopped during scoring");
-        spin_once();
+        step();
       }, cv_bench::options.backend == "renode" ? 120 : 20);
+}
+bool Scorer::wait_until(const std::function<bool()> &predicate, double timeout,
+                        const std::string &description) {
+  const auto end = std::chrono::steady_clock::now() +
+                   std::chrono::duration<double>(timeout);
+  while (rclcpp::ok() && std::chrono::steady_clock::now() < end) {
+    if (predicate())
+      return true;
+    step();
+  }
+  std::cout << "[wait_until] timed out after " << timeout
+            << "s waiting for: " << description << std::endl;
+  return false;
+}
+void Scorer::release_tick() {
+  if (!ack_pub_ || !unacked_ns_ || retired_)
+    return;
+  std_msgs::msg::Header ack;
+  ack.stamp = rclcpp::Time(*unacked_ns_, RCL_ROS_TIME);
+  ack_pub_->publish(ack);
+  unacked_ns_.reset();
+}
+void Scorer::retire() {
+  if (!ack_pub_ || retired_)
+    return;
+  release_tick();
+  std_msgs::msg::Header ack;  // far future: every later tick is already released
+  ack.stamp.sec = 1000000000;
+  ack_pub_->publish(ack);
+  retired_ = true;
+}
+bool Scorer::step(double wall_timeout_s) {
+  release_tick();
+  const auto end = std::chrono::steady_clock::now() +
+                   std::chrono::duration<double>(wall_timeout_s);
+  while (rclcpp::ok() && !tick_ns_ && std::chrono::steady_clock::now() < end)
+    spin_once();
+  if (!tick_ns_)
+    return false;
+  unacked_ns_ = tick_ns_;
+  tick_ns_.reset();
+  tick_body();
+  return true;
+}
+void Scorer::align(double period_s) {
+  const auto period_ms = std::llround(period_s * 1000);
+  while (rclcpp::ok())
+    if (step() && (std::llround(now_s() * 1000) - kPhaseMs) % period_ms == 0)
+      return;
+}
+// The old 50 ms pose sampler and 100 ms scorer, on the chain's tick.
+void Scorer::tick_body() {
+  ++ticks_;
+  if (scoring)
+    pending_poses_.push_back(now_s());
+  if (ticks_ % 2 == 0)
+    fire_tick();
 }
 void Scorer::reset() {
   pending_.clear();
   for (auto &entry : shots)
     entry.second.clear();
   scoring = true;
+  score_from_ = now_s();
   states.clear();
   pending_states_.clear();
   route_records.clear();
@@ -745,29 +837,6 @@ void Scorer::sync_referee() {
   gate.values = {ready};
   msg.status.push_back(gate);
   referee_pub_->publish(msg);
-  if (referee_future_) {
-    if (referee_future_->wait_for(std::chrono::seconds(0)) !=
-        std::future_status::ready) {
-      // Responses can be lost after parameters were applied. Retry current state.
-      if (std::chrono::steady_clock::now() - referee_sent_ <
-          std::chrono::seconds(2))
-        return;
-      referee_client_->remove_pending_request(*referee_future_);
-      referee_future_.reset();
-      if (++referee_timeouts_ >= 3)
-        throw std::runtime_error("MCB referee parameter response timed out 3 times");
-      RCLCPP_WARN(get_logger(),
-                  "MCB referee parameter response timed out; retrying current state (%d/3)",
-                  referee_timeouts_);
-    } else {
-      const auto response = referee_future_->get();
-      for (const auto &r : response->results)
-        if (!r.successful)
-          throw std::runtime_error("MCB rejected match referee status: " + r.reason);
-      referee_future_.reset();
-      referee_timeouts_ = 0;
-    }
-  }
   if (!referee_client_->service_is_ready())
     return;
   auto req = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
@@ -784,8 +853,23 @@ void Scorer::sync_referee() {
            rclcpp::Parameter("hurt_armor_id", hurt_armor_id),
            rclcpp::Parameter("shooter_power", alive)})
     req->parameters.push_back(p.to_parameter_msg());
-  referee_future_ = referee_client_->async_send_request(req);
-  referee_sent_ = std::chrono::steady_clock::now();
+  // Wait for the answer here, on the tick: physics is held, and the MCB applies the
+  // change on the first step after the release, however late its thread ran.
+  auto pending = referee_client_->async_send_request(req);
+  if (!wait_future(pending.future, referee_wait_s_)) {
+    referee_client_->remove_pending_request(pending.request_id);
+    if (++referee_timeouts_ >= 3)
+      throw std::runtime_error("MCB referee parameter response timed out 3 times");
+    RCLCPP_WARN(get_logger(),
+                "MCB referee parameter response timed out; retrying current state (%d/3)",
+                referee_timeouts_);
+    return;
+  }
+  referee_timeouts_ = 0;
+  const auto response = pending.future.get();
+  for (const auto &r : response->results)
+    if (!r.successful)
+      throw std::runtime_error("MCB rejected match referee status: " + r.reason);
 }
 double hit_rate(const std::vector<Json> &shots) {
   int hits = 0;

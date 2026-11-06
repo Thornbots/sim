@@ -50,6 +50,16 @@ public:
   explicit Scorer(const std::string &stage, const std::string &logpath);
   void reset();
   void spin_for(double seconds) override;
+  bool wait_until(const std::function<bool()> &predicate, double timeout,
+                  const std::string &description) override;
+  // One 50 ms tick of the harness chain: releases the previous tick, waits for the
+  // next, and runs its scoring. Decisions made between this and the next call happen
+  // while physics is held at the tick, so they land on a known sim time.
+  bool step(double wall_timeout_s = 0.1);
+  // Step until the tick time is a multiple of `period_s`.
+  void align(double period_s);
+  // Stop holding physics on this harness (teardown): later ticks need no release.
+  void retire();
   void check_lockstep();
   std::string stage, log_path;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
@@ -83,13 +93,18 @@ private:
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions_;
   std::map<std::string, std::string> lockstep_status_;
   std::optional<uint32_t> latest_tf_fallbacks_;
-  rclcpp::TimerBase::SharedPtr fire_timer_, pose_timer_;
+  static constexpr int kPhaseMs = 1;  // after the other chains' ticks at each boundary
+  rclcpp::TimerBase::SharedPtr start_timer_, tick_timer_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ack_pub_, ready_pub_;
+  std::optional<int64_t> tick_ns_, unacked_ns_;  // pending tick; tick being decided
+  bool retired_ = false;
+  uint64_t ticks_ = 0;
+  double score_from_ = 0;  // shots and states stamped earlier are not this window's
+  void tick_body();
+  void release_tick();
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr referee_client_;
-  std::optional<
-      rclcpp::Client<rcl_interfaces::srv::SetParameters>::FutureAndRequestId>
-      referee_future_;
-  std::chrono::steady_clock::time_point referee_sent_;
   int referee_timeouts_ = 0;
+  double referee_wait_s_ = 2.0;  // wall seconds to wait for one parameter reply
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
       referee_pub_;
   template <class Message, class Callback>
