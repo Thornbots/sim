@@ -1480,6 +1480,12 @@ stamp, panel) and `match_environment`'s ghost aim noise per (seed, ghost, truth
 stamp), so a draw never depends on how many other draws or which robot's message
 came first, as in `bench_world`. Ghost fire timing is deterministic (0.5 s apart).
 
+Run-to-run differences are located with `MCB_UART_TRACE=<file>`, which makes the MCB
+plugin log `<sim ns> <bytes>` for every Jetson-to-MCB read; diff two runs' traces to see
+the first frame that reached the firmware on a different step. The measurements and the
+remaining work are in the
+[T17 investigation](docs/t17-consistent-runs-2026-11-05.md).
+
 `/sim/lockstep/status` reports holds, per-chain wall wait and timeout counts.
 The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.

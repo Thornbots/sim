@@ -3,6 +3,8 @@
 #define SIM__UART_RELAY_HPP_
 
 #include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <deque>
 #include <stdexcept>
@@ -22,6 +24,8 @@ public:
   : pty_(pty), to_pty_(mcb_baud), to_firmware_(jetson_baud), delay_(read_delay_ns),
     capture_frames_(capture_frames) {
     if (delay_ < 0) throw std::invalid_argument("negative UART read delay");
+    // Diagnostic: MCB_UART_TRACE=<file> logs "<sim ns> <bytes>" for each Jetson read.
+    if (const char *path = std::getenv("MCB_UART_TRACE")) trace_ = std::fopen(path, "w");
     int sockets[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) < 0) fail("socketpair");
     socket_ = sockets[0]; child_ = sockets[1];
@@ -32,7 +36,11 @@ public:
       }
     }
   }
-  ~UartRelay() { if (socket_ >= 0) close(socket_); if (child_ >= 0) close(child_); }
+  ~UartRelay() {
+    if (socket_ >= 0) close(socket_);
+    if (child_ >= 0) close(child_);
+    if (trace_) std::fclose(trace_);
+  }
   UartRelay(const UartRelay &) = delete;
   UartRelay &operator=(const UartRelay &) = delete;
   int child_fd() const { return child_; }
@@ -47,7 +55,12 @@ public:
   void before_step(int64_t now_ns) {
     if (now_ns > INT64_MAX - delay_) throw std::overflow_error("UART relay time overflow");
     receive_firmware(now_ns, false);
-    receive(pty_, to_firmware_, now_ns + delay_, false);
+    size_t got = 0;
+    receive(pty_, to_firmware_, now_ns + delay_, false, &got);
+    if (trace_ && got) {
+      std::fprintf(trace_, "%lld %zu\n", static_cast<long long>(now_ns), got);
+      std::fflush(trace_);
+    }
     deliver_to_pty(now_ns);
     deliver(socket_, to_firmware_, now_ns, true);
   }
@@ -94,12 +107,14 @@ private:
       fail("UART relay write");
   }
   static void fail(const char *what) { throw std::system_error(errno, std::generic_category(), what); }
-  static void receive(int fd, UartWire &wire, int64_t time, bool socket) {
+  static void receive(int fd, UartWire &wire, int64_t time, bool socket, size_t *total = nullptr) {
     uint8_t buffer[4096];
     for (;;) {
       const auto n = ::read(fd, buffer, sizeof(buffer));
-      if (n > 0) wire.enqueue(time, std::vector<uint8_t>(buffer, buffer + n));
-      else if (n == 0) {
+      if (n > 0) {
+        wire.enqueue(time, std::vector<uint8_t>(buffer, buffer + n));
+        if (total) *total += static_cast<size_t>(n);
+      } else if (n == 0) {
         if (socket) throw std::runtime_error("firmware UART disconnected");
         return;
       } else if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EIO) return;
@@ -124,6 +139,7 @@ private:
   std::deque<PendingFrame> frames_;
   std::vector<CapturedUartFrame> delivered_;
   uint64_t complete_bytes_ = 0, sent_bytes_ = 0;
+  std::FILE *trace_ = nullptr;
 };
 }  // namespace sim
 #endif  // SIM__UART_RELAY_HPP_
