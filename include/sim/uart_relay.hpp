@@ -3,6 +3,7 @@
 #define SIM__UART_RELAY_HPP_
 
 #include <cerrno>
+#include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -58,7 +59,7 @@ public:
     size_t got = 0;
     receive(pty_, to_firmware_, now_ns + delay_, false, &got);
     if (trace_ && got) {
-      std::fprintf(trace_, "%lld %zu\n", static_cast<long long>(now_ns), got);
+      std::fprintf(trace_, "%" PRId64 " %zu\n", now_ns, got);
       std::fflush(trace_);
     }
     deliver_to_pty(now_ns);
