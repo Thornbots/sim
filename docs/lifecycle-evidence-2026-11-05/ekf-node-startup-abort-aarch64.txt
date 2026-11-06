@@ -1,0 +1,140 @@
+35:[INFO] [seeded_ekf-33]: process started with pid [15691]
+78:[seeded_ekf-33] [INFO] [1793949164.074168668] [ekf_filter_node]: Waiting for clock to start...
+214:[ERROR] [seeded_ekf-33]: process has died [pid 15691, exit code -6, cmd '/workspaces/isaac_ros-dev/install/sentry_localization/lib/sentry_localization/seeded_ekf --red-start-x -5.25 --red-start-y -3.0 --blue-start-x 5.25 --blu
+259:[seeded_ekf-33] terminate called after throwing an instance of 'rclcpp::exceptions::RCLError'
+260:[seeded_ekf-33]   what():  could not create publisher: rcl node's context is invalid, at ./src/rcl/node.c:404
+Program terminated with signal SIGABRT, Aborted.
+#0  __pthread_kill_implementation (threadid=269660771500064, signo=signo@entry=6, no_tid=no_tid@entry=0) at ./nptl/pthread_kill.c:44
+Thread 15 (Thread 0xf54142f07000 (LWP 16033)):
+#0  0x0000f5414a381d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xab4dc16a0a10) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xab4dc16a0a10) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xab4dc16a0a10, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./np
+#3  0x0000f5414a3849f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xab4dc164f1e0, cond=0xab4dc16a09e8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xab4dc16a09e8, mutex=0xab4dc164f1e0) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000f5414797687c in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#6  0x0000f54147bd6790 [PAC] in void* eprosima::thread::ThreadProxy<eprosima::create_thread<eprosima::fastdds::rtps::FlowControllerImpl<eprosima::fastdds::rtps::FlowControllerSyncPublishMode, eprosima
+#7  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#8  0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 14 (Thread 0xf54145007000 (LWP 16029)):
+#0  0x0000f5414a3ee51c in __libc_recvfrom (fd=9, buf=0xab4dc1668cb0, len=65500, flags=0, addr=..., addrlen=0xf54145006288) at ../sysdeps/unix/sysv/linux/recvfrom.c:27
+#1  0x0000f54147aaea54 in eprosima::fastdds::rtps::UDPChannelResource::Receive(unsigned char*, unsigned int, unsigned int&, eprosima::fastrtps::rtps::Locator_t&) () from /opt/ros/jazzy/lib/libfastrtps
+#2  0x0000f54147aaef28 [PAC] in eprosima::fastdds::rtps::UDPChannelResource::perform_listen_operation(eprosima::fastrtps::rtps::Locator_t) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#3  0x0000f54147ab1334 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#4  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#5  0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 13 (Thread 0xf5414269e000 (LWP 16061)):
+#0  0x0000f5414a381d70 in __futex_abstimed_wait_common64 (private=<optimized out>, cancel=true, abstime=0xf5414269cfc8, op=265, expected=0, futex_word=0xf5414a79b120) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=<optimized out>, abstime=0xf5414269cfc8, clockid=0, expected=0, futex_word=0xf5414a79b120) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xf5414a79b120, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0xf5414269cfc8, private=<optimized ou
+#3  0x0000f5414a38de30 in do_futex_wait (sem=sem@entry=0xf5414a79b120, abstime=abstime@entry=0xf5414269cfc8, clockid=0) at ./nptl/sem_waitcommon.c:111
+#4  0x0000f5414a38def8 in __new_sem_wait_slow64 (sem=0xf5414a79b120, abstime=0xf5414269cfc8, clockid=0) at ./nptl/sem_waitcommon.c:183
+#5  0x0000f541479b5b04 in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#6  0x0000f54147c9ef38 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#7  0x0000f54147c9fbd0 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#8  0x0000f54147c9bffc [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#9  0x0000f54147ca4fe4 [PAC] in void* eprosima::thread::ThreadProxy<eprosima::create_thread<eprosima::fastdds::rtps::SharedMemChannelResource::init_thread(eprosima::fastrtps::rtps::Locator_t const&, e
+#10 0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#11 0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 12 (Thread 0xf541468be000 (LWP 16015)):
+#0  0x0000f5414a381d70 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0xab4dc1644400) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0xab4dc1644400) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xab4dc1644400, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./np
+#3  0x0000f5414a3849f0 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0xab4dc1642ec0, cond=0xab4dc16443d8) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_wait (cond=0xab4dc16443d8, mutex=0xab4dc1642ec0) at ./nptl/pthread_cond_wait.c:627
+#5  0x0000f5414797687c in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#6  0x0000f54147978e84 [PAC] in eprosima::fastrtps::rtps::ResourceEvent::unregister_timer(eprosima::fastrtps::rtps::TimedEventImpl*) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#7  0x0000f54147979090 [PAC] in eprosima::fastrtps::rtps::TimedEvent::~TimedEvent() () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#8  0x0000f541479790ec [PAC] in eprosima::fastrtps::rtps::TimedEvent::~TimedEvent() () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#9  0x0000f54147a1f6cc [PAC] in eprosima::fastdds::dds::DataWriterImpl::~DataWriterImpl() () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#10 0x0000f54147c64808 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#11 0x0000f54147a35d00 [PAC] in eprosima::fastdds::dds::PublisherImpl::delete_datawriter(eprosima::fastdds::dds::DataWriter const*) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#12 0x0000f541481b10d8 [PAC] in rmw_fastrtps_shared_cpp::destroy_publisher(char const*, CustomParticipantInfo*, rmw_publisher_s*) () from /opt/ros/jazzy/lib/librmw_fastrtps_shared_cpp.so
+#13 0x0000f541481ba920 [PAC] in rmw_fastrtps_shared_cpp::__rmw_destroy_publisher(char const*, rmw_node_s const*, rmw_publisher_s*) () from /opt/ros/jazzy/lib/librmw_fastrtps_shared_cpp.so
+#14 0x0000f54149f1bc34 [PAC] in ?? () from /opt/ros/jazzy/lib/librcl.so
+#15 0x0000f54149f1bf9c [PAC] in ?? () from /opt/ros/jazzy/lib/librcl.so
+#16 0x0000f54149f17374 [PAC] in ?? () from /opt/ros/jazzy/lib/librcl.so
+#17 0x0000f54149f19c70 [PAC] in rcl_logging_rosout_fini () from /opt/ros/jazzy/lib/librcl.so
+#18 0x0000f54149f1a500 [PAC] in rcl_logging_fini () from /opt/ros/jazzy/lib/librcl.so
+#19 0x0000f5414a8c2854 [PAC] in rclcpp::Context::shutdown(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) () from /opt/ros/jazzy/lib/librclcpp.so
+#20 0x0000f5414a9a4584 [PAC] in rclcpp::SignalHandler::deferred_signal_handler() () from /opt/ros/jazzy/lib/librclcpp.so
+#21 0x0000f5414a5e1ae0 [PAC] in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+Thread 11 (Thread 0xf54145817000 (LWP 16025)):
+#0  0x0000f5414a381d70 in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0xf54145816648, op=137, expected=0, futex_word=0xab4dc164444c) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0xf54145816648, clockid=-1050393524, expected=0, futex_word=0xab4dc164444c) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xab4dc164444c, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0xf54145816648, private=private@entry
+#3  0x0000f5414a385010 in __pthread_cond_wait_common (abstime=0xf54145816648, clockid=1, mutex=0xab4dc1642f10, cond=0xab4dc1644420) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_clockwait64 (abstime=0xf54145816648, clockid=1, mutex=0xab4dc1642f10, cond=0xab4dc1644420) at ./nptl/pthread_cond_wait.c:691
+#5  ___pthread_cond_clockwait64 (cond=0xab4dc1644420, mutex=0xab4dc1642f10, clockid=1, abstime=0xf54145816648) at ./nptl/pthread_cond_wait.c:679
+#6  0x0000f5414797650c in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#7  0x0000f54147977704 [PAC] in eprosima::fastrtps::rtps::ResourceEvent::event_service() () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#8  0x0000f5414797c5a4 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#9  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#10 0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 10 (Thread 0xf54148a7e000 (LWP 16004)):
+#0  syscall () at ../sysdeps/unix/sysv/linux/aarch64/syscall.S:38
+#1  0x0000f5414979992c in ?? () from /lib/aarch64-linux-gnu/liblttng-ust.so.1
+#2  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#3  0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 9 (Thread 0xf541470ce000 (LWP 16014)):
+#0  0x0000f5414a381d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0xf541470cd6b8, op=137, expected=0, futex_word=0xab4dc16516e8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0xf541470cd6b8, clockid=-1050339608, expected=0, futex_word=0xab4dc16516e8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xab4dc16516e8, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0xf541470cd6b8, private=private@entry
+#3  0x0000f5414a385010 in __pthread_cond_wait_common (abstime=0xf541470cd6b8, clockid=1, mutex=0xab4dc1651690, cond=0xab4dc16516c0) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_clockwait64 (abstime=0xf541470cd6b8, clockid=1, mutex=0xab4dc1651690, cond=0xab4dc16516c0) at ./nptl/pthread_cond_wait.c:691
+#5  ___pthread_cond_clockwait64 (cond=0xab4dc16516c0, mutex=0xab4dc1651690, clockid=1, abstime=0xf541470cd6b8) at ./nptl/pthread_cond_wait.c:679
+#6  0x0000f541498d41cc in ?? () from /opt/ros/jazzy/lib/librcl_logging_spdlog.so
+#7  0x0000f5414a5e1ae0 [PAC] in ?? () from /lib/aarch64-linux-gnu/libstdc++.so.6
+#8  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#9  0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 8 (Thread 0xf541447f7000 (LWP 16030)):
+#0  0x0000f5414a3ee518 in __libc_recvfrom (fd=10, buf=0xab4dc1678ca0, len=65500, flags=0, addr=..., addrlen=0xf541447f6288) at ../sysdeps/unix/sysv/linux/recvfrom.c:27
+#1  0x0000f54147aaea54 in eprosima::fastdds::rtps::UDPChannelResource::Receive(unsigned char*, unsigned int, unsigned int&, eprosima::fastrtps::rtps::Locator_t&) () from /opt/ros/jazzy/lib/libfastrtps
+#2  0x0000f54147aaef28 [PAC] in eprosima::fastdds::rtps::UDPChannelResource::perform_listen_operation(eprosima::fastrtps::rtps::Locator_t) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#3  0x0000f54147ab1334 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#4  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#5  0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 7 (Thread 0xf541437d7000 (LWP 16032)):
+#0  0x0000f5414a3ee518 in __libc_recvfrom (fd=12, buf=0xab4dc168f5e0, len=65500, flags=0, addr=..., addrlen=0xf541437d6288) at ../sysdeps/unix/sysv/linux/recvfrom.c:27
+#1  0x0000f54147aaea54 in eprosima::fastdds::rtps::UDPChannelResource::Receive(unsigned char*, unsigned int, unsigned int&, eprosima::fastrtps::rtps::Locator_t&) () from /opt/ros/jazzy/lib/libfastrtps
+#2  0x0000f54147aaef28 [PAC] in eprosima::fastdds::rtps::UDPChannelResource::perform_listen_operation(eprosima::fastrtps::rtps::Locator_t) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#3  0x0000f54147ab1334 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#4  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#5  0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 6 (Thread 0xf5414928e000 (LWP 16003)):
+#0  syscall () at ../sysdeps/unix/sysv/linux/aarch64/syscall.S:38
+#1  0x0000f5414979992c in ?? () from /lib/aarch64-linux-gnu/liblttng-ust.so.1
+#2  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#3  0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 5 (Thread 0xf54143fe7000 (LWP 16031)):
+#0  0x0000f5414a381d6c in __futex_abstimed_wait_common64 (private=<optimized out>, cancel=true, abstime=0xf54143fe5fc8, op=265, expected=0, futex_word=0xf5414a7a8120) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=<optimized out>, abstime=0xf54143fe5fc8, clockid=0, expected=0, futex_word=0xf5414a7a8120) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xf5414a7a8120, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0xf54143fe5fc8, private=<optimized ou
+#3  0x0000f5414a38de30 in do_futex_wait (sem=sem@entry=0xf5414a7a8120, abstime=abstime@entry=0xf54143fe5fc8, clockid=0) at ./nptl/sem_waitcommon.c:111
+#4  0x0000f5414a38def8 in __new_sem_wait_slow64 (sem=0xf5414a7a8120, abstime=0xf54143fe5fc8, clockid=0) at ./nptl/sem_waitcommon.c:183
+#5  0x0000f541479b5b04 in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#6  0x0000f54147c9ef38 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#7  0x0000f54147c9fbd0 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#8  0x0000f54147c9bffc [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#9  0x0000f54147ca4fe4 [PAC] in void* eprosima::thread::ThreadProxy<eprosima::create_thread<eprosima::fastdds::rtps::SharedMemChannelResource::init_thread(eprosima::fastrtps::rtps::Locator_t const&, e
+#10 0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#11 0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 4 (Thread 0xf541460ae000 (LWP 16024)):
+#0  0x0000f5414a381d6c in __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0xf541460ad6c8, op=137, expected=0, futex_word=0xab4dc16437a8) at ./nptl/futex-internal.c:57
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0xf541460ad6c8, clockid=-1050396760, expected=0, futex_word=0xab4dc16437a8) at ./nptl/futex-internal.c:87
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0xab4dc16437a8, expected=expected@entry=0, clockid=clockid@entry=1, abstime=abstime@entry=0xf541460ad6c8, private=private@entry
+#3  0x0000f5414a385010 in __pthread_cond_wait_common (abstime=0xf541460ad6c8, clockid=1, mutex=0xab4dc16437b0, cond=0xab4dc1643780) at ./nptl/pthread_cond_wait.c:503
+#4  ___pthread_cond_clockwait64 (abstime=0xf541460ad6c8, clockid=1, mutex=0xab4dc16437b0, cond=0xab4dc1643780) at ./nptl/pthread_cond_wait.c:691
+#5  ___pthread_cond_clockwait64 (cond=0xab4dc1643780, mutex=0xab4dc16437b0, clockid=1, abstime=0xf541460ad6c8) at ./nptl/pthread_cond_wait.c:679
+#6  0x0000f54147ca4e18 in void* eprosima::thread::ThreadProxy<eprosima::create_thread<eprosima::fastdds::rtps::SharedMemWatchdog::SharedMemWatchdog()::{lambda()#1}>(eprosima::fastdds::rtps::SharedMemW
+#7  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#8  0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 3 (Thread 0xf54141e8e000 (LWP 16062)):
+#0  0x0000f5414a3ee518 in __libc_recvfrom (fd=16, buf=0xab4dc17c8380, len=65500, flags=0, addr=..., addrlen=0xf54141e8d288) at ../sysdeps/unix/sysv/linux/recvfrom.c:27
+#1  0x0000f54147aaea54 in eprosima::fastdds::rtps::UDPChannelResource::Receive(unsigned char*, unsigned int, unsigned int&, eprosima::fastrtps::rtps::Locator_t&) () from /opt/ros/jazzy/lib/libfastrtps
+#2  0x0000f54147aaef28 [PAC] in eprosima::fastdds::rtps::UDPChannelResource::perform_listen_operation(eprosima::fastrtps::rtps::Locator_t) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#3  0x0000f54147ab1334 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#4  0x0000f5414a38582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#5  0x0000f5414a3eb8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79
+Thread 2 (Thread 0xf541414e9000 (LWP 16071)):
+#0  0x0000f5414a5abafc in __cxxabiv1::__si_class_type_info::__do_dyncast(long, __cxxabiv1::__class_type_info::__sub_kind, __cxxabiv1::__class_type_info const*, void const*, __cxxabiv1::__class_type_in
+#1  0x0000f5414a5a

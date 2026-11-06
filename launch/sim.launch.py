@@ -43,20 +43,30 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit, OnProcessStart, OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
-    Command, LaunchConfiguration, PathJoinSubstitution, PythonExpression)
+    Command, LaunchConfiguration, PythonExpression)
 from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
 from sim.auto_explore import SPAWN_YAW
 from sim.clock_bridge import clock_bridge_node
 from sim.display import display_error
 from sim.field import BLUE_START, default_world, world_path
+from sim.gz_process import gz_sim_process
 from sim.mcb_link import default_mcb_link
 from sim.suite_exit import finish_suite
 
 
+def _is_true(context, name):
+    return context.launch_configurations[name].lower() in ('true', '1', 'yes')
+
+
 RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
+
+
+def _gz_gui(context):
+    config = context.launch_configurations['gz_gui_config']
+    return [gz_sim_process(['-g', *(['--gui-config', config] if config else [])],
+                           name='gazebo_gui')]
 
 
 def _world_with_rtf(context):
@@ -270,7 +280,6 @@ def generate_launch_description():
         description='How much later than its sample cv_target_emulator stamps a '
         "detection: camera latency for target_tracker's camera_latency_s to undo"
     )
-    world = LaunchConfiguration('world')
     robot_name = LaunchConfiguration('robot_name')
 
     # --- Resource path so gz sim can resolve model://sim/... URIs used
@@ -299,16 +308,10 @@ def generate_launch_description():
     # --- Start the gz sim server with the requested world. The GUI comes up
     # separately once the robot is in (gz_gui below): a GUI started with the
     # server takes its first state before the spawn and never shows the robot.
-    gz_sim = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])
-        ),
-        launch_arguments={
-            'gz_args': [world, PythonExpression(["' -s' if '",
-                        LaunchConfiguration('uart_epoch_zero'),
-                        "'.lower() in ('true', '1', 'yes') else ' -r -s'"])],
-        }.items(),
-    )
+    # No shell between launch and gz: see sim/gz_process.py.
+    gz_sim = OpaqueFunction(function=lambda context: [gz_sim_process([
+        LaunchConfiguration('world').perform(context),
+        *(['-s'] if _is_true(context, 'uart_epoch_zero') else ['-r', '-s'])])])
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
     clock_bridge = clock_bridge_node(
@@ -401,13 +404,7 @@ def generate_launch_description():
     gz_gui = RegisterEventHandler(
         OnProcessExit(
             target_action=spawn_robot,
-            on_exit=[IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(PathJoinSubstitution(
-                    [FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])),
-                launch_arguments={'gz_args': ['-g', PythonExpression([
-                    "' --gui-config '", " + '", LaunchConfiguration('gz_gui_config'),
-                    "' if '", LaunchConfiguration('gz_gui_config'), "' else ''"])]}.items(),
-            )],
+            on_exit=[OpaqueFunction(function=_gz_gui)],
         ),
         condition=IfCondition(LaunchConfiguration('gui')),
     )
@@ -416,8 +413,8 @@ def generate_launch_description():
     # into ROS 2. The sim adapter adds acquisition timing and normalizes
     # invalid ranges before the shared hardware/sim lidar_self_filter.
     scan_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='scan_bridge',
         output='screen',
         arguments=['/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan'],
@@ -445,8 +442,8 @@ def generate_launch_description():
     # it does NOT talk to ROS on its own, hence this bridge.
     gz_joint_state_topic = [world_path('model/'), robot_name, '/joint_state']
     joint_state_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='joint_state_bridge',
         output='screen',
         arguments=[gz_joint_state_topic + ['@sensor_msgs/msg/JointState[gz.msgs.Model']],
@@ -462,8 +459,8 @@ def generate_launch_description():
     # /model/<robot_name>/odometry as gz.msgs.Odometry, not to ROS.
     gz_odom_topic = ['/model/', robot_name, '/odometry']
     odom_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='odom_bridge',
         output='screen',
         arguments=[gz_odom_topic + ['@nav_msgs/msg/Odometry[gz.msgs.Odometry']],
@@ -531,8 +528,8 @@ def generate_launch_description():
     # design needed.
     gz_cmd_vel_topic = ['/model/', robot_name, '/cmd_vel']
     cmd_vel_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='cmd_vel_bridge',
         output='screen',
         arguments=[gz_cmd_vel_topic + ['@geometry_msgs/msg/Twist]gz.msgs.Twist']],
@@ -548,8 +545,8 @@ def generate_launch_description():
     # ros_gz_interfaces/srv/SetEntityPose, so actor_driver can call it
     # every tick without starting a process per call.
     set_pose_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='set_pose_bridge',
         output='screen',
         arguments=[world_path('set_pose') + '@ros_gz_interfaces/srv/SetEntityPose'],
@@ -564,8 +561,8 @@ def generate_launch_description():
     # head turn.
     gz_headlink_topic = ['/model/', robot_name, '/joint/headlink/cmd_pos']
     head_pan_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='head_pan_bridge',
         output='screen',
         arguments=[gz_headlink_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
@@ -578,8 +575,8 @@ def generate_launch_description():
     # above.
     gz_headpitch_topic = ['/model/', robot_name, '/joint/headpitch/cmd_pos']
     head_pitch_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='head_pitch_bridge',
         output='screen',
         arguments=[gz_headpitch_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
@@ -594,8 +591,8 @@ def generate_launch_description():
     # realsense-yolov8-nitros-bridge/launch/isaac_ros_yolov8_realsense.launch.py)
     # so CV nodes written against the physical camera run unmodified in sim.
     camera_image_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='camera_image_bridge',
         condition=camera_on,
         output='screen',
@@ -647,8 +644,8 @@ def generate_launch_description():
     # One set of intrinsics, reused for colour and depth: sim's camera is a
     # single lens, so the extrinsics between them are identity too.
     camera_color_info_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='camera_color_info_bridge',
         condition=camera_on,
         output='screen',
@@ -657,8 +654,8 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
     camera_depth_info_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='camera_depth_info_bridge',
         condition=camera_on,
         output='screen',

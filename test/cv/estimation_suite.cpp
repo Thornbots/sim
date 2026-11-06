@@ -198,6 +198,9 @@ EstimationEnvironment *environment = nullptr;
 class EstimationSuite : public testing::TestWithParam<cb::Cell> {};
 TEST_P(EstimationSuite, Estimation) {
   ASSERT_TRUE(environment->error.empty()) << environment->error;
+  // After SIGINT every remaining cell fails at once, so TearDown stops the stack
+  // within the launch's SIGINT window.
+  ASSERT_TRUE(rclcpp::ok()) << "interrupted: ROS shut down";
   const auto c = GetParam();
   timing::Case timing_case(
       "test_estimation[" + c.layout + "-" +
@@ -306,6 +309,7 @@ INSTANTIATE_TEST_SUITE_P(Cells, EstimationSuite,
                            return cb::gtest_name(info.param.name);
                          });
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   cb::options.stage = "estimation";
   cb::parse_options(argc, argv);
   if (!cb::options.headless) {

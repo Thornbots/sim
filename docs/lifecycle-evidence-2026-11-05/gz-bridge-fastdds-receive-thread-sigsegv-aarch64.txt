@@ -1,0 +1,16 @@
+Thread 1 (Thread 0xf9acdb1c6d00 (LWP 544192)):
+#0  0x0000f9acddb56e10 in eprosima::fastrtps::rtps::StatefulWriter::matched_reader_remove(eprosima::fastrtps::rtps::GUID_t const&) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#1  0x0000f9acddd5b944 [PAC] in eprosima::fastrtps::rtps::EDP::unpairReaderProxy(eprosima::fastrtps::rtps::GUID_t const&, eprosima::fastrtps::rtps::GUID_t const&) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#2  0x0000f9acddd46710 [PAC] in eprosima::fastrtps::rtps::PDP::removeReaderProxyData(eprosima::fastrtps::rtps::GUID_t const&) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#3  0x0000f9acddd65f34 [PAC] in eprosima::fastrtps::rtps::EDPSimpleSUBListener::onNewCacheChangeAdded(eprosima::fastrtps::rtps::RTPSReader*, eprosima::fastrtps::rtps::CacheChange_t const*) () from /opt/ros/jazzy/lib/libf
+#4  0x0000f9acddb7c370 [PAC] in eprosima::fastrtps::rtps::StatefulReader::NotifyChanges(eprosima::fastrtps::rtps::WriterProxy*) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#5  0x0000f9acddb7cd14 [PAC] in eprosima::fastrtps::rtps::StatefulReader::change_received(eprosima::fastrtps::rtps::CacheChange_t*, eprosima::fastrtps::rtps::WriterProxy*, unsigned long) () from /opt/ros/jazzy/lib/libfas
+#6  0x0000f9acddb7d30c [PAC] in eprosima::fastrtps::rtps::StatefulReader::processDataMsg(eprosima::fastrtps::rtps::CacheChange_t*) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#7  0x0000f9acddb91ba4 [PAC] in eprosima::fastrtps::rtps::MessageReceiver::process_data_message_without_security(eprosima::fastrtps::rtps::EntityId_t const&, eprosima::fastrtps::rtps::CacheChange_t&, bool) () from /opt/r
+#8  0x0000f9acddb97c48 [PAC] in eprosima::fastrtps::rtps::MessageReceiver::proc_Submsg_Data(eprosima::fastrtps::rtps::CDRMessage_t*, eprosima::fastrtps::rtps::SubmessageHeader_t*, eprosima::fastrtps::rtps::EntityId_t&, b
+#9  0x0000f9acddb98d9c [PAC] in eprosima::fastrtps::rtps::MessageReceiver::processCDRMsg(eprosima::fastrtps::rtps::Locator_t const&, eprosima::fastrtps::rtps::Locator_t const&, eprosima::fastrtps::rtps::CDRMessage_t*) ()
+#10 0x0000f9acddba0148 [PAC] in eprosima::fastrtps::rtps::ReceiverResource::OnDataReceived(unsigned char const*, unsigned int, eprosima::fastrtps::rtps::Locator_t const&, eprosima::fastrtps::rtps::Locator_t const&) () fr
+#11 0x0000f9acddc6ef50 [PAC] in eprosima::fastdds::rtps::UDPChannelResource::perform_listen_operation(eprosima::fastrtps::rtps::Locator_t) () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#12 0x0000f9acddc71334 [PAC] in ?? () from /opt/ros/jazzy/lib/libfastrtps.so.2.14
+#13 0x0000f9ace110582c [PAC] in start_thread (arg=0x0) at ./nptl/pthread_create.c:447
+#14 0x0000f9ace116b8dc in thread_start () at ../sysdeps/unix/sysv/linux/aarch64/clone.S:79

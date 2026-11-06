@@ -444,6 +444,9 @@ ShotEnvironment *environment = nullptr;
 class ShotSuite : public testing::TestWithParam<cb::Cell> {};
 TEST_P(ShotSuite, ShotHit) {
   ASSERT_TRUE(environment->error.empty()) << environment->error;
+  // After SIGINT every remaining cell fails at once, so TearDown stops the stack
+  // within the launch's SIGINT window.
+  ASSERT_TRUE(rclcpp::ok()) << "interrupted: ROS shut down";
   auto c = GetParam();
   timing::Case timing_case("test_shot_hit[" + c.layout + "-" +
                            (c.speed == 0
@@ -602,6 +605,7 @@ INSTANTIATE_TEST_SUITE_P(Cells, ShotSuite, testing::ValuesIn(cb::cells(false)),
                            return cb::gtest_name(info.param.name);
                          });
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   if (argc == 2 && std::string(argv[1]) == "--print-launch-constants") {
     std::cout << cb::Json{{"MUZZLE_SPEED", cb::kMuzzleSpeed},
                           {"POINT_SHOOTER", {0., 0., .4}},

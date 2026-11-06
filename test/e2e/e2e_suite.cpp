@@ -137,8 +137,11 @@ public:
     timing::Phase phase("teardown");
     if (scorer)
       scorer->retire();
-    if (launch)
+    if (launch) {
       launch->stop();
+      EXPECT_TRUE(launch->clean())
+          << "stack shutdown needed SIGKILL; see the SIGKILLing line above";
+    }
     timing::set_sim_clock({});
     scorer.reset();
     control.reset();
@@ -255,6 +258,9 @@ std::vector<Cell> cases() {
 class E2ESuite : public testing::TestWithParam<Cell> {};
 TEST_P(E2ESuite, MCB) {
   ASSERT_TRUE(environment->error.empty()) << environment->error;
+  // After SIGINT every remaining cell fails at once, so TearDown stops the stack
+  // within the launch's SIGINT window.
+  ASSERT_TRUE(rclcpp::ok()) << "interrupted: ROS shut down";
   auto c = GetParam();
   timing::Case timing_case(
       cb::options.stage == "mcb_parked"
@@ -473,6 +479,7 @@ INSTANTIATE_TEST_SUITE_P(Cells, E2ESuite, testing::ValuesIn(cases()),
                            return cb::gtest_name(info.param.name);
                          });
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   if (argc == 2 && std::string(argv[1]) == "--print-launch-constants") {
     cb::Json paths = cb::Json::object();
     for (const auto &[name, path] : sim::match_scenario::parked_paths()) {

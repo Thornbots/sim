@@ -23,6 +23,7 @@
 #include <gz/msgs/time.pb.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -37,6 +38,7 @@
 #include <gz/plugin/Register.hh>
 #include <gz/sim/System.hh>
 #include <gz/sim/Events.hh>
+#include <gz/common/SignalHandler.hh>
 #include <gz/transport/Node.hh>
 
 namespace sim
@@ -66,6 +68,10 @@ public:
     gz::sim::EntityComponentManager &, gz::sim::EventManager & events) override
   {
     events_ = &events;
+    // The coordinator exits with the rest of the stack, so a gate holding for
+    // its release would sit out max_wait_s (30 s in epoch-zero mode) and gz
+    // would outlive launch's SIGINT and SIGTERM windows.
+    signals_.AddCallback([stopping = stopping_](int) {*stopping = true;});
     const auto release = sdf->Get<std::string>("release_topic", "/sim/lockstep/release").first;
     held_pub_ = node_.Advertise<gz::msgs::Time>(
       sdf->Get<std::string>("held_topic", "/sim/lockstep/held").first);
@@ -125,13 +131,17 @@ public:
     held_pub_.Publish(to_msg(t));
     const auto deadline = std::chrono::steady_clock::now() +
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(max_wait_);
-    while (strict_startup_ && released_ns_ <= t && std::chrono::steady_clock::now() < deadline) {
+    // Wait in short slices so a stop request is noticed within 10 ms.
+    while (released_ns_ <= t && !*stopping_ && std::chrono::steady_clock::now() < deadline) {
       cv_.wait_until(lock, std::min(deadline, std::chrono::steady_clock::now() +
         std::chrono::milliseconds(10)));
-      if (released_ns_ <= t) {held_pub_.Publish(to_msg(t));}
+      if (strict_startup_ && released_ns_ <= t) {held_pub_.Publish(to_msg(t));}
     }
-    const bool released = strict_startup_ ? released_ns_ > t :
-      cv_.wait_for(lock, max_wait_, [&] {return released_ns_ > t;});
+    if (*stopping_) {
+      events_->Emit<gz::sim::events::Stop>();
+      return;
+    }
+    const bool released = released_ns_ > t;
     if (!released) {
       ++timeouts_;
       if (strict_startup_) {
@@ -169,6 +179,8 @@ private:
   bool epoch_zero_pending_ = false;
   std::optional<std::chrono::steady_clock::time_point> startup_deadline_;
   gz::sim::EventManager * events_ = nullptr;
+  gz::common::SignalHandler signals_;
+  std::shared_ptr<std::atomic<bool>> stopping_ = std::make_shared<std::atomic<bool>>(false);
   // Destroy transport callbacks before the mutex and release state.
   gz::transport::Node node_;
 };

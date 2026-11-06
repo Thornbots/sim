@@ -52,7 +52,7 @@ from sim.auto_explore import SPAWN_YAW
 from sim.display import display_error
 from sim.field import BLUE_START, team_start_args
 from sim.mcb_link import default_mcb_link
-from sim.suite_exit import finish_suite
+from sim.suite_exit import finish_suite, suite_command
 
 STAGES = ('mcb_parked', 'mcb_drive', 'mcb_match')
 DRIVING = ('mcb_drive', 'mcb_match')
@@ -212,7 +212,7 @@ def _tests(context):
             config['uart_baud'] != '115200' or config['mcb_read_delay_ms'] != '0'):
         raise RuntimeError('UART fixture/baud overrides require run_tests:=false; '
                            'suite does not forward them')
-    cmd = ['ros2', 'run', 'sim', 'e2e_suite', '--stage', config['stage'],
+    cmd = [*suite_command('e2e_suite'), '--stage', config['stage'],
            '--backend', config['backend']]
     for arg, opt in (('speeds', '--e2e-speeds'), ('paths', '--e2e-paths'),
                      ('pose_latency_s', '--pose-latency-s'),
@@ -274,7 +274,7 @@ def generate_launch_description():
         "'/sim/match/opponent_0/path' if '", LaunchConfiguration('stage'),
         "' in ", repr(DRIVING), " else '/target/ground_truth_odom'"])
     path_bridge = Node(
-        package='ros_gz_bridge', executable='parameter_bridge', name='opponent_path_bridge',
+        package='sim', executable='gz_bridge', name='opponent_path_bridge',
         output='screen',
         arguments=[f'/model/{OPPONENT}/path@nav_msgs/msg/Odometry]gz.msgs.Odometry'],
         remappings=[(f'/model/{OPPONENT}/path', path_topic)],
@@ -455,7 +455,7 @@ def generate_launch_description():
                          'initial_yaw': parked_paths['initial_yaws'][name], **scene_wait}
                         if deterministic else {})}],
                     remappings=[('/target/ground_truth_odom', topic)]), Node(
-                    package='ros_gz_bridge', executable='parameter_bridge',
+                    package='sim', executable='gz_bridge',
                     name=f'path_bridge_{name}', output='screen',
                     arguments=[f'/model/{name}/path@nav_msgs/msg/Odometry]gz.msgs.Odometry'],
                     remappings=[(f'/model/{name}/path', topic)],

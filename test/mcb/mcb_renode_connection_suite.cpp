@@ -43,7 +43,7 @@ TEST(RenodeConnection, ReconnectsPreservePeripheralState) {
     "emulation CreateExternalControlServer \"server\" " << port << '\n';
   sim::LaunchTree server("renode_connection",
     {SIM_RENODE_ROOT "/renode", "--disable-gui", "--plain", "--port", "-1", base + ".resc"},
-    base + ".log");
+    base + ".log", sim::LaunchOptions::emulator());
   {
     sim::type_c::Board board(port);
     EXPECT_EQ(board.read_register(0x4000661c), 1U) << "CAN2 reset must preserve CAN1 filters";
