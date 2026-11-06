@@ -255,6 +255,16 @@ target_link_libraries(robot_spawn_ready gz-transport::core gz-msgs::core)
 ament_target_dependencies(robot_spawn_ready rclcpp std_msgs)
 install(TARGETS robot_spawn_ready DESTINATION lib/${PROJECT_NAME})
 
+add_executable(startup_barrier src/startup_barrier.cpp)
+target_compile_features(startup_barrier PUBLIC cxx_std_17)
+ament_target_dependencies(startup_barrier rclcpp std_msgs)
+install(TARGETS startup_barrier DESTINATION lib/${PROJECT_NAME})
+
+add_executable(initial_pose_setter src/initial_pose_setter.cpp)
+target_compile_features(initial_pose_setter PUBLIC cxx_std_17)
+ament_target_dependencies(initial_pose_setter rclcpp geometry_msgs)
+install(TARGETS initial_pose_setter DESTINATION lib/${PROJECT_NAME})
+
 add_executable(match_environment src/match_environment.cpp)
 target_compile_features(match_environment PUBLIC cxx_std_17)
 target_link_libraries(match_environment

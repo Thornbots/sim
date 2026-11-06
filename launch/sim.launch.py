@@ -78,7 +78,7 @@ def _world_with_rtf(context):
             'true', '1', 'yes')
         startup = ('<strict_startup>true</strict_startup>'
                    '<epoch_zero_startup>true</epoch_zero_startup>' if epoch_zero else '')
-        max_wait = '30.0' if epoch_zero else '5.0'
+        max_wait = context.launch_configurations['startup_wait_s'] if epoch_zero else '5.0'
         sdf = sdf.replace('</world>',
                           '<plugin filename="lockstep_gate" name="sim::LockstepGate">'
                           f'<max_wait_s>{max_wait}</max_wait_s>{startup}</plugin></world>', 1)
@@ -378,6 +378,8 @@ def generate_launch_description():
         package='sim', executable='robot_spawn_ready', name='robot_spawn_ready', output='screen',
         condition=IfCondition(LaunchConfiguration('verify_epoch_zero_spawn')),
         parameters=[{'model': robot_name,
+                     'startup_timeout_s': ParameterValue(
+                         LaunchConfiguration('startup_wait_s'), value_type=float),
                      'x': ParameterValue(LaunchConfiguration('x'), value_type=float),
                      'y': ParameterValue(LaunchConfiguration('y'), value_type=float),
                      'z': ParameterValue(LaunchConfiguration('z'), value_type=float),
@@ -762,6 +764,8 @@ def generate_launch_description():
         DeclareLaunchArgument('uart_relay_fixture', default_value='false'),
         DeclareLaunchArgument('uart_deterministic', default_value='false'),
         DeclareLaunchArgument('uart_epoch_zero', default_value='false'),
+        DeclareLaunchArgument('startup_wait_s', default_value='30.0',
+                              description='epoch-zero wall limit for the gate and spawn check'),
         DeclareLaunchArgument('verify_epoch_zero_spawn', default_value='false'),
         DeclareLaunchArgument('uart_epoch_zero_ack', default_value='/detector_standin/ready'),
         DeclareLaunchArgument('uart_baud', default_value='115200'),
