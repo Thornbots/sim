@@ -46,6 +46,7 @@
 #include "rosgraph_msgs/msg/clock.hpp"
 #include "sim/combat.hpp"
 #include "sim/cv_head_aim_core.hpp"
+#include "sim/keyed_noise.hpp"
 #include "sim/match_scenario.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "urdf/model.h"
@@ -227,7 +228,8 @@ std::vector<Matrix4> armor_offsets() {
 class MatchEnvironment : public rclcpp::Node {
 public:
   MatchEnvironment()
-      : Node("match_environment"), random_(declare_parameter("seed", 2026)) {
+      : Node("match_environment"),
+        seed_(static_cast<uint64_t>(declare_parameter("seed", 2026))) {
     declare_parameter("active", false);
     stage_ = declare_parameter("stage", std::string("mcb_drive"));
     for (const auto &name : kRouteNames) {
@@ -481,8 +483,10 @@ private:
           (root.inverse() * Eigen::Vector4d(aim.x(), aim.y(), aim.z(), 1.0))
               .head<3>();
       auto [yaw, pitch] = sim::cv_head_aim::solve_head_angles(relative);
-      yaw += random_.gauss(0.015);
-      pitch += random_.gauss(0.015);
+      // Keyed by the shooter's truth sample, not drawn from one shared stream.
+      PythonRandom noise(aim_noise_key(name, truth.at(name).stamp_s));
+      yaw += noise.gauss(0.015);
+      pitch += noise.gauss(0.015);
       gz::msgs::Double yaw_message;
       yaw_message.set_data(yaw);
       head_commands_.at(name)[0].Publish(yaw_message);
@@ -502,8 +506,16 @@ private:
     }
   }
 
+  // PythonRandom takes a non-negative 62-bit seed.
+  int64_t aim_noise_key(const std::string &name, double stamp_s) const {
+    const auto robot = static_cast<uint64_t>(
+        std::distance(path_names_.begin(), std::find(path_names_.begin(), path_names_.end(), name)));
+    return static_cast<int64_t>(
+        sim::noise_key(seed_, robot, std::llround(stamp_s * 1e9)) >> 2);
+  }
+
   std::string stage_;
-  PythonRandom random_;
+  uint64_t seed_;
   std::map<std::string, int> hp_;
   Vector2 world_velocity_ = Vector2::Zero();
   std::map<std::string, Truth> truth_;

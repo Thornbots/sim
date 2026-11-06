@@ -473,6 +473,9 @@ if(BUILD_TESTING)
   target_include_directories(test_pose_history PRIVATE include)
   target_link_libraries(test_pose_history pose_history Eigen3::Eigen)
   # Real gz server on the paused field plus the opponent_driver executable.
+  ament_add_gtest(test_keyed_noise test/cpp/test_keyed_noise.cpp TIMEOUT 30)
+  target_include_directories(test_keyed_noise PRIVATE include)
+
   ament_add_gtest(test_opponent_startup test/cpp/test_opponent_startup.cpp TIMEOUT 1500)
   add_dependencies(test_opponent_startup opponent_driver)
   target_compile_definitions(test_opponent_startup PRIVATE

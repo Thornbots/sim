@@ -1464,6 +1464,12 @@ its TF reads are stamped 0.1 s before the tick and every miss is counted on
 `/point_to_cv_target/latest_tf_fallbacks`. The harness prints the count with the
 lockstep summary and fails the run unless it is 0.
 
+Random draws are keyed, not streamed ([`keyed_noise.hpp`](include/sim/keyed_noise.hpp)):
+`detector_standin`'s ray noise (when enabled) is drawn per (seed, opponent, capture
+stamp, panel) and `match_environment`'s ghost aim noise per (seed, ghost, truth
+stamp), so a draw never depends on how many other draws or which robot's message
+came first, as in `bench_world`. Ghost fire timing is deterministic (0.5 s apart).
+
 `/sim/lockstep/status` reports holds, per-chain wall wait and timeout counts.
 The harness requires fresh status, at least one hold, and zero timeouts;
 the native log checker also rejects gate/coordinator timeout messages.

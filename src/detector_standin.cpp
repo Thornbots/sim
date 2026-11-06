@@ -38,6 +38,7 @@
 #include <gz/msgs/pose_v.pb.h>
 #include <gz/transport/Node.hh>
 #include <rclcpp/rclcpp.hpp>
+#include "sim/keyed_noise.hpp"
 #include <rclcpp_components/register_node_macro.hpp>
 #include <rosgraph_msgs/msg/clock.hpp>
 #include <std_msgs/msg/header.hpp>
@@ -111,7 +112,7 @@ public:
     frame_id_ = declare_parameter("frame_id", "camera");
     depth_coeff_ = declare_parameter("noise_depth_range_coeff", 0.0);
     lateral_rad_ = declare_parameter("noise_lateral_rad", 0.0);
-    rng_.seed(declare_parameter("seed", 0));
+    seed_ = static_cast<uint64_t>(declare_parameter("seed", 0));
     // The URDF camera's: 640x480, horizontal_fov 1.5184, 0.1-10 m.
     const int w = declare_parameter("image_width", 640);
     const int h = declare_parameter("image_height", 480);
@@ -341,7 +342,9 @@ private:
     out.header.stamp = stamp;
     out.header.frame_id = frame_id_;
     for (size_t i = 0; i < theirs.size(); ++i) {
+      size_t panel_index = 0;
       for (const auto & root_T_panel : root_T_panels_) {
+        const size_t panel = panel_index++;
         const Eigen::Isometry3d camera_T_panel =
           camera_T_world * theirs[i].world_T_root * root_T_panel;
         const Eigen::Vector3d centre = camera_T_panel.translation();
@@ -350,7 +353,7 @@ private:
         {
           continue;
         }
-        const Eigen::Vector3d shift = ray_noise(centre);
+        const Eigen::Vector3d shift = ray_noise(centre, stamp.nanoseconds(), i, panel);
         dji_serial_bridge::msg::PanelDetection d;
         d.header = out.header;
         const auto corners = panel_corners(camera_T_panel, panel_w_, panel_h_);
@@ -368,7 +371,10 @@ private:
   }
 
   // A D435-shaped error: std depth_coeff * r^2 along the ray, lateral_rad * r across it.
-  Eigen::Vector3d ray_noise(const Eigen::Vector3d & p)
+  // Drawn from a stream keyed by (seed, capture stamp, opponent, panel), so a
+  // detection's error does not depend on which others were drawn before it.
+  Eigen::Vector3d ray_noise(
+    const Eigen::Vector3d & p, int64_t stamp_ns, size_t opponent, size_t panel)
   {
     const double r = p.norm();
     if (r <= 0.0 || (depth_coeff_ <= 0.0 && lateral_rad_ <= 0.0)) {
@@ -377,10 +383,11 @@ private:
     const Eigen::Vector3d along = p / r;
     const Eigen::Vector3d side = along.cross(Eigen::Vector3d::UnitZ()).normalized();
     const Eigen::Vector3d up = side.cross(along);
+    std::mt19937_64 rng(sim::noise_key(seed_, opponent, stamp_ns, panel));
     std::normal_distribution<double> n(0.0, 1.0);
-    const double depth = n(rng_);
-    const double horizontal = n(rng_);
-    const double vertical = n(rng_);
+    const double depth = n(rng);
+    const double horizontal = n(rng);
+    const double vertical = n(rng);
     return along * (depth_coeff_ * r * r * depth) +
            (side * horizontal + up * vertical) * (lateral_rad_ * r);
   }
@@ -399,7 +406,7 @@ private:
   std::vector<int64_t> class_ids_;
   double half_angle_, score_, depth_coeff_, lateral_rad_, max_range_;
   Intrinsics k_;
-  std::mt19937 rng_;
+  uint64_t seed_ = 0;
   Eigen::Isometry3d head_pitch_T_camera_;
   std::vector<Eigen::Isometry3d> root_T_panels_;
   double panel_w_ = 0.0, panel_h_ = 0.0;
