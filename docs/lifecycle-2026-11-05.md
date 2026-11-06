@@ -318,3 +318,14 @@ A further 300 iterations of the final build were lost to the 09:10 Colima hang a
 harness's rclpy peers exited 1 in 4 iterations when interrupted before their node existed; peers are not
 counted. Owned-context-only is a negative result worth keeping: destroying the context alone does not help
 while the node is leaked.
+
+### "The broader RTF gates" belong to D-speed
+
+The phrase entered the roadmap in `25405fe2` (2026-11-02) as "broader lifecycle/RTF gates", copied from
+[de-harness-2026-11-02.md](de-harness-2026-11-02.md#unfinished-gates): "named RTF bottleneck/rendering
+measurements" among open items. That is the previous roadmap's D-speed ("Find the RTF bottleneck and render only
+scored inputs", [E2E_PLAN speed](../../docs/E2E_PLAN.md#speed)), which is paused. The lifecycle half of the phrase
+was this work. What E-launch could own already exists: `e2e_test_core.hpp` throws on a clock that stalls for five
+wall seconds or moves backwards, the lockstep gates and `[wait_until]`/wall-cap limits fail the run,
+`check_bench_log` rejects those messages, and every suite prints `suite timing` with its RTF. A minimum-RTF gate
+would need a numeric speed bar that no document defines, so it is D-speed acceptance; nothing was invented here.
