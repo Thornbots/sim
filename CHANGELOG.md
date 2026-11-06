@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Seeded noise is keyed by (seed, robot, stamp[, panel]) instead of one shared
+  stream: `detector_standin` ray noise and `match_environment` ghost aim noise
+  no longer depend on message arrival order (`keyed_noise.hpp`, unit-tested).
+  Ghost aim noise values differ from the previous stream's for the same seed.
+
 - E2E lockstep stages run `point_to_cv_target` with `allow_latest_tf:=false`:
   its TF reads are stamped, not the newest to arrive, and each miss is counted on
   `/point_to_cv_target/latest_tf_fallbacks`; the harness fails a run with any.
