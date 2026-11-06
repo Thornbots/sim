@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <cmath>
@@ -112,6 +113,12 @@ inline uint8_t referee_u8(int64_t value) {
     throw std::out_of_range("referee value outside uint8 range");
   }
   return static_cast<uint8_t>(value);
+}
+
+// Set by the gz system when gz is told to stop; ends blocking firmware waits.
+inline std::atomic<bool> &cancelled() {
+  static std::atomic<bool> flag{false};
+  return flag;
 }
 
 struct Referee {
@@ -486,6 +493,10 @@ public:
     return result;
   }
 
+  // The signal that killed the process (0 if none): SIGINT/SIGTERM mean someone is
+  // stopping the stack, which kill_launch.sh does to every descendant.
+  int exit_signal() const { return exit_signal_; }
+
 private:
   void spawn(int master_fd) {
     int in[2], out[2];
@@ -564,7 +575,8 @@ private:
         throw std::runtime_error(
             "MCB firmware stopped responding to hardware ticks");
       }
-      const int ready = poll(&descriptor, 1, static_cast<int>(timeout));
+      // Wait in slices so a stop request ends even the 600 s board boot wait.
+      const int ready = poll(&descriptor, 1, static_cast<int>(std::min<long>(timeout, 100)));
       if (ready < 0 && errno == EINTR) {
         continue;
       }
@@ -572,8 +584,10 @@ private:
         system_error("poll firmware");
       }
       if (ready == 0) {
-        throw std::runtime_error(
-            "MCB firmware stopped responding to hardware ticks");
+        if (cancelled()) {
+          throw std::runtime_error("MCB firmware wait cancelled by a stop request");
+        }
+        continue;
       }
       const auto received =
           ::read(output_fd_, data.data() + offset, count - offset);
@@ -589,6 +603,7 @@ private:
         std::string code = "None";
         if (exited == pid_) {
           pid_ = -1;
+          if (WIFSIGNALED(status)) exit_signal_ = WTERMSIG(status);
           code = std::to_string(WIFEXITED(status) ? WEXITSTATUS(status)
                                                   : -WTERMSIG(status));
         }
@@ -602,8 +617,9 @@ private:
   void close() {
     close_fd(input_fd_);
     if (pid_ > 0) {
-      const auto deadline =
-          std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      // The board adapter may be inside a Renode advance (up to ~11 s at boot).
+      const auto deadline = std::chrono::steady_clock::now() +
+                            std::chrono::seconds(adapter_.empty() ? 2 : 20);
       int status = 0;
       bool done = false;
       while (std::chrono::steady_clock::now() < deadline) {
@@ -627,6 +643,7 @@ private:
   std::string binary_, adapter_;
   uint32_t mode_ = 0, time_ms_ = 0;
   pid_t pid_ = -1;
+  int exit_signal_ = 0;
   int input_fd_ = -1, output_fd_ = -1;
 };
 } // namespace sim::mcb_firmware

@@ -138,8 +138,26 @@ TEST(LaunchTreeSignals, GroupModeReachesEveryMemberWithoutForwarding) {
   sim::LaunchTree tree("group", {"python3", "-c",
                                  two_process_script(kMemberExitsOnInt,
                                                     "    member.wait()\n    sys.exit(0)\n")},
-                       log.string(), true);
+                       log.string(), sim::LaunchOptions{true});
   ASSERT_TRUE(wait_ready(tree));
+  tree.stop(5.0);
+  EXPECT_TRUE(tree.clean());
+  std::filesystem::remove(log);
+}
+// Renode: third-party SIGINT stays blocked, the owner stops it with SIGTERM.
+TEST(LaunchTreeSignals, EmulatorOptionsBlockSigintAndStopOnSigterm) {
+  const auto log = std::filesystem::temp_directory_path() / "sim_stop_emulator.log";
+  sim::LaunchTree tree("emulator", {"python3", "-c",
+      "import signal, sys, time\n"
+      "signal.signal(signal.SIGINT, lambda s, f: sys.exit(1))\n"  // a runtime handler
+      "signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))\n"
+      "print('ready', flush=True)\n"
+      "while True: time.sleep(1)\n"}, log.string(), sim::LaunchOptions::emulator());
+  ASSERT_TRUE(wait_ready(tree));
+  const auto group = tree.pid();
+  EXPECT_EQ(kill(group, SIGINT), 0);  // what kill_launch.sh does
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  EXPECT_TRUE(tree.alive());
   tree.stop(5.0);
   EXPECT_TRUE(tree.clean());
   std::filesystem::remove(log);

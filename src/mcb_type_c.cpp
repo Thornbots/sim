@@ -1,4 +1,5 @@
 // Copyright 2026 Thornbots. SPDX-License-Identifier: Apache-2.0
+#include <csignal>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -93,7 +94,7 @@ public:
     process_ = std::make_unique<sim::LaunchTree>("renode",
         std::vector<std::string>{(root / "renode").string(), "--disable-gui", "--plain",
                                   "--port", "-1", script.string()},
-        (directory_ / "renode.log").string(), true);
+        (directory_ / "renode.log").string(), sim::LaunchOptions::emulator());
     for (int attempt = 0; attempt < 100; ++attempt) {
       if (!process_->alive()) throw std::runtime_error(process_->read_log());
       if (sim::type_c::listening(std::stoul(port))) {
@@ -113,7 +114,16 @@ private:
 };
 }
 
+volatile std::sig_atomic_t g_stop = 0;
+extern "C" void on_stop(int) { g_stop = 1; }
+
 int main() {
+  // kill_launch.sh and Ctrl-C signal every process; end the tick loop and run the
+  // normal teardown (close the board, stop Renode) instead of dying with it open.
+  struct sigaction stop{};
+  stop.sa_handler = on_stop;  // no SA_RESTART: a blocked fread must return
+  sigaction(SIGINT, &stop, nullptr);
+  sigaction(SIGTERM, &stop, nullptr);
   // LaunchTree diagnostics must not enter the binary hardware pipe.
   std::cout.rdbuf(std::cerr.rdbuf());
   try {
@@ -127,6 +137,7 @@ int main() {
     // The board deliberately requires an absent remote during its power-on guard.
     const auto boot_start = std::chrono::steady_clock::now();
     board.advance(3500000);
+    if (g_stop) return 0;  // stopped during the power-on guard: tear down normally
     std::cerr << "Type C power-on guard completed in " <<
         std::chrono::duration<double>(std::chrono::steady_clock::now() - boot_start).count()
         << " wall seconds\n";
@@ -139,7 +150,7 @@ int main() {
     sim::mcb_protocol::DJISerial parser;
     std::optional<sim::mcb_protocol::Pose> initial;
     // Stationary calibration: inputs are constant, so advance 10 ms at a time.
-    for (unsigned step = 0; step < 600 && !initial; ++step) {
+    for (unsigned step = 0; step < 600 && !initial && !g_stop; ++step) {
       if (step % 10 == 0) board.referee(sim::mcb_firmware::referee_frames(referee));
       board.advance(10000);
       for (const auto &frame : parser.feed(board.uart())) {
@@ -147,6 +158,7 @@ int main() {
           initial = sim::mcb_protocol::unpack<sim::mcb_protocol::Pose>(frame.payload);
       }
     }
+    if (g_stop) return 0;
     board.remote(false);
     board.motors();
     if (!initial || board.frames() == 0 || parser.errors().crc8 || parser.errors().crc16)
@@ -160,7 +172,7 @@ int main() {
     sim::mcb_motor::ProjectileExit exit;
     Input input;
     uint32_t remote_mode = 0;
-    while (std::fread(&input, sizeof(input), 1, stdin) == 1) {
+    while (!g_stop && std::fread(&input, sizeof(input), 1, stdin) == 1) {
       if (!input.cycles || input.cycles > 100 || input.referee_bytes > 4096 || input.mode > 5 ||
           (input.mode & 3) > 1)
         throw std::runtime_error("Type C supports stop and simple auto-drive modes only");

@@ -21,6 +21,7 @@
 #include <gz/sim/EventManager.hh>
 #include <gz/transport/Node.hh>
 #include <atomic>
+#include <csignal>
 #include <geometry_msgs/msg/twist.hpp>
 #include <dji_serial_bridge/msg/sim_frame_metadata.hpp>
 #include <dji_serial_bridge/msg/sim_frame_ack.hpp>
@@ -44,7 +45,10 @@ public:
     events_ = &events;
     // Launch stops the UART bridge and coordinator at the same moment as gz;
     // a missing acknowledgment then is shutdown, not a lockstep failure.
-    signals_.AddCallback([stopping = stopping_](int) { *stopping = true; });
+    signals_.AddCallback([stopping = stopping_](int) {
+      *stopping = true;
+      mcb_firmware::cancelled() = true;
+    });
     gz::sim::Model model(entity);
     body_ = gz::sim::Link(model.CanonicalLink(ecm));
     body_.EnableVelocityChecks(ecm);
@@ -215,9 +219,16 @@ public:
           coordinated_);
       if (!coordinated_) RCLCPP_WARN(node_->get_logger(), "UART relay fixture: timestamps and publication are not lockstep");
     }
-    firmware_ = std::make_unique<mcb_firmware::Firmware>(relay_ ? relay_->child_fd() : pty_->master(),
-        sdf->Get<std::string>("firmware_binary", "").first, drive_,
-        sdf->Get<bool>("auto_fire", true).first, adapter);
+    try {
+      firmware_ = std::make_unique<mcb_firmware::Firmware>(relay_ ? relay_->child_fd() : pty_->master(),
+          sdf->Get<std::string>("firmware_binary", "").first, drive_,
+          sdf->Get<bool>("auto_fire", true).first, adapter);
+    } catch (const std::runtime_error &) {
+      // Ctrl-C during the board's boot calibration: stop instead of failing.
+      if (!mcb_firmware::cancelled()) throw;
+      events.Emit<gz::sim::events::Stop>();
+      return;
+    }
     if (relay_) relay_->close_child();
     if (coordinated_) {
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -266,6 +277,7 @@ public:
 
   void PreUpdate(const gz::sim::UpdateInfo &info, gz::sim::EntityComponentManager &ecm) override {
     commit_control();
+    if (!firmware_) return;  // Configure was cancelled by a stop request
     if (epoch_zero_ && !bootstrap_done_) {
       executor_->spin_some();
       if (!failure_.empty()) throw std::runtime_error(failure_);
@@ -361,7 +373,19 @@ public:
                                   acceleration.X(), acceleration.Y(), acceleration.Z()};
     const auto uart_time = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     if (relay_) relay_->before_step(uart_time);
-    const auto output = firmware_->step(1, readings, referee_, feedback, external_, imu);
+    mcb_firmware::Firmware::Output output;
+    try {
+      output = firmware_->step(1, readings, referee_, feedback, external_, imu);
+    } catch (const std::runtime_error &) {
+      // kill_launch.sh and Ctrl-C signal every process, so the firmware can die
+      // of SIGINT/SIGTERM just before this process learns it is stopping.
+      const int by = firmware_->exit_signal();
+      if (*stopping_ || by == SIGINT || by == SIGTERM) {
+        events_->Emit<gz::sim::events::Stop>();
+        return;
+      }
+      throw;
+    }
     if (relay_) relay_->after_step(uart_time);
     if (coordinated_) {
       for (const auto &frame : relay_->take_delivered()) {
@@ -419,7 +443,7 @@ public:
   }
 
   void PostUpdate(const gz::sim::UpdateInfo &info, const gz::sim::EntityComponentManager &) override {
-    if (!coordinated_ || info.paused) return;
+    if (!firmware_ || !coordinated_ || info.paused) return;
     if (pending_.empty() && consume_pending_.empty() && failure_.empty()) return;
     const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
