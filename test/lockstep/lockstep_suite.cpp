@@ -245,6 +245,57 @@ TEST_F(Lockstep, StrictCoordinatorBeforeGateFindsFirstRelease) {
   EXPECT_EQ(clock_, 5000000);
 }
 
+// A chain "extra" every 10 ms behind the 5 ms MCB chain, answering on two alternatives.
+TEST_F(Lockstep, AnyOfGroupIsSatisfiedByEitherTopicAndHoldsAtTheLaggedTick) {
+  auto a = node_->create_publisher<std_msgs::msg::Header>("/lockstep_test/a", 100);
+  auto b = node_->create_publisher<std_msgs::msg::Header>("/lockstep_test/b", 100);
+  start(true, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  coordinator(true, {"-p", "chains:=[mcb_batch,extra]", "-p", "extra.period_s:=0.010",
+    "-p", "extra.phase_s:=0.0", "-p", "extra.lag_s:=0.002", "-p", "extra.align_s:=0.004",
+    "-p", "extra.acks:=[/lockstep_test/a|/lockstep_test/b]"});
+  const auto answer = [&](rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr & pub, int64_t ns) {
+    std_msgs::msg::Header h;
+    h.stamp = rclcpp::Time(ns);
+    pub->publish(h);
+  };
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {return ack_->get_subscription_count() > 0 &&
+    a->get_subscription_count() > 0 && b->get_subscription_count() > 0;}, 2));
+  ack(5000000);
+  // The extra chain's first tick is 10 ms; its lag puts the hold at 12 ms rounded up to
+  // 4 ms, which is 12 ms; the MCB chain stops it at 10 ms first.
+  ASSERT_TRUE(wait([&] {return held_ == 10000000;}, 2)) << coordinator_->read_log();
+  ack(10000000);
+  ASSERT_TRUE(wait([&] {return held_ == 12000000;}, 2)) << coordinator_->read_log();
+  std::this_thread::sleep_for(50ms);
+  EXPECT_EQ(held_, 12000000);  // neither alternative has answered tick 10 ms
+  answer(b, 10000000);
+  ASSERT_TRUE(wait([&] {return held_ == 15000000;}, 2)) << coordinator_->read_log();
+  EXPECT_EQ(status_.count("timeouts") ? status_["timeouts"] : "0", "0");
+}
+
+// Messages are counted, whatever their stamps, when a producer's stamps are not the tick's.
+TEST_F(Lockstep, CountedGroupWaitsForOneMessagePerTick) {
+  auto c = node_->create_publisher<std_msgs::msg::Header>("/lockstep_test/c", 100);
+  start(true, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  coordinator(true, {"-p", "chains:=[mcb_batch,extra]", "-p", "extra.period_s:=0.010",
+    "-p", "extra.phase_s:=0.0", "-p", "extra.acks:=[~/lockstep_test/c]"});
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {return ack_->get_subscription_count() > 0 &&
+    c->get_subscription_count() > 0;}, 2));
+  ack(5000000);
+  ASSERT_TRUE(wait([&] {return held_ == 10000000;}, 2)) << coordinator_->read_log();
+  ack(10000000);
+  std::this_thread::sleep_for(50ms);
+  EXPECT_EQ(held_, 10000000);  // tick 10 ms has no message yet
+  std_msgs::msg::Header h;
+  h.stamp = rclcpp::Time(1);  // the stamp is irrelevant
+  c->publish(h);
+  ASSERT_TRUE(wait([&] {return held_ == 15000000;}, 2)) << coordinator_->read_log();
+}
+
 TEST_F(Lockstep, StrictMissingInitialAckStopsWithoutFreeAdvance) {
   start(true, true);
   ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));

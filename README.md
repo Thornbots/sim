@@ -1480,8 +1480,26 @@ stamp, panel) and `match_environment`'s ghost aim noise per (seed, ghost, truth
 stamp), so a draw never depends on how many other draws or which robot's message
 came first, as in `bench_world`. Ghost fire timing is deterministic (0.5 s apart).
 
+Every Jetson-side producer of a UART frame is a chain too (`producer_chains:=auto`, on
+with epoch-zero startup; `PRODUCER_CHAINS` in [`e2e.launch.py`](launch/e2e.launch.py)).
+Each holds physics at its node's own tick and waits for an ack group `a|b`: the bridge's
+`~/tx_ack/<type>` (the frame reached its queue) or the producer's none-mark (nothing to
+send this tick). Chains: `cv_target` (40 Hz), `detector` (60 Hz, through selector and
+tracker; the tracker is told to run `process_delay_s` 25 ms after the capture so it, and
+its stamp, sit on a hold), `nav` (10 Hz), `ekf` (counted acks: one relay frame or mark
+per tick; the stock EKF's period is set to 34 ms, a whole number of ms, and it takes its
+phase from the first non-zero clock, which `boot_hold_s` fixes) and `scan` (rf2o's quality
+diagnostic per lidar scan, 89 ms apart on gz's whole-ms grid). MCB POSE frames are not a
+chain: the plugin holds at a delivered POSE until `pose_consumed` reports `/odom`, the EKF
+input, the relay and TF `odom<-camera/muzzle` at its stamp. The bridge queues frames
+(`sim_tx_queue`) and the coordinator flushes the queue after each hold's chains answer, so
+frames from producers that fire at the same instant reach the PTY in a fixed order (type,
+stamp) and are gated on the hold time, not on a clock that may trail. The relay decides on
+the localization sample's stamp (`message_clock`). `mmm`, whose ping protocol runs on wall
+time, is not launched.
+
 Run-to-run differences are located with `MCB_UART_TRACE=<file>`, which makes the MCB
-plugin log `<sim ns> <bytes>` for every Jetson-to-MCB read; diff two runs' traces to see
+plugin log `<sim ns> <bytes> <hex>` for every Jetson-to-MCB read; diff two runs' traces to see
 the first frame that reached the firmware on a different step. The measurements and the
 remaining work are in the
 [T17 investigation](docs/t17-consistent-runs-2026-11-05.md).

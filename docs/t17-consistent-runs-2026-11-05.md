@@ -94,3 +94,73 @@ frames. The firmware sees a different input history and the contact dynamics amp
   `initial_pose_setter`.
 - Concurrent load matters: RTF numbers above are with another agent's container at
   about 390% CPU.
+
+## 2026-11-06 pass: producer chains
+
+Mac mini (Colima, 6 CPUs), my own container (`isaac-agent-t17b`, uncapped). Another
+agent's container (`isaac-agent-lifecycle`) ran at about 395% CPU throughout, so no RTF or
+wall number below is a clean-machine figure, and the RTF=1 and two-core runs of the
+acceptance list were not made. The Colima VM also hung once (about 01:59); runs in flight
+then were discarded.
+
+### What was built
+
+| Step | Change |
+| --- | --- |
+| 1 | Bridge: `~/tx_ack/{nav_goal,cv_target,target_state,relocalize,ping}` per frame; `sim_tx_queue` holds frames until the coordinator's per-hold flush, sorts them by (type, stamp, arrival) and gates them on the hold time |
+| 2 | Coordinator: any-of groups `a\|b`, counted groups `~a\|~b`, `lag_s`/`align_s`/`start_s`, `boot_hold_s`, flush topics, `topic#pkg/msg/Type` acks for messages that start with a Header |
+| 3 | None-marks: `point_to_cv_target`, `target_selector`, `target_tracker`, `mcb_relay`, `waypoint_nav` |
+| 4 | Chains `cv_target`, `detector`, `nav`, `ekf`, `scan`; the MCB plugin holds at each delivered POSE until `pose_consumed` sees `/odom`, the EKF input, the relay and TF at its stamp |
+
+Things the trace showed that the plan did not expect, each fixed:
+
+- `mmm` (launched by `auto.launch.py`) pings the MCB from a wall timer: 2-4 PING frames at 1 ms,
+  different every run. Not launched in the E2E stack.
+- The relay's, bridge's and tracker's own `now()` can trail the clock the producer stamped,
+  so wire-busy and age gates dropped different CV_TARGETs and RELOCALIZE/TARGET_STATE payloads
+  carried different ages and extrapolations. The bridge now gates on the hold time; the relay
+  decides on the localization sample's stamp; the tracker runs `process_delay_s` after capture.
+- Producers that fire at the same instant (CV_TARGET and NAV_GOAL at 200 ms) wrote to the PTY
+  in whatever order they won; hence the queue and flush.
+- The stock EKF's timer is created at its first non-zero clock and runs at 1/30 s, which is
+  not a whole number of milliseconds; its tick could not be held. `boot_hold_s` fixes the first
+  clock at 1 ms and the simulator runs the EKF at 34 ms (`ekf_frequency_hz`; a node-specific
+  override, since `ekf.yaml`'s entry outranks a wildcard one).
+- gz's lidar noise comes from an unseeded generator: the very first scan differed by 1-2 cm on
+  about 130 of 720 beams. `lidar_scan` now draws it keyed by (seed, stamp, beam).
+- POSE skips every 100th slot (x.x01 s) and gz's 11.2 Hz lidar runs 89 ms apart on whole
+  milliseconds, so the scan chain waits 30 ms and the detector chain 25 ms.
+
+### Results
+
+Stationary-lateral cell, `backend:=hosted`, `duration:=10`, unthrottled, UART trace compared
+run to run (matching leading lines of the Jetson-to-MCB read stream, with bytes):
+
+| Stage of the work | Matching leading lines (3 runs) | Lines read | Runs compared |
+| --- | --- | --- | --- |
+| before (previous pass) | 0 | about 1470 distinct steps | `tr_h*` |
+| + mmm off, TX queue, nav lag 0, EKF phase, message clock, tracker delay | 11 | 1800-1960 | c34 c35 c36 |
+| + keyed lidar noise | 68 and 19 | 1900-1960 | c40 c41 c42 |
+
+Every one of these runs passed with 0 lockstep timeouts and 0 latest-TF fallbacks. Full
+coverage on the final code: all 12 `mcb_parked` cells pass (12 passed, 422 s wall for 319.6 s
+sim, 95959 holds, 0 timeouts), `mcb_drive` passes (0 timeouts), `mcb_match` fails only its 10%
+enemy-hit floor ("spin: low score without measured diagnosis", the known combat flake), 0
+timeouts and 0 fallbacks. The coordinator's new groups are covered by two new `lockstep_suite`
+tests (20 pass).
+
+### What still differs, with the evidence
+
+- With the lidar noise keyed, `/scan_raw` is bit-identical in two runs for the first 14.2 sim
+  seconds, then differs by about 2e-7 m: once the chassis moves, the physics state diverges.
+- `/odom` (the MCB's POSE) is bit-identical for the first 14 s too, then differs by 1e-5 of its
+  value 11 ms after the drive starts. The harness tick that arms the drive is not the cause of
+  a visible difference in the UART trace, which matches there.
+- rf2o's `/scan_odom` differs at 1e-13 relative (twist x/y, covariance noise) from its first
+  graded scan although its input scans and `/odom` are bit-identical, so something inside
+  rf2o or its TF/odom-prior path (not the Jetson-side producers) is not bit-reproducible. That
+  noise reaches the EKF, then the CV_TARGET and RELOCALIZE payloads as 1 ulp in a float, which
+  is the first differing line of the trace now (451 ms to 1.63 s).
+- So `shots.jsonl` is still not identical; the cause is no longer frame timing. Next: find the
+  rf2o difference (compare its inputs per stamp: TF extrinsic, odom prior, scan), then the
+  physics state at 14.0 s, with `MCB_UART_TRACE` and `/odom` CSVs from two runs as above.

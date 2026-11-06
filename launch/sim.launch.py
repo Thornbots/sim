@@ -342,6 +342,11 @@ def generate_launch_description():
                                   ' uart_epoch_zero:=', LaunchConfiguration('uart_epoch_zero'),
                                   ' uart_epoch_zero_ack:=',
                                   LaunchConfiguration('uart_epoch_zero_ack'),
+                                  ' lidar_noise:=', PythonExpression([
+                                      "'false' if '", LaunchConfiguration('lidar_keyed_noise'),
+                                      "' == 'true' else 'true'"]),
+                                  ' uart_pose_consumed:=',
+                                  LaunchConfiguration('uart_pose_consumed'),
                                   ' uart_baud:=', LaunchConfiguration('uart_baud'),
                                   ' mcb_read_delay_ms:=', LaunchConfiguration('mcb_read_delay_ms'),
                                   ' mcb_auto_fire:=', LaunchConfiguration('mcb_auto_fire'),
@@ -424,7 +429,9 @@ def generate_launch_description():
         package='sim',
         executable='lidar_scan',
         output='screen',
-        parameters=[{'use_sim_time': True}],
+        parameters=[{'use_sim_time': True, 'noise_stddev_m': ParameterValue(
+            PythonExpression(["0.01 if '", LaunchConfiguration('lidar_keyed_noise'),
+                              "' == 'true' else 0.0"]), value_type=float)}],
     )
 
     # --- Bridge the JointStatePublisher gazebo plugin's output into ROS 2, as
@@ -763,6 +770,12 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('uart_relay_fixture', default_value='false'),
         DeclareLaunchArgument('uart_deterministic', default_value='false'),
+        DeclareLaunchArgument('lidar_keyed_noise', default_value='false',
+                              description='Lidar noise is drawn per (seed, stamp, beam) in '
+                                          'lidar_scan instead of by gz\'s unseeded generator'),
+        DeclareLaunchArgument('uart_pose_consumed', default_value='none',
+                              description='Header topic that acks each consumed MCB POSE; '
+                                          'physics holds at a delivered POSE until then'),
         DeclareLaunchArgument('uart_epoch_zero', default_value='false'),
         DeclareLaunchArgument('startup_wait_s', default_value='30.0',
                               description='epoch-zero wall limit for the gate and spawn check'),

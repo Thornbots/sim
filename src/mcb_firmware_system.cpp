@@ -185,6 +185,19 @@ public:
             }
             pending_.pop_front();
           });
+      // Optional: hold physics at a delivered POSE until the stack has consumed it (the
+      // probe publishes its capture stamp), so the EKF and TF see it before the next tick.
+      consumed_topic_ = sdf->Get<std::string>("uart_pose_consumed", "none").first;
+      if (consumed_topic_ == "none") consumed_topic_.clear();
+      if (!consumed_topic_.empty()) {
+        consumed_sub_ = sync_node_->create_subscription<std_msgs::msg::Header>(
+            consumed_topic_, rclcpp::QoS(100).reliable(),
+            [this](std_msgs::msg::Header::ConstSharedPtr msg) {
+              const int64_t ns = static_cast<int64_t>(msg->stamp.sec) * 1'000'000'000 + msg->stamp.nanosec;
+              while (!consume_pending_.empty() && consume_pending_.front() <= ns)
+                consume_pending_.pop_front();
+            });
+      }
     }
     if (coordinated_ || sdf->Get<bool>("uart_relay_fixture", false).first) {
       relay_ = std::make_unique<UartRelay>(pty_->master(),
@@ -346,6 +359,9 @@ public:
       for (const auto &frame : relay_->take_delivered()) {
         if (pending_.size() >= 32) throw std::runtime_error("UART acknowledgment queue overflow");
         pending_.push_back({frame.id, uart_time});
+        if (!consumed_topic_.empty() && frame.bytes.size() > 6 &&
+            (frame.bytes[5] | frame.bytes[6] << 8) == mcb_protocol::kPose)
+          consume_pending_.push_back(frame.capture_ns);
         dji_serial_bridge::msg::SimFrameMetadata metadata;
         metadata.header.stamp = rclcpp::Time(frame.capture_ns, RCL_ROS_TIME);
         metadata.delivery_time = rclcpp::Time(uart_time, RCL_ROS_TIME);
@@ -396,14 +412,15 @@ public:
 
   void PostUpdate(const gz::sim::UpdateInfo &info, const gz::sim::EntityComponentManager &) override {
     if (!coordinated_ || info.paused) return;
-    if (pending_.empty() && failure_.empty()) return;
+    if (pending_.empty() && consume_pending_.empty() && failure_.empty()) return;
     const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
-    while (failure_.empty() && (!pending_.empty() || clock_ns_ < held)) {
+    while (failure_.empty() && (!pending_.empty() || !consume_pending_.empty() || clock_ns_ < held)) {
       if (std::chrono::steady_clock::now() >= deadline)
         throw std::runtime_error("UART acknowledgment or ROS clock timeout: pending=" +
             std::to_string(pending_.size()) + " clock=" + std::to_string(clock_ns_) +
-            " held=" + std::to_string(held));
+            " held=" + std::to_string(held) + " unconsumed_poses=" +
+            std::to_string(consume_pending_.size()));
       executor_->spin_once(std::chrono::milliseconds(10));
     }
     if (!failure_.empty()) throw std::runtime_error(failure_);
@@ -414,6 +431,9 @@ private:
   gz::transport::Node gz_node_;
   gz::transport::Node::Publisher clock_pub_;
   rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
+  std::string consumed_topic_;
+  std::deque<int64_t> consume_pending_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr consumed_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr ready_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr observed_sub_, detector_sub_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr bootstrap_pub_;
