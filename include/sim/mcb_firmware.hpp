@@ -578,7 +578,7 @@ private:
             "MCB firmware stopped responding to hardware ticks");
       }
       // Wait in slices so a stop request ends even the 600 s board boot wait.
-      const int ready = poll(&descriptor, 1, static_cast<int>(std::min<long>(timeout, 100)));
+      const int ready = poll(&descriptor, 1, static_cast<int>(std::min<int64_t>(timeout, 100)));
       if (ready < 0 && errno == EINTR) {
         continue;
       }
