@@ -325,6 +325,11 @@ def generate_launch_description():
                           'enable_mmm': PythonExpression([
                               "'false' if '", LaunchConfiguration('producer_chains'),
                               "' == 'true' else 'true'"]),
+                          # Equal-stamp measurements (pose and twist of one message, scan
+                          # odometry) order by topic, not by callback arrival.
+                          'ekf_deterministic_order': PythonExpression([
+                              "'true' if '", LaunchConfiguration('producer_chains'),
+                              "' == 'true' else ''"]),
                           'ekf_frequency_hz': PythonExpression([
                               "'", repr(1.0 / EKF_PERIOD_S), "' if '",
                               LaunchConfiguration('producer_chains'), "' == 'true' else ''"]),
@@ -479,7 +484,12 @@ def generate_launch_description():
         if harness_chain and not deterministic:
             raise ValueError('harness_chain requires epoch-zero startup')
         producers = _is_true(context, 'producer_chains')
-        coordination = coordinator(deterministic, stage, extra_ready, startup_timeout,
+        # A stock EKF would silently ignore ekf_deterministic_order and order ties by timing.
+        if producers and not os.path.exists(os.path.join(
+                get_package_share_directory('robot_localization'), 'thornbots_fork')):
+            raise RuntimeError('producer_chains needs the Thornbots robot_localization fork '
+                               '(build the workspace robot_localization package)')
+        coordination =coordinator(deterministic, stage, extra_ready, startup_timeout,
                                    harness_chain, producers)
         delay = float(context.launch_configurations['epoch_coordinator_delay_s'])
         if not math.isfinite(delay) or delay < 0 or delay > 10 or (delay and not deterministic):
