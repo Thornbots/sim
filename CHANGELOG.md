@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- With remote DDS off (the default) the sim launches now use thornbots_pkg's loopback
+  `fastdds_local.xml` and no `ROS_AUTOMATIC_DISCOVERY_RANGE` instead of the `LOCALHOST` range. Under
+  `LOCALHOST` a hosted `mcb_parked` cell timed out its first lockstep hold (`cv_target at 0.025 s,
+  no ack`); with the profile it passes and sends no packet to the Tailscale range (the only
+  off-box traffic is gz-transport multicast). Needs the matching thornbots_pkg change.
+
 - The sim launches' `foxglove` argument now defaults to `$THORNBOTS_FOXGLOVE` or false (was true), and
   a new `remote_dds` argument (`$THORNBOTS_REMOTE_DDS` or false) keeps DDS on the machine: `LOCALHOST`
   range, no profile with Tailscale peers, and the pinned UDP-only nodes on loopback-only twins

@@ -695,8 +695,9 @@ every topic in the container's DDS domain, and sends only the ones a panel
 subscribes to, so leave image panels closed over a slow link.
 
 `remote_dds:=` (default `$THORNBOTS_REMOTE_DDS` or off) is the DDS counterpart.
-Off keeps DDS on the machine (`LOCALHOST` range, no peers profile, loopback-only
-UDP-only twins); on restores the container profile with the robots' Tailscale
+Off keeps DDS on the machine (thornbots_pkg's loopback `fastdds_local.xml`, no
+discovery range, loopback-only UDP-only twins; not the `LOCALHOST` range, under which
+a 21-node stack timed out its first lockstep hold); on restores the container profile with the robots' Tailscale
 peers, for cross-machine tests. See `sim/dds_switch.py` and
 [thornbots_pkg](../thornbots_pkg/README.md#remote-dds-and-foxglove).
 

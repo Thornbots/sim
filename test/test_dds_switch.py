@@ -49,8 +49,8 @@ def _resolve(environment, arguments=None):
 def test_defaults_keep_dds_and_foxglove_off():
     environment, profile, pinned, foxglove = _resolve(
         {'FASTRTPS_DEFAULT_PROFILES_FILE': '/etc/fastdds/profile.xml'})
-    assert environment['ROS_AUTOMATIC_DISCOVERY_RANGE'] == 'LOCALHOST'
-    assert 'FASTRTPS_DEFAULT_PROFILES_FILE' not in environment
+    assert 'ROS_AUTOMATIC_DISCOVERY_RANGE' not in environment
+    assert environment['FASTRTPS_DEFAULT_PROFILES_FILE'].endswith('config/fastdds_local.xml')
     assert profile.endswith('fastdds_udp_only_local.xml')
     assert pinned['ROS_AUTOMATIC_DISCOVERY_RANGE'] == 'SYSTEM_DEFAULT'
     assert foxglove == 'false'
