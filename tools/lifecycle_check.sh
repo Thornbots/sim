@@ -60,7 +60,7 @@ live() {  # non-zombie processes that belong to a sim stack, not this script's a
     local skip=" $$ " p=$$
     while [ "${p:-1}" -gt 1 ]; do p=$(ps -o ppid= -p "$p" | tr -d ' '); skip+="$p "; done
     ps -eo pid,ppid,pgid,stat,args | awk -v skip="$skip" 'NR > 1 && $4 !~ /^Z/ && index(skip, " " $1 " ") == 0' \
-        | grep -E "$PATTERN" | grep -v -e grep -e lifecycle_check -e "ps -eo" -e "python3 -"
+        | grep -E "$PATTERN" | grep -v -e grep -e lifecycle_check -e "ps -eo" -e "python3 -" -e "bash -lc"
 }
 
 leftovers() {  # processes, gz topics, pty links, temporary worlds

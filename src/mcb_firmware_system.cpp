@@ -380,7 +380,7 @@ public:
       // kill_launch.sh and Ctrl-C signal every process, so the firmware can die
       // of SIGINT/SIGTERM just before this process learns it is stopping.
       const int by = firmware_->exit_signal();
-      if (*stopping_ || by == SIGINT || by == SIGTERM) {
+      if (*stopping_ || by == SIGINT || by == SIGTERM || firmware_->exited_cleanly()) {
         events_->Emit<gz::sim::events::Stop>();
         return;
       }

@@ -496,6 +496,8 @@ public:
   // The signal that killed the process (0 if none): SIGINT/SIGTERM mean someone is
   // stopping the stack, which kill_launch.sh does to every descendant.
   int exit_signal() const { return exit_signal_; }
+  // The process returned 0 on its own: the board adapter does so on SIGINT/SIGTERM.
+  bool exited_cleanly() const { return exited_cleanly_; }
 
 private:
   void spawn(int master_fd) {
@@ -604,6 +606,7 @@ private:
         if (exited == pid_) {
           pid_ = -1;
           if (WIFSIGNALED(status)) exit_signal_ = WTERMSIG(status);
+          exited_cleanly_ = WIFEXITED(status) && WEXITSTATUS(status) == 0;
           code = std::to_string(WIFEXITED(status) ? WEXITSTATUS(status)
                                                   : -WTERMSIG(status));
         }
@@ -616,10 +619,11 @@ private:
 
   void close() {
     close_fd(input_fd_);
+    // The board adapter may be inside a Renode advance (~11 s at boot) and never
+    // reads the closed stdin; it exits at once on SIGTERM and takes Renode with it.
+    if (pid_ > 0 && !adapter_.empty()) kill(pid_, SIGTERM);
     if (pid_ > 0) {
-      // The board adapter may be inside a Renode advance (up to ~11 s at boot).
-      const auto deadline = std::chrono::steady_clock::now() +
-                            std::chrono::seconds(adapter_.empty() ? 2 : 20);
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
       int status = 0;
       bool done = false;
       while (std::chrono::steady_clock::now() < deadline) {
@@ -644,6 +648,7 @@ private:
   uint32_t mode_ = 0, time_ms_ = 0;
   pid_t pid_ = -1;
   int exit_signal_ = 0;
+  bool exited_cleanly_ = false;
   int input_fd_ = -1, output_fd_ = -1;
 };
 } // namespace sim::mcb_firmware
