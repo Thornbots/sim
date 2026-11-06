@@ -512,6 +512,9 @@ int main(int argc, char **argv) {
   if (cb::options.fail_fast)
     testing::GTEST_FLAG(fail_fast) = true;
   rclcpp::init(0, nullptr);
+  // An interrupted cell fails; end the run there so TearDown stops the stack
+  // within the launch's SIGINT window instead of failing every remaining cell.
+  rclcpp::on_shutdown([] { testing::GTEST_FLAG(fail_fast) = true; });
   const auto begin = std::chrono::steady_clock::now();
   int result = 1;
   {
