@@ -330,3 +330,34 @@ Three unthrottled runs per stage were taken earlier (table above). Notes:
 Raw per-run directories (logs, `shots`/`states`/`poses`/`route` jsonl, UART traces) were copied out of the container to
 the host's `/tmp/c-accept/t17`. Commands as above: `run_suite.sh <stage> backend:=hosted log_dir:=<dir>` with
 `MCB_UART_TRACE=<dir>/uart.trace`, then `ros2 run sim compare_runs <dir A> <dir B>`.
+
+### Renode bring-up regression found by the lifecycle repeats (2026-11-07)
+
+`BACKEND=renode tools/lifecycle_check.sh --repeat 4` (board ELF `build/hardware/scons-release`, Renode 1.17.0, same
+container as above, nothing else on the VM) failed from its first run: every cell dies at the first release with
+`lockstep timeout: gz not held at 0.020 s after 2.0 s wall` (4 holds, `NO DATA from MCB` after the first 11 bytes),
+`FAIL: 1 unclean-shutdown log line` and, for interrupts, `suite ended before the signal`. Standalone,
+`run_suite.sh mcb_parked backend:=renode firmware_binary:=<board ELF> speeds:=0 paths:=lateral duration:=10 headless:=true`
+fails the same way in 3 of 3 runs (about 90 s each: ~85 s board boot, then the timeout), at low load (VM CPU 79% idle,
+Renode at 110% of one core), so it is not a timing margin.
+
+Bisect of `sim` only (everything else at the nightly gitlinks, same build flags), the same cell, passing means
+gz stepping past 0.020 s with 0 timeouts (stopped by hand after 24 to 27 sim seconds, not run to completion):
+
+| `sim` commit | Result |
+| --- | --- |
+| `57bccb9` (#91, before #92) | passes, 26.9 s sim in 523 s wall |
+| `b934372` (#92, fork deterministic order) | passes |
+| `9360b27` (#92, "identical hosted runs of every E2E stage") | **fails** at 0.020 s |
+| `ca1b3ef` (nightly) | **fails** at 0.020 s |
+
+So the break is `9360b27`. Hosted stays correct. The change that is the likeliest cause, not yet shown: with `producer_chains`
+the opponent heads move to `OpponentMover`, which waits up to 5 s wall in `PreUpdate` for the path sample of each tick
+(`path_hz` 60 or 100); under Renode gz spends the hold in the board's step, so the clock that releases the
+`target_driver`/`match_environment` sample is behind the step that needs it. Nothing here confirms that; the next
+check is gz's `PreUpdate` wait (a backtrace of the stuck `gz sim -s` at the timeout). The earlier Renode passes
+(1 stationary-lateral cell in 1013 s; the 20 of 20 matrix) predate `9360b27`.
+
+Effect: the Renode repeats 2 to 5 of E-teardown cannot be taken on nightly, and the T17 harness is unvalidated on the board
+backend. Per-run logs: the host's `/tmp/c-accept/renode/lc` (`001-` to `003-` of the lifecycle run, `diag1`, `bis1` to `bis3`).
+
