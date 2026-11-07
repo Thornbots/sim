@@ -1,0 +1,24 @@
+# Parked firmware results, 2026-10-03
+
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
+Historical observations, preserved from the [parked-stage documentation](../README.md#firmware-behaviour-and-historical-results-mcb_parked).
+These results describe the October 3 branch, not current firmware or validation.
+
+`mcb_parked` on `position-based-cv` with only the `delay_ms` fix (2026-10-03, container,
+lateral, still and 1 m/s, 15 s each): `CV_TARGET` and `RELOCALIZE` frames
+are read, none refused, but the gun turns away. One `RELOCALIZE` moved the
+parked MCB's odometry to (0.74, 1.86), our `odom`'s numbers, and the head
+sat at `head_yaw` 4.13 rad with the opponent straight ahead. Still: no
+valid `TargetState`, no shots. 1 m/s: the tracked centre 3.17 m off, 0 of
+6 shots hit. At that revision, `pose_translator` read POSE's x right, y forward as REP-105,
+so our `odom` and the MCB's odometry differed by a turn.
+
+With all three fixes (2026-10-03, container, still lateral cell): the
+aim lands within 3 mm of the panel and the barrel 1.55 deg above it, a
+24 m/s shot's drop over 3.2 m, so those runs scored shots under gravity.
+Then 28 of 40 hit (70%, barrel 0.36 deg off the aim, miss 0.020 m)
+on a clean track (centre 0.097 m), 2 of 40 and 1 of 30 on runs where
+the tracker read 1.6-1.9 m/s for the still target (T17).

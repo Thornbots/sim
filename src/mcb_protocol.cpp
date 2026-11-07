@@ -113,7 +113,26 @@ std::vector<uint8_t> pack(const CvTarget & msg)
   append_float(out, msg.x);
   append_float(out, msg.y);
   append_float(out, msg.z);
-  append_u16(out, msg.delay_ms);
+  out.push_back(msg.flags);
+  return out;
+}
+
+std::vector<uint8_t> pack(const TargetState & msg)
+{
+  std::vector<uint8_t> out;
+  out.reserve(TargetState::kSize);
+  for (const float v : msg.center) {append_float(out, v);}
+  for (const float v : msg.velocity) {append_float(out, v);}
+  for (const float v : msg.acceleration) {append_float(out, v);}
+  append_float(out, msg.yaw);
+  append_float(out, msg.yaw_rate);
+  for (const float v : msg.radius) {append_float(out, v);}
+  for (const float v : msg.z_offset) {append_float(out, v);}
+  for (const float v : msg.panel) {append_float(out, v);}
+  append_u16(out, msg.state_age_ms);
+  append_u16(out, msg.detection_age_ms);
+  append_u16(out, msg.track_id);
+  out.push_back(msg.confidence);
   out.push_back(msg.flags);
   return out;
 }
@@ -169,7 +188,29 @@ template<> CvTarget unpack<CvTarget>(const std::vector<uint8_t> & data)
 {
   require_size(data, CvTarget::kSize);
   return {read_float(data.data()), read_float(data.data() + 4), read_float(data.data() + 8),
-    read_u16(data.data() + 12), data[14]};
+    data[12]};
+}
+
+template<> TargetState unpack<TargetState>(const std::vector<uint8_t> & data)
+{
+  require_size(data, TargetState::kSize);
+  TargetState m;
+  const uint8_t * p = data.data();
+  auto next = [&p]() {const float v = read_float(p); p += 4; return v;};
+  for (float & v : m.center) {v = next();}
+  for (float & v : m.velocity) {v = next();}
+  for (float & v : m.acceleration) {v = next();}
+  m.yaw = next();
+  m.yaw_rate = next();
+  for (float & v : m.radius) {v = next();}
+  for (float & v : m.z_offset) {v = next();}
+  for (float & v : m.panel) {v = next();}
+  m.state_age_ms = read_u16(p);
+  m.detection_age_ms = read_u16(p + 2);
+  m.track_id = read_u16(p + 4);
+  m.confidence = p[6];
+  m.flags = p[7];
+  return m;
 }
 
 template<> Relocalize unpack<Relocalize>(const std::vector<uint8_t> & data)
@@ -197,6 +238,19 @@ template<> Ping unpack<Ping>(const std::vector<uint8_t> & data)
 {
   require_size(data, Ping::kSize);
   return {data[0]};
+}
+
+std::vector<uint8_t> pack(const DebugBlob & msg)
+{
+  if (msg.data.size() > kDebugMaxPayload) {
+    throw std::length_error("DEBUG payload exceeds 128 bytes");
+  }
+  return msg.data;
+}
+
+template<> DebugBlob unpack<DebugBlob>(const std::vector<uint8_t> & data)
+{
+  return {pack(DebugBlob{data})};
 }
 
 std::vector<uint8_t> encode_frame(

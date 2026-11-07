@@ -49,7 +49,8 @@ public:
 
   ~Relay()
   {
-    stop();
+    request_stop();
+    join();
   }
 
   void start()
@@ -63,7 +64,9 @@ public:
     return reader_done_.load();
   }
 
-  void stop()
+  // Signal the echo and publish children without waiting, so that several
+  // relays can all be told to stop before any is joined.
+  void request_stop()
   {
     pid_t echo_pid = -1;
     pid_t publish_pid = -1;
@@ -80,6 +83,10 @@ public:
     if (publish_pid > 0) {
       kill(publish_pid, SIGTERM);
     }
+  }
+
+  void join()
+  {
     if (reader_.joinable()) {
       reader_.join();
     }
@@ -91,8 +98,11 @@ public:
 private:
   void read_slider()
   {
+    // CLOEXEC: the other relay's concurrent fork+exec must not inherit this
+    // write end, or this reader never sees EOF until that child dies and
+    // stopping one relay before the other deadlocks.
     int pipe_fds[2];
-    if (pipe(pipe_fds) != 0) {
+    if (pipe2(pipe_fds, O_CLOEXEC) != 0) {
       RCLCPP_ERROR(logger_, "Cannot open slider pipe: %s", std::strerror(errno));
       reader_done_ = true;
       return;
@@ -246,8 +256,10 @@ int main(int argc, char ** argv)
   while (rclcpp::ok() && (!pan.reader_done() || !pitch.reader_done())) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
-  pan.stop();
-  pitch.stop();
+  pan.request_stop();
+  pitch.request_stop();
+  pan.join();
+  pitch.join();
   rclcpp::shutdown();
   return 0;
 }

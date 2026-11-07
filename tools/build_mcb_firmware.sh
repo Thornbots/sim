@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the checked-out MCB code, including its hosted hardware fixture.
 set -euo pipefail
-if [[ "$(uname -s)" != Linux ]] || ! command -v scons >/dev/null || ! command -v g++-11 >/dev/null; then
-    echo 'Build in the Linux ROS container with scons and g++-11 installed.' >&2
+if [[ "$(uname -s)" != Linux ]] || ! command -v scons >/dev/null || ! command -v g++-14 >/dev/null; then
+    echo 'Build in the Linux ROS container with scons and g++-14 installed.' >&2
     exit 1
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -16,5 +16,5 @@ if [[ ! -d "$MCB_PROJECT/../taproot-scripts/scons-tools" ]]; then
     exit 1
 fi
 cd "$MCB_PROJECT"
-scons build-sim robot=sentry profile=release -j"${MCB_BUILD_JOBS:-4}"
+scons build-sim robot=sentry profile=release compiler-suffix=-14 -j"${MCB_BUILD_JOBS:-4}"
 echo "MCB firmware: $MCB_PROJECT/build/sim/scons-release/MCB-project.elf"

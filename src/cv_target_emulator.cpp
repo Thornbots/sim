@@ -39,9 +39,9 @@ constexpr double kPanelHeight = 0.125;
 constexpr double kPanelNormalAngleFromUp = 75.0 * kPi / 180.0;
 constexpr std::array<double, 4> kPanelOffsets{0.0, kPi / 2.0, kPi, -kPi / 2.0};
 constexpr std::array<bool, 4> kUsesRadiusX{true, false, true, false};
-const Eigen::Vector3d kHeadlinkOrigin(-0.000171242, 9.52126e-05, 0.248293);
-const Eigen::Vector3d kHeadpitchOrigin(-0.00760542, -0.100122, 0.14235);
-const Eigen::Vector3d kCameralinkOrigin(0.0920381, 0.0948673, 0.0566588);
+const Eigen::Vector3d kHeadlinkOrigin(0, 0, 0.267503694);
+const Eigen::Vector3d kHeadpitchOrigin(0, 0, 0.136);
+const Eigen::Vector3d kCameralinkOrigin(0.095699877, 0.0325, 0.055000043);
 
 Eigen::Matrix3d rotation_from_quaternion(const geometry_msgs::msg::Quaternion & q)
 {
@@ -194,8 +194,8 @@ public:
     declare_parameter("blackout_s", 0.0);
     declare_parameter("yaw_joint_name", std::string("headlink"));
     declare_parameter("pitch_joint_name", std::string("headpitch"));
-    declare_parameter("panel_radius_x", 0.252);
-    declare_parameter("panel_radius_y", 0.252);
+    declare_parameter("panel_radius_x", 0.253729);
+    declare_parameter("panel_radius_y", 0.249716);
     declare_parameter("panel_stagger_m", 0.0);
     declare_parameter("panel_view_half_angle", 75.0 * kPi / 180.0);
     declare_parameter("class_id", 2);

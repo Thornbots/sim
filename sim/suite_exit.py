@@ -13,8 +13,22 @@
 # limitations under the License.
 
 """Shut down completed suites and return a failed launch for failed native test runs."""
+import os
+
+from ament_index_python.packages import get_package_prefix
+
 from launch.actions import EmitEvent, LogInfo
 from launch.events import Shutdown
+
+
+def suite_command(executable):
+    """
+    Return the argv prefix running a sim suite executable directly.
+
+    `ros2 run` is a Python wrapper that ignores a lone SIGINT, so launch could not
+    stop a suite started through it without a group-wide signal.
+    """
+    return [os.path.join(get_package_prefix('sim'), 'lib', 'sim', executable)]
 
 
 def finish_suite(event, context, name):

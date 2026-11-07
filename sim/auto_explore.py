@@ -15,4 +15,4 @@
 """Spawn heading consumed by ROS Python launch files; helpers are C++."""
 import math
 
-SPAWN_YAW = -math.pi / 2
+SPAWN_YAW = math.pi / 2

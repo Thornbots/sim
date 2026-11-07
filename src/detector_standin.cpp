@@ -38,7 +38,10 @@
 #include <gz/msgs/pose_v.pb.h>
 #include <gz/transport/Node.hh>
 #include <rclcpp/rclcpp.hpp>
+#include "sim/keyed_noise.hpp"
 #include <rclcpp_components/register_node_macro.hpp>
+#include <rosgraph_msgs/msg/clock.hpp>
+#include <std_msgs/msg/header.hpp>
 #include <urdf/model.h>
 
 #include "sim/panel_view.hpp"
@@ -109,7 +112,7 @@ public:
     frame_id_ = declare_parameter("frame_id", "camera");
     depth_coeff_ = declare_parameter("noise_depth_range_coeff", 0.0);
     lateral_rad_ = declare_parameter("noise_lateral_rad", 0.0);
-    rng_.seed(declare_parameter("seed", 0));
+    seed_ = static_cast<uint64_t>(declare_parameter("seed", 0));
     // The URDF camera's: 640x480, horizontal_fov 1.5184, 0.1-10 m.
     const int w = declare_parameter("image_width", 640);
     const int h = declare_parameter("image_height", 480);
@@ -139,17 +142,31 @@ public:
 
     pub_ = create_publisher<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", 10);
-    // The D435's depth rate, on the sim clock.
-    timer_ = create_timer(
-      std::chrono::duration<double>(1.0 / declare_parameter("rate_hz", 60.0)),
-      [this]() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        pending_.push_back(now());
-        if (pending_.size() > kMaxPending) {
-          pending_.pop_front();
-        }
-        drain();
-      });
+    rate_hz_ = declare_parameter("rate_hz", 60.0);
+    deterministic_ = declare_parameter("deterministic_epoch_zero", false);
+    if (deterministic_) {
+      if (!std::isfinite(rate_hz_) || rate_hz_ <= 0.0 || rate_hz_ > 1000.0) {
+        throw std::invalid_argument("deterministic rate_hz must be in (0, 1000]");
+      }
+      if (!get_parameter("use_sim_time").as_bool()) {
+        throw std::invalid_argument("deterministic_epoch_zero requires use_sim_time");
+      }
+      ready_pub_ = create_publisher<std_msgs::msg::Header>(
+        "~/ready", rclcpp::QoS(1).reliable().transient_local());
+      consumed_pub_ = create_publisher<std_msgs::msg::Header>("~/consumed", 10);
+      clock_sub_ = create_subscription<rosgraph_msgs::msg::Clock>(
+        "/clock", rclcpp::ClockQoS(),
+        [this](rosgraph_msgs::msg::Clock::ConstSharedPtr msg) {init_clock(*msg);});
+    } else {
+      timer_ = create_timer(std::chrono::duration<double>(1.0 / rate_hz_), [this]() {
+          std::lock_guard<std::mutex> lock(mutex_);
+          pending_.push_back(now());
+          if (pending_.size() > kMaxPending) {
+            pending_.pop_front();
+          }
+          drain();
+        });
+    }
 
     std::vector<std::string> models = opponents_;
     models.push_back(our_model_);
@@ -167,6 +184,66 @@ public:
 private:
   static constexpr size_t kMaxPending = 10;
   static constexpr size_t kMaxHistory = 250;  // 1 s at gz's 250 Hz
+
+  void fail(const char * reason)
+  {
+    failed_ = true;
+    if (timer_) {
+      timer_->cancel();
+    }
+    RCLCPP_ERROR(get_logger(), "deterministic detector failed: %s", reason);
+  }
+
+  void init_clock(const rosgraph_msgs::msg::Clock & msg)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (failed_ || timer_) {
+      return;
+    }
+    if (msg.clock.sec != 0 || msg.clock.nanosec != 0 || now().nanoseconds() != 0) {
+      fail("epoch zero missed");
+      return;
+    }
+    timer_ = create_timer(std::chrono::milliseconds(1), [this]() {tick();});
+    if (now().nanoseconds() != 0) {
+      fail("clock advanced while initializing timer");
+      return;
+    }
+    std_msgs::msg::Header ready;
+    ready.frame_id = frame_id_;
+    ready_pub_->publish(ready);
+  }
+
+  void tick()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (failed_) {
+      return;
+    }
+    const auto current = now().nanoseconds();
+    if (current < last_clock_ns_) {
+      fail("clock moved backwards");
+      return;
+    }
+    last_clock_ns_ = current;
+    while (true) {
+      const int64_t scheduled = static_cast<int64_t>(
+        std::ceil(static_cast<double>(next_tick_) * 1000.0 / rate_hz_)) * 1000000;
+      if (scheduled > current) {
+        break;
+      }
+      if (pending_.size() == kMaxPending) {
+        fail("pending tick queue overflow");
+        return;
+      }
+      pending_.emplace_back(scheduled, RCL_ROS_TIME);
+      ++next_tick_;
+      drain();
+      if (failed_) {
+        return;
+      }
+    }
+  }
 
   void on_pose(const std::string & name, const gz::msgs::Pose_V & m)
   {
@@ -224,6 +301,9 @@ private:
   // Answers every pending tick whose stamp all the poses have reached.
   void drain()
   {
+    if (failed_) {
+      return;
+    }
     while (!pending_.empty()) {
       const rclcpp::Time stamp = pending_.front();
       const double t = stamp.seconds();
@@ -238,6 +318,15 @@ private:
       }
       if (at == At::kOk) {
         publish(stamp, ours, theirs);
+        if (deterministic_) {
+          std_msgs::msg::Header consumed;
+          consumed.stamp = stamp;
+          consumed.frame_id = frame_id_;
+          consumed_pub_->publish(consumed);
+        }
+      } else if (deterministic_) {
+        fail("truth history no longer covers a pending tick");
+        return;
       }
       pending_.pop_front();
     }
@@ -253,7 +342,9 @@ private:
     out.header.stamp = stamp;
     out.header.frame_id = frame_id_;
     for (size_t i = 0; i < theirs.size(); ++i) {
+      size_t panel_index = 0;
       for (const auto & root_T_panel : root_T_panels_) {
+        const size_t panel = panel_index++;
         const Eigen::Isometry3d camera_T_panel =
           camera_T_world * theirs[i].world_T_root * root_T_panel;
         const Eigen::Vector3d centre = camera_T_panel.translation();
@@ -262,7 +353,7 @@ private:
         {
           continue;
         }
-        const Eigen::Vector3d shift = ray_noise(centre);
+        const Eigen::Vector3d shift = ray_noise(centre, stamp.nanoseconds(), i, panel);
         dji_serial_bridge::msg::PanelDetection d;
         d.header = out.header;
         const auto corners = panel_corners(camera_T_panel, panel_w_, panel_h_);
@@ -280,7 +371,10 @@ private:
   }
 
   // A D435-shaped error: std depth_coeff * r^2 along the ray, lateral_rad * r across it.
-  Eigen::Vector3d ray_noise(const Eigen::Vector3d & p)
+  // Drawn from a stream keyed by (seed, capture stamp, opponent, panel), so a
+  // detection's error does not depend on which others were drawn before it.
+  Eigen::Vector3d ray_noise(
+    const Eigen::Vector3d & p, int64_t stamp_ns, size_t opponent, size_t panel)
   {
     const double r = p.norm();
     if (r <= 0.0 || (depth_coeff_ <= 0.0 && lateral_rad_ <= 0.0)) {
@@ -289,10 +383,11 @@ private:
     const Eigen::Vector3d along = p / r;
     const Eigen::Vector3d side = along.cross(Eigen::Vector3d::UnitZ()).normalized();
     const Eigen::Vector3d up = side.cross(along);
+    std::mt19937_64 rng(sim::noise_key(seed_, opponent, stamp_ns, panel));
     std::normal_distribution<double> n(0.0, 1.0);
-    const double depth = n(rng_);
-    const double horizontal = n(rng_);
-    const double vertical = n(rng_);
+    const double depth = n(rng);
+    const double horizontal = n(rng);
+    const double vertical = n(rng);
     return along * (depth_coeff_ * r * r * depth) +
            (side * horizontal + up * vertical) * (lateral_rad_ * r);
   }
@@ -311,7 +406,7 @@ private:
   std::vector<int64_t> class_ids_;
   double half_angle_, score_, depth_coeff_, lateral_rad_, max_range_;
   Intrinsics k_;
-  std::mt19937 rng_;
+  uint64_t seed_ = 0;
   Eigen::Isometry3d head_pitch_T_camera_;
   std::vector<Eigen::Isometry3d> root_T_panels_;
   double panel_w_ = 0.0, panel_h_ = 0.0;
@@ -323,6 +418,11 @@ private:
   gz::transport::Node gz_;
   rclcpp::Publisher<dji_serial_bridge::msg::PanelDetectionArray>::SharedPtr pub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  bool deterministic_ = false, failed_ = false;
+  double rate_hz_ = 60.0;
+  int64_t next_tick_ = 1, last_clock_ns_ = 0;
+  rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ready_pub_, consumed_pub_;
 };
 
 }  // namespace sim

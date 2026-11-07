@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Launches gz sim with the ARCC_Field_2026 world and spawns the sentry robot.
+Launches gz sim with the default field world (world/model.config) and spawns the sentry robot.
 
 The robot is urdf/<model>.urdf.xacro.
 
@@ -39,20 +39,36 @@ from launch.actions import (
     SetLaunchConfiguration,
     TimerAction,
 )
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit, OnProcessStart, OnShutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
-    Command, LaunchConfiguration, PathJoinSubstitution)
+    Command, LaunchConfiguration, PythonExpression)
 from launch_ros.actions import ComposableNodeContainer, Node
 from launch_ros.descriptions import ComposableNode
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
 from sim.auto_explore import SPAWN_YAW
+from sim.clock_bridge import clock_bridge_node
+from sim.dds_switch import (
+    dds_environment, FOXGLOVE_DEFAULT, remote_dds_argument, udp_env)
 from sim.display import display_error
+from sim.field import BLUE_START, default_world, world_path
+from sim.gz_process import gz_sim_process
+from sim.mcb_link import default_mcb_link
+from sim.suite_exit import finish_suite
+
+
+def _is_true(context, name):
+    return context.launch_configurations[name].lower() in ('true', '1', 'yes')
 
 
 RTF_TAG = re.compile(r'<real_time_factor>[^<]*</real_time_factor>')
+
+
+def _gz_gui(context):
+    config = context.launch_configurations['gz_gui_config']
+    return [gz_sim_process(['-g', *(['--gui-config', config] if config else [])],
+                           name='gazebo_gui')]
 
 
 def _world_with_rtf(context):
@@ -70,16 +86,24 @@ def _world_with_rtf(context):
             raise RuntimeError('real_time_factor:= needs a <real_time_factor> tag in the world')
         sdf = RTF_TAG.sub(f'<real_time_factor>{rtf}</real_time_factor>', sdf)
     if lockstep:
+        epoch_zero = context.launch_configurations['uart_epoch_zero'].lower() in (
+            'true', '1', 'yes')
+        startup = ('<strict_startup>true</strict_startup>'
+                   '<epoch_zero_startup>true</epoch_zero_startup>' if epoch_zero else '')
+        max_wait = context.launch_configurations['startup_wait_s'] if epoch_zero else '5.0'
         sdf = sdf.replace('</world>',
                           '<plugin filename="lockstep_gate" name="sim::LockstepGate">'
-                          '<max_wait_s>5.0</max_wait_s></plugin></world>', 1)
+                          f'<max_wait_s>{max_wait}</max_wait_s>{startup}</plugin></world>', 1)
     with tempfile.NamedTemporaryFile(mode='w', prefix='sim_world_', suffix='.sdf',
                                      delete=False) as f:
         path = f.name
         f.write(sdf)
 
     def remove_world(event, context):
-        os.unlink(path)
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass  # Shutdown can be emitted by both the parent and child launch.
         return []
 
     return [SetLaunchConfiguration('world', path),
@@ -89,12 +113,11 @@ def _world_with_rtf(context):
 def generate_launch_description():
     pkg_share = get_package_share_directory('sim')
 
-    default_world = os.path.join(pkg_share, 'world', 'ARCC_Field_2026.sdf')
     default_rviz_config = os.path.join(pkg_share, 'rviz', 'config.rviz')
 
     world_arg = DeclareLaunchArgument(
-        'world', default_value=default_world,
-        description='Full path to the .sdf world file to load'
+        'world', default_value=default_world(pkg_share),
+        description='Full path to the .sdf world file to load; its <world> must be named field'
     )
     lockstep_arg = DeclareLaunchArgument(
         'lockstep', default_value='false',
@@ -110,14 +133,16 @@ def generate_launch_description():
         'robot_name', default_value='sentry',
         description='Name the robot is spawned with in the sim'
     )
-    x_arg = DeclareLaunchArgument('x', default_value='0.0')
-    y_arg = DeclareLaunchArgument('y', default_value='0.0')
+    x_arg = DeclareLaunchArgument('x', default_value=str(BLUE_START[0]))
+    y_arg = DeclareLaunchArgument('y', default_value=str(BLUE_START[1]))
     z_arg = DeclareLaunchArgument('z', default_value='0.03')
     yaw_arg = DeclareLaunchArgument(
         'yaw', default_value=str(SPAWN_YAW),
-        description='Spawn heading, rad CCW; the default faces across the field (-y)')
+        description='Spawn heading, rad CCW; both teams boot facing +y')
     # Windows default off where no display opens; watch in Foxglove there.
     windows = 'true' if display_error() is None else 'false'
+    gz_gui_config_arg = DeclareLaunchArgument(
+        'gz_gui_config', default_value='', description='Optional gz GUI configuration path')
     gui_arg = DeclareLaunchArgument(
         'gui', default_value=windows,
         description='Set to false to run gz sim headless (server only)'
@@ -127,8 +152,9 @@ def generate_launch_description():
         description='Set to false to skip launching rviz2'
     )
     foxglove_arg = DeclareLaunchArgument(
-        'foxglove', default_value='true',
-        description='Foxglove bridge on :8765 (launch/foxglove.launch.py)'
+        'foxglove', default_value=FOXGLOVE_DEFAULT,
+        description='Foxglove bridge on :8765 (launch/foxglove.launch.py); '
+        'default $THORNBOTS_FOXGLOVE or false'
     )
     rviz_config_arg = DeclareLaunchArgument(
         'rviz_config', default_value=default_rviz_config,
@@ -148,9 +174,8 @@ def generate_launch_description():
     )
 
     # --- Optional synthetic wheel-odometry drift injection (pose emulator).
-    # Off by default -- sim's /dji_serial_bridge/pose stays exact ground truth unless explicitly
-    # opted into, so this never changes existing behavior by accident. Turn
-    # it on to exercise/demonstrate slam_toolbox's map->odom correction, which
+    # Off by default: /dji_serial_bridge/pose reports exact displacement from boot. Turn
+    # it on to exercise/demonstrate slam_toolbox's map->nav_odom correction, which
     # otherwise has nothing real to correct against in sim.
     odom_noise_enabled_arg = DeclareLaunchArgument(
         'odom_noise_enabled', default_value='false',
@@ -258,7 +283,6 @@ def generate_launch_description():
         description='How much later than its sample cv_target_emulator stamps a '
         "detection: camera latency for target_tracker's camera_latency_s to undo"
     )
-    world = LaunchConfiguration('world')
     robot_name = LaunchConfiguration('robot_name')
 
     # --- Resource path so gz sim can resolve model://sim/... URIs used
@@ -287,24 +311,16 @@ def generate_launch_description():
     # --- Start the gz sim server with the requested world. The GUI comes up
     # separately once the robot is in (gz_gui below): a GUI started with the
     # server takes its first state before the spawn and never shows the robot.
-    gz_sim = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])
-        ),
-        launch_arguments={
-            'gz_args': [world, ' -r -s'],  # -r: run, not paused; -s: server only
-        }.items(),
-    )
+    # No shell between launch and gz: see sim/gz_process.py.
+    gz_sim = OpaqueFunction(function=lambda context: [gz_sim_process([
+        LaunchConfiguration('world').perform(context),
+        *(['-s'] if _is_true(context, 'uart_epoch_zero') else ['-r', '-s'])])])
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
-    clock_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
-        name='clock_bridge',
-        output='screen',
-        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
-        parameters=[{'use_sim_time': True}],
-    )
+    clock_bridge = clock_bridge_node(
+        condition=UnlessCondition(LaunchConfiguration('uart_deterministic')))
+    uart_clock_bridge = clock_bridge_node(
+        '/sim/uart_clock', condition=IfCondition(LaunchConfiguration('uart_deterministic')))
 
     # --- Spawn the robot into the running world.
     # NOTE: deliberately -string (raw URDF text), NOT -topic
@@ -319,13 +335,37 @@ def generate_launch_description():
         arguments=[
             '-string', Command(['xacro '] + model_xacro
                                + [' camera:=', LaunchConfiguration('camera'),
+                                  ' mcb_physics:=', LaunchConfiguration('mcb_physics'),
+                                  ' mcb_drive:=', LaunchConfiguration('mcb_drive'),
+                                  ' firmware_binary:=', LaunchConfiguration('firmware_binary'),
+                                  ' mcb_backend:=', LaunchConfiguration('mcb_backend'),
+                                  ' mcb_game_stage:=', LaunchConfiguration('mcb_game_stage'),
+                                  ' mcb_device_link:=', LaunchConfiguration('mcb_device_link'),
+                                  ' uart_relay_fixture:=',
+                                  LaunchConfiguration('uart_relay_fixture'),
+                                  ' uart_deterministic:=',
+                                  LaunchConfiguration('uart_deterministic'),
+                                  ' uart_epoch_zero:=', LaunchConfiguration('uart_epoch_zero'),
+                                  ' uart_epoch_zero_ack:=',
+                                  LaunchConfiguration('uart_epoch_zero_ack'),
+                                  ' lidar_noise:=', PythonExpression([
+                                      "'false' if '", LaunchConfiguration('lidar_keyed_noise'),
+                                      "' == 'true' else 'true'"]),
+                                  ' uart_pose_consumed:=',
+                                  LaunchConfiguration('uart_pose_consumed'),
+                                  ' uart_baud:=', LaunchConfiguration('uart_baud'),
+                                  ' mcb_read_delay_ms:=', LaunchConfiguration('mcb_read_delay_ms'),
+                                  ' mcb_auto_fire:=', LaunchConfiguration('mcb_auto_fire'),
                                   ' name:=', robot_name]),
             '-name', robot_name,
             '-x', LaunchConfiguration('x'),
             '-y', LaunchConfiguration('y'),
             '-z', LaunchConfiguration('z'),
             '-Y', LaunchConfiguration('yaw'),
-            '-allow_renaming', 'true',
+            '-allow_renaming', PythonExpression([
+                "'false' if '",
+                LaunchConfiguration('uart_epoch_zero'),
+                "'.lower() in ('true', '1', 'yes') else 'true'"]),
         ],
     )
     # Keep a short delay before spawning so gz sim's entity-creation service
@@ -337,32 +377,61 @@ def generate_launch_description():
         OnProcessStart(
             target_action=clock_bridge,
             on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
-        )
+        ), condition=UnlessCondition(LaunchConfiguration('uart_epoch_zero'))
     )
+    delayed_uart_spawn_robot = RegisterEventHandler(
+        OnProcessStart(
+            target_action=uart_clock_bridge,
+            on_start=[TimerAction(period=2.0, actions=[spawn_robot])],
+        ), condition=UnlessCondition(LaunchConfiguration('uart_epoch_zero'))
+    )
+    robot_spawn_ready = Node(
+        package='sim', executable='robot_spawn_ready', name='robot_spawn_ready', output='screen',
+        condition=IfCondition(LaunchConfiguration('verify_epoch_zero_spawn')),
+        parameters=[{'model': robot_name,
+                     'startup_timeout_s': ParameterValue(
+                         LaunchConfiguration('startup_wait_s'), value_type=float),
+                     'x': ParameterValue(LaunchConfiguration('x'), value_type=float),
+                     'y': ParameterValue(LaunchConfiguration('y'), value_type=float),
+                     'z': ParameterValue(LaunchConfiguration('z'), value_type=float),
+                     'yaw': ParameterValue(LaunchConfiguration('yaw'), value_type=float)}])
+    spawn_failure = RegisterEventHandler(OnProcessExit(
+        target_action=robot_spawn_ready,
+        on_exit=lambda event, context: finish_suite(event, context, 'robot spawn verification')
+        if event.returncode else []))
+    create_failure = RegisterEventHandler(OnProcessExit(
+        target_action=spawn_robot,
+        on_exit=lambda event, context: finish_suite(event, context, 'robot creation')
+        if event.returncode and context.launch_configurations['uart_epoch_zero'].lower() in
+        ('true', '1', 'yes') else []))
     gz_gui = RegisterEventHandler(
         OnProcessExit(
             target_action=spawn_robot,
-            on_exit=[IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(PathJoinSubstitution(
-                    [FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'])),
-                launch_arguments={'gz_args': '-g'}.items(),
-            )],
+            on_exit=[OpaqueFunction(function=_gz_gui)],
         ),
         condition=IfCondition(LaunchConfiguration('gui')),
     )
 
     # --- Bridge the gpu_lidar sensor's /scan topic (defined in the model xacro)
-    # into ROS 2, remapped to scan_raw -- thornbots_pkg's lidar_self_filter node
-    # is the only thing that publishes the final /scan (see its docstring),
-    # for both sim and real hardware.
+    # into ROS 2. The sim adapter adds acquisition timing and normalizes
+    # invalid ranges before the shared hardware/sim lidar_self_filter.
     scan_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='scan_bridge',
         output='screen',
         arguments=['/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan'],
-        remappings=[('/scan', '/scan_raw')],
+        remappings=[('/scan', '/sim/scan')],
         parameters=[{'use_sim_time': True}],
+    )
+
+    lidar_scan = Node(
+        package='sim',
+        executable='lidar_scan',
+        output='screen',
+        parameters=[{'use_sim_time': True, 'noise_stddev_m': ParameterValue(
+            PythonExpression(["0.01 if '", LaunchConfiguration('lidar_keyed_noise'),
+                              "' == 'true' else 0.0"]), value_type=float)}],
     )
 
     # --- Bridge the JointStatePublisher gazebo plugin's output into ROS 2, as
@@ -374,12 +443,10 @@ def generate_launch_description():
     # publishes on the gz-transport topic
     # /world/<world>/model/<robot_name>/joint_state as gz.msgs.Model --
     # it does NOT talk to ROS on its own, hence this bridge.
-    gz_joint_state_topic = [
-        '/world/ARCC_Field_2026/model/', robot_name, '/joint_state'
-    ]
+    gz_joint_state_topic = [world_path('model/'), robot_name, '/joint_state']
     joint_state_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='joint_state_bridge',
         output='screen',
         arguments=[gz_joint_state_topic + ['@sensor_msgs/msg/JointState[gz.msgs.Model']],
@@ -395,8 +462,8 @@ def generate_launch_description():
     # /model/<robot_name>/odometry as gz.msgs.Odometry, not to ROS.
     gz_odom_topic = ['/model/', robot_name, '/odometry']
     odom_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='odom_bridge',
         output='screen',
         arguments=[gz_odom_topic + ['@nav_msgs/msg/Odometry[gz.msgs.Odometry']],
@@ -464,8 +531,8 @@ def generate_launch_description():
     # design needed.
     gz_cmd_vel_topic = ['/model/', robot_name, '/cmd_vel']
     cmd_vel_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='cmd_vel_bridge',
         output='screen',
         arguments=[gz_cmd_vel_topic + ['@geometry_msgs/msg/Twist]gz.msgs.Twist']],
@@ -481,11 +548,11 @@ def generate_launch_description():
     # ros_gz_interfaces/srv/SetEntityPose, so actor_driver can call it
     # every tick without starting a process per call.
     set_pose_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='set_pose_bridge',
         output='screen',
-        arguments=['/world/ARCC_Field_2026/set_pose@ros_gz_interfaces/srv/SetEntityPose'],
+        arguments=[world_path('set_pose') + '@ros_gz_interfaces/srv/SetEntityPose'],
         parameters=[{'use_sim_time': True}],
     )
 
@@ -497,8 +564,8 @@ def generate_launch_description():
     # head turn.
     gz_headlink_topic = ['/model/', robot_name, '/joint/headlink/cmd_pos']
     head_pan_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='head_pan_bridge',
         output='screen',
         arguments=[gz_headlink_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
@@ -511,8 +578,8 @@ def generate_launch_description():
     # above.
     gz_headpitch_topic = ['/model/', robot_name, '/joint/headpitch/cmd_pos']
     head_pitch_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='head_pitch_bridge',
         output='screen',
         arguments=[gz_headpitch_topic + ['@std_msgs/msg/Float64]gz.msgs.Double']],
@@ -527,8 +594,8 @@ def generate_launch_description():
     # realsense-yolov8-nitros-bridge/launch/isaac_ros_yolov8_realsense.launch.py)
     # so CV nodes written against the physical camera run unmodified in sim.
     camera_image_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='camera_image_bridge',
         condition=camera_on,
         output='screen',
@@ -580,8 +647,8 @@ def generate_launch_description():
     # One set of intrinsics, reused for colour and depth: sim's camera is a
     # single lens, so the extrinsics between them are identity too.
     camera_color_info_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='camera_color_info_bridge',
         condition=camera_on,
         output='screen',
@@ -590,8 +657,8 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
     camera_depth_info_bridge = Node(
-        package='ros_gz_bridge',
-        executable='parameter_bridge',
+        package='sim',
+        executable='gz_bridge',
         name='camera_depth_info_bridge',
         condition=camera_on,
         output='screen',
@@ -649,12 +716,26 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
 
-    # --- Turns thornbots_pkg's /cv/target into /head_pan_cmd + /head_pitch_cmd
-    # so the head actually tracks CV detections (see the CV head aim node).
+    # --- The MCB's aim planner, standing in for the firmware this gz robot does
+    # not run (no mcb_physics): the firmware's AimPlanner on /cv/target_state,
+    # falling back to the idle /cv/target look point. cv_head_aim turns its
+    # aim into /head_pan_cmd + /head_pitch_cmd so the head tracks detections.
     # Needs thornbots_pkg's auto.launch.py running alongside this (for
-    # point_to_cv_target -> /cv/target) -- same spawn_target gate as
-    # cv_target_emulator above, since aiming only makes sense once a
-    # target exists to aim at.
+    # target_tracker -> /cv/target_state), and the firmware checkout at build time.
+    # Same spawn_target gate as cv_target_emulator above. Aim only: nothing fires.
+    aim_standin_exe = os.path.join(
+        get_package_prefix('sim'), 'lib', 'sim', 'mcb_aim_standin')
+    mcb_aim_standin = Node(
+        package='sim',
+        executable='mcb_aim_standin',
+        name='mcb_aim_standin',
+        output='screen',
+        parameters=[{'use_sim_time': True, 'fire_enabled': False}],
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('spawn_target'), "'.lower() in ('true', '1', 'yes') and ",
+            str(os.path.exists(aim_standin_exe))])),
+    )
+
     cv_head_aim = Node(
         package='sim',
         executable='cv_head_aim',
@@ -673,6 +754,7 @@ def generate_launch_description():
         name='rviz2',
         output='screen',
         arguments=['-d', LaunchConfiguration('rviz_config')],
+        additional_env=udp_env(),
         parameters=[{'use_sim_time': True}],
         condition=IfCondition(LaunchConfiguration('rviz')),
     )
@@ -685,6 +767,28 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument('uart_relay_fixture', default_value='false'),
+        DeclareLaunchArgument('uart_deterministic', default_value='false'),
+        DeclareLaunchArgument('lidar_keyed_noise', default_value='false',
+                              description='Lidar noise is drawn per (seed, stamp, beam) in '
+                                          'lidar_scan instead of by the unseeded gz generator'),
+        DeclareLaunchArgument('uart_pose_consumed', default_value='none',
+                              description='Header topic that acks each consumed MCB POSE; '
+                                          'physics holds at a delivered POSE until then'),
+        DeclareLaunchArgument('uart_epoch_zero', default_value='false'),
+        DeclareLaunchArgument('startup_wait_s', default_value='30.0',
+                              description='epoch-zero wall limit for the gate and spawn check'),
+        DeclareLaunchArgument('verify_epoch_zero_spawn', default_value='false'),
+        DeclareLaunchArgument('uart_epoch_zero_ack', default_value='/detector_standin/ready'),
+        DeclareLaunchArgument('uart_baud', default_value='115200'),
+        DeclareLaunchArgument('mcb_read_delay_ms', default_value='0'),
+        DeclareLaunchArgument('mcb_physics', default_value='false'),
+        DeclareLaunchArgument('mcb_drive', default_value='stop'),
+        DeclareLaunchArgument('firmware_binary', default_value=''),
+        DeclareLaunchArgument('mcb_backend', default_value='hosted', choices=['hosted', 'renode']),
+        DeclareLaunchArgument('mcb_game_stage', default_value='4'),
+        DeclareLaunchArgument('mcb_device_link', default_value=default_mcb_link()),
+        DeclareLaunchArgument('mcb_auto_fire', default_value='true'),
         world_arg,
         lockstep_arg,
         model_arg,
@@ -694,8 +798,10 @@ def generate_launch_description():
         z_arg,
         yaw_arg,
         gui_arg,
+        gz_gui_config_arg,
         rviz_arg,
         foxglove_arg,
+        remote_dds_argument(), *dds_environment(),
         rviz_config_arg,
         camera_arg,
         real_time_factor_arg,
@@ -722,7 +828,9 @@ def generate_launch_description():
         OpaqueFunction(function=_world_with_rtf),
         gz_sim,
         clock_bridge,
+        uart_clock_bridge,
         scan_bridge,
+        lidar_scan,
         joint_state_bridge,
         odom_bridge,
         head_slider_relay,
@@ -735,10 +843,18 @@ def generate_launch_description():
         camera_color_info_bridge,
         camera_depth_info_bridge,
         delayed_spawn_robot,
+        delayed_uart_spawn_robot,
+        create_failure,
+        OpaqueFunction(function=lambda context: [spawn_robot] if
+                       context.launch_configurations['uart_epoch_zero'].lower() in
+                       ('true', '1', 'yes') else []),
+        spawn_failure,
+        robot_spawn_ready,
         gz_gui,
         pose_emulator,
         target_driver,
         cv_target_emulator,
+        mcb_aim_standin,
         cv_head_aim,
         rviz,
         foxglove,
