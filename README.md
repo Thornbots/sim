@@ -340,9 +340,12 @@ outside the launch tree to clean up:
   referenced from its own handles, services and timer, so with the global context the participant
   and rmw's graph-listener thread outlived `main` and Fast DDS's singleton
   destroyed the participant under that thread (SIGSEGV or `pure virtual method
-  called`, about 2% of early interrupts). `tools/bridge_teardown_stress.py N MIN
-  MAX OUT` hunts for a regression: it interrupts four bridges and three
-  subscribers together after a random delay and counts bridge deaths.
+  called`, about 2% of early interrupts). Teardown is bounded: three seconds after
+  `spin()` returns a watchdog leaves with a message on stderr (`teardown exceeded 3 s`,
+  once in about 1,000 exits before it existed), and `GZ_BRIDGE_ABORT_ON_HANG=1` aborts for a core.
+  `tools/bridge_teardown_stress.py N MIN MAX OUT` hunts for a regression: it interrupts four
+  bridges and three subscribers together after a random delay and counts bridge deaths and
+  watchdog exits.
 
 `tools/lifecycle_check.sh` is the acceptance test. For each of `mcb_parked`,
 `mcb_drive`, `mcb_match` and `tracking` it ends a run by completion, Ctrl-C

@@ -28,12 +28,17 @@
 #include "ros_gz_bridge/ros_gz_bridge.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rcutils/logging.h"
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <unistd.h>
 
 namespace {
 using ros_gz_bridge::BridgeDirection;
@@ -90,6 +95,23 @@ class Bridge : public ros_gz_bridge::RosGzBridge {
   }
 };
 
+// Bounded teardown. Destroying the Fast DDS participant has rarely blocked here (1 bridge
+// of about 1,000 exits in the lifecycle matrix: SIGINT seen, no exit for 15 s, SIGTERM
+// ignored), and the bridge holds nothing that needs saving. Three seconds after spin()
+// returns the process leaves without finishing the destruction, and says so on stderr.
+// GZ_BRIDGE_ABORT_ON_HANG=1 aborts instead, to take a core of the stuck teardown.
+void start_teardown_watchdog() {
+  std::thread([] {
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    static const char message[] =
+        "gz_bridge: teardown exceeded 3 s; leaving without destroying the DDS participant\n";
+    const ssize_t written = write(STDERR_FILENO, message, sizeof(message) - 1);
+    (void)written;
+    if (std::getenv("GZ_BRIDGE_ABORT_ON_HANG")) std::abort();
+    std::_Exit(0);
+  }).detach();
+}
+
 // Everything that uses the context lives in this scope, so it is gone before
 // the caller releases the context.
 int run(const std::shared_ptr<rclcpp::Context> &context, const std::vector<std::string> &args) {
@@ -105,6 +127,7 @@ int run(const std::shared_ptr<rclcpp::Context> &context, const std::vector<std::
     rclcpp::executors::SingleThreadedExecutor executor(executor_options);
     executor.add_node(node);
     executor.spin();
+    start_teardown_watchdog();
     executor.remove_node(node);
     node->release();
     return 0;

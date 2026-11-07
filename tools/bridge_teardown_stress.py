@@ -5,7 +5,7 @@ Each iteration starts four gz_bridge processes with the sim's message types (the
 publishers whose Fast DDS receive threads handle a peer's reader removal) and
 three rclpy subscribers (those peers), waits a random time, then SIGINTs every
 process back to back, as launch does, and records how each exited. A bridge must
-exit 0; the subscribers are only peers (an rclpy node interrupted before it
+exit 0 without its teardown watchdog firing; the subscribers are only peers (an rclpy node interrupted before it
 exists exits 1, which is not counted). Run it in a container with sim built and
 sourced; set GZ_BRIDGE to test another binary.
 
@@ -85,6 +85,9 @@ def iteration(binary, outdir, low, high):
             status = 'hung'
         if name.startswith('bridge') and status != 0:
             failed[name] = status
+        elif name.startswith('bridge') and 'teardown exceeded' in open(
+                os.path.join(outdir, name + '.log')).read():
+            failed[name] = 'watchdog'  # exited 0 only because the teardown watchdog fired
     return failed
 
 
