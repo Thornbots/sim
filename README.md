@@ -640,8 +640,8 @@ and up the canted face. Ballistic `mcb_drive`/`mcb_match` records take the
 nearest front-side crossing of any panel along the flight (`crossing_panel`),
 so near misses show their side too.
 `states.jsonl` records stamped TargetState errors by case. `mcb_parked` shot
-and state records also include head-TF and map-localization errors against gz
-truth. The localization error is `map->root` truth error;
+and state records also include head-TF errors against gz truth; the map-localization
+errors are in `poses.jsonl`. The localization error is `map->root` truth error;
 `navigation_error_m` is the `nav_odom->root` xy truth error at the same stamp.
 `odom_disagreement_m` compares raw MCB POSE with TF
 `odom->root` at that POSE's stamp. That agreement is what a hit depends on;
@@ -1559,6 +1559,34 @@ with `extrinsic_lookahead_s:=0.001` (launch argument `rf2o_extrinsic_lookahead_s
 stamped on a head-TF sample is looked up the same way whether or not the next sample has
 arrived ([rf2o](../rf2o_laser_odometry/README.md#extrinsic-lookahead)).
 
+The EKF is the Thornbots [`robot_localization` fork](../robot_localization/README.md#thornbots-fork)
+with `deterministic_measurement_order` (equal stamps pop by topic) and `publish_queued_stamps` (a
+Header per measurement it has queued), both set by `ekf_deterministic_order:=true`
+(`producer_chains` sets it and refuses to launch on the stock package). `pose_consumed` and
+`scan_odom_gate` wait for that ack, so a tick cannot miss a measurement that was published
+before it. A group topic suffixed `@hold` or `@tick` is satisfied only by a message stamped
+exactly the chain's hold or tick (the `detector` chain: a TARGET_STATE ack at its hold, or a
+none-mark at its tick), so a later frame's mark or an earlier frame's ack cannot release a tick.
+
+The other inputs that used to depend on message timing are keyed by stamp too:
+
+- `target_driver` and `match_environment` step and stamp at their own scheduled ticks (not the
+  clock a callback happens to see) and send a sample again while the clock stands still.
+  A change made by the harness (`effective_s`, `start_time_s`) applies to ticks after the
+  harness tick it was made at.
+- `OpponentMover` (with `path_hz`) waits for the path sample of the latest tick before each step and
+  uses that sample, never a newer one that has already arrived. In `mcb_match`, the head angles ride
+  in the path's twist and the mover sets the joints itself (the head PID controllers are removed
+  from those models), `match_environment` takes the gz truth and the sentry's odometry as of fixed
+  offsets before each tick once they have arrived, and `waypoint_nav` reports ready only after its
+  referee subscription has matched (a best-effort sample sent earlier is lost).
+- `target_tracker` queues empty frames behind earlier ones and (`tf_lookahead_s`, 1 ms here)
+  waits for TF newer than its query, as rf2o does.
+- The scorer counts its windows in chain ticks (`run_to`, `tick_s()`), not in the clock it has
+  seen, and waits for the coordinator's status without stepping. AMCL's map-frame errors
+  (`localization_*`, `navigation_*`, `map_navigation_*`) are only in `poses.jsonl`: AMCL is
+  off the hit path and not run-to-run identical.
+
 Run-to-run differences are located with `MCB_UART_TRACE=<file>`, which makes the MCB
 plugin log `<sim ns> <bytes> <hex>` for every Jetson-to-MCB read; diff two runs' traces to see
 the first frame that reached the firmware on a different step. The measurements and the
@@ -1646,10 +1674,10 @@ python3 src/sim/test/test_uart_epoch_zero.py \
 ```
 
 Lockstep gates the MCB batch and, with the default coordinated UART, every
-MCB-to-Jetson frame in sim time (bytes x 10 / `uart_baud`). The other
-CV/localization chains and wall-time bring-up remain asynchronous, so this does
-not establish identical shot sequences. Live gates are in
-[ROADMAP T17](../docs/ROADMAP.md#a-acceptance-details).
+MCB-to-Jetson frame in sim time (bytes x 10 / `uart_baud`); the producer chains and
+epoch-zero startup below make repeated hosted runs of every `mcb_parked` cell,
+`mcb_drive` and `mcb_match` write identical `shots.jsonl` and `states.jsonl`
+([measurements](docs/t17-consistent-runs-2026-11-05.md#2026-11-06-pass-3-the-remaining-timing-races)).
 
 The on-demand transport test runs a small gz world in its own process group
 and checks held clock, legacy phase and timeouts, plus strict startup discovery,
@@ -2032,6 +2060,8 @@ firmware approach, driving, spinning and parked motion, not a scripted
 straight/corner route; there is no scripted route-error metric for firmware
 auto-drive.
 
+These map-frame and navigation errors are in `poses.jsonl` only; shot and state records
+leave them out so two runs' files compare equal (AMCL is not run-to-run identical).
 `navigation_error_m` compares local `nav_odom->root` with field truth;
 `localization_error_m` measures the globally corrected `map->root` pose and
 therefore includes `map->nav_odom`. Navigation error describes field alignment

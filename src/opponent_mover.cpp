@@ -17,13 +17,18 @@
 // bridged from ROS) and sets the model's world pose to it carried forward
 // at its velocity and yaw rate to the step's sim time, at height <z>.
 // Past <stale_s> without a sample the model holds still. Teleporting from
+// With <path_hz> it waits (up to 5 s wall) for the path sample of the latest tick before this step, so
+// which sample carries it forward never depends on message timing.
 // Python moved it in 4-36 cm jumps; VelocityControl moved only the first
 // robot spawned (2026-09-29). see README.md for design rationale
 
 #include <gz/msgs/odometry.pb.h>
 
 #include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <cmath>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -32,6 +37,8 @@
 #include <gz/math/Pose3.hh>
 #include <gz/plugin/Register.hh>
 #include <gz/sim/Model.hh>
+#include <gz/sim/components/JointPositionReset.hh>
+#include <gz/sim/components/JointVelocityReset.hh>
 #include <gz/sim/System.hh>
 #include <gz/sim/Util.hh>
 #include <gz/transport/Node.hh>
@@ -54,6 +61,7 @@ public:
       "topic", "/model/" + model_.Name(ecm) + "/path").first;
     z_ = sdf->Get<double>("z", 0.0).first;
     stale_s_ = sdf->Get<double>("stale_s", 0.1).first;
+    path_hz_ = sdf->Get<double>("path_hz", 0.0).first;
     node_.Subscribe(topic, &OpponentMover::OnPath, this);
   }
 
@@ -64,8 +72,42 @@ public:
     }
     std::optional<gz::msgs::Odometry> path;
     {
-      std::lock_guard<std::mutex> lock(mutex_);
-      path = path_;
+      std::unique_lock<std::mutex> lock(mutex_);
+      if (path_hz_ > 0.0 && !path_ &&
+        info.simTime.count() - info.dt.count() >=
+        static_cast<int64_t>(std::ceil(1000.0 / path_hz_)) * 1000000)
+      {
+        // The first sample has been published: the step it starts on must not depend on timing.
+        cv_.wait_for(lock, std::chrono::seconds(5), [&] {return path_.has_value();});
+      }
+      if (path_hz_ > 0.0 && path_) {
+        // The newest tick the clock has published: ticks are ceil(k / hz) ms, and /clock
+        // reaches the step before this one.
+        const int64_t before = info.simTime.count() - info.dt.count();
+        int64_t k = static_cast<int64_t>(std::floor(before * 1e-9 * path_hz_)) + 1;
+        int64_t tick = 0;
+        do {
+          --k;
+          tick = static_cast<int64_t>(std::ceil(k * 1000.0 / path_hz_)) * 1000000;
+        } while (tick > before && k > 0);
+        const auto stamp_ns = [](const gz::msgs::Odometry & m) {
+            return static_cast<int64_t>(m.header().stamp().sec()) * 1000000000 +
+                   m.header().stamp().nsec();
+          };
+        const double age = (before - stamp_ns(*path_)) * 1e-9;
+        if (age <= stale_s_) {
+          cv_.wait_for(lock, std::chrono::seconds(5), [&] {return samples_.count(tick) > 0;});
+        }
+        // That tick's own sample, even when a newer one has already arrived: which of the
+        // two a step used must not depend on message timing.
+        auto it = samples_.upper_bound(tick);
+        if (it != samples_.begin()) {
+          path = std::prev(it)->second;
+        }
+      }
+      if (!path) {
+        path = path_;
+      }
     }
     if (!path) {
       return;
@@ -83,6 +125,29 @@ public:
     const auto world_velocity = gz::math::Quaterniond(
       q.w(), q.x(), q.y(), q.z()).RotateVector(
       gz::math::Vector3d(v.linear().x(), v.linear().y(), v.linear().z()));
+    if (path_hz_ > 0.0) {
+      // Head angles ride in the path's twist (angular x yaw, y pitch), set directly so the
+      // head's PID and its reaction on the chassis cannot depend on message timing.
+      const double heads[2] = {v.angular().x(), v.angular().y()};
+      const char * names[2] = {"headlink", "headpitch"};
+      for (int i = 0; i < 2; ++i) {
+        const auto joint = model_.JointByName(ecm, names[i]);
+        if (joint == gz::sim::kNullEntity) {continue;}
+        auto * reset = ecm.Component<gz::sim::components::JointPositionReset>(joint);
+        if (reset) {
+          *reset = gz::sim::components::JointPositionReset({heads[i]});
+        } else {
+          ecm.CreateComponent(joint, gz::sim::components::JointPositionReset({heads[i]}));
+        }
+        // Kinematic: no velocity left to integrate between steps.
+        auto * still = ecm.Component<gz::sim::components::JointVelocityReset>(joint);
+        if (still) {
+          *still = gz::sim::components::JointVelocityReset({0.0});
+        } else {
+          ecm.CreateComponent(joint, gz::sim::components::JointVelocityReset({0.0}));
+        }
+      }
+    }
     model_.SetWorldPoseCmd(
       ecm, gz::math::Pose3d(
         p.position().x() + world_velocity.X() * dt,
@@ -93,15 +158,23 @@ public:
 private:
   void OnPath(const gz::msgs::Odometry & msg)
   {
-    std::lock_guard<std::mutex> lock(mutex_);
-    path_ = msg;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      path_ = msg;
+      samples_[static_cast<int64_t>(msg.header().stamp().sec()) * 1000000000 +
+        msg.header().stamp().nsec()] = msg;
+      while (samples_.size() > 32) {samples_.erase(samples_.begin());}
+    }
+    cv_.notify_all();
   }
 
   gz::sim::Model model_{gz::sim::kNullEntity};
-  double z_ = 0.0, stale_s_ = 0.1;
+  double z_ = 0.0, stale_s_ = 0.1, path_hz_ = 0.0;
+  std::condition_variable cv_;
   gz::transport::Node node_;
   std::mutex mutex_;  // gz-transport calls OnPath on its own thread
   std::optional<gz::msgs::Odometry> path_;
+  std::map<int64_t, gz::msgs::Odometry> samples_;  // by stamp, the newest few
 };
 
 }  // namespace sim

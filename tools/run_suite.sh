@@ -44,6 +44,16 @@ if [ ! -x "$GUARD" ]; then
     exit 1
 fi
 
+# A run that follows another within seconds can find the last one's gz-transport advertisements
+# still listed; discovery of the new gate's release channel then outlasts the first hold's 2 s.
+# Wait for them to expire (the listing empties) before starting.
+if command -v gz >/dev/null; then
+    for _ in $(seq 1 120); do
+        [ -z "$(gz topic -l 2>/dev/null)" ] && break
+        sleep 0.5
+    done
+fi
+
 LOG="/tmp/sim_suite_${SUITE}_$(date +%Y%m%d_%H%M%S).log"
 START=$(mktemp); FIFO=$(mktemp -u)
 mkfifo "$FIFO"

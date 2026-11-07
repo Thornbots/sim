@@ -58,6 +58,12 @@ public:
   bool step(double wall_timeout_s = 0.1);
   // Step until the tick time is a multiple of `period_s`.
   void align(double period_s);
+  // Steps chain ticks until the held tick reaches `tick_target`. Unlike spin_for, which counts
+  // the clock this node has seen, the end is a tick, the same in every run.
+  void run_to(double tick_target, double wall_budget_s);
+  // The chain tick the clock is held at between steps: the same value in every run, unlike
+  // now_s(), which is whatever /clock message this node has handled.
+  double tick_s() { return unacked_ns_ ? *unacked_ns_ * 1e-9 : now_s(); }
   // Stop holding physics on this harness (teardown): later ticks need no release.
   void retire();
   void check_lockstep();
@@ -115,7 +121,8 @@ private:
   }
   std::optional<Matrix> world_T_odom(double t);
   Vec muzzle_velocity(const std::string &name, double t);
-  Json pose_errors(double t);
+  // map_frame adds the AMCL/navigation errors, which are not run-to-run deterministic.
+  Json pose_errors(double t, bool map_frame = false);
   std::optional<Json> judge(double t);
   std::optional<Json> judge_match(const std::string &kind, double t);
   void judge_state(const dji_serial_bridge::msg::TargetState &m);

@@ -4,7 +4,9 @@
 // Lockstep probe: answers each MCB POSE frame once the stack has consumed it. For a
 // POSE stamped k it publishes a Header stamped k on `topic` after /odom has
 // reached k, as has `/localization/ekf_input` (and the relay's ack, if `relay_topic` is set), and TF `odom_frame <- f` is available at k for every f in `frames`
-// (the camera and muzzle chains hang off the same joint states). It reads only
+// (the camera and muzzle chains hang off the same joint states). With `queued_topic` (the EKF's
+// `~/queued_stamps`) it also waits for the EKF to have queued a measurement stamped k, so the
+// EKF's next tick cannot miss it. It reads only
 // stamps, never wall time; a wall timer polls so a held sim clock cannot stall it.
 
 #include <chrono>
@@ -46,6 +48,15 @@ public:
       "/localization/ekf_input", 100, [this](nav_msgs::msg::Odometry::ConstSharedPtr m) {
         input_ns_ = std::max(input_ns_, rclcpp::Time(m->header.stamp).nanoseconds());
       });
+    const auto queued_topic = declare_parameter("queued_topic", std::string(""));
+    if (!queued_topic.empty()) {
+      queued_sub_ = create_subscription<std_msgs::msg::Header>(
+        queued_topic, rclcpp::QoS(1000).reliable(), [this](std_msgs::msg::Header::ConstSharedPtr m) {
+          queued_ns_ = std::max(queued_ns_, rclcpp::Time(m->stamp).nanoseconds());
+        });
+    } else {
+      queued_ns_ = std::numeric_limits<int64_t>::max();
+    }
     const auto relay_topic = declare_parameter("relay_topic", std::string(""));
     if (!relay_topic.empty()) {
       relay_sub_ = create_subscription<std_msgs::msg::Header>(
@@ -66,7 +77,7 @@ private:
   void poll()
   {
     while (!pending_.empty() && odom_ns_ >= pending_.front() && input_ns_ >= pending_.front() &&
-      relay_ns_ >= pending_.front()) {
+      relay_ns_ >= pending_.front() && queued_ns_ >= pending_.front()) {
       const rclcpp::Time at(pending_.front(), RCL_ROS_TIME);
       bool ready = true;
       for (const auto & frame : frames_) {
@@ -83,13 +94,13 @@ private:
   std::string odom_frame_;
   std::vector<std::string> frames_;
   std::deque<int64_t> pending_;
-  int64_t odom_ns_ = 0, input_ns_ = 0, relay_ns_ = 0;
+  int64_t odom_ns_ = 0, input_ns_ = 0, relay_ns_ = 0, queued_ns_ = 0;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr pub_;
   rclcpp::Subscription<dji_serial_bridge::msg::RobotPose>::SharedPtr pose_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_, input_sub_;
-  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr relay_sub_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr relay_sub_, queued_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 }  // namespace
