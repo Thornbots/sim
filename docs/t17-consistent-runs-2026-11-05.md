@@ -290,8 +290,43 @@ is otherwise accepted by the checker).
 | | `mcb_match` | 3 | identical, 329 / 1109 | equal |
 | stage-switch loop | `mcb_drive`, `mcb_match` alternating | 16 | identical to the first of each | |
 
-Not taken: the RTF=1 run and the run with gz pinned to two cores. Both are to be taken only when
-`docker ps` shows no other agent container, and `isaac-agent-lifecycle-resid` was up for this whole
-session. `campaign.sh`-style commands used here: `run_suite.sh mcb_parked|mcb_drive|mcb_match backend:=hosted
-log_dir:=<dir>` with `MCB_UART_TRACE=<dir>/uart.trace`, then `ros2 run sim compare_runs <dir A> <dir B>`;
-for the two-core run, `taskset -a -cp 0,1` on every gz process while the stack starts.
+### RTF=1 and gz two-core acceptance (2026-11-07)
+
+Fresh agent container on the aarch64 Mac mini (Colima, 6 CPUs), the only container on the VM; workspace `nightly`
+`0ec6189d` with every submodule at its recorded commit. Hosted firmware `ca02cfc5`. Per stage, one unthrottled baseline
+(`real_time_factor:=0`), one `real_time_factor:=1` run and one run with `taskset -a -cp 0,1` re-applied every 0.3 s to
+every `gz sim` process (all gz threads read back as affinity `0,1`), each compared with `compare_runs` against the baseline.
+
+| Stage | Run | Suite RTF | Lockstep timeouts | Latest-TF fallbacks | `shots.jsonl` | `states.jsonl` | Native checker |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `mcb_parked` (12 cells) | unthrottled | 1.10 | 0 | 0 | reference, 1883 | reference, 14468 | ok |
+| | RTF=1 | 0.80 | 0 | 0 | identical | identical | ok |
+| | gz two cores | 1.10 | 0 | 0 | identical | identical | ok |
+| `mcb_drive` | unthrottled | 1.13 | 0 | 0 | reference, 109 | reference, 1148 | ok |
+| | RTF=1 | 0.82 | 0 | 0 | identical | identical | ok |
+| | gz two cores | 1.11 | 0 | 0 | identical | identical | ok |
+| `mcb_match` | unthrottled | 1.06 | 0 | 0 | reference, 329 | reference, 1109 | combat floor only |
+| | RTF=1 | 0.83 | 0 | 0 | identical | identical | combat floor only |
+| | gz two cores | 1.05 | 0 | 0 | identical | identical | combat floor only |
+
+Timeouts are the coordinator's final line; fallbacks are the count of latest-TF warnings in each `stack.log`.
+Three unthrottled runs per stage were taken earlier (table above). Notes:
+
+- `real_time_factor:=1` realises 0.80 to 0.83 on this machine (the throttle adds its own wall wait), below the
+  unthrottled 1.05 to 1.13. The run is still a throttled one; the order of events was identical.
+- Two cores left RTF unchanged: lockstep holds gz while the other chains run, so gz is not CPU-bound on six cores.
+  The pinning was verified, not assumed: 49 of 49 gz tasks sampled mid-run had affinity `0,1`. A repeat of
+  `mcb_drive` (baseline 2 and pinned 2) gave the same `shots`/`states` again.
+- `compare_runs` exits 1 for the throttled pairs only because `poses.jsonl` (`mcb_parked`) and `route.jsonl`
+  (`mcb_drive`, `mcb_match`) differ in AMCL map-frame fields (pass 3, finding 7: off the hit path, not gated). Two
+  plain unthrottled `mcb_drive` runs differ in `route.jsonl` by the same amount (`localization_error_m` 0.0141 against
+  0.0153), so that difference is AMCL run-to-run noise, not an effect of throttling.
+- Faults of the run itself, not of the harness: a fresh container needs `firmware/MCBV3` (and its `taproot-scripts`),
+  `scons g++-14 gcc-arm-none-eabi` plus `python3-jinja2 python3-pyelftools`, and the `robot_localization` fork built in the
+  workspace; with the submodules left at an older checkout the stack stalled at sim 0.0 s ("waiting for /ekf_filter_node",
+  `NO DATA from MCB`), which looks like a harness deadlock but is a stale `sentry_localization`/`ros2_dji_serial_bridge`.
+  Update every submodule (`git submodule update --init`) before building.
+
+Raw per-run directories (logs, `shots`/`states`/`poses`/`route` jsonl, UART traces) were copied out of the container to
+the host's `/tmp/c-accept/t17`. Commands as above: `run_suite.sh <stage> backend:=hosted log_dir:=<dir>` with
+`MCB_UART_TRACE=<dir>/uart.trace`, then `ros2 run sim compare_runs <dir A> <dir B>`.
