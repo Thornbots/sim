@@ -24,10 +24,12 @@
 
 #include <gz/msgs/odometry.pb.h>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -95,17 +97,21 @@ public:
                    m.header().stamp().nsec();
           };
         const double age = (before - stamp_ns(*path_)) * 1e-9;
-        if (age <= stale_s_) {
+        // Wait only for a tick the producer makes: its first sample carries its first tick
+        // (17 ms at 60 Hz), and a long board boot lets that sample arrive while the clock is
+        // still at zero, so no sample for the earlier ticks will ever come.
+        if (age <= stale_s_ && tick >= first_stamp_) {
           cv_.wait_for(lock, std::chrono::seconds(5), [&] {return samples_.count(tick) > 0;});
         }
         // That tick's own sample, even when a newer one has already arrived: which of the
-        // two a step used must not depend on message timing.
+        // two a step used must not depend on message timing. Before the first tick there is
+        // none, and the model holds still (never the newest sample: it is ahead of the clock).
         auto it = samples_.upper_bound(tick);
         if (it != samples_.begin()) {
           path = std::prev(it)->second;
         }
       }
-      if (!path) {
+      if (!path && path_hz_ <= 0.0) {
         path = path_;
       }
     }
@@ -161,8 +167,10 @@ private:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       path_ = msg;
-      samples_[static_cast<int64_t>(msg.header().stamp().sec()) * 1000000000 +
-        msg.header().stamp().nsec()] = msg;
+      const int64_t stamp = static_cast<int64_t>(msg.header().stamp().sec()) * 1000000000 +
+        msg.header().stamp().nsec();
+      samples_[stamp] = msg;
+      first_stamp_ = std::min(first_stamp_, stamp);
       while (samples_.size() > 32) {samples_.erase(samples_.begin());}
     }
     cv_.notify_all();
@@ -175,6 +183,7 @@ private:
   std::mutex mutex_;  // gz-transport calls OnPath on its own thread
   std::optional<gz::msgs::Odometry> path_;
   std::map<int64_t, gz::msgs::Odometry> samples_;  // by stamp, the newest few
+  int64_t first_stamp_ = std::numeric_limits<int64_t>::max();  // earliest stamp ever received
 };
 
 }  // namespace sim

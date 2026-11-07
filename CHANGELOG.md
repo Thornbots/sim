@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `OpponentMover` with `path_hz` no longer waits 5 s wall for a path sample no producer makes. Its
+  first sample is stamped with the producer's first tick (17 ms at 60 Hz) and is resent during the
+  board boot; with the Renode backend (about 85 s of boot) it reached the mover before the clock left
+  zero, so the step before the first tick waited for a tick-0 sample, stalled gz and every Renode
+  stage died at its first release with `lockstep timeout: gz not held at 0.020 s` (sim `9360b27`).
+  Before the first tick the model now holds still, as it already did when the sample arrived later
+  (hosted). Hosted runs are unchanged. See the
+  [investigation](docs/t17-consistent-runs-2026-11-05.md#renode-bring-up-regression-found-by-the-lifecycle-repeats-2026-11-07).
+
 - `estimation_suite` and `shot_hit_suite` drop their simulation-clock callback (which holds the sampler
   node) on every exit from a test body. After an interrupt a failed ASSERT left it in a static, so the
   node was destroyed at exit against Fast DDS's singleton and the suite hung past launch's 5 s SIGINT

@@ -1586,7 +1586,10 @@ The other inputs that used to depend on message timing are keyed by stamp too:
   A change made by the harness (`effective_s`, `start_time_s`) applies to ticks after the
   harness tick it was made at.
 - `OpponentMover` (with `path_hz`) waits for the path sample of the latest tick before each step and
-  uses that sample, never a newer one that has already arrived. In `mcb_match`, the head angles ride
+  uses that sample, never a newer one that has already arrived. Before the producer's first tick
+  (its first sample is stamped with that tick, 17 ms at 60 Hz, and is resent during a long board
+  boot) there is no sample and the model holds still; it waits only for ticks from the first one on.
+  In `mcb_match`, the head angles ride
   in the path's twist and the mover sets the joints itself (the head PID controllers are removed
   from those models), `match_environment` takes the gz truth and the sentry's odometry as of fixed
   offsets before each tick once they have arrived, and `waypoint_nav` reports ready only after its
