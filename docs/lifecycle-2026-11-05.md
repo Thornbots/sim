@@ -366,6 +366,13 @@ loosened), and no run logged a watchdog exit. Earlier hosted `--repeat 5` runs o
 62 of 64 valid runs (two bring-up flakes at range 32; the remaining 36 were void after the gz abort left a pty), 90 of 91 valid runs (one
 bring-up flake at range 32; the last nine overlapped a probe stack of mine on the same domain and are void), 99/100 (the bridge hang).
 
+**Renode board backend** (the same ELF built for the board, `MCB_RENODE_ROOT` Renode 1.17.0, `arm-none-eabi-objcopy` installed; a container without
+`binutils-arm-none-eabi` fails at once with `command failed:` and `MCB firmware exited (2)`): one full `lifecycle_check.sh` matrix, **20 of 20
+runs passed** (`mcb_parked`, `mcb_drive`, `mcb_match` and `tracking`, each by completion, Ctrl-C, SIGTERM, SIGHUP and a killed shell), preceded by one
+completion of each MCB suite (702, 663 and 725 s, all passed; the board boots for about 100 s and the scored span runs at RTF about 0.04). Every
+interrupted run ended 1 s after the signal. A run costs about 12 min complete and 8.5 min interrupted, so `--repeat 5` is about 11 h of machine time;
+it was stopped after the first repeat and **Renode repeats 2 to 5 were not run**. No Renode run logged a watchdog exit.
+
 **Early-interrupt hunt** (`tools/bridge_teardown_stress.py`, four bridges and three subscribers, delay 0.02 to 5 s): the bridge with
 an owned context, `release()` and early logging **0 deaths in 1,200 iterations**: 300 at 0.02 to 1 s and 300 at 0.2 to 5 s before the
 watchdog existed, 600 at 0.2 to 3 s with it in abort mode (0 watchdog exits); stock `gz_bridge` died in 3 of 150. One-sided 95% bound: 3/1,200, about 0.25% per iteration, against about 2% before.
