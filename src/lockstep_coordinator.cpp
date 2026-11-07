@@ -18,7 +18,10 @@
 // reaching the tick satisfies it (a frame's TX ack, or the producer's mark that it sent
 // nothing); every group must. A topic prefixed `~` is counted instead: the group (all of
 // its topics `~`) holds when the messages received so far reach the number of this chain's
-// ticks, for a producer that answers once per tick but whose stamps are not the tick's. A topic is a std_msgs/Header, or `topic#pkg/msg/Type` for
+// ticks, for a producer that answers once per tick but whose stamps are not the tick's. A topic
+// suffixed `@hold` or `@tick` is satisfied only by a message stamped exactly the chain's hold (tick +
+// `lag_s`, aligned) or exactly the tick, for producers that answer each tick in order: a later tick's
+// mark (or the previous tick's ack) must not release this one. A topic is a std_msgs/Header, or `topic#pkg/msg/Type` for
 // any message whose first field is a Header. A chain may hold `lag_s` after its tick and
 // round that hold up to `align_s`; `start_s` skips earlier ticks (data that is only complete a few steps later); the
 // acks still need the tick's own stamp. At each hold it waits for every group. A wait past max_wait_s wall is
@@ -114,6 +117,8 @@ public:
           }
           const bool counted = spec[0] == '~';
           if (counted) {spec.erase(0, 1);}
+          const bool at_hold = spec.size() > 5 && spec.compare(spec.size() - 5, 5, "@hold") == 0;
+          const bool at_tick = spec.size() > 5 && spec.compare(spec.size() - 5, 5, "@tick") == 0;
           if (counted != (alternatives.empty() ? counted : acks_[alternatives[0]]->counted)) {
             throw std::invalid_argument("lockstep ack group cannot mix counted and stamped topics");
           }
@@ -125,8 +130,15 @@ public:
             auto a = std::make_shared<Ack>();
             a->spec = spec;
             a->counted = counted;
+            a->match = at_hold ? Ack::Match::Hold : at_tick ? Ack::Match::Tick : Ack::Match::Newest;
             const auto hash = spec.find('#');
             a->topic = spec.substr(0, hash);
+            if (at_hold || at_tick) {
+              if (hash != std::string::npos) {
+                throw std::invalid_argument("lockstep @hold/@tick apply to a Header topic only");
+              }
+              a->topic.erase(a->topic.size() - 5);
+            }
             if (hash != std::string::npos) {a->type = spec.substr(hash + 1);}
             if (a->topic.empty()) {
               throw std::invalid_argument("lockstep ack topic cannot be empty");
@@ -228,6 +240,8 @@ private:
   {
     std::string spec, topic, type;  // type empty: std_msgs/Header
     bool counted = false;
+    enum class Match {Newest, Hold, Tick} match = Match::Newest;  // exact: stamp == hold / tick
+    std::set<int64_t> stamps;  // every stamp received, for the exact matches
     int64_t count = 0;
     int64_t newest_ns = kNever;
     rclcpp::SubscriptionBase::SharedPtr sub;
@@ -325,6 +339,7 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     a.newest_ns = std::max(a.newest_ns, ns);
+    if (a.match != Ack::Match::Newest) {a.stamps.insert(ns);}
     ++a.count;
     cv_.notify_all();
   }
@@ -572,7 +587,11 @@ private:
               return total >= c.ticks + 1;
             }
             return std::any_of(group.begin(), group.end(),
-                [&](size_t i) {return acks_[i]->newest_ns >= tick;});
+                [&](size_t i) {
+                  const auto & a = *acks_[i];
+                  if (a.match == Ack::Match::Newest) {return a.newest_ns >= tick;}
+                  return a.stamps.count(a.match == Ack::Match::Hold ? hold_of(c, tick) : tick) > 0;
+                });
           };
         const auto t1 = std::chrono::steady_clock::now();
         const bool ok = wait(lock, [&] {

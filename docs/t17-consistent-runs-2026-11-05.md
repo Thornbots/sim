@@ -218,7 +218,7 @@ The remaining divergence was in the EKF, not rf2o or physics:
 | + lookahead (d1, d2) | 19 | 158 scans | 14 s |
 | + gate (g1, g2) | 807 (to 20.095 s) | 290 scans (to 25.9 s) | 26 s |
 
-### What still differs
+### What still differs (closed by pass 3, below)
 
 - The first UART difference is now a TARGET_STATE frame at 20.095 s, and `shots.jsonl` is
   still not identical (99 and 97 records in g1 and g2).
@@ -247,3 +247,48 @@ fallbacks, native checker `bench ok`); `mcb_drive` passed (0 timeouts, 0 fallbac
 instrumented EKF overlay (e2) died at 14 ms of sim time with "UART acknowledgment or ROS clock
 timeout: unconsumed_poses=1"; it did not recur in the five runs after it or in the 14 cells of the regression above, and the
 cause is not found. Startup races of that kind should be watched in the acceptance campaign.
+
+## 2026-11-06 pass 3: the remaining timing races
+
+Mac mini (Colima, 6 CPUs), my container `isaac-agent-t17rl`; the E-residual agent's container
+(`isaac-agent-lifecycle-resid`) was up throughout, doing light work, so no figure here is a clean-machine
+one. Method: a script runs a cell or stage N times, each with `MCB_UART_TRACE`, optionally a bag
+(`/odom`, `/scan*`, `/localization/*`, `/tf`, `/joint_states`, the detector, tracker and bridge topics,
+the TX acks and flushes) and temporary traces (removed). Runs are compared by the first differing
+line of the UART trace, then by the first differing input topic *in sim time* (message index is
+useless once repeats differ), then by the content of that input. Each fix below was found that way and
+changed the first-divergence point of the next batch.
+
+| # | Cause (evidence) | Fix |
+| --- | --- | --- |
+| 1 | EKF ties and tick membership: with the fork's tie-break alone, `/localization/odom` still differed from identical inputs (a measurement queued after the tick fired) | `deterministic_measurement_order` and `publish_queued_stamps` in the [fork](../../robot_localization/README.md#thornbots-fork); `pose_consumed` and `scan_odom_gate` wait for the queued stamp |
+| 2 | The `detector` chain released a tick on the previous frame's TX ack, or on a later empty frame's none-mark, before this frame's TARGET_STATE was queued (the frame then went out at a later hold, or was dropped by the wire-busy gate) | `@hold` / `@tick` exact-stamp ack groups in the coordinator; `target_tracker` queues empty frames behind earlier ones |
+| 3 | `target_driver` stamped and integrated with whatever clock the callback saw (dt and stamp 1 ms off) | scheduled tick times; `match_environment` likewise |
+| 4 | `OpponentMover` used the newest path sample that had arrived, sample k or k+1 at a tick step (1 ulp in parked, mm in `mcb_drive`); the first step also started at a timing-dependent step; two bimodal values of the opponent's y (1.3 m, differing by 4e-9) came from that start | waits for the tick's sample and uses it; waits for the first sample; senders resend while the clock stands still (a sample the gz side missed would stall physics) |
+| 5 | Cell changes: `set_target` took effect at whichever `target_driver` tick followed the parameter callback; `match_environment` `active` likewise | `effective_s` / `start_time_s` carry the harness tick the change was made at |
+| 6 | The harness decided windows with `now_s()` (the clock this node had seen), so a cell started one whole second apart in different runs (`align(1.0)` skipped a tick), ended a tick apart, and `check_lockstep` stepped the clock while waiting for a wall-timed status | `tick_s()` and `run_to` count chain ticks; the status wait does not step; the parked ingress loop is tick-based; 1 s of stepping past the window lets in-window shots and states land, and records beyond it are dropped |
+| 7 | AMCL (not gated, off the hit path) put map-frame errors in `shots.jsonl` and `states.jsonl` | those fields are only in `poses.jsonl` |
+| 8 | Tracker `lookupTransform` at a query that falls on a TF sample slerps at ratio 0 once a newer sample has arrived (rf2o's race again) | `tf_lookahead_s` 1 ms in the E2E stack |
+| 9 | `waypoint_nav` missed the first referee sample when its best-effort subscription had not matched yet, so its first goal came one tick later in 1 run of 8 | `epoch_zero_ready`: ready only once `/dji_serial_bridge/ref_sys` has a publisher |
+| 10 | `mcb_match`: `match_environment` took the gz truth and the sentry's odometry as they had arrived, and the opponents' heads were turned by gz PID controllers fed over gz transport, whose reaction moved the chassis | stamped snapshots at fixed offsets; head angles ride in the path message and `OpponentMover` sets the joints (position and zero velocity); the PID plugins are removed from those models when `path_hz` is set |
+| 11 | A run started within seconds of another timed out at its first hold ("gz not held at 0.010 s after 2.0 s wall", 4 of about 30 stage switches): the last run's gz-transport advertisements were still listed | `run_suite.sh` waits for `gz topic -l` to empty (limit unchanged) |
+
+Things that were wrong in the hypotheses: the AMCL map-frame error was never the cause of a
+`TARGET_STATE` difference; gz truth was identical in every run pair where it was dumped; the
+opponents' y-values being bimodal looked like a physics start-up effect and was the mover.
+
+### Results
+
+All runs hosted, unthrottled, `real_time_factor:=0`, lockstep timeouts 0, latest-TF fallbacks 0, native
+checker `bench ok` (`mcb_match` exits non-zero only on its known combat floor, 7.9% against 10%, and
+is otherwise accepted by the checker).
+
+| Batch | Stage | Runs | `shots.jsonl` / `states.jsonl` | UART read stream |
+| --- | --- | --- | --- | --- |
+| acceptance (cy1-3) | all 12 `mcb_parked` cells | 3 | identical, 1883 / 14468 records | equal to the shorter run's end |
+| | `mcb_drive` | 3 | identical, 109 / 1148 | equal |
+| | `mcb_match` | 3 | identical, 329 / 1109 | equal |
+| stage-switch loop | `mcb_drive`, `mcb_match` alternating | 16 | identical to the first of each | |
+
+RTF=1 and gz-two-core runs: see the README's status line below; they need a Mini with no other
+agent container.

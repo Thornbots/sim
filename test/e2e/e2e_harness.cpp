@@ -25,11 +25,17 @@ namespace sim::e2e {
 void Scorer::check_lockstep() {
   if (!cv_bench::options.lockstep)
     return;
-  const double end = now_s();
-  if (!wait_until([&] {
-        return lockstep_status_.count("sim_s") &&
-               std::stod(lockstep_status_.at("sim_s")) >= end;
-      }, 5, "fresh lockstep status"))
+  // Wait for the coordinator's wall-timed status with the clock held at this tick: stepping
+  // meanwhile would end the window at a different tick in every run.
+  // The coordinator's sim_s is the last hold it completed: the one before the tick held now.
+  const double end = tick_s() - .1;
+  const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  const auto fresh = [&] {
+    return lockstep_status_.count("sim_s") && std::stod(lockstep_status_.at("sim_s")) >= end;
+  };
+  while (rclcpp::ok() && !fresh() && std::chrono::steady_clock::now() < limit)
+    spin_once();
+  if (!fresh())
     throw std::runtime_error("lockstep: missing or stale coordinator status");
   const auto &s = lockstep_status_;
   if (std::stoll(s.at("holds")) == 0)
@@ -202,7 +208,8 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           state_history_.push_back(m);
           while (state_history_.size() > 300) state_history_.pop_front();
           state_stamp = stamp_s(m.header.stamp);
-          if (scoring && stamp_s(m.header.stamp) >= score_from_)
+          if (scoring && stamp_s(m.header.stamp) >= score_from_ &&
+              stamp_s(m.header.stamp) < score_until)
             pending_states_.push_back(m);
         }
       });
@@ -322,14 +329,36 @@ bool Scorer::step(double wall_timeout_s) {
 void Scorer::align(double period_s) {
   const auto period_ms = std::llround(period_s * 1000);
   while (rclcpp::ok())
-    if (step() && (std::llround(now_s() * 1000) - kPhaseMs) % period_ms == 0)
+    if (step() && (std::llround(tick_s() * 1000) - kPhaseMs) % period_ms == 0)
       return;
+}
+void Scorer::run_to(double tick_target, double wall_budget_s) {
+  const auto begin = std::chrono::steady_clock::now();
+  auto progress = begin;
+  double previous = tick_s();
+  while (rclcpp::ok()) {
+    if (step()) {
+      const double tick = tick_s();
+      if (tick < previous - 1e-6)
+        throw std::runtime_error("E2E clock moved backwards during scoring");
+      if (tick > previous)
+        progress = std::chrono::steady_clock::now();
+      previous = tick;
+      if (tick >= tick_target - 1e-6)
+        return;
+    }
+    const auto wall = std::chrono::steady_clock::now();
+    if (wall - progress > std::chrono::seconds(5))
+      throw std::runtime_error("E2E clock stalled for five wall seconds");
+    if (wall - begin > std::chrono::duration<double>(wall_budget_s))
+      throw std::runtime_error("E2E scoring exceeded its wall-time budget");
+  }
 }
 // The old 50 ms pose sampler and 100 ms scorer, on the chain's tick.
 void Scorer::tick_body() {
   ++ticks_;
-  if (scoring)
-    pending_poses_.push_back(now_s());
+  if (scoring && tick_s() < score_until)
+    pending_poses_.push_back(tick_s());
   if (ticks_ % 2 == 0)
     fire_tick();
 }
@@ -338,7 +367,7 @@ void Scorer::reset() {
   for (auto &entry : shots)
     entry.second.clear();
   scoring = true;
-  score_from_ = now_s();
+  score_from_ = tick_s();
   states.clear();
   pending_states_.clear();
   route_records.clear();
@@ -363,7 +392,7 @@ std::optional<Matrix> Scorer::world_T_odom(double t) {
     return {};
   }
 }
-Json Scorer::pose_errors(double t) {
+Json Scorer::pose_errors(double t, bool map_frame) {
   auto ours = histories.at("sentry")->at(t);
   if (!ours)
     return Json::object();
@@ -450,40 +479,44 @@ Json Scorer::pose_errors(double t) {
       }
       break;
     }
-  try {
-    auto tr = tf.lookupTransform(
-                    "map", "root",
-                    rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME))
-                  .transform;
-    out["localization_error_m"] =
-        std::hypot(tr.translation.x - ours->root(0, 3),
-                   tr.translation.y - ours->root(1, 3));
-    out["localization_xy"] = {tr.translation.x, tr.translation.y};
-  } catch (const tf2::TransformException & error) {
-    out["localization_error_m"] = nullptr;
-    out["localization_tf_error"] = error.what();
-  }
-  try {
-    const auto tr = tf.lookupTransform(
-        "nav_odom", "root",
-        rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
-    out["navigation_error_m"] = std::hypot(
-        tr.translation.x - ours->root(0, 3), tr.translation.y - ours->root(1, 3));
-    out["navigation_xy"] = {tr.translation.x, tr.translation.y};
-  } catch (const tf2::TransformException & error) {
-    out["navigation_error_m"] = nullptr;
-    out["navigation_tf_error"] = error.what();
-  }
-  try {
-    const auto map = tf.lookupTransform(
-        "map", "nav_odom",
-        rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
-    out["map_navigation_xy"] = {map.translation.x, map.translation.y};
-    out["map_navigation_yaw_rad"] = std::atan2(
-        2 * (map.rotation.w * map.rotation.z + map.rotation.x * map.rotation.y),
-        1 - 2 * (map.rotation.y * map.rotation.y + map.rotation.z * map.rotation.z));
-  } catch (const tf2::TransformException &) {
-    out["map_navigation_xy"] = nullptr;
+  // AMCL and its map->nav_odom correction are not lockstep-gated (their particles and
+  // timing vary), so only poses.jsonl records them; shot and state records stay comparable.
+  if (map_frame) {
+    try {
+      auto tr = tf.lookupTransform(
+                      "map", "root",
+                      rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME))
+                    .transform;
+      out["localization_error_m"] =
+          std::hypot(tr.translation.x - ours->root(0, 3),
+                     tr.translation.y - ours->root(1, 3));
+      out["localization_xy"] = {tr.translation.x, tr.translation.y};
+    } catch (const tf2::TransformException & error) {
+      out["localization_error_m"] = nullptr;
+      out["localization_tf_error"] = error.what();
+    }
+    try {
+      const auto tr = tf.lookupTransform(
+          "nav_odom", "root",
+          rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
+      out["navigation_error_m"] = std::hypot(
+          tr.translation.x - ours->root(0, 3), tr.translation.y - ours->root(1, 3));
+      out["navigation_xy"] = {tr.translation.x, tr.translation.y};
+    } catch (const tf2::TransformException & error) {
+      out["navigation_error_m"] = nullptr;
+      out["navigation_tf_error"] = error.what();
+    }
+    try {
+      const auto map = tf.lookupTransform(
+          "map", "nav_odom",
+          rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
+      out["map_navigation_xy"] = {map.translation.x, map.translation.y};
+      out["map_navigation_yaw_rad"] = std::atan2(
+          2 * (map.rotation.w * map.rotation.z + map.rotation.x * map.rotation.y),
+          1 - 2 * (map.rotation.y * map.rotation.y + map.rotation.z * map.rotation.z));
+    } catch (const tf2::TransformException &) {
+      out["map_navigation_xy"] = nullptr;
+    }
   }
   return out;
 }
@@ -651,7 +684,7 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
   auto key = std::make_pair(kind, launch);
   auto impact = resolver_->resolve(
       shooter, muzzle.block<3, 1>(0, 3), muzzle.block<3, 1>(0, 0), launch,
-      functions, std::min(now_s() - .02, available), flight_steps_[key], inherited);
+      functions, std::min(tick_s() - .02, available), flight_steps_[key], inherited);
   if (impact.pending) {
     flight_steps_[key] = impact.next_step;
     return {};
@@ -677,7 +710,7 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
   return out;
 }
 void Scorer::fire_tick() {
-  double now = now_s();
+  double now = tick_s();
   std::vector<dji_serial_bridge::msg::TargetState> states_keep;
   for (const auto &m : pending_states_)
     if (stamp_s(m.header.stamp) < now - .5)
@@ -690,7 +723,7 @@ void Scorer::fire_tick() {
     if (t > now - .1)
       ref_keep.push_back(t);
     else {
-      auto out = pose_errors(t);
+      auto out = pose_errors(t, true);
       // EKF + raw-pose pairing can arrive after the first scoring callback.
       // Retry the capture stamp; terminal gaps remain visible after one second.
       if (now - t < 1.0 &&
@@ -805,14 +838,14 @@ void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
   visual_pub_->publish(markers);
 }
 void Scorer::sync_referee() {
-  double elapsed = now_s() - match_start.value_or(now_s());
+  double elapsed = tick_s() - match_start.value_or(tick_s());
   if (match_start && !center_time) {
     bool ready = true;
     for (const auto &[name, history] : histories) {
-      const auto pose = history->at(now_s() - .01);
+      const auto pose = history->at(tick_s() - .01);
       ready &= pose && match_scenario::in_center_zone(pose->root(0, 3), pose->root(1, 3));
     }
-    if (ready) center_time = now_s();
+    if (ready) center_time = tick_s();
   }
   diagnostic_msgs::msg::DiagnosticArray msg;
   msg.header.stamp = get_clock()->now();

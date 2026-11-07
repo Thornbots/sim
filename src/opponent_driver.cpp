@@ -97,7 +97,7 @@ void visit_elements(tinyxml2::XMLElement * element,
   }
 }
 
-std::string opponent_urdf(const std::string & name)
+std::string opponent_urdf(const std::string & name, double path_hz)
 {
   tinyxml2::XMLDocument document;
   const std::string xml = xacro_opponent(name);
@@ -139,6 +139,29 @@ std::string opponent_urdf(const std::string & name)
       while (auto * child = element->FirstChildElement(tag)) {element->DeleteChild(child);}
     }
   });
+  if (path_hz > 0.0) {
+    // The mover turns the heads itself, so the PID controllers are removed.
+    std::vector<tinyxml2::XMLElement *> controllers;
+    visit_elements(document.RootElement(), [&controllers](tinyxml2::XMLElement * element) {
+      const char * file = element->Attribute("filename");
+      if (std::strcmp(element->Name(), "plugin") == 0 && file &&
+        std::strcmp(file, "gz-sim-joint-position-controller-system") == 0) {
+        controllers.push_back(element);
+      }
+    });
+    for (auto * controller : controllers) {controller->Parent()->DeleteChild(controller);}
+  }
+  if (path_hz > 0.0) {
+    // The mover then waits for the path sample of each tick (see opponent_mover.cpp).
+    visit_elements(document.RootElement(), [&document, path_hz](tinyxml2::XMLElement * element) {
+      const char * plugin = element->Attribute("name");
+      if (std::strcmp(element->Name(), "plugin") != 0 || !plugin ||
+        std::strcmp(plugin, "sim::OpponentMover") != 0) {return;}
+      auto * hz = document.NewElement("path_hz");
+      hz->SetText(path_hz);
+      element->InsertEndChild(hz);
+    });
+  }
   tinyxml2::XMLPrinter printer;
   document.Print(&printer);
   return printer.CStr();
@@ -152,6 +175,8 @@ public:
     name_ = declare_parameter<std::string>("name", "opponent_0");
     z_ = declare_parameter("z", -0.0115);
     initial_yaw_ = declare_parameter("initial_yaw", 0.0);
+    // Rate of the path this opponent rides, when a lockstep run needs its pose per tick.
+    path_hz_ = declare_parameter("path_hz", 0.0);
     const auto initial = declare_parameter<std::vector<double>>(
       "initial_position", std::vector<double>{});
     const double timeout = declare_parameter("startup_timeout_s", 30.0);
@@ -283,7 +308,7 @@ private:
           RCLCPP_INFO(get_logger(), "%s ready at epoch zero", name_.c_str());
           return;
         }
-        if (sdf.empty()) {sdf = opponent_urdf(name_);}
+        if (sdf.empty()) {sdf = opponent_urdf(name_, path_hz_);}
         gz::msgs::EntityFactory request;
         request.set_sdf(sdf);
         request.set_name(name_);
@@ -336,7 +361,7 @@ private:
     auto names = model_names();
     if (names && !present(names)) {
       gz::msgs::EntityFactory request;
-      request.set_sdf(opponent_urdf(name_));
+      request.set_sdf(opponent_urdf(name_, path_hz_));
       request.set_name(name_);
       request.set_allow_renaming(false);
       request.mutable_pose()->mutable_position()->set_x(start_->first);
@@ -356,7 +381,7 @@ private:
   }
 
   std::string name_;
-  double z_, initial_yaw_;
+  double z_, initial_yaw_, path_hz_ = 0.0;
   std::optional<std::pair<double, double>> start_;
   std::unique_ptr<gz::transport::Node> gz_node_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;

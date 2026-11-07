@@ -144,7 +144,8 @@ PRODUCER_CHAINS = {
     # detector_standin's 60 Hz frame through selector and tracker to TARGET_STATE; the
     # tracker needs TF 10 ms past the capture (pose_latency_s) and gz poses on a 4 ms grid.
     'detector': {'period_s': 1.0 / 60.0, 'phase_s': 0.0, 'lag_s': 0.025, 'align_s': 0.004,
-                 'acks': ['/dji_serial_bridge/tx_ack/target_state|/sim/e2e/target_state_none']},
+                 'acks': ['/dji_serial_bridge/tx_ack/target_state@hold|'
+                          '/sim/e2e/target_state_none@tick']},
     # waypoint_nav's 10 Hz NAV_GOAL, held 1 ms after its tick so the EKF chain (same
     # instant every third tick) has been released first.
     'nav': {'period_s': 0.1, 'phase_s': 0.0, 'lag_s': 0.0, 'acks': [
@@ -155,6 +156,8 @@ PRODUCER_MARKS = {
     # The detector chain holds at tick + 25 ms rounded to the 4 ms gz pose grid.
     'process_delay_s': 0.025,
     'process_align_s': 0.004,
+    # tf2 interpolates a sample at the query once a newer one has arrived; wait for one.
+    'tf_lookahead_s': 0.001,
     'cv_target_none_topic': '/sim/e2e/cv_target_none',
     'target_state_none_topic': '/sim/e2e/target_state_none',
 }
@@ -307,6 +310,7 @@ def generate_launch_description():
         package='thornbots_nav', executable='waypoint_nav', name='waypoint_nav', output='screen',
         parameters=[os.path.join(get_package_share_directory('thornbots_nav'), 'config',
                                  'route.yaml'), {'use_sim_time': True,
+                                                 'epoch_zero_ready': ParameterValue(marks, value_type=bool),
                                                  'nav_goal_none_topic': PythonExpression([
                                                      "'/sim/e2e/nav_goal_none' if '", marks,
                                                      "' == 'true' else ''"])}])
@@ -325,6 +329,11 @@ def generate_launch_description():
                           'enable_mmm': PythonExpression([
                               "'false' if '", LaunchConfiguration('producer_chains'),
                               "' == 'true' else 'true'"]),
+                          # Equal-stamp measurements (pose and twist of one message, scan
+                          # odometry) order by topic, not by callback arrival.
+                          'ekf_deterministic_order': PythonExpression([
+                              "'true' if '", LaunchConfiguration('producer_chains'),
+                              "' == 'true' else ''"]),
                           'ekf_frequency_hz': PythonExpression([
                               "'", repr(1.0 / EKF_PERIOD_S), "' if '",
                               LaunchConfiguration('producer_chains'), "' == 'true' else ''"]),
@@ -403,7 +412,8 @@ def generate_launch_description():
                 '/robot_spawn_ready/ready', '/startup_barrier/ready',
                 '/match_environment/ready' if stage in DRIVING else '/target_driver/ready'] +
                 (['/opponent_driver_opponent_1/ready', '/opponent_driver_ally_0/ready']
-                 if stage == 'mcb_match' else []) + ([extra_ready] if extra_ready else []),
+                 if stage == 'mcb_match' else []) + ([extra_ready] if extra_ready else []) +
+                (['/waypoint_nav/epoch_zero_ready'] if producers else []),
                 startup_timeout_s=startup_timeout)
         return Node(
             package='sim', executable='lockstep_coordinator', output='screen',
@@ -421,6 +431,11 @@ def generate_launch_description():
             raise RuntimeError('deterministic_epoch_zero requires lockstep and '
                                'uart_deterministic without uart_relay_fixture')
         opponent_params = {'use_sim_time': True, 'name': OPPONENT}
+        # The mover then waits for the path sample of each tick instead of using whichever
+        # arrived (target_driver 60 Hz; match_environment 100 Hz).
+        path_hz = ({'path_hz': 100.0 if stage in DRIVING else 60.0}
+                   if _is_true(context, 'producer_chains') else {})
+        opponent_params.update(path_hz)
         # The board boots inside robot creation, so scene checks may wait that long.
         scene_wait = {'startup_timeout_s': startup_wait_s(context.launch_configurations)}
         if deterministic:
@@ -448,7 +463,7 @@ def generate_launch_description():
                 extras += [Node(
                     package='sim', executable='opponent_driver',
                     name=f'opponent_driver_{name}', output='screen',
-                    parameters=[{'use_sim_time': True, 'name': name, **(
+                    parameters=[{'use_sim_time': True, 'name': name, **path_hz, **(
                         {'initial_position': parked_paths['initial_positions'][name],
                          'initial_yaw': parked_paths['initial_yaws'][name], **scene_wait}
                         if deterministic else {})}],
@@ -479,7 +494,12 @@ def generate_launch_description():
         if harness_chain and not deterministic:
             raise ValueError('harness_chain requires epoch-zero startup')
         producers = _is_true(context, 'producer_chains')
-        coordination = coordinator(deterministic, stage, extra_ready, startup_timeout,
+        # A stock EKF would silently ignore ekf_deterministic_order and order ties by timing.
+        if producers and not os.path.exists(os.path.join(
+                get_package_share_directory('robot_localization'), 'thornbots_fork')):
+            raise RuntimeError('producer_chains needs the Thornbots robot_localization fork '
+                               '(build the workspace robot_localization package)')
+        coordination =coordinator(deterministic, stage, extra_ready, startup_timeout,
                                    harness_chain, producers)
         delay = float(context.launch_configurations['epoch_coordinator_delay_s'])
         if not math.isfinite(delay) or delay < 0 or delay > 10 or (delay and not deterministic):
@@ -503,9 +523,11 @@ def generate_launch_description():
         ) if deterministic else None
         if producers:
             extras.append(Node(package='sim', executable='pose_consumed', output='screen',
-                               parameters=[{'relay_topic': '/sim/e2e/relay_odom'}]))
+                               parameters=[{'relay_topic': '/sim/e2e/relay_odom',
+                                            'queued_topic': '/ekf_filter_node/queued_stamps'}]))
             extras.append(Node(package='sim', executable='scan_odom_gate', output='screen',
-                               parameters=[{'period_s': EKF_PERIOD_S}]))
+                               parameters=[{'period_s': EKF_PERIOD_S,
+                                            'queued_topic': '/ekf_filter_node/queued_stamps'}]))
         return ([failure, coordinator_action, detector(opponents), opponent_driver] + extras
                 + ([barrier, pose_setter] if barrier else []) + common
                 + ([match_environment] if stage in DRIVING else [target_driver])

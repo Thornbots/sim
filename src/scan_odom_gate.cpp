@@ -9,7 +9,8 @@
 // quality diagnostic of every scan due and, when rf2o reports an increment, its
 // Odometry; republishes those in stamp order; then publishes the hold time on `mark_topic`
 // for the coordinator's chain once the navigation adapter's output (`forward_topic`, the
-// EKF's input) carries every stamp released. Scans are the lidar grid `first_scan_s` + n * `scan_period_s`.
+// EKF's input) carries every stamp released, and, with `queued_topic` (the EKF's
+// `~/queued_stamps`), once the EKF has queued each of them. Scans are the lidar grid `first_scan_s` + n * `scan_period_s`.
 // It reads only stamps and the node clock, which the chain keeps at the hold.
 
 #include <algorithm>
@@ -75,6 +76,13 @@ public:
       rclcpp::QoS(100).reliable(), [this](nav_msgs::msg::Odometry::ConstSharedPtr m) {
         forwarded_.insert(rclcpp::Time(m->header.stamp).nanoseconds());
       });
+    const auto queued = declare_parameter("queued_topic", std::string(""));
+    if (!queued.empty()) {
+      queued_sub_ = create_subscription<std_msgs::msg::Header>(
+        queued, rclcpp::QoS(1000).reliable(), [this](std_msgs::msg::Header::ConstSharedPtr m) {
+          queued_.insert(rclcpp::Time(m->stamp).nanoseconds());
+        });
+    }
     timer_ = create_wall_timer(std::chrono::milliseconds(1), [this] {poll();});
   }
 
@@ -84,7 +92,7 @@ private:
     for (;;) {
       if (releasing_) {
         for (const int64_t stamp : awaited_) {
-          if (forwarded_.count(stamp) == 0) {return;}
+          if (forwarded_.count(stamp) == 0 || (queued_sub_ && queued_.count(stamp) == 0)) {return;}
         }
         awaited_.clear();
         std_msgs::msg::Header h;
@@ -117,13 +125,14 @@ private:
   int64_t period_ns_, scan_period_ns_, next_scan_ns_, lag_ns_, next_hold_ns_;
   std::map<int64_t, nav_msgs::msg::Odometry> odoms_;
   std::map<int64_t, bool> qualities_;
-  std::set<int64_t> awaited_, forwarded_;
+  std::set<int64_t> awaited_, forwarded_, queued_;
   bool releasing_ = false;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr out_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr mark_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr quality_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr forward_sub_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr queued_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 }  // namespace

@@ -20,7 +20,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <cstdio>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -231,6 +233,7 @@ public:
       : Node("match_environment"),
         seed_(static_cast<uint64_t>(declare_parameter("seed", 2026))) {
     declare_parameter("active", false);
+    declare_parameter("start_time_s", -1.0);
     stage_ = declare_parameter("stage", std::string("mcb_drive"));
     for (const auto &name : kRouteNames) {
       hp_[name] = 400;
@@ -256,12 +259,24 @@ public:
         [this](const std::vector<rclcpp::Parameter> &params) {
           return on_params(params);
         });
-    if (declare_parameter("deterministic_epoch_zero", false)) {
+    deterministic_ = declare_parameter("deterministic_epoch_zero", false);
+    if (deterministic_) {
       if (!get_parameter("use_sim_time").as_bool()) {
         throw std::invalid_argument("deterministic_epoch_zero requires use_sim_time");
       }
       ready_pub_ = create_publisher<std_msgs::msg::Header>(
           "~/ready", rclcpp::QoS(1).reliable().transient_local());
+      // While the clock stands still, send the latest paths again: a sample the gz side
+      // missed would stall the simulation (the mover keys them by stamp).
+      // Truth arrives on gz's threads and wakes nothing here: poll for it.
+      drain_timer_ = create_wall_timer(std::chrono::milliseconds(1), [this] {drain_ticks();});
+      resend_timer_ = create_wall_timer(std::chrono::milliseconds(50), [this] {
+        const int64_t clock = now().nanoseconds();
+        if (clock == last_wall_clock_ns_) {
+          for (const auto & [name, message] : last_paths_) {path_pubs_.at(name)->publish(message);}
+        }
+        last_wall_clock_ns_ = clock;
+      });
       clock_sub_ = create_subscription<rosgraph_msgs::msg::Clock>(
           "/clock", rclcpp::ClockQoS(), [this](rosgraph_msgs::msg::Clock::ConstSharedPtr msg) {
             if (timer_ || epoch_failed_) return;
@@ -295,8 +310,15 @@ private:
   on_params(const std::vector<rclcpp::Parameter> &params) {
     for (const auto &param : params) {
       if (param.get_name() == "active") {
-        start_s_ = param.as_bool() ? std::optional<double>(now().seconds())
-                                   : std::nullopt;
+        if (deterministic_) {
+          // The next tick's time, not whenever this callback ran.
+          start_s_ = std::nullopt;
+          start_pending_ = param.as_bool();
+          start_after_s_ = get_parameter("start_time_s").as_double();
+        } else {
+          start_s_ = param.as_bool() ? std::optional<double>(now().seconds())
+                                     : std::nullopt;
+        }
       }
     }
     rcl_interfaces::msg::SetParametersResult result;
@@ -314,6 +336,9 @@ private:
     const double tz = 2.0 * (q.x * v.y - q.y * v.x);
     world_velocity_ = Vector2(v.x + q.w * tx + q.y * tz - q.z * ty,
                               v.y + q.w * ty + q.z * tx - q.x * tz);
+    odom_hist_.push_back({rclcpp::Time(message.header.stamp).seconds(), position_, world_velocity_});
+    while (odom_hist_.size() > 64) {odom_hist_.pop_front();}
+    if (deterministic_) {drain_ticks();}
   }
 
   nav_msgs::msg::Odometry
@@ -335,20 +360,110 @@ private:
     return message;
   }
 
+  struct Snapshot
+  {
+    std::map<std::string, Truth> truth;
+    std::vector<std::string> order;
+    Vector2 sentry_position = Vector2::Zero(), sentry_velocity = Vector2::Zero();
+  };
+
   void tick() {
-    const rclcpp::Time current = now();
+    if (!deterministic_) {
+      run(now(), nullptr);
+      return;
+    }
+    // Lockstep: the tick's own time, not a later clock this callback happens to see.
+    pending_.emplace_back(++ticks_ * 10000000LL, get_clock()->get_clock_type());
+    drain_ticks();
+  }
+
+  // A tick uses the gz truth and the sentry's odometry as of fixed offsets before it, once
+  // they have arrived, not whatever the latest message was when the callback ran.
+  bool snapshot_for(const rclcpp::Time &tick, Snapshot &out) {
+    if (stage_ != "mcb_match") {
+      return true;
+    }
+    const double at = tick.seconds();
+    constexpr double kTruthLag = 0.008, kOdomLag = 0.025;
+    std::lock_guard<std::mutex> lock(truth_mutex_);
+    for (const auto &name : kRouteNames) {
+      const auto found = truth_hist_.find(name);
+      if (found == truth_hist_.end() || found->second.empty() ||
+          found->second.back().stamp_s < at - kTruthLag) {
+        return false;
+      }
+      const Truth *chosen = nullptr;
+      for (const auto &sample : found->second) {
+        if (sample.stamp_s <= at - kTruthLag) {chosen = &sample;}
+      }
+      if (chosen) {
+        out.truth[name] = *chosen;
+        out.order.push_back(name);
+      }
+    }
+    if (odom_hist_.empty() || odom_hist_.back().stamp_s < at - kOdomLag) {
+      return false;
+    }
+    for (const auto &sample : odom_hist_) {
+      if (sample.stamp_s <= at - kOdomLag) {
+        out.sentry_position = sample.position;
+        out.sentry_velocity = sample.velocity;
+      }
+    }
+    return true;
+  }
+
+  void drain_ticks() {
+    while (!pending_.empty()) {
+      Snapshot snapshot;
+      if (!snapshot_for(pending_.front(), snapshot)) {
+        const auto wall = std::chrono::steady_clock::now();
+        if (!waiting_) {
+          waiting_ = true;
+          wait_since_ = wall;
+        }
+        if (wall - wait_since_ < std::chrono::seconds(5)) {
+          return;
+        }
+        RCLCPP_ERROR(get_logger(), "match environment: inputs for tick %.3f s never arrived",
+                     pending_.front().seconds());
+      }
+      waiting_ = false;
+      run(pending_.front(), &snapshot);
+      pending_.pop_front();
+    }
+  }
+
+  void run(const rclcpp::Time &current, const Snapshot *snapshot) {
+    // The first tick after the harness tick the activation was made at, not after whichever
+    // of this node's callbacks happened to run first.
+    if (start_pending_ && current.seconds() > start_after_s_) {
+      start_s_ = current.seconds();
+      start_pending_ = false;
+    }
     const double seconds = current.seconds();
     const double elapsed = start_s_ ? std::max(seconds - *start_s_, 0.0) : 0.0;
 
+    std::map<std::string, Truth> truth;
+    std::vector<std::string> order;
+    if (snapshot) {
+      truth = snapshot->truth;
+      order = snapshot->order;
+    } else {
+      std::lock_guard<std::mutex> lock(truth_mutex_);
+      truth = truth_;
+      order = truth_order_;
+    }
     std::map<std::string, std::pair<Vector2, Vector2>> samples;
-    samples["sentry"] = {position_, world_velocity_};
+    samples["sentry"] = snapshot ? std::make_pair(snapshot->sentry_position, snapshot->sentry_velocity)
+                                 : std::make_pair(position_, world_velocity_);
+    std::map<std::string, nav_msgs::msg::Odometry> messages;
     for (const auto &name : path_names_) {
       auto robot = sample_robot(name, elapsed, stage_);
       samples[name] = {robot.position, robot.velocity};
       if (hp_.at(name) == 0) {
-        std::lock_guard<std::mutex> lock(truth_mutex_);
-        const auto found = truth_.find(name);
-        if (found != truth_.end()) {
+        const auto found = truth.find(name);
+        if (found != truth.end()) {
           robot.position = found->second.root.topRightCorner<2, 1>();
           robot.yaw =
               std::atan2(found->second.root(1, 0), found->second.root(0, 0));
@@ -356,12 +471,23 @@ private:
         robot.velocity.setZero();
         robot.spin = 0.0;
       }
-      path_pubs_.at(name)->publish(
-          path_message(name, robot.position, robot.velocity, robot.yaw,
-                       robot.spin, message_time(current)));
+      messages[name] = path_message(name, robot.position, robot.velocity, robot.yaw,
+                                    robot.spin, message_time(current));
     }
     if (stage_ == "mcb_match" && start_s_ && elapsed < match_duration(stage_)) {
-      combat(current, samples);
+      combat(current, samples, truth, order);
+    }
+    for (auto &[name, message] : messages) {
+      if (deterministic_) {
+        // The mover turns the head to these (no gz joint command to race the physics step).
+        const auto head = head_targets_.find(name);
+        if (head != head_targets_.end()) {
+          message.twist.twist.angular.x = head->second[0];
+          message.twist.twist.angular.y = head->second[1];
+        }
+      }
+      last_paths_[name] = message;
+      path_pubs_.at(name)->publish(message);
     }
   }
 
@@ -424,18 +550,16 @@ private:
       truth_order_.push_back(name);
     }
     truth_[name] = sample;
+    auto & history = truth_hist_[name];
+    history.push_back(sample);
+    while (history.size() > 256) {history.pop_front();}
   }
 
   void
   combat(const rclcpp::Time &current,
-         const std::map<std::string, std::pair<Vector2, Vector2>> &samples) {
-    std::map<std::string, Truth> truth;
-    std::vector<std::string> order;
-    {
-      std::lock_guard<std::mutex> lock(truth_mutex_);
-      truth = truth_;
-      order = truth_order_;
-    }
+         const std::map<std::string, std::pair<Vector2, Vector2>> &samples,
+         const std::map<std::string, Truth> &truth,
+         const std::vector<std::string> &order) {
     const double seconds = current.seconds();
     for (const auto &name : path_names_) {
       if (hp_.at(name) == 0 || !truth.count(name) ||
@@ -487,12 +611,16 @@ private:
       PythonRandom noise(aim_noise_key(name, truth.at(name).stamp_s));
       yaw += noise.gauss(0.015);
       pitch += noise.gauss(0.015);
-      gz::msgs::Double yaw_message;
-      yaw_message.set_data(yaw);
-      head_commands_.at(name)[0].Publish(yaw_message);
-      gz::msgs::Double pitch_message;
-      pitch_message.set_data(std::clamp(pitch, -0.6, 0.6));
-      head_commands_.at(name)[1].Publish(pitch_message);
+      if (deterministic_) {
+        head_targets_[name] = {yaw, std::clamp(pitch, -0.6, 0.6)};
+      } else {
+        gz::msgs::Double yaw_message;
+        yaw_message.set_data(yaw);
+        head_commands_.at(name)[0].Publish(yaw_message);
+        gz::msgs::Double pitch_message;
+        pitch_message.set_data(std::clamp(pitch, -0.6, 0.6));
+        head_commands_.at(name)[1].Publish(pitch_message);
+      }
       if (!center_ready_) {
         continue;
       }
@@ -523,6 +651,23 @@ private:
   std::mutex truth_mutex_;
   std::map<std::string, double> next_fire_;
   std::optional<double> start_s_;
+  bool deterministic_ = false, start_pending_ = false;
+  double start_after_s_ = -1.0;
+  std::map<std::string, nav_msgs::msg::Odometry> last_paths_;
+  struct OdomSample
+  {
+    double stamp_s;
+    Vector2 position, velocity;
+  };
+  std::deque<OdomSample> odom_hist_;
+  std::map<std::string, std::deque<Truth>> truth_hist_;
+  std::deque<rclcpp::Time> pending_;
+  bool waiting_ = false;
+  std::chrono::steady_clock::time_point wait_since_;
+  std::map<std::string, std::array<double, 2>> head_targets_;
+  int64_t last_wall_clock_ns_ = -1;
+  rclcpp::TimerBase::SharedPtr resend_timer_, drain_timer_;
+  int64_t ticks_ = 0;
   Vector2 position_ = Vector2::Zero();
   bool center_ready_ = false;
   std::vector<std::string> path_names_;

@@ -275,6 +275,42 @@ TEST_F(Lockstep, AnyOfGroupIsSatisfiedByEitherTopicAndHoldsAtTheLaggedTick) {
   EXPECT_EQ(status_.count("timeouts") ? status_["timeouts"] : "0", "0");
 }
 
+// A producer stamps its output when it makes it, a lag after the tick: `@hold` makes the
+// chain wait for that stamp, not accept an answer stamped at the tick (or an earlier one).
+TEST_F(Lockstep, HoldAndTickSuffixesNeedTheExactStamp) {
+  auto a = node_->create_publisher<std_msgs::msg::Header>("/lockstep_test/a", 100);
+  auto b = node_->create_publisher<std_msgs::msg::Header>("/lockstep_test/b", 100);
+  start(true, true);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  coordinator(true, {"-p", "chains:=[mcb_batch,extra]", "-p", "extra.period_s:=0.010",
+    "-p", "extra.phase_s:=0.0", "-p", "extra.lag_s:=0.002", "-p", "extra.align_s:=0.004",
+    "-p", "extra.acks:=[/lockstep_test/a@hold|/lockstep_test/b@tick]"});
+  const auto answer = [&](int64_t ns) {
+    std_msgs::msg::Header h;
+    h.stamp = rclcpp::Time(ns);
+    a->publish(h);
+  };
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {return ack_->get_subscription_count() > 0 &&
+    a->get_subscription_count() > 0 && b->get_subscription_count() > 0;}, 2));
+  ack(5000000);
+  ASSERT_TRUE(wait([&] {return held_ == 10000000;}, 2)) << coordinator_->read_log();
+  ack(10000000);
+  ASSERT_TRUE(wait([&] {return held_ == 12000000;}, 2)) << coordinator_->read_log();
+  answer(10000000);  // the tick's own stamp: not enough
+  std::this_thread::sleep_for(50ms);
+  EXPECT_EQ(held_, 12000000);
+  // Neither a later tick's mark nor an older one satisfies it; the tick's own does.
+  std_msgs::msg::Header mark;
+  mark.stamp = rclcpp::Time(20000000);
+  b->publish(mark);
+  std::this_thread::sleep_for(50ms);
+  EXPECT_EQ(held_, 12000000);
+  mark.stamp = rclcpp::Time(10000000);
+  b->publish(mark);
+  ASSERT_TRUE(wait([&] {return held_ == 15000000;}, 2)) << coordinator_->read_log();
+}
+
 // Messages are counted, whatever their stamps, when a producer's stamps are not the tick's.
 TEST_F(Lockstep, CountedGroupWaitsForOneMessagePerTick) {
   auto c = node_->create_publisher<std_msgs::msg::Header>("/lockstep_test/c", 100);

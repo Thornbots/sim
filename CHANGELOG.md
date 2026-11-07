@@ -17,10 +17,22 @@
   fixed hold before an EKF tick instead of at a wall-timed moment, and the E2E stack sets
   rf2o's `extrinsic_lookahead_s` to 1 ms (`rf2o_extrinsic_lookahead_s`). rf2o's scan odometry
   is now bit-identical between runs, the EKF's tick membership no longer varies, and the
-  Jetson-to-MCB read stream matches for 800+ lines (was 19). Equal-stamp measurement
-  order inside the stock EKF still varies on about 9% of the ticks that carry a scan
-  result, so `shots.jsonl` is not yet identical. See the
+  Jetson-to-MCB read stream matches for 800+ lines (was 19). See the
   [investigation](docs/t17-consistent-runs-2026-11-05.md).
+
+- Repeated hosted runs now write identical `shots.jsonl` and `states.jsonl`: three unthrottled runs of
+  every `mcb_parked` cell (1883 / 14468 records), `mcb_drive` (109 / 1148) and `mcb_match` (329 / 1109),
+  with 0 lockstep timeouts and 0 latest-TF fallbacks. The EKF is the Thornbots `robot_localization`
+  fork (`ekf_deterministic_order`; the E2E stack refuses to start on the stock package) and its
+  queued-stamp ack gates POSE delivery and rf2o's release; coordinator ack groups take `@hold` and `@tick`
+  exact stamps; `target_driver`, `match_environment` and `OpponentMover` step, stamp and select path
+  samples by tick, parameter changes carry the harness tick they were made at, and in `mcb_match` the
+  opponents' heads are set by the mover from the path message instead of gz PID controllers; the scorer
+  counts windows in chain ticks (`run_to`, `tick_s()`) and waits for the lockstep status without stepping.
+  AMCL's map-frame errors moved from `shots.jsonl` and `states.jsonl` to `poses.jsonl`.
+  `run_suite.sh` waits for the previous run's gz-transport advertisements to expire before launching.
+  No robot behavior changes (all options are off by default). RTF=1 and gz-two-core runs are still to
+  be taken ([investigation](docs/t17-consistent-runs-2026-11-05.md#2026-11-06-pass-3-the-remaining-timing-races)).
 
 - Every Jetson-side UART producer is a lockstep chain (`producer_chains`, on with epoch-zero
   startup): the coordinator takes any-of (`a|b`) and counted (`~topic`) ack groups, lagged
