@@ -371,7 +371,18 @@ bring-up flake at range 32; the last nine overlapped a probe stack of mine on th
 runs passed** (`mcb_parked`, `mcb_drive`, `mcb_match` and `tracking`, each by completion, Ctrl-C, SIGTERM, SIGHUP and a killed shell), preceded by one
 completion of each MCB suite (702, 663 and 725 s, all passed; the board boots for about 100 s and the scored span runs at RTF about 0.04). Every
 interrupted run ended 1 s after the signal. A run costs about 12 min complete and 8.5 min interrupted, so `--repeat 5` is about 11 h of machine time;
-it was stopped after the first repeat and **Renode repeats 2 to 5 were not run**. No Renode run logged a watchdog exit.
+it was stopped after the first repeat; repeats 2 to 5 ran on 2026-11-07 (below). No Renode run logged a watchdog exit.
+
+**Renode repeats 2 to 5 (2026-11-07).** Taken after the [OpponentMover fix](t17-consistent-runs-2026-11-05.md#cause-and-fix-2026-11-07)
+(sim `7536975`, workspace `nightly` gitlinks of that day; without it every Renode stage died at its first release). Fresh agent
+container on the aarch64 Mac mini (Colima, 6 CPUs, the only container on the VM), `BACKEND=renode tools/lifecycle_check.sh --repeat 4`, board
+ELF `build/hardware/scons-release`, Renode 1.17.0, about 7 h wall. **80 of 80 runs passed**: 20 per repeat (`mcb_parked`, `mcb_drive`, `mcb_match`, `tracking`
+x complete, Ctrl-C, SIGTERM, SIGHUP, killed shell), no leftover process, gz topic or pty, no SIGKILL, no unclean-shutdown line, every interrupted run
+ended 1 s after the signal (completions 664 to 739 s). With the first repeat the Renode total is 5 matrices, 100 of 100.
+Colima disk stayed at 1.8 GB of 19 GB. Three of the four `mcb_match:complete` runs also exited 1 on the suite's own verdict (the script counts
+these and still passes the run): the known combat floor (`enemy_hit_rate` 0.081 against 0.10, `e2e_suite.cpp:435`; runs 11, 31 and 71, the first and
+third with identical numbers); run 51 passed because the scorer recorded a diagnosis (`pose/TF stamps: head_pitch p95 attitude error exceeds 1
+degree`) that excuses the rate. Renode is not claimed identical run to run; only the hosted runs are. Raw logs are on the host in `~/c-evidence/lc`.
 
 **Early-interrupt hunt** (`tools/bridge_teardown_stress.py`, four bridges and three subscribers, delay 0.02 to 5 s): the bridge with
 an owned context, `release()` and early logging **0 deaths in 1,200 iterations**: 300 at 0.02 to 1 s and 300 at 0.2 to 5 s before the
