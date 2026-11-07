@@ -771,7 +771,7 @@ def generate_launch_description():
         DeclareLaunchArgument('uart_deterministic', default_value='false'),
         DeclareLaunchArgument('lidar_keyed_noise', default_value='false',
                               description='Lidar noise is drawn per (seed, stamp, beam) in '
-                                          "lidar_scan instead of by gz's unseeded generator"),
+                                          'lidar_scan instead of by the unseeded gz generator'),
         DeclareLaunchArgument('uart_pose_consumed', default_value='none',
                               description='Header topic that acks each consumed MCB POSE; '
                                           'physics holds at a delivered POSE until then'),

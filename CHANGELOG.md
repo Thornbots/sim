@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `estimation_suite` and `shot_hit_suite` drop their simulation-clock callback (which holds the sampler
+  node) on every exit from a test body. After an interrupt a failed ASSERT left it in a static, so the
+  node was destroyed at exit against Fast DDS's singleton and the suite hung past launch's 5 s SIGINT
+  window or aborted: `tracking:kill` failed 7 of 155 runs before, 0 of 100 after.
+
 - With remote DDS off (the default) the sim launches now use thornbots_pkg's loopback
   `fastdds_local.xml` and no `ROS_AUTOMATIC_DISCOVERY_RANGE` instead of the `LOCALHOST` range. Under
   `LOCALHOST` a hosted `mcb_parked` cell timed out its first lockstep hold (`cv_target at 0.025 s,
@@ -12,6 +17,14 @@
   a new `remote_dds` argument (`$THORNBOTS_REMOTE_DDS` or false) keeps DDS on the machine: `LOCALHOST`
   range, no profile with Tailscale peers, and the pinned UDP-only nodes on loopback-only twins
   (`sim/dds_switch.py`). Pass `foxglove:=true` to watch a run; `remote_dds:=true` for cross-machine tests.
+
+- `gz_bridge` frees its ROS context before `main` returns and initialises rcutils logging before
+  installing the signal handler. `ros_gz_bridge`'s node is referenced from its own handles,
+  services and timer, so the Fast DDS participant and rmw's graph-listener thread outlived `main` and were
+  destroyed against each other in static destruction (about 2% of early interrupts killed a bridge
+  with SIGSEGV, SIGABRT or "pure virtual method called"). Teardown is bounded by a 3 s watchdog that
+  logs `teardown exceeded 3 s` (a bridge once ignored SIGINT and SIGTERM for 15 s in the participant's
+  destruction). `tools/bridge_teardown_stress.py` repeats the interrupt. See the [investigation](docs/lifecycle-2026-11-05.md#2026-11-06-the-fast-dds-bridge-race-and-the-rtf-gate).
 
 - `scan_odom_gate` and the `ekf_pre` lockstep chain release rf2o's odometry to the EKF at a
   fixed hold before an EKF tick instead of at a wall-timed moment, and the E2E stack sets

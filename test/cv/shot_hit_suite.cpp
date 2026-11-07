@@ -485,6 +485,12 @@ TEST_P(ShotSuite, ShotHit) {
     s->wait_until([&]() { return s->now_s() > 0; }, 5, "the first /clock");
   }
   timing::set_sim_clock([s]() { return s->now_s(); });
+  // The clock holds the sampler node. Every exit from this body (a failed ASSERT after
+  // an interrupt included) must drop it, or the node is destroyed in static
+  // destruction against Fast DDS's singleton and the process hangs or aborts.
+  struct SimClockGuard {
+    ~SimClockGuard() { timing::set_sim_clock({}); }
+  } sim_clock_guard;
   {
     timing::Phase phase("settle");
     s->spin_for(3);

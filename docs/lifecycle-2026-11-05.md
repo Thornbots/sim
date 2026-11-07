@@ -255,3 +255,117 @@ Reviewed from the merged diff by a different agent than the author, then exercis
   fixed above).
 
 This review covers #68 only. RTF and D-speed acceptance are not part of it.
+
+## 2026-11-06: the Fast DDS bridge race and the RTF gate
+
+Mac mini (aarch64), isolated container, Jazzy, `libfastrtps` 2.14.6, `ros_gz_bridge` 1.0.24.
+
+### Upstream check
+
+- Apt offers `ros-jazzy-fastrtps` 2.14.7 (2026-09-11) and no later 2.14.x; 2.14 is the last v2 minor.
+  The 2.14.6 to 2.14.7 diff (25 commits) touches no code in `StatefulWriter`, `RTPSParticipantImpl`
+  endpoint removal or `EDP::unpairReaderProxy`. Its relevant fixes are `RTPSParticipantAttributes` data
+  races (#6370) and thread-safe `on_xxx_matched` (#6371/#6382, listener pointer re-reads in
+  `DataWriterImpl`/`DataReaderImpl`). It is not a fix for this crash, and no issue or PR names
+  `StatefulWriter::matched_reader_remove`. The nearest open report is
+  [Fast-DDS #3303](https://github.com/eProsima/Fast-DDS/issues/3303) (a discovery thread reaching an
+  entity another thread is deleting, listener-pointer variant, open since 2023). So the image was not
+  changed and nothing was filed upstream: the cores below show the process destroys the participant
+  against a thread that is still running, which is ours to avoid.
+- `unpairReaderProxy` takes `endpoints_list_mutex` shared and `deleteUserEndpoint` takes it exclusive, so
+  the receive thread cannot reach a writer that is being deleted. The writer was already gone because the
+  participant was being destroyed.
+
+### Reproducer and what the cores show
+
+`tools/bridge_teardown_stress.py` (first run as a scratch variant with four sim-style bridges and three rclpy
+peers) interrupts everything back to back after a random delay, as launch does. Stock `gz_bridge`,
+delay 0.2 to 4 s: **3 of 150 iterations** killed a bridge (SIGABRT "pure virtual method called" twice,
+SIGSEGV once). Cores (GDB) show `main` inside `exit` to `~DomainParticipantFactory` to
+`~DomainParticipantImpl` (deleting a `DataReader`, joining the shared-memory or resource-event threads)
+while a second thread, a plain `std::thread` in `librmw_fastrtps_shared_cpp`, was inside
+`rmw_fastrtps_shared_cpp::_take` to `DataReaderImpl::take` on the reader being deleted (rmw's
+graph-listener thread, which takes from `ros_discovery_info`). The listener thread is joined only by
+`rcl_context_fini`, which never ran.
+
+Why it never ran: `context.use_count()` was 3 at exit, and the `RosGzBridge` node was still referenced
+(use_count 2 to 3) after `spin()`, `remove_node` and releasing our pointer. The node is referenced from its
+own handles, services and heartbeat timer, so it is never destroyed; neither does stock
+`parameter_bridge` destroy it. The global context therefore lives until static destruction, where Fast DDS's
+singleton destroys the participant under rmw's live thread. The original 2.14.6 backtrace
+(`matched_reader_remove` on the UDP receive thread) is consistent with the same teardown seen from another
+thread; its core is gone, so that is inferred from the matching failure rate and fix, not shown.
+
+### Fix
+
+`gz_bridge` owns its `rclcpp::Context` and installs the signal handlers itself; `release()` (a subclass
+clearing the protected `handles_`, `services_` and `heartbeat_timer_`) drops the self-references, the node is
+destroyed, `context.reset()` runs `rcl_context_fini` on the main thread (use_count 1) and the participant is
+deleted before `main` returns. Initialising rcutils logging before `install_signal_handlers()` closes a
+second window: an interrupt within about 50 ms of start made the handler thread and `main` both run
+`rcutils_logging_initialize` (SIGSEGV in `rcutils_hash_map_init`, 1 of 300).
+
+| Build (same harness, delays in s) | Iterations | Bridge deaths |
+| --- | --- | --- |
+| Stock `gz_bridge` (`rclcpp::shutdown()` only), 0.2 to 4 | 150 | 3 iterations |
+| Owned context only (node still leaked), 0.2 to 4 | 150, then 200 | 3, then 3 iterations (4 bridges) |
+| + `release()`, 0.2 to 4 | 200 | 0 |
+| + `release()`, 0.05 to 2 | 300 | 1 (the logging window above) |
+| + `release()`, 0.2 to 6 | 300 | 0 |
+| + early logging init (final), 0.02 to 1 | 300 | 0 |
+
+A further 300 iterations of the final build were lost to the 09:10 Colima hang and are not counted. The
+harness's rclpy peers exited 1 in 4 iterations when interrupted before their node existed; peers are not
+counted. Owned-context-only is a negative result worth keeping: destroying the context alone does not help
+while the node is leaked.
+
+### "The broader RTF gates" belong to D-speed
+
+The phrase entered the roadmap in `25405fe2` (2026-11-02) as "broader lifecycle/RTF gates", copied from
+[de-harness-2026-11-02.md](de-harness-2026-11-02.md#unfinished-gates): "named RTF bottleneck/rendering
+measurements" among open items. That is the previous roadmap's D-speed ("Find the RTF bottleneck and render only
+scored inputs", [E2E_PLAN speed](../../docs/E2E_PLAN.md#speed)), which is paused. The lifecycle half of the phrase
+was this work. What E-launch could own already exists: `e2e_test_core.hpp` throws on a clock that stalls for five
+wall seconds or moves backwards, the lockstep gates and `[wait_until]`/wall-cap limits fail the run,
+`check_bench_log` rejects those messages, and every suite prints `suite timing` with its RTF. A minimum-RTF gate
+would need a numeric speed bar that no document defines, so it is D-speed acceptance; nothing was invented here.
+
+### `tracking:kill`: the suite's clock callback outlived the sampler
+
+The first hosted `--repeat 5` run on the final code failed 1 of 100 (`tracking:kill`, `estimation_tests` still
+alive 5 s after SIGINT, launch escalated to SIGTERM); a hunt of `tracking:kill` alone failed 1 of 5, 1 of 30, 3 of 60
+and 2 of 60 (7 of 155, 4.5%), and no other ending of `tracking` failed. The stuck process printed its summary and
+then did not exit. A core of an aborted one shows `main` inside `exit` destroying a `std::function<double()>` in
+`test/cv/estimation_suite.cpp`'s sim-clock static, which owns the sampler `Node` (`~Node`, `~NodeTimeSource`,
+`rcl_subscription_fini`, `__rmw_destroy_subscription`, then `std::terminate`). `timing::set_sim_clock` was cleared
+only on the normal path; after SIGINT the body leaves on a failed ASSERT, so the node survived `TearDown`'s
+`sampler.reset()` to static destruction, against Fast DDS's singleton. This is the `gz_bridge` failure again: an rclcpp
+node must not outlive `main`. A guard now clears the clock on every exit, in `estimation_suite` and in `shot_hit_suite`,
+which has the same pattern. After the change `tracking:kill` ran 100 of 100 clean (7 of 155 before, P(0 of 100) about
+1% at the old rate). The other suites clear the clock in their environment's teardown or capture `this`.
+
+### Final acceptance runs (2026-11-06, aarch64 Mac mini, workspace `nightly` 899dfae3 plus the PRs below)
+
+Fresh agent container, Fast DDS 2.14.6, hosted firmware `ca02cfc5` and the same ELF built for the board, Renode 1.17.0.
+T17's container ran beside mine throughout (load average 3 to 6 on the VM's 6 CPUs). Raw logs were kept in the
+container, and the task worktree's `artifacts/lc/` was emptied once during a Renode start (cause not found), so
+the per-run directories of the earlier matrices are gone; the counts below are the ones recorded at the time.
+
+**New faults found by repeating the matrix, each fixed at its cause:**
+
+| Fault | Evidence | Fix |
+| --- | --- | --- |
+| Fresh container, defaults-off bring-up fails: `lockstep timeout: cv_target at 0.025 s, no ack` on every hosted cell | `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` (nightly #185) fails with or without UDP pinning; range unset with a loopback profile passes; the parked stack has 37 DDS participants (ids 0-36 counted from `/proc/net/udp`) and LOCALHOST peers 4 ids | thornbots_pkg `fastdds_local.xml` ([#68](https://github.com/Thornbots/thornbots_pkg/pull/68), [sim #91](https://github.com/Thornbots/sim/pull/91)); 0 packets to 100.64.0.0/10 on `docker0` in a defaults-off cell (only gz-transport multicast leaves the container) |
+| The same profile at `maxInitialPeersRange` 32 still lost a bring-up lockstep hold (`cv_target`, `detector`, `nav` acks) in 3 of about 155 hosted runs | ids past 31 cannot find one another; a gz abort (`UART acknowledgment or ROS clock timeout` at 14 ms) then left a pty and failed every later run's precheck | range 128 ([thornbots_pkg #69](https://github.com/Thornbots/thornbots_pkg/pull/69)); 0 bring-up flakes in 200 runs after |
+| `tracking:kill` 7 of 155 | sim-clock static kept the sampler node past `main` | guard, see above; 0 of 100 after |
+| One bridge ignored SIGINT and SIGTERM for 15 s | `hosted --repeat 5` case 82 (`mcb_parked:int`), 1 of about 1,000 bridge exits, no core | 3 s teardown watchdog that logs; the cause (most likely the participant's destruction) was not diagnosed |
+
+**Hosted `lifecycle_check.sh --repeat 5`, final code** (sim `b56e9b4`, thornbots_pkg `df32ff8` plus range 128, `GZ_BRIDGE_ABORT_ON_HANG=1`):
+**100 of 100 runs passed**; the five `mcb_match` completions each failed the suite's own combat score gate (the match track's gate, not
+loosened), and no run logged a watchdog exit. Earlier hosted `--repeat 5` runs on intermediate code: 99/100 (`tracking:kill`, fixed),
+62 of 64 valid runs (two bring-up flakes at range 32; the remaining 36 were void after the gz abort left a pty), 90 of 91 valid runs (one
+bring-up flake at range 32; the last nine overlapped a probe stack of mine on the same domain and are void), 99/100 (the bridge hang).
+
+**Early-interrupt hunt** (`tools/bridge_teardown_stress.py`, four bridges and three subscribers, delay 0.02 to 5 s): the bridge with
+an owned context, `release()` and early logging **0 deaths in 1,200 iterations**: 300 at 0.02 to 1 s and 300 at 0.2 to 5 s before the
+watchdog existed, 600 at 0.2 to 3 s with it in abort mode (0 watchdog exits); stock `gz_bridge` died in 3 of 150. One-sided 95% bound: 3/1,200, about 0.25% per iteration, against about 2% before.

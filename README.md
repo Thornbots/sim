@@ -335,6 +335,17 @@ outside the launch tree to clean up:
   cannot kill it mid-tick; it exits when gz closes its stdin.
 - The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero node
   exit, including -2.
+- `gz_bridge` frees its ROS context before `main` returns
+  ([`src/gz_bridge.cpp`](src/gz_bridge.cpp)). `ros_gz_bridge`'s node is
+  referenced from its own handles, services and timer, so with the global context the participant
+  and rmw's graph-listener thread outlived `main` and Fast DDS's singleton
+  destroyed the participant under that thread (SIGSEGV or `pure virtual method
+  called`, about 2% of early interrupts). Teardown is bounded: three seconds after
+  `spin()` returns a watchdog leaves with a message on stderr (`teardown exceeded 3 s`,
+  once in about 1,000 exits before it existed), and `GZ_BRIDGE_ABORT_ON_HANG=1` aborts for a core.
+  `tools/bridge_teardown_stress.py N MIN MAX OUT` hunts for a regression: it interrupts four
+  bridges and three subscribers together after a random delay and counts bridge deaths and
+  watchdog exits.
 
 `tools/lifecycle_check.sh` is the acceptance test. For each of `mcb_parked`,
 `mcb_drive`, `mcb_match` and `tracking` it ends a run by completion, Ctrl-C
