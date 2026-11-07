@@ -361,3 +361,39 @@ check is gz's `PreUpdate` wait (a backtrace of the stuck `gz sim -s` at the time
 Effect: the Renode repeats 2 to 5 of E-teardown cannot be taken on nightly, and the T17 harness is unvalidated on the board
 backend. Per-run logs: the host's `/tmp/c-accept/renode/lc` (`001-` to `003-` of the lifecycle run, `diag1`, `bis1` to `bis3`).
 
+
+#### Cause and fix (2026-11-07)
+
+The suspect was right (`OpponentMover`), the mechanism was not the 5 s wait for a late sample. The gz process cannot be
+attached in an agent container (no `CAP_SYS_PTRACE`), so a `fprintf` in the mover showed the wait instead:
+`mover wait tick=0 before=16000000 have=0 newest=17000000`, then `wait done ok=0` 5 s later.
+
+- `target_driver` (60 Hz, `deterministic_epoch_zero`) stamps its first sample with its first tick, `ceil(1000/60)` = 17 ms,
+  while the clock is still at zero, and its 50 ms wall resend repeats it for as long as the clock stands still.
+- The mover (`path_hz` set) picks the newest tick at or before the step's start (`before`) and waits for a sample with
+  exactly that stamp. For `before` below 17 ms that tick is 0, and no producer ever makes a tick-0 sample.
+- Hosted boots in seconds: the path bridge connects after the first release, `path_` is still empty when the step at
+  17 ms starts, the first branch waits for it and the tick then is 17 ms. Under Renode the 85 s board boot gives the bridge
+  all the time it needs, so the 17 ms sample is already there during the steps before 17 ms and the second wait fires with
+  tick 0. gz sits in `PreUpdate` for 5 s wall, longer than the coordinator's 2 s `max_wait`. Hence the exact stall at the
+  hold for 0.020 s on every Renode stage, and why only `9360b27` (which added the tick wait) broke it.
+
+Fix (`src/opponent_mover.cpp`): wait for a tick only from the producer's first stamp on (`first_stamp_`, the earliest ever
+received), and with `path_hz` never fall back to the newest sample (it is ahead of the clock). Before the first tick the
+model holds still, which is what the hosted run already did. The 5 s waits and every lockstep timeout are unchanged.
+
+Checks on the fixed code (aarch64 Mac mini, one container, firmware `ca02cfc5`, Renode 1.17.0):
+
+- Renode, `run_suite.sh mcb_parked backend:=renode ... speeds:=0 paths:=lateral duration:=10`: 1 passed in 736 s, 40.5 s
+  sim, 12,981 holds, 0 lockstep timeouts, `bench ok` (before: dies at 0.020 s after about 90 s, 3 of 3).
+- Hosted, two unthrottled runs per stage, `compare_runs` between them:
+
+| Stage | Runs | `shots.jsonl` | `states.jsonl` | Lockstep timeouts | Latest-TF fallbacks | Native checker |
+| --- | --- | --- | --- | --- | --- | --- |
+| `mcb_parked` (12 cells) | 2 | identical, 1883 | identical, 14468 | 0 | 0 | ok |
+| `mcb_drive` | 2 | identical, 109 | identical, 1148 | 0 | 0 | ok |
+| `mcb_match` | 2 | identical, 329 | identical, 1109 | 0 | 0 | combat floor only |
+
+`compare_runs` exits 1 for all three only through `poses.jsonl` (`mcb_parked`) and `route.jsonl` (`mcb_drive`,
+`mcb_match`), the AMCL map-frame fields that are off the hit path and not gated (see above). The counts equal the
+earlier accepted references.
