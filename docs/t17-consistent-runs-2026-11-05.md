@@ -290,5 +290,8 @@ is otherwise accepted by the checker).
 | | `mcb_match` | 3 | identical, 329 / 1109 | equal |
 | stage-switch loop | `mcb_drive`, `mcb_match` alternating | 16 | identical to the first of each | |
 
-RTF=1 and gz-two-core runs: see the README's status line below; they need a Mini with no other
-agent container.
+Not taken: the RTF=1 run and the run with gz pinned to two cores. Both are to be taken only when
+`docker ps` shows no other agent container, and `isaac-agent-lifecycle-resid` was up for this whole
+session. `campaign.sh`-style commands used here: `run_suite.sh mcb_parked|mcb_drive|mcb_match backend:=hosted
+log_dir:=<dir>` with `MCB_UART_TRACE=<dir>/uart.trace`, then `ros2 run sim compare_runs <dir A> <dir B>`;
+for the two-core run, `taskset -a -cp 0,1` on every gz process while the stack starts.
