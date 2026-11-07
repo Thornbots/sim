@@ -343,3 +343,29 @@ only on the normal path; after SIGINT the body leaves on a failed ASSERT, so the
 node must not outlive `main`. A guard now clears the clock on every exit, in `estimation_suite` and in `shot_hit_suite`,
 which has the same pattern. After the change `tracking:kill` ran 100 of 100 clean (7 of 155 before, P(0 of 100) about
 1% at the old rate). The other suites clear the clock in their environment's teardown or capture `this`.
+
+### Final acceptance runs (2026-11-06, aarch64 Mac mini, workspace `nightly` 899dfae3 plus the PRs below)
+
+Fresh agent container, Fast DDS 2.14.6, hosted firmware `ca02cfc5` and the same ELF built for the board, Renode 1.17.0.
+T17's container ran beside mine throughout (load average 3 to 6 on the VM's 6 CPUs). Raw logs were kept in the
+container, and the task worktree's `artifacts/lc/` was emptied once during a Renode start (cause not found), so
+the per-run directories of the earlier matrices are gone; the counts below are the ones recorded at the time.
+
+**New faults found by repeating the matrix, each fixed at its cause:**
+
+| Fault | Evidence | Fix |
+| --- | --- | --- |
+| Fresh container, defaults-off bring-up fails: `lockstep timeout: cv_target at 0.025 s, no ack` on every hosted cell | `ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST` (nightly #185) fails with or without UDP pinning; range unset with a loopback profile passes; the parked stack has 37 DDS participants (ids 0-36 counted from `/proc/net/udp`) and LOCALHOST peers 4 ids | thornbots_pkg `fastdds_local.xml` ([#68](https://github.com/Thornbots/thornbots_pkg/pull/68), [sim #91](https://github.com/Thornbots/sim/pull/91)); 0 packets to 100.64.0.0/10 on `docker0` in a defaults-off cell (only gz-transport multicast leaves the container) |
+| The same profile at `maxInitialPeersRange` 32 still lost a bring-up lockstep hold (`cv_target`, `detector`, `nav` acks) in 3 of about 155 hosted runs | ids past 31 cannot find one another; a gz abort (`UART acknowledgment or ROS clock timeout` at 14 ms) then left a pty and failed every later run's precheck | range 128 ([thornbots_pkg #69](https://github.com/Thornbots/thornbots_pkg/pull/69)); 0 bring-up flakes in 200 runs after |
+| `tracking:kill` 7 of 155 | sim-clock static kept the sampler node past `main` | guard, see above; 0 of 100 after |
+| One bridge ignored SIGINT and SIGTERM for 15 s | `hosted --repeat 5` case 82 (`mcb_parked:int`), 1 of about 1,000 bridge exits, no core | 3 s teardown watchdog that logs; the cause (most likely the participant's destruction) was not diagnosed |
+
+**Hosted `lifecycle_check.sh --repeat 5`, final code** (sim `b56e9b4`, thornbots_pkg `df32ff8` plus range 128, `GZ_BRIDGE_ABORT_ON_HANG=1`):
+**100 of 100 runs passed**; the five `mcb_match` completions each failed the suite's own combat score gate (the match track's gate, not
+loosened), and no run logged a watchdog exit. Earlier hosted `--repeat 5` runs on intermediate code: 99/100 (`tracking:kill`, fixed),
+62 of 64 valid runs (two bring-up flakes at range 32; the remaining 36 were void after the gz abort left a pty), 90 of 91 valid runs (one
+bring-up flake at range 32; the last nine overlapped a probe stack of mine on the same domain and are void), 99/100 (the bridge hang).
+
+**Early-interrupt hunt** (`tools/bridge_teardown_stress.py`, four bridges and three subscribers, delay 0.02 to 5 s): the bridge with
+an owned context, `release()` and early logging **0 deaths in 1,200 iterations**: 300 at 0.02 to 1 s and 300 at 0.2 to 5 s before the
+watchdog existed, 600 at 0.2 to 3 s with it in abort mode (0 watchdog exits); stock `gz_bridge` died in 3 of 150. One-sided 95% bound: 3/1,200, about 0.25% per iteration, against about 2% before.
