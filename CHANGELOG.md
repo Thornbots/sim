@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Correct the Season 2 side wall position and regenerate its field meshes.
+
 - `OpponentMover` with `path_hz` no longer waits 5 s wall for a path sample no producer makes. Its
   first sample is stamped with the producer's first tick (17 ms at 60 Hz) and is resent during the
   board boot; with the Renode backend (about 85 s of boot) it reached the mover before the clock left

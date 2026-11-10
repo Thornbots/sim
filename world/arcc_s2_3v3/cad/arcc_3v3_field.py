@@ -189,7 +189,7 @@ def red_side():
     chute = box(850, 1050, W, W + WALL_T, WALL_H, 700)
     chute -= Pos(dx(950), dy(W), 600) * Rot(90, 0, 0) * Cylinder(52.5 / 2, 3 * WALL_T)
     add('pipe_chute', chute, Color(0.85, 0.85, 0.85))
-    add('side_wall', box(0, 2000, 3915 - 170, 3915, 0, 422), DARK)
+    add('side_wall', box(0, 2000, 3915, 3915 + 170, 0, 422), DARK)
     # Side High Ground (Fig 3-6): upper tier toward the resupply wall.
     shg = box(2000, 3000, 1000, 3000, 0, 210) + box(2000, 3000, 1000, 2000, 210, 410)
     add('side_high_ground', shg, GREY)
