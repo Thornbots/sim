@@ -53,8 +53,9 @@ def dds_environment():
     on, off = IfCondition(PythonExpression(_REMOTE)), UnlessCondition(PythonExpression(_REMOTE))
     return [
         UnsetEnvironmentVariable('ROS_AUTOMATIC_DISCOVERY_RANGE', condition=off),
-        SetEnvironmentVariable('FASTRTPS_DEFAULT_PROFILES_FILE', _thornbots_config('fastdds_local.xml'),
-                               condition=off),
+        SetEnvironmentVariable(
+            'FASTRTPS_DEFAULT_PROFILES_FILE', _thornbots_config('fastdds_local.xml'),
+            condition=off),
         UnsetEnvironmentVariable('ROS_AUTOMATIC_DISCOVERY_RANGE', condition=on),
         SetEnvironmentVariable(
             'FASTRTPS_DEFAULT_PROFILES_FILE',

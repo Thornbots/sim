@@ -310,7 +310,8 @@ def generate_launch_description():
         package='thornbots_nav', executable='waypoint_nav', name='waypoint_nav', output='screen',
         parameters=[os.path.join(get_package_share_directory('thornbots_nav'), 'config',
                                  'route.yaml'), {'use_sim_time': True,
-                                                 'epoch_zero_ready': ParameterValue(marks, value_type=bool),
+                                                 'epoch_zero_ready': ParameterValue(
+                                                     marks, value_type=bool),
                                                  'nav_goal_none_topic': PythonExpression([
                                                      "'/sim/e2e/nav_goal_none' if '", marks,
                                                      "' == 'true' else ''"])}])
@@ -499,7 +500,7 @@ def generate_launch_description():
                 get_package_share_directory('robot_localization'), 'thornbots_fork')):
             raise RuntimeError('producer_chains needs the Thornbots robot_localization fork '
                                '(build the workspace robot_localization package)')
-        coordination =coordinator(deterministic, stage, extra_ready, startup_timeout,
+        coordination = coordinator(deterministic, stage, extra_ready, startup_timeout,
                                    harness_chain, producers)
         delay = float(context.launch_configurations['epoch_coordinator_delay_s'])
         if not math.isfinite(delay) or delay < 0 or delay > 10 or (delay and not deterministic):
