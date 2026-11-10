@@ -1,5 +1,9 @@
 # Aim accuracy model investigation, 2026-10-12
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 This investigation records historical model/timing phases and hosted/board
 repeat profiles. Earlier artifacts are in
 `/home/blaise/workspaces/isaac_ros-jazzy/test-aim-accuracy-2026-10-12/`; the

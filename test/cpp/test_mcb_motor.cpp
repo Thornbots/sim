@@ -13,6 +13,7 @@
 // limitations under the License.
 #include <gtest/gtest.h>
 #include "sim/mcb_motor.hpp"
+#include "sim/field.hpp"
 #include "sim/mcb_sensors.hpp"
 namespace motor = sim::mcb_motor;
 
@@ -23,7 +24,7 @@ TEST(McbMotor, ProjectileExitCountsOneBallPerFeedFromRest) {
   const auto go = [&](double to, int settle = 20) {
     const double step = (to > at ? 1 : -1) / 64.0;
     while ((to - at) * step > 0) {
-      at += step;
+      at += std::copysign(std::min(std::abs(step), std::abs(to - at)), step);
       shots += exit.update(motor::packet(-at * exit.kShaftTurnsPerBall * 2 * motor::kPi, 0, 0));
     }
     for (int i = 0; i < settle; ++i)
@@ -31,7 +32,6 @@ TEST(McbMotor, ProjectileExitCountsOneBallPerFeedFromRest) {
   };
   go(0.2);  // pre-indexing from home fires nothing
   EXPECT_EQ(shots, 0u);
-  go(1.25, 0);  // a feed with overshoot past the next rest
   go(1.2);
   EXPECT_EQ(shots, 1u);
   go(0.9);  // unjam back and return
@@ -39,6 +39,30 @@ TEST(McbMotor, ProjectileExitCountsOneBallPerFeedFromRest) {
   EXPECT_EQ(shots, 1u);
   go(2.2);
   EXPECT_EQ(shots, 2u);
+  go(6.2, 0);  // continuous feed must not require a rest between chambers
+  EXPECT_EQ(shots, 6u);
+  go(4.2);
+  go(6.2);  // returning through emptied chambers does not reload them
+  EXPECT_EQ(shots, 6u);
+  go(7 + exit.kRestAt + exit.kExitTravel + 0.01, 0);  // pass two fresh exit planes
+  EXPECT_EQ(shots, 8u);
+  go(7.2);
+  EXPECT_EQ(shots, 8u);  // settling back cannot undo that exit
+}
+
+TEST(McbMotor, ProjectilePlanesCountFromMechanicalHomeWithoutStationaryArming) {
+  motor::ProjectileExit exit;
+  unsigned shots = 0;
+  for (int step = 1; step <= 1000; ++step) {
+    const double balls = 3.2 * step / 1000;
+    shots += exit.update(motor::packet(-balls * exit.kShaftTurnsPerBall * 2 * motor::kPi, 0, 0));
+  }
+  EXPECT_EQ(shots, 3u);
+  for (int step = 999; step >= 0; --step) {
+    const double balls = 3.2 * step / 1000;
+    shots += exit.update(motor::packet(-balls * exit.kShaftTurnsPerBall * 2 * motor::kPi, 0, 0));
+  }
+  EXPECT_EQ(shots, 3u);
 }
 
 TEST(McbMotor, EncodesDjiSignedFeedbackAndWrapsEncoder) {
@@ -98,6 +122,54 @@ TEST(McbMotor, AuxiliaryRotorAcceleratesAndReturnsMeasuredCurrent) {
   EXPECT_EQ(static_cast<int16_t>((data[4][4] << 8) | data[4][5]), 819);
 }
 
+TEST(McbMotor, IndexerUsesOutputShaftDynamicsAndC610CurrentUnits) {
+  motor::Plant plant;
+  plant.commands[2] = -4000;  // C610: -4 A, not C620's -4.8828125 A
+  const auto data = plant.feedback({}, 0, 0, 0, 0.001);
+  EXPECT_DOUBLE_EQ(plant.current[2], -4);
+  // Output torque = -.3125*4 = -1.25 Nm; acceleration = -1.25/.004 rad/s^2.
+  EXPECT_NEAR(plant.speed[2] / 36, -312.5 * 0.001, 1e-12);
+  EXPECT_NEAR(plant.angle[2] / 36, -312.5 * 0.001 * 0.001, 1e-12);
+  EXPECT_NEAR(plant.rotor_torque(2), -1.25 / 36, 1e-12);
+  EXPECT_NEAR(plant.rotor_torque(2) * plant.speed[2],
+              -1.25 * plant.speed[2] / 36, 1e-12);  // gearbox conserves mechanical power
+  EXPECT_EQ(static_cast<int16_t>((data[2][4] << 8) | data[2][5]), -4000);
+  EXPECT_EQ(static_cast<int16_t>((data[2][2] << 8) | data[2][3]),
+            static_cast<int16_t>(std::round(-11.25 * 30 / motor::kPi)));
+}
+
+TEST(McbMotor, IndexerSupplyLimitsCurrentAndAllowsRegenerativeBraking) {
+  struct Case { double output_speed; int16_t command; double amps; };
+  for (const auto &sample : std::array<Case, 7>{{
+           {0, -20000, -10}, {0, 20000, 10},
+           {50, 10000, 2.38 / 0.906}, {-50, -10000, -2.38 / 0.906},
+           {50, -10000, -10}, {-50, 10000, 10}, {60, 0, -1.944 / 0.906}}}) {
+    SCOPED_TRACE(sample.output_speed);
+    SCOPED_TRACE(sample.command);
+    motor::Plant plant;
+    plant.angle[2] = -100;  // away from the reverse homing stop for either direction
+    plant.speed[2] = sample.output_speed * 36;
+    plant.commands[2] = sample.command;
+    const auto data = plant.feedback({}, 0, 0, 0, .001);
+    EXPECT_NEAR(plant.current[2], sample.amps, 1e-12);
+    EXPECT_NEAR((plant.speed[2] / 36 - sample.output_speed) / .001,
+                .3125 * sample.amps / .004, 1e-9);
+    EXPECT_EQ(static_cast<int16_t>((data[2][4] << 8) | data[2][5]),
+              static_cast<int16_t>(std::round(sample.amps * 1000)));
+    const double voltage = .906 * plant.current[2] + .4324 * sample.output_speed;
+    EXPECT_LE(std::abs(voltage), 24 + 1e-12);
+  }
+}
+
+TEST(McbMotor, IndexerCoastsWithoutInventingTheOldRotorViscousLoad) {
+  motor::Plant plant;
+  plant.angle[2] = -100;
+  plant.speed[2] = -12 * 36;
+  plant.feedback({}, 0, 0, 0, .001);
+  EXPECT_NEAR(plant.current[2], 0, 1e-12);
+  EXPECT_DOUBLE_EQ(plant.speed[2], -12 * 36);
+}
+
 TEST(McbMotor, PassiveRollingResistanceDissipatesEveryChassisAxis) {
   motor::Plant plant;
   for (const auto &v : std::array<std::array<double, 3>, 6>{
@@ -133,14 +205,14 @@ TEST(McbMotor, LoadedIndexerHomesAgainstAStopAndCanAdvanceForward) {
   for (int tick = 0; tick < 200; ++tick) data = plant.feedback({}, 0, 0, 0, .001);
   EXPECT_EQ(plant.angle[2], 0);
   EXPECT_EQ(plant.speed[2], 0);
-  EXPECT_GT(static_cast<int16_t>((data[2][4] << 8) | data[2][5]), 2000);
+  EXPECT_EQ(static_cast<int16_t>((data[2][4] << 8) | data[2][5]), 4000);
   plant.commands[2] = -4000;
   for (int tick = 0; tick < 200; ++tick) plant.feedback({}, 0, 0, 0, .001);
   EXPECT_LT(plant.angle[2], -2 * motor::kPi);
 }
 
 TEST(BootTranslation, BothTeamsStartAtZeroAndKeepFieldDisplacementAxes) {
-  for (double start : {-4.625, 4.625}) {
+  for (double start : {sim::field::kRedStart[0], sim::field::kBlueStart[0]}) {
     SCOPED_TRACE(start);
     sim::BootTranslation origin;
     origin.observe(start, 0.0);

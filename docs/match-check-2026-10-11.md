@@ -1,5 +1,9 @@
 # Hosted-firmware match stages, 2026-10-11
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Linux x86_64, existing Jazzy container, T32 + T33 package merge commits
 (sim `341477c`, thornbots `0b15f48`, bridge `bb19633`, MCBV3 `f01fda7`).
 Fresh isolated ROS build and a fresh GCC 14 hosted sentry ELF; the stack log

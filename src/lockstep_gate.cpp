@@ -22,17 +22,23 @@
 
 #include <gz/msgs/time.pb.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <stdexcept>
 #include <string>
 
 #include <gz/common/Console.hh>
 #include <gz/plugin/Register.hh>
 #include <gz/sim/System.hh>
+#include <gz/sim/Events.hh>
+#include <gz/common/SignalHandler.hh>
 #include <gz/transport/Node.hh>
 
 namespace sim
@@ -59,8 +65,13 @@ class LockstepGate
 public:
   void Configure(
     const gz::sim::Entity &, const std::shared_ptr<const sdf::Element> & sdf,
-    gz::sim::EntityComponentManager &, gz::sim::EventManager &) override
+    gz::sim::EntityComponentManager &, gz::sim::EventManager & events) override
   {
+    events_ = &events;
+    // The coordinator exits with the rest of the stack, so a gate holding for
+    // its release would sit out max_wait_s (30 s in epoch-zero mode) and gz
+    // would outlive launch's SIGINT and SIGTERM windows.
+    signals_.AddCallback([stopping = stopping_](int) {*stopping = true;});
     const auto release = sdf->Get<std::string>("release_topic", "/sim/lockstep/release").first;
     held_pub_ = node_.Advertise<gz::msgs::Time>(
       sdf->Get<std::string>("held_topic", "/sim/lockstep/held").first);
@@ -68,7 +79,12 @@ public:
       sdf->Get<std::string>("timeout_topic", "/sim/lockstep/timeout").first);
     max_wait_ = std::chrono::duration<double>(sdf->Get<double>("max_wait_s", 2.0).first);
     // Held at 0 until the first release, or free until then.
-    const bool hold_at_start = sdf->Get<bool>("hold_at_start", false).first;
+    strict_startup_ = sdf->Get<bool>("strict_startup", false).first;
+    epoch_zero_pending_ = sdf->Get<bool>("epoch_zero_startup", false).first;
+    if (epoch_zero_pending_ && !strict_startup_) {
+      throw std::invalid_argument("epoch_zero_startup requires strict_startup");
+    }
+    const bool hold_at_start = strict_startup_ || sdf->Get<bool>("hold_at_start", false).first;
     released_ns_ = hold_at_start ? 0 : kFree;
     node_.Subscribe(release, &LockstepGate::OnRelease, this);
     gzmsg << "LockstepGate: releases on " << release << ", "
@@ -77,17 +93,64 @@ public:
 
   void PostUpdate(const gz::sim::UpdateInfo & info, const gz::sim::EntityComponentManager &) override
   {
-    if (info.paused) {
-      return;
-    }
     const int64_t t = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     std::unique_lock<std::mutex> lock(mutex_);
+    // Paused updates must return so scene/create services can finish startup.
+    if (epoch_zero_pending_) {
+      if (!info.paused || t != 0) {
+        gzerr << "LockstepGate: epoch zero startup requires a paused world at zero; stopping"
+              << std::endl;
+        timeout_pub_.Publish(to_msg(t));
+        events_->Emit<gz::sim::events::Stop>();
+        return;
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if (!startup_deadline_) {
+        startup_deadline_ = now +
+          std::chrono::duration_cast<std::chrono::steady_clock::duration>(max_wait_);
+      }
+      if (now >= *startup_deadline_) {
+        gzerr << "LockstepGate: lockstep timeout held at epoch zero; stopping strict session"
+              << std::endl;
+        timeout_pub_.Publish(to_msg(0));
+        events_->Emit<gz::sim::events::Stop>();
+        return;
+      }
+      if (released_ns_ > 0) {
+        epoch_zero_pending_ = false;
+        events_->Emit<gz::sim::events::Pause>(false);
+      } else {
+        held_pub_.Publish(to_msg(0));
+      }
+      return;
+    }
+    if (info.paused) {return;}
     if (t < released_ns_) {
       return;
     }
     held_pub_.Publish(to_msg(t));
-    if (!cv_.wait_for(lock, max_wait_, [&] {return released_ns_ > t;})) {
+    const auto deadline = std::chrono::steady_clock::now() +
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(max_wait_);
+    // Wait in short slices so a stop request is noticed within 10 ms.
+    while (released_ns_ <= t && !*stopping_ && std::chrono::steady_clock::now() < deadline) {
+      cv_.wait_until(lock, std::min(deadline, std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(10)));
+      if (strict_startup_ && released_ns_ <= t) {held_pub_.Publish(to_msg(t));}
+    }
+    if (*stopping_) {
+      events_->Emit<gz::sim::events::Stop>();
+      return;
+    }
+    const bool released = released_ns_ > t;
+    if (!released) {
       ++timeouts_;
+      if (strict_startup_) {
+        gzerr << "LockstepGate: lockstep timeout held at " << t * 1e-9
+              << " s; stopping strict session" << std::endl;
+        timeout_pub_.Publish(to_msg(t));
+        events_->Emit<gz::sim::events::Stop>();
+        return;
+      }
       gzerr << "LockstepGate: lockstep timeout " << timeouts_ << " held at " << t * 1e-9
             << " s; running free until the next release" << std::endl;
       timeout_pub_.Publish(to_msg(t));
@@ -112,6 +175,12 @@ private:
   std::condition_variable cv_;
   int64_t released_ns_ = kFree;
   int timeouts_ = 0;
+  bool strict_startup_ = false;
+  bool epoch_zero_pending_ = false;
+  std::optional<std::chrono::steady_clock::time_point> startup_deadline_;
+  gz::sim::EventManager * events_ = nullptr;
+  gz::common::SignalHandler signals_;
+  std::shared_ptr<std::atomic<bool>> stopping_ = std::make_shared<std::atomic<bool>>(false);
   // Destroy transport callbacks before the mutex and release state.
   gz::transport::Node node_;
 };

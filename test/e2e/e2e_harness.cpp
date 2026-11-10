@@ -15,6 +15,7 @@
 #include "sim/e2e_harness.hpp"
 #include "sim/cv_suite_options.hpp"
 #include "sim/e2e_test_core.hpp"
+#include "sim/field.hpp"
 #include "sim/process.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cstdio>
@@ -24,11 +25,17 @@ namespace sim::e2e {
 void Scorer::check_lockstep() {
   if (!cv_bench::options.lockstep)
     return;
-  const double end = now_s();
-  if (!wait_until([&] {
-        return lockstep_status_.count("sim_s") &&
-               std::stod(lockstep_status_.at("sim_s")) >= end;
-      }, 5, "fresh lockstep status"))
+  // Wait for the coordinator's wall-timed status with the clock held at this tick: stepping
+  // meanwhile would end the window at a different tick in every run.
+  // The coordinator's sim_s is the last hold it completed: the one before the tick held now.
+  const double end = tick_s() - .1;
+  const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  const auto fresh = [&] {
+    return lockstep_status_.count("sim_s") && std::stod(lockstep_status_.at("sim_s")) >= end;
+  };
+  while (rclcpp::ok() && !fresh() && std::chrono::steady_clock::now() < limit)
+    spin_once();
+  if (!fresh())
     throw std::runtime_error("lockstep: missing or stale coordinator status");
   const auto &s = lockstep_status_;
   if (std::stoll(s.at("holds")) == 0)
@@ -37,8 +44,37 @@ void Scorer::check_lockstep() {
             << " sim s, " << s.at("timeouts") << " lockstep timeouts; gz wait "
             << s.at("gz_step_wait_s") << " s, MCB wait "
             << s.at("chain.mcb_batch.wait_s") << " s" << std::endl;
+  // Per chain: its holds and the wall time physics waited on its acks; the longest
+  // wait names the hop that sets the speed. RTF is sim over wall time.
+  std::string longest;
+  double longest_s = -1;
+  std::cout << "lockstep chains:";
+  for (const auto &[key, value] : s) {
+    const std::string tail = ".wait_s";
+    if (key.rfind("chain.", 0) != 0 || key.size() <= tail.size() ||
+        key.compare(key.size() - tail.size(), tail.size(), tail) != 0)
+      continue;
+    const std::string name = key.substr(6, key.size() - 6 - tail.size());
+    const double wait = std::stod(value);
+    std::cout << ' ' << name << " holds=" << s.at("chain." + name + ".holds")
+              << " wait=" << value << "s";
+    if (wait > longest_s) {
+      longest_s = wait;
+      longest = name;
+    }
+  }
+  std::cout << "\nlockstep longest-holding chain: " << longest << " (" << longest_s
+            << " s); RTF " << std::stod(s.at("sim_s")) / std::stod(s.at("wall_s"))
+            << std::endl;
   if (std::stoll(s.at("timeouts")))
     throw std::runtime_error(s.at("timeouts") + " lockstep timeouts: invalid run");
+  if (!latest_tf_fallbacks_)
+    throw std::runtime_error("lockstep: point_to_cv_target never reported "
+                             "latest-TF fallbacks");
+  std::cout << "latest-TF fallbacks: " << *latest_tf_fallbacks_ << std::endl;
+  if (*latest_tf_fallbacks_)
+    throw std::runtime_error(std::to_string(*latest_tf_fallbacks_) +
+                             " latest-TF fallbacks: invalid run");
 }
 namespace cb = cv_bench;
 template <class Q, class P> Matrix iso(const Q &q, const P &p) {
@@ -95,6 +131,11 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         for (const auto &value : m.values)
           lockstep_status_[value.key] = value.value;
       });
+  // Counted by point_to_cv_target when it runs with allow_latest_tf:=false.
+  subscribe<std_msgs::msg::UInt32>(
+      "/point_to_cv_target/latest_tf_fallbacks",
+      rclcpp::QoS(1).reliable().transient_local(),
+      [this](const auto &m) { latest_tf_fallbacks_ = m.data; });
   for (const auto &name :
        stage == "mcb_match"
            ? std::vector<std::string>{"sentry", "opponent_0", "opponent_1",
@@ -106,7 +147,6 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         "/model/" + name + "/pose",
         [history, name](const gz::msgs::Pose_V &m) { history->add(name, m); });
   }
-  shots["flag"] = {};
   shots["mcb"] = {};
   subscribe<sensor_msgs::msg::JointState>(
       "/mcb_emulator/gimbal_setpoint", rclcpp::QoS(100), [this](const auto &m) {
@@ -126,7 +166,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         if (visual_pub_->get_subscription_count()) {
           visualization_msgs::msg::Marker point;
           point.header = m.header;
-          point.ns = "aim"; point.id = 0;
+          point.ns = "idle_look"; point.id = 0;
           point.type = visualization_msgs::msg::Marker::SPHERE;
           point.pose.orientation.w = 1.;
           point.pose.position.x = m.x; point.pose.position.y = m.y; point.pose.position.z = m.z;
@@ -139,7 +179,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
             auto muzzle = tf.lookupTransform(point.header.frame_id, "muzzle", tf2::TimePointZero);
             auto ray = point;
             ray.header.stamp = get_clock()->now();
-            ray.ns = "aim_ray"; ray.type = visualization_msgs::msg::Marker::LINE_STRIP;
+            ray.ns = "idle_look_ray"; ray.type = visualization_msgs::msg::Marker::LINE_STRIP;
             ray.pose.position = geometry_msgs::msg::Point{};
             ray.scale.x = .015;
             geometry_msgs::msg::Point origin;
@@ -150,15 +190,6 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
             markers.markers.push_back(ray);
           } catch (const tf2::TransformException &) {}
           visual_pub_->publish(markers);
-        }
-        aims_.push_back({t, {m.x, m.y, m.z}});
-        while (aims_.front().first < t - 3)
-          aims_.pop_front();
-        if (m.fire && scoring && t < score_until) {
-          cb::append_json((std::filesystem::path(log_path).parent_path() /
-                           "fire_requests.jsonl").string(),
-                          {{"t", t}, {"delay_s", m.delay_ms / 1000.}});
-          pending_.push_back({"flag", t + m.delay_ms / 1000.});
         }
       });
   subscribe<dji_serial_bridge::msg::RobotPose>(
@@ -177,22 +208,35 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           state_history_.push_back(m);
           while (state_history_.size() > 300) state_history_.pop_front();
           state_stamp = stamp_s(m.header.stamp);
-          if (scoring)
+          if (scoring && stamp_s(m.header.stamp) >= score_from_ &&
+              stamp_s(m.header.stamp) < score_until)
             pending_states_.push_back(m);
         }
       });
   subscribe<std_msgs::msg::Header>("/mcb_emulator/shot", rclcpp::QoS(100),
                                    [this](const auto &m) {
                                      double t = stamp_s(m.stamp);
-                                     if (scoring && t < score_until)
+                                     if (scoring && t >= score_from_ && t < score_until)
                                        pending_.push_back({"mcb", t});
                                    });
-  pose_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
-      if (scoring)
-        pending_poses_.push_back(now_s());
+  // The 50 ms harness chain. In lockstep the coordinator holds physics at each tick
+  // until step() releases it, so everything the harness decides happens on a tick.
+  // Ticks fall kPhaseMs after each 50 ms boundary: the one-shot is the first, and the
+  // periodic timer it starts is anchored there.
+  start_timer_ = create_timer(std::chrono::milliseconds(kPhaseMs), [this]() {
+    start_timer_->cancel();
+    tick_ns_ = get_clock()->now().nanoseconds();
+    tick_timer_ = create_timer(std::chrono::milliseconds(50), [this]() {
+      tick_ns_ = get_clock()->now().nanoseconds();
     });
-  fire_timer_ =
-      create_timer(std::chrono::milliseconds(100), [this]() { fire_tick(); });
+  });
+  if (cv_bench::options.lockstep && !cv_bench::options.external) {
+    ack_pub_ = create_publisher<std_msgs::msg::Header>(
+        "/sim/e2e/harness_ack", rclcpp::QoS(100).reliable());
+    ready_pub_ = create_publisher<std_msgs::msg::Header>(
+        "/sim/e2e/harness_ready", rclcpp::QoS(1).reliable().transient_local());
+    ready_pub_->publish(std_msgs::msg::Header{});  // stamp zero: the epoch barrier's
+  }
   if (stage == "mcb_match") {
     for (const auto &name : {"opponent_0", "opponent_1", "ally_0"}) {
       shots[name] = {};
@@ -200,7 +244,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           std::string("/sim/match/") + name + "/shot", rclcpp::QoS(100),
           [this, name](const auto &m) {
             double t = stamp_s(m.stamp);
-            if (scoring && t < score_until)
+            if (scoring && t >= score_from_ && t < score_until)
               pending_.push_back({name, t + .05});
           });
     }
@@ -236,14 +280,94 @@ void Scorer::spin_for(double seconds) {
       [this]() {
         if (!rclcpp::ok())
           throw std::runtime_error("E2E ROS context stopped during scoring");
-        spin_once();
+        step();
       }, cv_bench::options.backend == "renode" ? 120 : 20);
+}
+bool Scorer::wait_until(const std::function<bool()> &predicate, double timeout,
+                        const std::string &description) {
+  const auto end = std::chrono::steady_clock::now() +
+                   std::chrono::duration<double>(timeout);
+  while (rclcpp::ok() && std::chrono::steady_clock::now() < end) {
+    if (predicate())
+      return true;
+    step();
+  }
+  std::cout << "[wait_until] timed out after " << timeout
+            << "s waiting for: " << description << std::endl;
+  return false;
+}
+void Scorer::release_tick() {
+  if (!ack_pub_ || !unacked_ns_ || retired_)
+    return;
+  std_msgs::msg::Header ack;
+  ack.stamp = rclcpp::Time(*unacked_ns_, RCL_ROS_TIME);
+  ack_pub_->publish(ack);
+  unacked_ns_.reset();
+}
+void Scorer::retire() {
+  if (!ack_pub_ || retired_)
+    return;
+  release_tick();
+  std_msgs::msg::Header ack;  // far future: every later tick is already released
+  ack.stamp.sec = 1000000000;
+  ack_pub_->publish(ack);
+  retired_ = true;
+}
+bool Scorer::step(double wall_timeout_s) {
+  release_tick();
+  const auto end = std::chrono::steady_clock::now() +
+                   std::chrono::duration<double>(wall_timeout_s);
+  while (rclcpp::ok() && !tick_ns_ && std::chrono::steady_clock::now() < end)
+    spin_once();
+  if (!tick_ns_)
+    return false;
+  unacked_ns_ = tick_ns_;
+  tick_ns_.reset();
+  tick_body();
+  return true;
+}
+void Scorer::align(double period_s) {
+  const auto period_ms = std::llround(period_s * 1000);
+  while (rclcpp::ok())
+    if (step() && (std::llround(tick_s() * 1000) - kPhaseMs) % period_ms == 0)
+      return;
+}
+void Scorer::run_to(double tick_target, double wall_budget_s) {
+  const auto begin = std::chrono::steady_clock::now();
+  auto progress = begin;
+  double previous = tick_s();
+  while (rclcpp::ok()) {
+    if (step()) {
+      const double tick = tick_s();
+      if (tick < previous - 1e-6)
+        throw std::runtime_error("E2E clock moved backwards during scoring");
+      if (tick > previous)
+        progress = std::chrono::steady_clock::now();
+      previous = tick;
+      if (tick >= tick_target - 1e-6)
+        return;
+    }
+    const auto wall = std::chrono::steady_clock::now();
+    if (wall - progress > std::chrono::seconds(5))
+      throw std::runtime_error("E2E clock stalled for five wall seconds");
+    if (wall - begin > std::chrono::duration<double>(wall_budget_s))
+      throw std::runtime_error("E2E scoring exceeded its wall-time budget");
+  }
+}
+// The old 50 ms pose sampler and 100 ms scorer, on the chain's tick.
+void Scorer::tick_body() {
+  ++ticks_;
+  if (scoring && tick_s() < score_until)
+    pending_poses_.push_back(tick_s());
+  if (ticks_ % 2 == 0)
+    fire_tick();
 }
 void Scorer::reset() {
   pending_.clear();
   for (auto &entry : shots)
     entry.second.clear();
   scoring = true;
+  score_from_ = tick_s();
   states.clear();
   pending_states_.clear();
   route_records.clear();
@@ -268,7 +392,7 @@ std::optional<Matrix> Scorer::world_T_odom(double t) {
     return {};
   }
 }
-Json Scorer::pose_errors(double t) {
+Json Scorer::pose_errors(double t, bool map_frame) {
   auto ours = histories.at("sentry")->at(t);
   if (!ours)
     return Json::object();
@@ -310,7 +434,8 @@ Json Scorer::pose_errors(double t) {
     }
     out["speed_m_s"] = speed;
     out["spin_rad_s"] = spin;
-    out["start_displacement_m"] = std::hypot(ours->root(0, 3) - 4.625, ours->root(1, 3));
+    out["start_displacement_m"] = std::hypot(ours->root(0, 3) - field::kBlueStart[0],
+                                           ours->root(1, 3) - field::kBlueStart[1]);
     out["segment"] = !center_time || t < *center_time ? "approach" :
                      speed > .2 ? "drive" : std::abs(spin) > .5 ? "spin" : "parked";
   }
@@ -354,104 +479,44 @@ Json Scorer::pose_errors(double t) {
       }
       break;
     }
-  try {
-    auto tr = tf.lookupTransform(
-                    "map", "root",
-                    rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME))
-                  .transform;
-    out["localization_error_m"] =
-        std::hypot(tr.translation.x - ours->root(0, 3),
-                   tr.translation.y - ours->root(1, 3));
-    out["localization_xy"] = {tr.translation.x, tr.translation.y};
-  } catch (const tf2::TransformException & error) {
-    out["localization_error_m"] = nullptr;
-    out["localization_tf_error"] = error.what();
-  }
-  try {
-    const auto tr = tf.lookupTransform(
-        "nav_odom", "root",
-        rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
-    out["navigation_error_m"] = std::hypot(
-        tr.translation.x - ours->root(0, 3), tr.translation.y - ours->root(1, 3));
-    out["navigation_xy"] = {tr.translation.x, tr.translation.y};
-  } catch (const tf2::TransformException & error) {
-    out["navigation_error_m"] = nullptr;
-    out["navigation_tf_error"] = error.what();
-  }
-  try {
-    const auto map = tf.lookupTransform(
-        "map", "nav_odom",
-        rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
-    out["map_navigation_xy"] = {map.translation.x, map.translation.y};
-    out["map_navigation_yaw_rad"] = std::atan2(
-        2 * (map.rotation.w * map.rotation.z + map.rotation.x * map.rotation.y),
-        1 - 2 * (map.rotation.y * map.rotation.y + map.rotation.z * map.rotation.z));
-  } catch (const tf2::TransformException &) {
-    out["map_navigation_xy"] = nullptr;
-  }
-  return out;
-}
-Json Scorer::aim_split(double launch, const Vec &origin, const Vec &direction,
-                       int k, std::shared_ptr<PoseHistory> history) {
-  const double lag = cb::options.gimbal_lag_s.value_or(
-      cb::options.backend == "hosted" ? 0.0 : .05);
-  double t = launch - lag;
-  auto world = world_T_odom(t);
-  if (!world || aims_.empty())
-    return Json::object();
-  std::optional<Vec> aim;
-  for (const auto &a : aims_)
-    if (a.first <= t)
-      aim = a.second;
-  if (!aim)
-    return Json::object();
-  Vec target = transform(*world, *aim), to = (target - origin).normalized();
-  Json out = {
-      {"barrel_off_aim_deg",
-       cb::rounded(180 / cb::kPi *
-                       std::acos(std::clamp(direction.dot(to), -1., 1.)),
-                   2)}};
-  std::string selected = "opponent_0";
-  if (!history && stage == "mcb_match") {
-    for (auto i = state_history_.rbegin(); i != state_history_.rend(); ++i) {
-      const double capture = stamp_s(i->header.stamp);
-      if (capture > t) continue;
-      auto frame = world_T_odom(capture);
-      if (!frame) return out;
-      const Vec center = transform(*frame, {i->center.x, i->center.y, i->center.z});
-      double nearest = INFINITY;
-      for (const auto &entry : histories) {
-        if (entry.first.rfind("opponent_", 0) != 0) continue;
-        auto pose = entry.second->at(capture);
-        if (!pose) continue;
-        const double distance = (center - pose->root.block<3, 1>(0, 3)).head<2>().norm();
-        if (distance < nearest) { nearest = distance; selected = entry.first; }
-      }
-      out["selected_target_association_m"] = nearest;
-      break;
+  // AMCL and its map->nav_odom correction are not lockstep-gated (their particles and
+  // timing vary), so only poses.jsonl records them; shot and state records stay comparable.
+  if (map_frame) {
+    try {
+      auto tr = tf.lookupTransform(
+                      "map", "root",
+                      rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME))
+                    .transform;
+      out["localization_error_m"] =
+          std::hypot(tr.translation.x - ours->root(0, 3),
+                     tr.translation.y - ours->root(1, 3));
+      out["localization_xy"] = {tr.translation.x, tr.translation.y};
+    } catch (const tf2::TransformException & error) {
+      out["localization_error_m"] = nullptr;
+      out["localization_tf_error"] = error.what();
     }
-  }
-  out["selected_target"] = selected;
-  const double flight = (target - origin).dot(direction) / combat::kMuzzleSpeed;
-  auto theirs = (history ? history : histories.at(selected))->at(launch + flight);
-  const Vec inherited = muzzle_velocity("sentry", launch);
-  const Vec impact_goal = target + inherited * flight;
-  if (theirs) {
-    Vec panel = ((*theirs).root * offsets_.armors[k]).block<3, 1>(0, 3),
-        diff = impact_goal - panel;
-    double closest = INFINITY;
-    Vec closest_error = Vec::Zero();
-    for (const auto &offset : offsets_.armors) {
-      Vec point = (theirs->root * offset).block<3, 1>(0, 3);
-      const Vec error = impact_goal - point;
-      if (error.norm() < closest) { closest = error.norm(); closest_error = error; }
+    try {
+      const auto tr = tf.lookupTransform(
+          "nav_odom", "root",
+          rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
+      out["navigation_error_m"] = std::hypot(
+          tr.translation.x - ours->root(0, 3), tr.translation.y - ours->root(1, 3));
+      out["navigation_xy"] = {tr.translation.x, tr.translation.y};
+    } catch (const tf2::TransformException & error) {
+      out["navigation_error_m"] = nullptr;
+      out["navigation_tf_error"] = error.what();
     }
-    out["aim_closest_panel_m"] = closest;
-    out["aim_minus_closest_panel"] = {closest_error.x(), closest_error.y(), closest_error.z()};
-    out["aim_off_panel_m"] = cb::rounded(diff.norm(), 3);
-    out["aim_minus_panel"] = {cb::rounded(diff.x(), 3),
-                              cb::rounded(diff.y(), 3),
-                              cb::rounded(diff.z(), 3)};
+    try {
+      const auto map = tf.lookupTransform(
+          "map", "nav_odom",
+          rclcpp::Time(static_cast<int64_t>(t * 1e9), RCL_ROS_TIME)).transform;
+      out["map_navigation_xy"] = {map.translation.x, map.translation.y};
+      out["map_navigation_yaw_rad"] = std::atan2(
+          2 * (map.rotation.w * map.rotation.z + map.rotation.x * map.rotation.y),
+          1 - 2 * (map.rotation.y * map.rotation.y + map.rotation.z * map.rotation.z));
+    } catch (const tf2::TransformException &) {
+      out["map_navigation_xy"] = nullptr;
+    }
   }
   return out;
 }
@@ -519,7 +584,6 @@ std::optional<Json> Scorer::judge(double t) {
     out["panel_right_m"] = b.face->x();
     out["panel_up_m"] = b.face->y();
   }
-  out.update(aim_split(t, origin, b.dir, b.k));
   out["muzzle_velocity_m_s"] = {inherited.x(), inherited.y(), inherited.z()};
   out.update(pose_errors(t));
   return out;
@@ -599,7 +663,7 @@ void Scorer::judge_state(const dji_serial_bridge::msg::TargetState &m) {
 }
 std::optional<Json> Scorer::judge_match(const std::string &kind,
                                         double launch) {
-  std::string shooter = (kind == "mcb" || kind == "flag") ? "sentry" : kind;
+  std::string shooter = kind == "mcb" ? "sentry" : kind;
   double available = INFINITY;
   combat::Histories functions;
   for (const auto &e : histories) {
@@ -620,7 +684,7 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
   auto key = std::make_pair(kind, launch);
   auto impact = resolver_->resolve(
       shooter, muzzle.block<3, 1>(0, 3), muzzle.block<3, 1>(0, 0), launch,
-      functions, std::min(now_s() - .02, available), flight_steps_[key], inherited);
+      functions, std::min(tick_s() - .02, available), flight_steps_[key], inherited);
   if (impact.pending) {
     flight_steps_[key] = impact.next_step;
     return {};
@@ -643,14 +707,10 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
     out["panel_up_m"] = impact.crossing->y();
   }
   out.update(pose_errors(launch));
-  if (shooter == "sentry")
-    out.update(aim_split(launch, muzzle.block<3, 1>(0, 3),
-                         muzzle.block<3, 1>(0, 0), impact.panel.value_or(0),
-                         nullptr));
   return out;
 }
 void Scorer::fire_tick() {
-  double now = now_s();
+  double now = tick_s();
   std::vector<dji_serial_bridge::msg::TargetState> states_keep;
   for (const auto &m : pending_states_)
     if (stamp_s(m.header.stamp) < now - .5)
@@ -663,7 +723,7 @@ void Scorer::fire_tick() {
     if (t > now - .1)
       ref_keep.push_back(t);
     else {
-      auto out = pose_errors(t);
+      auto out = pose_errors(t, true);
       // EKF + raw-pose pairing can arrive after the first scoring callback.
       // Retry the capture stamp; terminal gaps remain visible after one second.
       if (now - t < 1.0 &&
@@ -716,7 +776,7 @@ void Scorer::fire_tick() {
       impact.panel = shot["panel"].get<int>();
     impact.eligible = shot["eligible"];
     impact.normal_speed = shot["normal_speed"];
-    bool hit = e.first == "flag" ? impact.eligible : referee->apply(impact),
+    bool hit = referee->apply(impact),
          friendly =
              impact.victim &&
              match_scenario::teams().at(shot["shooter"].get<std::string>()) ==
@@ -724,7 +784,7 @@ void Scorer::fire_tick() {
     shot["hit"] = hit;
     shot["friendly_intersection"] = friendly;
     shot["enemy_hit"] = hit && !friendly;
-    if (e.first != "flag" && hit &&
+    if (hit &&
         impact.victim == std::optional<std::string>("sentry"))
       hurt_armor_id = impact.panel.value_or(0);
     Json hp = Json::object();
@@ -778,15 +838,14 @@ void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
   visual_pub_->publish(markers);
 }
 void Scorer::sync_referee() {
-  double elapsed = now_s() - match_start.value_or(now_s());
+  double elapsed = tick_s() - match_start.value_or(tick_s());
   if (match_start && !center_time) {
     bool ready = true;
     for (const auto &[name, history] : histories) {
-      const auto pose = history->at(now_s() - .01);
-      ready &= pose && std::abs(pose->root(0, 3)) < match_scenario::kCenterHalfWidth &&
-                       std::abs(pose->root(1, 3)) < match_scenario::kCenterHalfHeight;
+      const auto pose = history->at(tick_s() - .01);
+      ready &= pose && match_scenario::in_center_zone(pose->root(0, 3), pose->root(1, 3));
     }
-    if (ready) center_time = now_s();
+    if (ready) center_time = tick_s();
   }
   diagnostic_msgs::msg::DiagnosticArray msg;
   msg.header.stamp = get_clock()->now();
@@ -811,29 +870,6 @@ void Scorer::sync_referee() {
   gate.values = {ready};
   msg.status.push_back(gate);
   referee_pub_->publish(msg);
-  if (referee_future_) {
-    if (referee_future_->wait_for(std::chrono::seconds(0)) !=
-        std::future_status::ready) {
-      // Responses can be lost after parameters were applied. Retry current state.
-      if (std::chrono::steady_clock::now() - referee_sent_ <
-          std::chrono::seconds(2))
-        return;
-      referee_client_->remove_pending_request(*referee_future_);
-      referee_future_.reset();
-      if (++referee_timeouts_ >= 3)
-        throw std::runtime_error("MCB referee parameter response timed out 3 times");
-      RCLCPP_WARN(get_logger(),
-                  "MCB referee parameter response timed out; retrying current state (%d/3)",
-                  referee_timeouts_);
-    } else {
-      const auto response = referee_future_->get();
-      for (const auto &r : response->results)
-        if (!r.successful)
-          throw std::runtime_error("MCB rejected match referee status: " + r.reason);
-      referee_future_.reset();
-      referee_timeouts_ = 0;
-    }
-  }
   if (!referee_client_->service_is_ready())
     return;
   auto req = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
@@ -850,8 +886,23 @@ void Scorer::sync_referee() {
            rclcpp::Parameter("hurt_armor_id", hurt_armor_id),
            rclcpp::Parameter("shooter_power", alive)})
     req->parameters.push_back(p.to_parameter_msg());
-  referee_future_ = referee_client_->async_send_request(req);
-  referee_sent_ = std::chrono::steady_clock::now();
+  // Wait for the answer here, on the tick: physics is held, and the MCB applies the
+  // change on the first step after the release, however late its thread ran.
+  auto pending = referee_client_->async_send_request(req);
+  if (!wait_future(pending.future, referee_wait_s_)) {
+    referee_client_->remove_pending_request(pending.request_id);
+    if (++referee_timeouts_ >= 3)
+      throw std::runtime_error("MCB referee parameter response timed out 3 times");
+    RCLCPP_WARN(get_logger(),
+                "MCB referee parameter response timed out; retrying current state (%d/3)",
+                referee_timeouts_);
+    return;
+  }
+  referee_timeouts_ = 0;
+  const auto response = pending.future.get();
+  for (const auto &r : response->results)
+    if (!r.successful)
+      throw std::runtime_error("MCB rejected match referee status: " + r.reason);
 }
 double hit_rate(const std::vector<Json> &shots) {
   int hits = 0;

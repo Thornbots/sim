@@ -9,7 +9,7 @@ Read [tests](README.md#run-the-tests), [build](README.md#build) and
 
 - [Run approval and live-session rules](../AGENTS.md#containers-and-runs)
   cover integration suites and benches; registered unit/lint tests launch no stack.
-- Keep GUI enabled unless headless was requested; Foxglove is the main viewer.
+- Keep GUI enabled unless headless was requested; Foxglove is the main viewer but off by default (`foxglove:=true`).
   Launch long runs through `dexec.sh -d`; use `kill_launch.sh`, never `pkill`.
 - Also check for orphaned installed nodes (`ps -eo pid,ppid,cmd | grep install/`).
   Keep gz stacks in their own process group, outside the GTest launch, and
@@ -36,6 +36,9 @@ Keep field-safe match paths separate from bench paths; no blanket skips/xfail.
 Keep approach firing disabled until all routes reach center.
 
 ## Open
+
+Canonical commitments: [software](../docs/ROADMAP.md), [physical validation](../docs/ROBOT_TESTS.md).
+The links below are execution rules and reference contracts, not a second backlog.
 
 - Current failures and repeatability work: [ROADMAP status](../docs/ROADMAP.md#where-we-actually-are),
   [match track](../docs/ROADMAP.md#a-the-match-test), [tracker track](../docs/ROADMAP.md#g-estimation-accuracy).

@@ -1,5 +1,9 @@
 # Panel choice measurement, 2026-10-11
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Linux x86_64 Jazzy, fresh local sim/bridge/aiming overlay. T32's node chooses
 the most face-on panel near impact, holding its world normal until another
 is better by the configured margin. The draft also needed hold resets on
@@ -76,7 +80,8 @@ projectile exits. In `test/e2e/e2e_harness.cpp`, `Scorer` subscribes to
 `/mcb_emulator/shot` and queues the MCB shot at `t + .05`, where `t` is the
 indexer-request stamp published by `src/mcb_emulator_node.cpp`. That inline
 50 ms delay is separate from the aiming bench's `cv_bench.hpp::kFireLatency`
-and the Jetson's `firmware_latency_s` planning parameter. A request measured
+and the Jetson's `firmware_latency_s` planning parameter (both since removed;
+see [the MCB aim planner measurement](mcb-aim-planner-2026-11-04.md)). A request measured
 at 70-79 ms therefore starts its E2E modeled flight at 120-129 ms after
 receipt, rather than 150 ms. This is a source-derived E2E timing implication,
 not a measured live projectile exit. Hardware calibration remains open;

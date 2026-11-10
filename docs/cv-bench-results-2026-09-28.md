@@ -1,5 +1,9 @@
 # CV bench observations (2026-09-28 to 2026-09-29)
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Historical results retained from the retired CV split plan. They rank changes,
 not field hit rates. Current commands and bench behavior are in the
 [simulation README](../README.md#run-the-tests); open accuracy work is in
@@ -32,3 +36,12 @@ not field hit rates. Current commands and bench behavior are in the
   no-op. Moving-shooter radial/diagonal floors remained missing.
 - Flat 4 m/s misses clustered at unpredicted acceleration changes at path
   ends. This was a known limitation without a separate fix plan.
+
+## Clock pacing observations (2026-09-25 and 2026-10-01)
+
+On 2026-09-25, fixed RTF 8x lost 2-5 points. The paced clock ran
+6.6-6.8x and scored every cell within half a point of three 4x runs,
+`keep_up` 1.00.
+
+Historical five-run estimation p95 comparisons were within 1.03x
+(Mac, 2026-10-01). This did not establish repeatability of moving cells.

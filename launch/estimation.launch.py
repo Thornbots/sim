@@ -19,14 +19,14 @@ Estimation bench: target_tracker's TargetState against the truth, no gz.
 bench_world (C++, one lockstep loop) is the clock, the phantom target, our
 chassis and head, /dji_serial_bridge/pose, the head controller and the detections off our
 head's camera. target_selector and target_tracker build the TargetState, and
-point_to_cv_target aims the head through bench_world's controller.
+mcb_aim_standin (the firmware's planner) aims the head through bench_world's controller.
 Nothing fires. The C++ estimation harness scores each state at its stamp.
 Stops when the tests finish; Ctrl-C stops everything. `run_tests:=false`
 brings up the stack alone.
 """
 import os
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -41,8 +41,9 @@ from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from sim.dds_switch import FOXGLOVE_DEFAULT
 from sim.display import display_error
-from sim.suite_exit import finish_suite
+from sim.suite_exit import finish_suite, suite_command
 
 
 def _is_true(context, name):
@@ -54,7 +55,16 @@ def cv_node(executable, package='thornbots_pkg', **params):
                 output='screen', parameters=[{'use_sim_time': True, **params}])
 
 
+def _require_aim_standin():
+    # Built from the firmware checkout's AimPlanner; absent without it.
+    exe = os.path.join(get_package_prefix('sim'), 'lib', 'sim', 'mcb_aim_standin')
+    if not os.path.exists(exe):
+        raise RuntimeError('mcb_aim_standin is missing: build sim with firmware/MCBV3 '
+                           'checked out (README "MCB aim stand-in")')
+
+
 def _stack(context):
+    _require_aim_standin()
     cfg = context.launch_configurations
     headless = _is_true(context, 'headless') or display_error() is not None
     camera_latency = float(cfg['camera_latency_s'])
@@ -92,9 +102,10 @@ def _stack(context):
         Node(package='sim', executable='bench_world', name='bench_world', output='screen',
              parameters=[world]),
         robot_tf, cv_node('target_selector'), cv_node('target_tracker', **tracker),
-        cv_node('point_to_cv_target', red_start_x=0.0, red_start_y=0.0,
-                blue_start_x=0.0, blue_start_y=0.0, tick_topic='/cv/target/tick',
-                state_ack_topic='/cv/target/state_ack', idle_direction='hold'),
+        # The MCB's planner stands in: aim only, nothing fires, and the head's
+        # own lag is real, so the firmware's gimbal_lag_s stays in force.
+        cv_node('mcb_aim_standin', package='sim', fire_enabled=False,
+                tick_topic='/cv/target/tick', state_ack_topic='/cv/target/state_ack'),
     ]
     if not headless:
         actions.append(cv_node('target_state_markers', package='sim'))
@@ -110,7 +121,7 @@ def _stack(context):
 
 def _tests(context):
     cfg = context.launch_configurations
-    cmd = ['ros2', 'run', 'sim', 'estimation_suite', '--external-stack',
+    cmd = [*suite_command('estimation_suite'), '--external-stack',
            '--panel-layout', cfg['panel_layout'], '--target-path', cfg['target_path'],
            '--shooter-speed', cfg['shooter_speed'], '--chassis-spin', cfg['chassis_spin'],
            '--camera-latency', cfg['camera_latency_s']]
@@ -205,7 +216,7 @@ def generate_launch_description():
         DeclareLaunchArgument('log_dir', default_value='',
                               description='where estimation.jsonl and '
                                           'estimation_states.jsonl go'),
-        DeclareLaunchArgument('foxglove', default_value='true',
+        DeclareLaunchArgument('foxglove', default_value=FOXGLOVE_DEFAULT,
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('pytest_args', default_value='',
                               description="extra gtest args, e.g. '--gtest_filter=*flat*'"),

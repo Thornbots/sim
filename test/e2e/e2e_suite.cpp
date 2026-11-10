@@ -23,6 +23,7 @@ namespace ee = sim::e2e;
 namespace timing = sim::suite_timing;
 class Environment : public testing::Environment {
 public:
+  static constexpr double kBringupS = 10.0;
   std::shared_ptr<ee::Scorer> scorer;
   std::shared_ptr<sim::SimTimeNode> control;
   std::unique_ptr<sim::LaunchTree> launch;
@@ -61,17 +62,14 @@ public:
                     std::string(cb::options.headless ? "true" : "false"),
                 "stage:=" + cb::options.stage, "backend:=" + cb::options.backend, "target_speed:=0.0",
                 "pose_latency_s:=" + cb::number(cb::options.pose_latency_s),
-                "firmware_latency_s:=" + cb::number(cb::options.firmware_latency_s.value_or(.020)),
-                "gimbal_lag_s:=" + cb::number(cb::options.gimbal_lag_s.value_or(
-                    cb::options.backend == "hosted" ? 0.0 : .05)),
-                "chase_settle_s:=" + cb::number(cb::options.chase_settle_s.value_or(-1.0)),
-                "chase_margin_s:=" + cb::number(cb::options.chase_margin_s.value_or(
-                    cb::options.backend == "hosted" ? .025 : 0.0)),
                 "target_spin_hz:=0.0", "real_time_factor:=" + cb::options.rtf,
                 "lockstep:=" + std::string(cb::options.lockstep ? "true" : "false"),
+                "harness_chain:=" + std::string(cb::options.lockstep ? "true" : "false"),
                 "firmware_fixes:=" + std::string(cb::options.no_firmware_fixes
                                                      ? "false"
-                                                     : "true")},
+                                                     : "true"),
+                "epoch_readiness_extra:=" +
+                    std::string(cb::options.lockstep ? "/sim/e2e/harness_ready" : "")},
             cb::options.log_dir + "/stack.log");
       auto wait = [&](std::function<bool()> predicate, double timeout,
                       const std::string &description) {
@@ -110,6 +108,10 @@ public:
               return true;
             },
             120, "all four robot truth streams");
+      // Bring-up ends at a fixed sim time, so what AMCL's start or the host's speed
+      // does to when the chain appears cannot move where the cells start.
+      wait([&]() { return scorer->now_s() >= kBringupS; }, 300,
+           "the fixed bring-up time");
       wait(
           [&]() {
             return scorer->tf.canTransform("map", "root", tf2::TimePointZero);
@@ -120,7 +122,8 @@ public:
             return scorer->target_stamp &&
                    scorer->now_s() - *scorer->target_stamp < .1;
           },
-          60, "a fresh /cv/target aim point");
+          60, "a fresh /cv/target idle look point");
+      scorer->align(1.0);
       if (!scorer->driving()) {
         park_at_center();
         wait([&]() { return scorer->state_stamp.has_value(); }, 60,
@@ -132,8 +135,13 @@ public:
   }
   void TearDown() override {
     timing::Phase phase("teardown");
-    if (launch)
+    if (scorer)
+      scorer->retire();
+    if (launch) {
       launch->stop();
+      EXPECT_TRUE(launch->clean())
+          << "stack shutdown needed SIGKILL; see the SIGKILLing line above";
+    }
     timing::set_sim_clock({});
     scorer.reset();
     control.reset();
@@ -143,29 +151,30 @@ public:
     const auto trace = cb::options.log_dir + "/ingress.jsonl";
     cb::truncate(trace);
     // Let the stationary localization seed settle before the tight first waypoint.
-    scorer->spin_for(3);
+    scorer->run_to(scorer->tick_s() + 3, 120);
     control->set_params("mcb_emulator",
                         {rclcpp::Parameter("auto_fire", false),
                          rclcpp::Parameter("drive", std::string("simple"))});
-    const double start = scorer->now_s();
+    const double start = scorer->tick_s();
     std::optional<double> settled;
     bool arrived = false;
-    while (scorer->now_s() - start < 120) {
-      scorer->spin_for(.2);
+    while (scorer->tick_s() - start < 120) {
+      scorer->run_to(scorer->tick_s() + .2, 120);
       if (launch && !launch->alive())
         throw std::runtime_error("E2E stack exited during parked ingress");
-      auto pose = scorer->histories.at("sentry")->at(scorer->now_s() - .01);
+      auto pose = scorer->histories.at("sentry")->at(scorer->tick_s() - .1);
       if (!pose) continue;
       const double x = pose->root(0, 3), y = pose->root(1, 3);
-      const auto previous = scorer->histories.at("sentry")->at(scorer->now_s() - .21);
+      const auto previous = scorer->histories.at("sentry")->at(scorer->tick_s() - .3);
       if (!previous) continue;
       const double speed = (pose->root.block<2, 1>(0, 3) -
                             previous->root.block<2, 1>(0, 3)).norm() / .2;
-      cb::append_json(trace, {{"t", scorer->now_s()}, {"truth_xy", {x, y}},
+      cb::append_json(trace, {{"t", scorer->tick_s()}, {"truth_xy", {x, y}},
                               {"speed_m_s", speed}});
-      if (std::hypot(x, y) < 1.0 && speed < .08) {
-        if (!settled) settled = scorer->now_s();
-        if (scorer->now_s() - *settled >= 1) { arrived = true; break; }
+      const auto &c = sim::match_scenario::kCenter;
+      if (std::hypot(x - c[0], y - c[1]) < 1.0 && speed < .08) {
+        if (!settled) settled = scorer->tick_s();
+        if (scorer->tick_s() - *settled >= 1) { arrived = true; break; }
       } else {
         settled.reset();
       }
@@ -174,13 +183,13 @@ public:
                         {rclcpp::Parameter("drive", std::string("stop"))});
     if (!arrived)
       throw std::runtime_error("firmware parked ingress did not settle at center");
-    scorer->spin_for(3);
-    const auto pose = scorer->histories.at("sentry")->at(scorer->now_s() - .01);
+    scorer->run_to(scorer->tick_s() + 3, 120);
+    const auto pose = scorer->histories.at("sentry")->at(scorer->tick_s() - .1);
     if (!pose) throw std::runtime_error("missing parked chassis truth");
     parked_x = pose->root(0, 3);
     parked_y = pose->root(1, 3);
     std::cout << "Parked ingress reached center: (" << parked_x << ", "
-              << parked_y << ") after " << scorer->now_s() - start
+              << parked_y << ") after " << scorer->tick_s() - start
               << " sim seconds\n";
     set_target(0, 0, "lateral");
     control->set_params("mcb_emulator", {rclcpp::Parameter("auto_fire", true)});
@@ -194,7 +203,9 @@ public:
                          // origin_yaw=-pi/2: translate the original paths with the parked shooter.
                          rclcpp::Parameter("center_x", p.center_x - parked_y),
                          rclcpp::Parameter("center_y", parked_x),
-                         rclcpp::Parameter("half_width", p.half_width)});
+                         rclcpp::Parameter("half_width", p.half_width),
+                         // The tick the clock is held at: the driver applies this from the next.
+                         rclcpp::Parameter("effective_s", scorer->tick_s())});
   }
   void record_score(const std::string &cell, double duration) {
     const auto &shots = scorer->shots;
@@ -202,8 +213,6 @@ public:
         cb::options.log_dir + "/scores.jsonl",
         {{"cell", cell},
          {"duration_s", duration},
-         {"flag_shots", shots.at("flag").size()},
-         {"flag_hit_rate", cb::rounded(ee::hit_rate(shots.at("flag")), 4)},
          {"mcb_shots", shots.at("mcb").size()},
          {"mcb_hit_rate", cb::rounded(ee::hit_rate(shots.at("mcb")), 4)}});
   }
@@ -251,6 +260,9 @@ std::vector<Cell> cases() {
 class E2ESuite : public testing::TestWithParam<Cell> {};
 TEST_P(E2ESuite, MCB) {
   ASSERT_TRUE(environment->error.empty()) << environment->error;
+  // After SIGINT every remaining cell fails at once, so TearDown stops the stack
+  // within the launch's SIGINT window.
+  ASSERT_TRUE(rclcpp::ok()) << "interrupted: ROS shut down";
   auto c = GetParam();
   timing::Case timing_case(
       cb::options.stage == "mcb_parked"
@@ -264,6 +276,7 @@ TEST_P(E2ESuite, MCB) {
     double duration = cb::options.duration ? cb::options.duration : 20;
     std::cout << "\n=== " << c.name << ", spin " << std::fixed
               << std::setprecision(2) << c.spin << " Hz ===\n";
+    s->align(1.0);  // every cell starts on a whole simulated second
     {
       timing::Phase phase("reset");
       environment->set_target(c.speed, c.spin, c.path);
@@ -271,10 +284,16 @@ TEST_P(E2ESuite, MCB) {
     }
     {
       timing::Phase phase("settle");
-      s->spin_for(3);
+      // Windows are counted in chain ticks, not in the clock this scorer happens to have seen:
+      // the last shot's record depends on where they end.
+      s->run_to(s->tick_s() + 3, 120);
     }
     s->reset();
-    s->spin_for(duration + .5);
+    s->score_until = s->tick_s() + duration + .5;
+    s->run_to(s->score_until, std::max(30., (duration + .5) * 20));
+    // Shots and TargetStates stamped inside the window are judged and received later, by
+    // however many ticks that takes; keep stepping until they have, then drop the rest.
+    s->run_to(s->score_until + 1.0, 60);
     s->scoring = false;
     s->check_nodes(environment->nodes);
     s->check_lockstep();
@@ -318,13 +337,15 @@ TEST_P(E2ESuite, MCB) {
     EXPECT_GE(ee::hit_rate(mcb), .1) << c.name;
     return;
   }
+  s->align(1.0);
   s->reset();
-  environment->control->set_params("match_environment",
-                                   {rclcpp::Parameter("active", true)});
-  s->match_start = s->now_s();
+  s->match_start = s->tick_s();
+  environment->control->set_params(
+      "match_environment", {rclcpp::Parameter("start_time_s", s->tick_s()),
+                            rclcpp::Parameter("active", true)});
   double duration = sim::match_scenario::match_duration(cb::options.stage);
   s->score_until = *s->match_start + duration;
-  s->spin_for(duration + .5 + .05 + .1);
+  s->run_to(*s->match_start + duration + .5 + .05 + .1, std::max(30., (duration + .65) * 20));
   s->scoring = false;
   s->check_nodes(environment->nodes);
   s->check_lockstep();
@@ -341,9 +362,8 @@ TEST_P(E2ESuite, MCB) {
   std::vector<cb::Json> all_impacts;
   int allies = 0;
   for (const auto &e : s->shots)
-    if (e.first != "flag")
-      for (const auto &r : e.second)
-        all_impacts.push_back(r);
+    for (const auto &r : e.second)
+      all_impacts.push_back(r);
   if (match) {
     std::stable_sort(all_impacts.begin(), all_impacts.end(),
                      [](const auto &a, const auto &b) {
@@ -467,6 +487,7 @@ INSTANTIATE_TEST_SUITE_P(Cells, E2ESuite, testing::ValuesIn(cases()),
                            return cb::gtest_name(info.param.name);
                          });
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   if (argc == 2 && std::string(argv[1]) == "--print-launch-constants") {
     cb::Json paths = cb::Json::object();
     for (const auto &[name, path] : sim::match_scenario::parked_paths()) {
@@ -474,6 +495,14 @@ int main(int argc, char **argv) {
                      {"center_x", path.center_x},
                      {"half_width", path.half_width}};
     }
+    for (const auto &name : {"opponent_0", "opponent_1", "ally_0"}) {
+      const auto sample = sim::match_scenario::sample_robot(name, 0.0, "mcb_match");
+      paths["initial_positions"][name] = sample.position;
+      paths["initial_yaws"][name] = sample.yaw;
+    }
+    const auto &center = sim::match_scenario::kCenter;
+    paths["idle_zone"] = {center[0], center[1] -
+        sim::match_scenario::parked_paths().at("lateral").center_x};
     std::cout << paths.dump() << std::endl;
     return 0;
   }

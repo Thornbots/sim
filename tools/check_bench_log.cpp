@@ -34,6 +34,7 @@ Report check(const std::string &path) {
     {"no display", std::regex("Qt platform plugin|could not connect to display"), true},
     {"wait gave up", std::regex(R"(wall-clock cap hit|\[wait_until\] timed out)"), true},
     {"stack not ready", std::regex("stack NOT ready"), true},
+    {"shutdown needed SIGTERM/SIGKILL", std::regex(R"(sending signal 'SIG(TERM|KILL)'|SIGKILLing|did not exit within [0-9.]+s)"), true},
     {"lockstep timeout", std::regex(R"(lockstep timeout:|LockstepGate: lockstep timeout|lockstep: .* timed out after|[1-9]\d* lockstep timeouts)"), true},
     {"clock failure", std::regex("clock stalled|clock moved backwards"), true},
     {"pacing gate dropped", std::regex("silent, no longer pacing"), false},
@@ -63,7 +64,7 @@ Report check(const std::string &path) {
       if (reported.count(process)) continue;
       if (!shutting_down && !interrupted.count(process))
         out.fatal.push_back("crashed mid-run: " + process + " (exit " + std::to_string(code) + ")");
-      else if (code != -2 && code != -15 && code != 0)
+      else if (code != 0)  // -2/-15: a node killed by a second or escalated signal
         out.notes.push_back("unclean shutdown: " + process + " (exit " + std::to_string(code) + ")");
     }
     for (const auto &p : patterns) if (std::regex_search(line, p.pattern)) {

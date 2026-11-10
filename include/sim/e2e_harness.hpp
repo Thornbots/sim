@@ -32,6 +32,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <optional>
 #include <std_msgs/msg/header.hpp>
+#include <std_msgs/msg/u_int32.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/buffer.h>
@@ -49,6 +50,22 @@ public:
   explicit Scorer(const std::string &stage, const std::string &logpath);
   void reset();
   void spin_for(double seconds) override;
+  bool wait_until(const std::function<bool()> &predicate, double timeout,
+                  const std::string &description) override;
+  // One 50 ms tick of the harness chain: releases the previous tick, waits for the
+  // next, and runs its scoring. Decisions made between this and the next call happen
+  // while physics is held at the tick, so they land on a known sim time.
+  bool step(double wall_timeout_s = 0.1);
+  // Step until the tick time is a multiple of `period_s`.
+  void align(double period_s);
+  // Steps chain ticks until the held tick reaches `tick_target`. Unlike spin_for, which counts
+  // the clock this node has seen, the end is a tick, the same in every run.
+  void run_to(double tick_target, double wall_budget_s);
+  // The chain tick the clock is held at between steps: the same value in every run, unlike
+  // now_s(), which is whatever /clock message this node has handled.
+  double tick_s() { return unacked_ns_ ? *unacked_ns_ * 1e-9 : now_s(); }
+  // Stop holding physics on this harness (teardown): later ticks need no release.
+  void retire();
   void check_lockstep();
   std::string stage, log_path;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
@@ -69,7 +86,7 @@ private:
   Offsets offsets_;
   gz::transport::Node gz_;
   tf2_ros::TransformListener listener_;
-  std::deque<std::pair<double, Vec>> aims_, mcb_poses_;
+  std::deque<std::pair<double, Vec>> mcb_poses_;
   std::deque<std::pair<double, bool>> state_validity_;
   std::deque<dji_serial_bridge::msg::TargetState> state_history_;
   std::deque<std::pair<double, size_t>> detections_;
@@ -81,13 +98,19 @@ private:
   std::map<std::pair<std::string, double>, int> flight_steps_;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions_;
   std::map<std::string, std::string> lockstep_status_;
-  rclcpp::TimerBase::SharedPtr fire_timer_, pose_timer_;
+  std::optional<uint32_t> latest_tf_fallbacks_;
+  static constexpr int kPhaseMs = 1;  // after the other chains' ticks at each boundary
+  rclcpp::TimerBase::SharedPtr start_timer_, tick_timer_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ack_pub_, ready_pub_;
+  std::optional<int64_t> tick_ns_, unacked_ns_;  // pending tick; tick being decided
+  bool retired_ = false;
+  uint64_t ticks_ = 0;
+  double score_from_ = 0;  // shots and states stamped earlier are not this window's
+  void tick_body();
+  void release_tick();
   rclcpp::Client<rcl_interfaces::srv::SetParameters>::SharedPtr referee_client_;
-  std::optional<
-      rclcpp::Client<rcl_interfaces::srv::SetParameters>::FutureAndRequestId>
-      referee_future_;
-  std::chrono::steady_clock::time_point referee_sent_;
   int referee_timeouts_ = 0;
+  double referee_wait_s_ = 2.0;  // wall seconds to wait for one parameter reply
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
       referee_pub_;
   template <class Message, class Callback>
@@ -98,9 +121,8 @@ private:
   }
   std::optional<Matrix> world_T_odom(double t);
   Vec muzzle_velocity(const std::string &name, double t);
-  Json pose_errors(double t);
-  Json aim_split(double t, const Vec &origin, const Vec &direction, int panel,
-                 std::shared_ptr<PoseHistory> history = {});
+  // map_frame adds the AMCL/navigation errors, which are not run-to-run deterministic.
+  Json pose_errors(double t, bool map_frame = false);
   std::optional<Json> judge(double t);
   std::optional<Json> judge_match(const std::string &kind, double t);
   void judge_state(const dji_serial_bridge::msg::TargetState &m);

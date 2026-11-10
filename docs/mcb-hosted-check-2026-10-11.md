@@ -1,5 +1,9 @@
 # Hosted MCB and shutdown check, 2026-10-11
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Linux x86_64, workspace `db34069`, MCBV3 `86c2241`, sim `116736b`, bridge
 `8dd2fdd`, already-running Jazzy container. Fresh isolated builds of the
 checked-out firmware, sim and UART bridge passed without compiler warnings.

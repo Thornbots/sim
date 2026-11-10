@@ -1,5 +1,9 @@
 # Parked firmware results, 2026-10-03
 
+Historical evidence; live actions and acceptance are maintained in
+[ROADMAP](../../docs/ROADMAP.md) and [ROBOT_TESTS](../../docs/ROBOT_TESTS.md).
+Statements about draft PRs or remaining work below describe the dated checkpoint.
+
 Historical observations, preserved from the [parked-stage documentation](../README.md#firmware-behaviour-and-historical-results-mcb_parked).
 These results describe the October 3 branch, not current firmware or validation.
 

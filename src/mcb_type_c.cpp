@@ -1,4 +1,5 @@
 // Copyright 2026 Thornbots. SPDX-License-Identifier: Apache-2.0
+#include <csignal>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -93,7 +94,7 @@ public:
     process_ = std::make_unique<sim::LaunchTree>("renode",
         std::vector<std::string>{(root / "renode").string(), "--disable-gui", "--plain",
                                   "--port", "-1", script.string()},
-        (directory_ / "renode.log").string());
+        (directory_ / "renode.log").string(), sim::LaunchOptions::emulator());
     for (int attempt = 0; attempt < 100; ++attempt) {
       if (!process_->alive()) throw std::runtime_error(process_->read_log());
       if (sim::type_c::listening(std::stoul(port))) {
@@ -113,7 +114,16 @@ private:
 };
 }
 
+// Exit at once on SIGINT/SIGTERM. The board's power-on guard is one ~11 s Renode
+// call that cannot be interrupted, and gz stops waiting for this process long
+// before it ends. Renode has no state to save and dies with its parent (SIGKILL).
+extern "C" void on_stop(int) { _exit(0); }
+
 int main() {
+  struct sigaction stop{};
+  stop.sa_handler = on_stop;
+  sigaction(SIGINT, &stop, nullptr);
+  sigaction(SIGTERM, &stop, nullptr);
   // LaunchTree diagnostics must not enter the binary hardware pipe.
   std::cout.rdbuf(std::cerr.rdbuf());
   try {

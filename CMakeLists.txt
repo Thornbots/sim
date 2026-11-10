@@ -22,6 +22,7 @@ find_package(diagnostic_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rcl_interfaces REQUIRED)
 find_package(ros_gz_interfaces REQUIRED)
+find_package(ros_gz_bridge REQUIRED)
 find_package(dji_serial_bridge REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -59,11 +60,27 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../firmware/MCBV3/MCB-project/src/hosted/
   install(TARGETS mmm_suite DESTINATION lib/${PROJECT_NAME})
 endif()
 
+# The no-MCB benches plan aim with the firmware's own pure planner, compiled
+# from the checkout (never copied); without it these targets and tests skip.
+set(MCB_AIM_PLANNER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../firmware/MCBV3/MCB-project/src/subsystems/jetson")
+if(EXISTS "${MCB_AIM_PLANNER_DIR}/AimPlanner.cpp")
+  add_library(mcb_aim STATIC src/mcb_aim.cpp "${MCB_AIM_PLANNER_DIR}/AimPlanner.cpp")
+  set_target_properties(mcb_aim PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_compile_features(mcb_aim PUBLIC cxx_std_17)
+  target_include_directories(mcb_aim PUBLIC include "${MCB_AIM_PLANNER_DIR}")
+  add_executable(mcb_aim_standin src/mcb_aim_standin.cpp)
+  target_compile_features(mcb_aim_standin PUBLIC cxx_std_17)
+  target_link_libraries(mcb_aim_standin mcb_aim)
+  ament_target_dependencies(mcb_aim_standin
+    rclcpp dji_serial_bridge geometry_msgs std_msgs)
+  install(TARGETS mcb_aim_standin DESTINATION lib/${PROJECT_NAME})
+endif()
+
 add_executable(bench_world src/bench_world.cpp)
 target_compile_features(bench_world PUBLIC cxx_std_17)
 target_link_libraries(bench_world Eigen3::Eigen)
 ament_target_dependencies(bench_world
-  rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs
+  rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs std_srvs
   visualization_msgs)
 install(TARGETS bench_world DESTINATION lib/${PROJECT_NAME})
 
@@ -128,6 +145,17 @@ target_compile_features(display_probe PUBLIC cxx_std_17)
 target_link_libraries(display_probe suite_support)
 install(TARGETS display_probe DESTINATION lib/${PROJECT_NAME})
 
+add_executable(gz_bridge src/gz_bridge.cpp)
+target_compile_features(gz_bridge PUBLIC cxx_std_17)
+target_link_libraries(gz_bridge gz-transport::core gz-msgs::core)
+ament_target_dependencies(gz_bridge rclcpp ros_gz_bridge)
+install(TARGETS gz_bridge DESTINATION lib/${PROJECT_NAME})
+
+add_executable(guarded_exec src/guarded_exec.cpp)
+target_compile_features(guarded_exec PUBLIC cxx_std_17)
+target_link_libraries(guarded_exec suite_support)
+install(TARGETS guarded_exec DESTINATION lib/${PROJECT_NAME})
+
 foreach(tool check_bench_log compare_runs estimation_limits shot_floors rviz_to_foxglove rf2o_quality)
   add_executable(${tool} tools/${tool}.cpp)
   target_compile_features(${tool} PUBLIC cxx_std_17)
@@ -157,8 +185,8 @@ foreach(suite shot_hit estimation e2e)
     target_link_libraries(${suite}_suite pose_history)
   endif()
   ament_target_dependencies(${suite}_suite
-    rclcpp rcl_interfaces nav_msgs std_msgs visualization_msgs dji_serial_bridge
-    diagnostic_msgs tf2_ros ament_index_cpp)
+    rclcpp rcl_interfaces nav_msgs std_msgs std_srvs visualization_msgs dji_serial_bridge
+    diagnostic_msgs geometry_msgs tf2_ros ament_index_cpp)
   install(TARGETS ${suite}_suite DESTINATION lib/${PROJECT_NAME})
 endforeach()
 
@@ -220,15 +248,44 @@ install(TARGETS latch_holder DESTINATION lib/${PROJECT_NAME})
 
 add_executable(actor_driver src/actor_driver.cpp)
 target_compile_features(actor_driver PUBLIC cxx_std_17)
+target_include_directories(actor_driver PRIVATE include)
 target_link_libraries(actor_driver gz-transport::core gz-msgs::core)
 ament_target_dependencies(actor_driver nav_msgs rclcpp ros_gz_interfaces)
 install(TARGETS actor_driver DESTINATION lib/${PROJECT_NAME})
 
 add_executable(opponent_driver src/opponent_driver.cpp)
 target_compile_features(opponent_driver PUBLIC cxx_std_17)
+target_include_directories(opponent_driver PRIVATE include)
 target_link_libraries(opponent_driver gz-transport::core gz-msgs::core tinyxml2::tinyxml2)
 ament_target_dependencies(opponent_driver ament_index_cpp nav_msgs rclcpp)
 install(TARGETS opponent_driver DESTINATION lib/${PROJECT_NAME})
+
+add_executable(robot_spawn_ready src/robot_spawn_ready.cpp)
+target_compile_features(robot_spawn_ready PUBLIC cxx_std_17)
+target_include_directories(robot_spawn_ready PRIVATE include)
+target_link_libraries(robot_spawn_ready gz-transport::core gz-msgs::core)
+ament_target_dependencies(robot_spawn_ready rclcpp std_msgs)
+install(TARGETS robot_spawn_ready DESTINATION lib/${PROJECT_NAME})
+
+add_executable(startup_barrier src/startup_barrier.cpp)
+target_compile_features(startup_barrier PUBLIC cxx_std_17)
+ament_target_dependencies(startup_barrier rclcpp std_msgs)
+install(TARGETS startup_barrier DESTINATION lib/${PROJECT_NAME})
+
+add_executable(scan_odom_gate src/scan_odom_gate.cpp)
+target_compile_features(scan_odom_gate PUBLIC cxx_std_17)
+ament_target_dependencies(scan_odom_gate rclcpp std_msgs nav_msgs diagnostic_msgs)
+install(TARGETS scan_odom_gate DESTINATION lib/${PROJECT_NAME})
+
+add_executable(pose_consumed src/pose_consumed.cpp)
+target_compile_features(pose_consumed PUBLIC cxx_std_17)
+ament_target_dependencies(pose_consumed rclcpp std_msgs nav_msgs tf2_ros dji_serial_bridge)
+install(TARGETS pose_consumed DESTINATION lib/${PROJECT_NAME})
+
+add_executable(initial_pose_setter src/initial_pose_setter.cpp)
+target_compile_features(initial_pose_setter PUBLIC cxx_std_17)
+ament_target_dependencies(initial_pose_setter rclcpp geometry_msgs)
+install(TARGETS initial_pose_setter DESTINATION lib/${PROJECT_NAME})
 
 add_executable(match_environment src/match_environment.cpp)
 target_compile_features(match_environment PUBLIC cxx_std_17)
@@ -279,7 +336,7 @@ target_compile_features(detector_standin PUBLIC cxx_std_17)
 target_include_directories(detector_standin PRIVATE include)
 target_link_libraries(detector_standin Eigen3::Eigen gz-transport::core gz-msgs::core)
 ament_target_dependencies(detector_standin
-  dji_serial_bridge geometry_msgs rclcpp rclcpp_components urdf)
+  dji_serial_bridge geometry_msgs rclcpp rclcpp_components rosgraph_msgs std_msgs urdf)
 rclcpp_components_register_node(detector_standin
   PLUGIN "sim::DetectorStandin"
   EXECUTABLE detector_standin_node)
@@ -301,8 +358,9 @@ target_link_libraries(mcb_ready mcb_protocol)
 install(TARGETS mcb_ready DESTINATION lib/${PROJECT_NAME})
 target_compile_features(mcb_firmware_system PUBLIC cxx_std_17)
 target_include_directories(mcb_firmware_system PRIVATE include)
-target_link_libraries(mcb_firmware_system mcb_protocol util gz-sim::core gz-plugin::register)
-ament_target_dependencies(mcb_firmware_system rclcpp rcl_interfaces geometry_msgs std_msgs sensor_msgs ament_index_cpp)
+target_link_libraries(mcb_firmware_system mcb_protocol util gz-sim::core gz-plugin::register
+  gz-transport::core gz-msgs::core)
+ament_target_dependencies(mcb_firmware_system rclcpp rcl_interfaces geometry_msgs std_msgs sensor_msgs rosgraph_msgs ament_index_cpp dji_serial_bridge)
 add_executable(mcb_physics_suite test/mcb/mcb_physics_suite.cpp)
 target_compile_features(mcb_physics_suite PUBLIC cxx_std_17)
 target_link_libraries(mcb_physics_suite suite_support mcb_protocol util GTest::gtest)
@@ -334,7 +392,8 @@ install(TARGETS lockstep_suite DESTINATION lib/${PROJECT_NAME})
 
 ament_python_install_package(${PROJECT_NAME})
 
-install(DIRECTORY launch urdf meshes world rviz foxglove renode DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch urdf meshes world rviz foxglove renode DESTINATION share/${PROJECT_NAME}
+  PATTERN "cad" EXCLUDE)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
@@ -345,6 +404,14 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_pytest_test(test_compare_runs test/test_compare_runs.py TIMEOUT 30
     ENV "SIM_COMPARE_RUNS=$<TARGET_FILE:compare_runs>" "PYTEST_ADDOPTS=-p no:anyio")
+
+  ament_add_gtest(test_detector_standin test/cpp/test_detector_standin.cpp TIMEOUT 60)
+  find_package(class_loader REQUIRED)
+  target_compile_definitions(test_detector_standin PRIVATE DETECTOR_LIBRARY="$<TARGET_FILE:detector_standin>")
+  add_dependencies(test_detector_standin detector_standin)
+  target_link_libraries(test_detector_standin gz-transport::core gz-msgs::core)
+  ament_target_dependencies(test_detector_standin
+    class_loader dji_serial_bridge rclcpp rclcpp_components rosgraph_msgs std_msgs)
   ament_add_gtest(test_lidar_scan test/cpp/test_lidar_scan.cpp)
   target_include_directories(test_lidar_scan PRIVATE include)
   target_compile_definitions(test_lidar_scan PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -358,7 +425,19 @@ if(BUILD_TESTING)
   ament_add_gtest(test_cv_head_aim test/cpp/test_cv_head_aim.cpp)
   target_include_directories(test_cv_head_aim PRIVATE include)
   target_link_libraries(test_cv_head_aim cv_head_aim_core Eigen3::Eigen)
+  if(TARGET mcb_aim)
+    ament_add_gtest(test_mcb_aim test/cpp/test_mcb_aim.cpp)
+    target_link_libraries(test_mcb_aim mcb_aim Eigen3::Eigen)
+  endif()
   ament_add_gtest(test_mcb_protocol test/cpp/test_mcb_protocol.cpp)
+  ament_add_gtest(test_uart_frame_assembler test/cpp/test_uart_frame_assembler.cpp)
+  target_include_directories(test_uart_frame_assembler PRIVATE include)
+  target_link_libraries(test_uart_frame_assembler mcb_protocol)
+  ament_add_gtest(test_uart_relay test/cpp/test_uart_relay.cpp)
+  target_include_directories(test_uart_relay PRIVATE include)
+  target_link_libraries(test_uart_relay mcb_protocol util)
+  ament_add_gtest(test_uart_wire test/cpp/test_uart_wire.cpp)
+  target_include_directories(test_uart_wire PRIVATE include)
   ament_add_gtest(test_mcb_motor test/cpp/test_mcb_motor.cpp)
   target_include_directories(test_mcb_motor PRIVATE include)
   target_link_libraries(test_mcb_protocol mcb_protocol)
@@ -395,6 +474,11 @@ if(BUILD_TESTING)
   ament_add_gtest(test_match_routes test/cpp/test_match_routes.cpp)
   target_compile_definitions(test_match_routes PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(test_match_routes suite_support combat tinyxml2::tinyxml2)
+  find_package(rosbag2_cpp REQUIRED)
+  ament_add_gtest(test_mcb_debug_bag test/cpp/test_mcb_debug_bag.cpp TIMEOUT 90)
+  target_compile_definitions(test_mcb_debug_bag PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(test_mcb_debug_bag suite_support mcb_protocol util)
+  ament_target_dependencies(test_mcb_debug_bag rclcpp dji_serial_bridge rosbag2_cpp)
   ament_add_gtest(test_mcb_bridge_pty test/cpp/test_mcb_bridge_pty.cpp)
   target_compile_definitions(test_mcb_bridge_pty PRIVATE SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(test_mcb_bridge_pty suite_support mcb_protocol util)
@@ -413,6 +497,20 @@ if(BUILD_TESTING)
   ament_add_gtest(test_pose_history test/cpp/test_pose_history.cpp)
   target_include_directories(test_pose_history PRIVATE include)
   target_link_libraries(test_pose_history pose_history Eigen3::Eigen)
+  # Real gz server on the paused field plus the opponent_driver executable.
+  ament_add_gtest(test_keyed_noise test/cpp/test_keyed_noise.cpp TIMEOUT 30)
+  target_include_directories(test_keyed_noise PRIVATE include)
+
+  ament_add_gtest(test_opponent_startup test/cpp/test_opponent_startup.cpp TIMEOUT 1500)
+  add_dependencies(test_opponent_startup opponent_driver)
+  target_compile_definitions(test_opponent_startup PRIVATE
+    SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    OPPONENT_DRIVER_EXE="$<TARGET_FILE:opponent_driver>")
+  target_link_libraries(test_opponent_startup suite_support gz-transport::core gz-msgs::core)
+  ament_target_dependencies(test_opponent_startup rclcpp std_msgs)
+  ament_add_pytest_test(sim_dds_switch test/test_dds_switch.py TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENV "PYTEST_ADDOPTS=-p no:anyio")
   foreach(lint copyright flake8 pep257)
     ament_add_pytest_test(sim_${lint} test/test_${lint}.py TIMEOUT 120
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
