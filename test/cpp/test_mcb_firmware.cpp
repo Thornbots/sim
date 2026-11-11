@@ -205,9 +205,10 @@ TEST_F(McbFirmware, BothTeamsRoundTripFieldDisplacementVelocityAndHeading) {
     EXPECT_NEAR(poses.back().head_yaw, hw::kStartYaw + 0.2, 0.01);
   }
 }
-TEST_F(McbFirmware, PosePitchRoundTripsTheGazeboJointThroughMotorFeedback) {
+class McbPitchBoot : public McbFirmware, public testing::WithParamInterface<double> {};
+TEST_P(McbPitchBoot, PosePitchRoundTripsTheGazeboJointThroughMotorFeedback) {
   ref.game_stage = 1;
-  for (const double pitch : {0.0, -0.2, 0.2, 0.0}) {
+  for (const double pitch : {GetParam(), 0.0, -0.2, 0.2, 0.0}) {
     std::array<double, 10> readings{};
     readings[8] = pitch;
     const auto poses = messages<wire::Pose>(run(100, {}, readings));
@@ -215,6 +216,7 @@ TEST_F(McbFirmware, PosePitchRoundTripsTheGazeboJointThroughMotorFeedback) {
     EXPECT_NEAR(poses.back().head_pitch, pitch, 2 * hw::kPi / 8192 / 3);
   }
 }
+INSTANTIATE_TEST_SUITE_P(PitchBoot, McbPitchBoot, testing::Values(0.0, -0.2, 0.2));
 TEST_F(McbFirmware, AimsAtTheFacingPanelAndFiresFromATargetState) {
   const auto result = run(1000, state_frame(3.0F, 1, 0.2F));
   EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);

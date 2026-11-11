@@ -14,7 +14,7 @@ constexpr double kTrack = 0.50038;
 constexpr double kYawRatio = 32319.0 / 748.0;
 constexpr double kPitchRatio = 3.0;
 // Sentry's encoder offset in GimbalSubsystemConstants.hpp; verified through POSE.
-constexpr double kPitchOffset = 0.18;
+constexpr double kPitchOffset = -0.09;
 using Feedback = std::array<std::array<uint8_t, 8>, 10>;
 using Commands = std::array<int16_t, 10>;
 
