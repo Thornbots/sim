@@ -402,6 +402,9 @@ if(BUILD_TESTING)
   # the run itself, and its [tool:pytest] deselects the integration suites.
   set(ENV{PYTEST_ADDOPTS} "-p no:anyio")
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_pytest_test(test_compare_runs test/test_compare_runs.py TIMEOUT 30
+    ENV "SIM_COMPARE_RUNS=$<TARGET_FILE:compare_runs>" "PYTEST_ADDOPTS=-p no:anyio")
+
   ament_add_gtest(test_detector_standin test/cpp/test_detector_standin.cpp TIMEOUT 60)
   find_package(class_loader REQUIRED)
   target_compile_definitions(test_detector_standin PRIVATE DETECTOR_LIBRARY="$<TARGET_FILE:detector_standin>")
