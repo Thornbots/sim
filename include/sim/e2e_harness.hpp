@@ -67,6 +67,12 @@ public:
   // Stop holding physics on this harness (teardown): later ticks need no release.
   void retire();
   void check_lockstep();
+  // Set by the suite: whether the launched stack still runs. step() throws once it does not,
+  // so no wait outlives the stack (a wait on ticks would otherwise spin forever).
+  std::function<bool()> stack_alive;
+  // Wall seconds without a new tick before the harness calls the stack deadlocked: longer
+  // than the coordinator's 60 s guard, so its diagnosis (naming the topic) comes first.
+  static constexpr double kStallWallS = 90;
   std::string stage, log_path;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
   std::map<std::string, std::vector<Json>> shots;

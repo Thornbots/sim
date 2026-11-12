@@ -110,12 +110,14 @@ protected:
     cmd.push_back(path_);
     server_ = std::make_unique<sim::LaunchTree>(cmd, path_ + ".gz.log");
   }
-  void coordinator(bool strict = false, std::vector<std::string> extra = {}) {
+  void coordinator(bool strict = false, std::vector<std::string> extra = {},
+                   double max_wait_s = -1) {
+    if (max_wait_s < 0) {max_wait_s = strict ? 2.0 : 0.2;}
     std::vector<std::string> cmd = {
       "ros2", "run", "sim", "lockstep_coordinator", "--ros-args",
       "-p", "chains:=[mcb_batch]", "-p", "mcb_batch.period_s:=0.005",
       "-p", "mcb_batch.phase_s:=0.0", "-p",
-      std::string("max_wait_s:=") + (strict ? "2.0" : "0.2"),
+      "max_wait_s:=" + std::to_string(max_wait_s),
       "-p", std::string("strict_startup:=") + (strict ? "true" : "false"),
       "-p", "clock_topic:=/world/lockstep_test/clock",
       "-p", "mcb_batch.acks:=[/lockstep_test/ack]"};
@@ -236,6 +238,50 @@ TEST_F(Lockstep, StrictStartupWaitsAtFirstPositiveTickAndKeepsPhase) {
   EXPECT_EQ(clock_, 10000000);
   ack(10000000);
   ASSERT_TRUE(wait([&] {return held_ == 15000000;}, 1));
+}
+
+// A producer that takes longer than the gate's wait and the old 2 s per-tick limit, but is
+// alive, only slows the run: the coordinator keeps the gate alive and nothing times out.
+TEST_F(Lockstep, SlowLiveProducerOnlySlowsTheRun) {
+  start(true, true, 1.0);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  coordinator(true, {}, 30.0);
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {return ack_->get_subscription_count() > 0;}, 2));
+  ack(5000000);
+  ASSERT_TRUE(wait([&] {return held_ == 10000000;}, 2)) << coordinator_->read_log();
+  std::this_thread::sleep_for(3s);
+  EXPECT_EQ(clock_, 10000000);
+  ack(10000000);
+  ASSERT_TRUE(wait([&] {return held_ == 15000000;}, 2)) << coordinator_->read_log();
+  // Status is latched each wall second: wait for one that includes the slow hold.
+  ASSERT_TRUE(wait([&] {
+    return status_.count("chain.mcb_batch.longest_s") &&
+           std::stod(status_["chain.mcb_batch.longest_s"]) >= 2.9;
+  }, 3)) << coordinator_->read_log();
+  EXPECT_EQ(status_.at("timeouts"), "0");
+  EXPECT_EQ(server_->read_log().find("lockstep timeout"), std::string::npos)
+    << server_->read_log();
+  EXPECT_FALSE(exited());
+}
+
+// A producer that exits fails the run at once, naming its topic, long before the guard.
+TEST_F(Lockstep, ExitedProducerFailsFastNamingItsTopic) {
+  start(true, true, 60.0);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  coordinator(true, {}, 60.0);
+  ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {return ack_->get_subscription_count() > 0;}, 2));
+  ack(5000000);
+  ASSERT_TRUE(wait([&] {return held_ == 10000000;}, 2)) << coordinator_->read_log();
+  const auto t0 = std::chrono::steady_clock::now();
+  send_acks_ = false;
+  ack_.reset();
+  ASSERT_TRUE(wait([&] {return exited();}, 10)) << coordinator_->read_log();
+  EXPECT_LT(std::chrono::steady_clock::now() - t0, 10s);
+  EXPECT_TRUE(log_has("producer exited (no publisher left on /lockstep_test/ack)"))
+    << coordinator_->read_log();
+  EXPECT_EQ(clock_, 10000000);
 }
 
 TEST_F(Lockstep, StrictCoordinatorBeforeGateFindsFirstRelease) {
