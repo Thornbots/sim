@@ -29,8 +29,9 @@ from pathlib import Path
 
 from build123d import (
     Align, Box, BuildLine, BuildPart, BuildSketch, Circle, Color, Compound,
-    Cylinder, extrude, export_gltf, export_step, export_stl, Location,
-    FilletPolyline, make_face, Plane, Polyline, Pos, Rot, SlotOverall, sweep, Torus,
+    Cylinder, extrude, export_gltf, export_step, export_stl, FilletPolyline,
+    Location, make_face, Plane, Polyline, Pos, Rot, SlotOverall, Spline, sweep,
+    Torus, Wire,
 )
 
 L, W = 12000.0, 8000.0  # inner battlefield, Fig 3-3
@@ -123,19 +124,18 @@ def zigzag_pole():
     456 mm pole on a 250 mm plate (Fig 3-10).
 
     The bend is a placeholder: the rules defer zig-zag details to a later release.
-    Bends are 40 mm radius (> tube radius) so the sweep cannot self-intersect.
+    The path is one B-spline fitted to 40 mm bends (min radius ~34 > tube 11),
+    so the sweep cannot self-intersect and has no partial-torus elbows, which
+    Onshape trimmed the long way round into near-full loops.
     """
     plate_t, tube_r = 6.0, 11.0
     pts = [(0, 0, plate_t), (0, 0, 70), (0, 45, 150), (0, -10, 235),
            (0, -45, 300), (0, 20, 395), (0, 20, 456 - tube_r)]
-    with BuildPart() as pole:
-        Box(250, 250, plate_t, align=(C, C, LO))
-        with BuildLine() as path:
-            FilletPolyline(*pts, radius=40)
-        with BuildSketch(Plane(origin=pts[0], z_dir=(0, 0, 1))):
-            Circle(tube_r)
-        sweep(path=path.line)
-    return pole.part
+    bends = Wire(FilletPolyline(*pts, radius=40).edges())
+    path = Spline(*[bends.position_at(i / 60) for i in range(61)],
+                  tangents=[(0, 0, 1), (0, 0, 1)])  # vertical: cap lies on the plate
+    tube = sweep(Plane(origin=pts[0], z_dir=(0, 0, 1)) * Circle(tube_r), path=path)
+    return Box(250, 250, plate_t, align=(C, C, LO)) + tube
 
 
 def donut():
