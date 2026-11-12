@@ -887,9 +887,8 @@ because `/cv/panel_detections` are deprojected with the colour intrinsics. Befor
 2026-10-29 it sat on the D435 centre or IR apex, so real-robot aim points landed
 right of the panels; the sim hid this because its detector shared the frame.
 `muzzle` is on the pitch axis at the bore, 1.9 mm left of the yaw axis. `lidar`
-uses the 2026-10-31 flipped-mount CAD translation with the robot-measured 2.579 rad
-yaw ([lidar filter](../thornbots_pkg/README.md#lidar_self_filter)). The `head`
-mesh still shows the upright Oct 26 lidar; the sim sensor does not see it.
+uses the restored upright mount defaults ([lidar filter](../thornbots_pkg/README.md#lidar_self_filter)).
+The sim sensor does not see the head mesh.
 
 Joint and link names (`root`, `body`, `head`, `head_pitch`, `lidar`, `camera`,
 `muzzle`, `headlink`, `headpitch`) are stable; `headlink` turns about +z, CCW
