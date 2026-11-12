@@ -55,12 +55,8 @@ struct Output
   bool replanned = false;
 };
 
-// AutoAimAndFireCommand's target-state path in sim time, advanced once per
-// replan period (the bench grid): a held state, a replan unless a shot is
-// pending, the pending shot holding its aim, state timeout, then the idle
-// look point. Differences from the firmware, which free-runs a 1 ms control
-// cycle: a replan waits for the next period boundary after a request comes
-// due, and the shooter's pose comes from the newest POSE sample.
+// Shared firmware lifecycle on a 1 ms sim clock; the default fixture follows
+// commanded angles/rates perfectly. Tests may supply physical measured motion.
 class Standin
 {
 public:
@@ -70,18 +66,15 @@ public:
   void on_state(uint32_t now_ms, const aim::TargetInput & at_receipt);
   // An idle CV_TARGET look point arrived.
   void on_idle(uint32_t now_ms, const aim::Vec3 & point);
-  Output tick(uint32_t now_ms, const Pose & pose);
-  bool holding_state() const {return have_state_;}
+  Output tick(uint32_t now_ms, const Pose & pose,
+    std::optional<aim::GimbalMotion> measured = std::nullopt);
+  bool holding_state() const {return control_.state() == aim::AimControl::State::TRACKING;}
 
 private:
   Config config_;
-  aim::AimPlanner planner_;
-  aim::TargetInput held_;
-  uint32_t received_ms_ = 0;
-  bool have_state_ = false;
-  aim::Vec3 held_aim_;
-  bool pending_ = false;
-  uint32_t plan_ms_ = 0, due_ms_ = 0;
+  aim::AimControl control_;
+  bool ever_requested_ = false;
+  uint32_t last_request_ms_ = 0;
   std::optional<aim::Vec3> idle_;
   uint32_t idle_ms_ = 0;
 };

@@ -122,16 +122,16 @@ the Jetson planner's numbers.
 `sim_clock` steps sim time 2 ms at a time and stops exactly one period past
 the newest stamp on `/cv/target_state`, `/dji_serial_bridge/pose`, the stand-in's `/cv/target/tick` and the
 scorer's `/bench/progress` until that topic publishes, so no node falls
-behind and each 40 Hz tick is stamped on its deadline; a topic with
+behind and each control tick is stamped on its deadline; a topic with
 no publisher left (the scorer between cases) stops holding it. A fixed
 `real_time_factor` above 0 does not wait. Use `:=1` as the control;
 [dated pacing comparisons](docs/cv-bench-results-2026-09-28.md#clock-pacing-observations-2026-09-25-and-2026-10-01) record the measured tradeoff.
 
 `spin_mode:=firmware` uses the firmware's spin policy and chase windows;
-`spin_mode:=shotgating` holds the center line and times fire for comparison.
+`spin_mode:=shotgating` uses a narrow face-on diagnostic firing window.
 `spin_mode:=chase` permits `chase_settle_s` and `chase_margin_s` overrides,
-which otherwise use the firmware values. `gimbal_lag_s` defaults to 0 for the
-perfect gimbal (the firmware's constant is 0.05 s). The recorded floors below
+which otherwise use the firmware values. The perfect gimbal follows planner
+rates between 5 ms replans. The recorded floors below
 were measured in chase mode. Each cell has
 its own floor in `FLOORS` (`include/sim/shot_floors_data.hpp`), the lowest score
 over three runs minus 10 points. Forty cells are measured: both layouts on
@@ -1384,33 +1384,41 @@ zero. `panel_stagger_m` follows the case's layout (`CvStack.set_target`).
 
 ### MCB aim stand-in
 
-The aiming and estimation benches run no MCB, but aiming now lives in the
-firmware (`firmware/MCBV3/MCB-project/src/subsystems/jetson/AimPlanner.{hpp,cpp}`,
-[MCBV3 aiming planner](../firmware/MCBV3/README.md#mcbv3-aiming-planner)). sim
-compiles that pure file from the checkout into `mcb_aim` (never copies it;
-CMake skips the library, `mcb_aim_standin`, `test_mcb_aim` and so the two
-benches when the checkout is absent) and `mcb_aim_standin` wraps it:
+The no-MCB benches compile the checked-out firmware's `AimPlanner.cpp` into
+`mcb_aim`; no planner copy lives in sim. `Standin` uses the same `AimControl`
+assignment lifecycle and measured-shot gate as `AutoAimAndFireCommand`.
+See the [firmware design](../firmware/MCBV3/README.md#target-handoff-redesign)
+for state transitions, ballistics and the full-panel gate; the
+[wire contract](../ros2_dji_serial_bridge/UART_PROTOCOL.md#proposed-target-assignment-update-and-clear)
+owns flag semantics and receipt expiry. The firmware checkout and matching
+bridge messages are required to build the stand-in.
 
-- Inputs: `/cv/target_state` (ages and confidence quantized as the wire does),
-  `/dji_serial_bridge/pose` (position less velocity times the state's age is the
-  shooter, at `shooter_z`; velocity as given, in `odom`), and the idle
-  `/cv/target` point as the fallback after a state times out (0.2 s validity).
-- Cadence: `AutoAimAndFireCommand`'s sequence (observe on receipt, 0.5 s
-  timeout, a pending request holds its aim and blocks replans, otherwise
-  replan) once per 25 ms period on the sim clock. The firmware free-runs a 1 ms
-  cycle; here a replan after a due request waits for the next period, and the
-  request's stamp is its ideal time, plan time plus `request_delay_ms`.
-- Outputs: `/mcb_aim_standin/aim` (`PointStamped`, odom, stamped at the plan) and
-  `/mcb_aim_standin/fire` (`Vector3Stamped`: stamp = request, `x` = request to
-  chamber exit, 20 ms, `y` = plan to exit). With `tick_topic`/`state_ack_topic`
-  it also owns the bench lockstep tick and ack that `point_to_cv_target` used to
-  publish. `point_to_cv_target` and `mcb_relay` no longer run in either bench.
-- Tuning is `AimTuning`'s defaults, which equal the sentry firmware's
-  (22 m/s, 20 ms latency); `test_mcb_aim` pins both. Exposed overrides:
-  `gimbal_lag_s` (the aiming bench's gimbal is perfect, so 0), `spin_mode`
-  (`firmware`, `chase` or `shotgating`) with `chase_settle_s`/`chase_margin_s`,
-  and `panel_switch_margin_rad`. `fire_enabled:=false` plans without firing
-  (estimation bench, `sim.launch.py spawn_target`).
+- Inputs: managed `/cv/target_state`, including independent `clear`, with wire
+  age/confidence quantization; current raw-odom `/dji_serial_bridge/pose` at
+  `shooter_z`; and idle `/cv/target` (200 ms validity).
+- Cadence: 1 ms control ticks, 5 ms replans and linear rate advancement between
+  solves. The ROS adapter processes intervening millisecond ticks before applying
+  newly received input, preserving decision stamps when accelerated `/clock`
+  updates coalesce timer callbacks. Gaps above its bounded catch-up limit discard
+  missed decisions. The ideal gimbal follows requested angles/rates. Unit fixtures can
+  supply physical measured motion to test misses. There is no pending request
+  queue or frozen aim. The bench ideal indexer retains its 40 Hz request cap.
+- Outputs: `/mcb_aim_standin/aim` (`PointStamped`, raw odom, stamped at the current
+  control decision) and `/mcb_aim_standin/fire` (`Vector3Stamped`, request stamp,
+  `x` = request-to-muzzle latency, `y` = current decision-to-muzzle latency).
+  `tick_topic` and `state_ack_topic` retain the bench's lockstep seams.
+- Tuning uses the sentry firmware defaults. Overrides: `spin_mode` (`firmware`,
+  `chase`, diagnostic `shotgating`), chase settle/margin and panel switch margin.
+  `fire_enabled:=false` keeps aiming without requests. `gimbal_lag_s` is removed;
+  launch owners should remove that obsolete override.
+
+The existing shot-hit scorer follows straight rays through the published aim
+points with a perfect gimbal, rather than integrating the calibrated ballistic
+model. It compares aiming continuity and hit placement; firmware hosted tests
+validate drag/gravity and the measured-angle panel intersection. Neither this
+fixture nor hosted wall timing establishes Type C scheduler timing. Three-run
+nightly comparisons and validation are recorded in
+[managed aiming, 2026-11-12](docs/managed-aim-2026-11-12.md).
 
 ### point_shooter
 

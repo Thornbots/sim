@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "mcb_aim_fixture.hpp"
 #include "sim/field.hpp"
 #include "sim/mcb_firmware.hpp"
 #include <gtest/gtest.h>
 #include <cmath>
 #include <optional>
+#include <limits>
 namespace {
 namespace hw = sim::mcb_firmware;
 namespace wire = sim::mcb_protocol;
@@ -36,7 +38,7 @@ std::vector<uint8_t> state_frame(float x, float y, float z,
   state.center[0] = x;
   state.center[1] = y;
   state.center[2] = z;
-  state.panel[0] = x - 0.25F;  // facing the shooter at the origin, as the invalid fallback
+  state.panel[0] = x - 0.25F;  // diagnostic measured panel; no invalid fallback
   state.panel[1] = y;
   state.panel[2] = z;
   state.confidence = confidence;
@@ -47,15 +49,15 @@ std::vector<uint8_t> state_frame(float x, float y, float z,
 }
 // The panel facing a shooter at the origin: centre less the 0.25 m radius.
 constexpr double kFacingRadius = 0.25;
-// 126 ms old on arrival: fireable at the replan on receipt, stale by the next,
-// and expired 374 ms later, so each frame asks for exactly one shot.
-const auto kSingleShotState =
-    state_frame(3.0F, 1, 0.2F, wire::kTargetStateFlagValid, 255, 126, 126);
+const auto kSingleShotState = state_frame(3.0F, 1, 0.2F);
+const auto kClearState = state_frame(0, 0, 0, wire::kTargetStateFlagClear);
+using sim::mcb_aim_fixture::aligned_readings;
 class McbFirmware : public testing::Test {
 protected:
   std::unique_ptr<hw::PtyLink> link;
   std::unique_ptr<hw::Firmware> firmware;
   hw::Referee ref;
+  bool alignment_prepared = false;
   struct Run {
     std::vector<wire::Frame> frames;
     std::vector<uint32_t> shots;
@@ -114,6 +116,16 @@ protected:
     }
     return result;
   }
+  void prepare_alignment() {
+    if (alignment_prepared) return;
+    sim::mcb_aim_fixture::prepare_alignment(*firmware, ref);
+    alignment_prepared=true;
+  }
+  Run run_aligned(int ms, const std::vector<uint8_t>& frame = {},
+                  double x=3, double y=1, double z=.2) {
+    prepare_alignment();
+    return run(ms,frame,aligned_readings(x,y,z));
+  }
   template <typename T> std::vector<T> messages(const Run &result) {
     std::vector<T> out;
     for (const auto &frame : result.frames) {
@@ -136,7 +148,7 @@ TEST_F(McbFirmware, IndexerResumesWhenSetupBecomesInGame) {
   run(9000);
   ref.game_stage = 4;
   const auto target = state_frame(-3.0F, 1, .2F);
-  const auto result = run(500, target);
+  const auto result = run_aligned(500, target, -3,1,.2);
   ASSERT_FALSE(result.shots.empty()) << "the firmware never requested indexing";
   EXPECT_TRUE(std::any_of(result.outputs.begin(), result.outputs.end(),
       [](const auto &output) { return std::abs(output.motors[2]) > 100; }))
@@ -218,7 +230,7 @@ TEST_P(McbPitchBoot, PosePitchRoundTripsTheGazeboJointThroughMotorFeedback) {
 }
 INSTANTIATE_TEST_SUITE_P(PitchBoot, McbPitchBoot, testing::Values(0.0, -0.2, 0.2));
 TEST_F(McbFirmware, AimsAtTheFacingPanelAndFiresFromATargetState) {
-  const auto result = run(1000, state_frame(3.0F, 1, 0.2F));
+  const auto result = run_aligned(1000, state_frame(3.0F, 1, 0.2F));
   EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
   EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
   EXPECT_GE(result.shots.size(), 3U);
@@ -231,18 +243,15 @@ TEST_F(McbFirmware, IdleLookPointHoldsAimAfterExpiryAndNeverFires) {
   EXPECT_TRUE(result.shots.empty());
   EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0), 1e-5);
 }
-TEST_F(McbFirmware, ARequestWaitsForTheExitLessTheIndexerLatency) {
+TEST_F(McbFirmware, AlignedRequestHasNoMinimumFireDelay) {
   run(200);  // Let referee, motor feedback and command scheduling become ready.
   const auto start = firmware->time_ms();
   const auto packet = state_frame(3.0F, 1, 0.2F);
   ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
             static_cast<ssize_t>(packet.size()));
-  const auto result = run(200);
+  const auto result = run_aligned(200);
   ASSERT_FALSE(result.shots.empty());
-  // A still panel's plan: 40 ms modeled exit (the minimum) less the robot's
-  // 20 ms request-to-exit, from the first replan after receipt.
-  EXPECT_GE(result.shots.front() - start, 18U);
-  EXPECT_LT(result.shots.front() - start, 50U);
+  EXPECT_LT(result.shots.front() - start, 10U);
 }
 TEST_F(McbFirmware, AHeldStateOutranksTheIdleLookPoint) {
   run(200);
@@ -256,23 +265,24 @@ TEST_F(McbFirmware, AHeldStateOutranksTheIdleLookPoint) {
   const auto result = run(100);
   EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
 }
-TEST_F(McbFirmware, UnconvergedStateAimsAtThePanelAndDoesNotFire) {
+TEST_F(McbFirmware, UnassignedStateCannotUseMeasuredPanelFallback) {
   const auto result = run(500, state_frame(3.0F, 1, 0.2F, 0));
   EXPECT_TRUE(result.shots.empty());
-  EXPECT_NEAR(result.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
+  EXPECT_GT(std::abs(hw::wrap(result.outputs.back().yaw - aim_yaw(1.0, 3.0-kFacingRadius))), .1);
 }
-TEST_F(McbFirmware, LowConfidenceAndStaleDetectionsAimButDoNotFire) {
-  const auto doubtful = run(500, state_frame(3.0F, 1, 0.2F, wire::kTargetStateFlagValid, 100));
-  EXPECT_TRUE(doubtful.shots.empty());
+TEST_F(McbFirmware, ConfidenceAndDetectionAgeAreDiagnosticOnly) {
+  const auto doubtful = run_aligned(500, state_frame(3.0F, 1, 0.2F, wire::kTargetStateFlagValid, 100));
+  EXPECT_FALSE(doubtful.shots.empty());
   EXPECT_NEAR(doubtful.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
-  const auto stale = run(500, state_frame(3.0F, 1, 0.2F, wire::kTargetStateFlagValid, 255, 200));
-  EXPECT_TRUE(stale.shots.empty());
+  const auto stale = run_aligned(500, state_frame(3.0F, 1, 0.2F, wire::kTargetStateFlagValid, 255, 200));
+  EXPECT_FALSE(stale.shots.empty());
   EXPECT_NEAR(stale.outputs.back().yaw, aim_yaw(1.0, 3.0 - kFacingRadius), 1e-3);
 }
 TEST_F(McbFirmware, FirstChamberExitHasTimedLatencyWithoutEmptyingTheNext) {
+  prepare_alignment();
   sim::mcb_motor::Plant plant;
   sim::mcb_motor::ProjectileExit exit;
-  const std::array<double, 10> readings{};
+  const auto readings=aligned_readings();
   std::vector<uint32_t> requested, exited;
   double peak_balls = 0;
   const auto packet = kSingleShotState;
@@ -285,6 +295,10 @@ TEST_F(McbFirmware, FirstChamberExitHasTimedLatencyWithoutEmptyingTheNext) {
     const auto output = firmware->step(1, readings, ref, feedback);
     plant.commands = output.motors;
     requested.insert(requested.end(), output.shots.begin(), output.shots.end());
+    if (!output.shots.empty()) {
+      ASSERT_EQ(write(link->slave(), kClearState.data(), kClearState.size()),
+                static_cast<ssize_t>(kClearState.size()));
+    }
     for (uint32_t i = exit.update(feedback[2]); i > 0; --i) exited.push_back(firmware->time_ms());
     peak_balls = std::max(peak_balls, -plant.angle[2] / (2 * hw::kPi * exit.kShaftTurnsPerBall));
     if (ms == 2999) {
@@ -304,6 +318,7 @@ TEST_F(McbFirmware, FirstChamberExitHasTimedLatencyWithoutEmptyingTheNext) {
   RecordProperty("exit_travel_chambers", exit.kExitTravel);
 }
 TEST_F(McbFirmware, SettledSingleFeedsEachKeepTheMeasuredExitLatency) {
+  prepare_alignment();
   sim::mcb_motor::Plant plant;
   sim::mcb_motor::ProjectileExit exit;
   std::vector<uint32_t> requests, exits;
@@ -313,10 +328,14 @@ TEST_F(McbFirmware, SettledSingleFeedsEachKeepTheMeasuredExitLatency) {
       ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
                 static_cast<ssize_t>(packet.size()));
     }
-    const auto feedback = plant.feedback({}, 0, 0, 0, .001);
-    const auto output = firmware->step(1, {}, ref, feedback);
+    const auto feedback = plant.feedback(aligned_readings(), 0, 0, 0, .001);
+    const auto output = firmware->step(1, aligned_readings(), ref, feedback);
     plant.commands = output.motors;
     requests.insert(requests.end(), output.shots.begin(), output.shots.end());
+    if (!output.shots.empty()) {
+      ASSERT_EQ(write(link->slave(), kClearState.data(), kClearState.size()),
+                static_cast<ssize_t>(kClearState.size()));
+    }
     for (auto n = exit.update(feedback[2]); n > 0; --n) exits.push_back(firmware->time_ms());
     if (ms == 2999) {
       ASSERT_TRUE(requests.empty());
@@ -329,6 +348,7 @@ TEST_F(McbFirmware, SettledSingleFeedsEachKeepTheMeasuredExitLatency) {
     EXPECT_NEAR(static_cast<double>(exits[i]) - requests[i], 20.0, 3.0) << "shot " << i;
 }
 TEST_F(McbFirmware, ContinuousFeedExitsFollowPhysicalChambersWithoutSettling) {
+  prepare_alignment();
   namespace motor = sim::mcb_motor;
   motor::Plant plant;
   motor::ProjectileExit exit;
@@ -340,8 +360,8 @@ TEST_F(McbFirmware, ContinuousFeedExitsFollowPhysicalChambersWithoutSettling) {
       ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
                 static_cast<ssize_t>(packet.size()));
     }
-    const auto feedback = plant.feedback({}, 0, 0, 0, 0.001);
-    const auto output = firmware->step(1, {}, ref, feedback);
+    const auto feedback = plant.feedback(aligned_readings(), 0, 0, 0, 0.001);
+    const auto output = firmware->step(1, aligned_readings(), ref, feedback);
     plant.commands = output.motors;
     requests.insert(requests.end(), output.shots.begin(), output.shots.end());
     for (auto n = exit.update(feedback[2]); n > 0; --n) {
@@ -647,6 +667,20 @@ TEST_F(McbFirmware, ParkedHoldHasNoPositionTarget) {
 
 TEST_F(McbFirmware, ImmediateFireDuringFirstLatencyIntervalDoesNotWrapTimer) {
   run(60);  // Arm the initial cooldown, still below the indexing latency.
-  const auto result = run(60, state_frame(3.0F, 1, .2F));
+  const auto result = run_aligned(60, state_frame(3.0F, 1, .2F));
   EXPECT_FALSE(result.shots.empty());
+}
+
+TEST_F(McbFirmware, MeasuredMissBlocksFireUntilAligned) {
+  const auto packet=state_frame(3,1,.2f);
+  EXPECT_TRUE(run(200,packet).shots.empty());
+  EXPECT_FALSE(run_aligned(200,packet).shots.empty());
+}
+TEST_F(McbFirmware, ClearOverridesValidAndReleaseTrackIdentity) {
+  run_aligned(200,state_frame(3,1,.2f));
+  auto clear=wire::TargetState{};
+  clear.flags=wire::kTargetStateFlagClear|wire::kTargetStateFlagValid;
+  clear.track_id=999;
+  clear.center[0]=std::numeric_limits<float>::quiet_NaN();
+  EXPECT_TRUE(run_aligned(200,wire::frame(clear)).shots.empty());
 }
