@@ -108,8 +108,10 @@ blend in `test/cv/shot_hit_suite.cpp`), so falling behind 40 Hz costs points.
 There is no gz, robot or tracker. `sim_clock` publishes `/clock`,
 `point_shooter` puts `root` in `odom` (`POINT_SHOOTER`, 0.4 m up) and
 publishes `/dji_serial_bridge/pose`, `target_driver` moves the phantom target and
-`target_state_truth` publishes its true `TargetState`. `mcb_aim_standin` runs the
-firmware's `AimPlanner` on that state. Each shot leaves
+`target_state_truth` publishes its true `TargetState` on `/cv/tracker/target_state`.
+The Jetson [target manager](../thornbots_pkg/README.md#target_manager) feeds
+managed assignments, updates and clears to `mcb_aim_standin`, which runs the
+firmware's `AimPlanner`. Each shot leaves
 `root` toward the newest stand-in aim (an `odom` point) before its exit time, carrying
 `root`'s velocity: a perfect gimbal that holds each 40 Hz aim until the
 next. So a miss is the MCB planner's math and nothing else. It draws the
@@ -120,7 +122,8 @@ the Jetson planner's numbers.
 
 `real_time_factor:=0` (the default) runs it as fast as the stack keeps up.
 `sim_clock` steps sim time 2 ms at a time and stops exactly one period past
-the newest stamp on `/cv/target_state`, `/dji_serial_bridge/pose`, the stand-in's `/cv/target/tick` and the
+the newest consumed-input acknowledgment on `/cv/manager/input_ack`,
+`/dji_serial_bridge/pose`, the stand-in's `/cv/target/tick` and the
 scorer's `/bench/progress` until that topic publishes, so no node falls
 behind and each control tick is stamped on its deadline; a topic with
 no publisher left (the scorer between cases) stops holding it. A fixed
@@ -1368,7 +1371,13 @@ datasheet estimates; measure them on the robot. Set both to 0 for the old
 
 ### target_state_truth: the aiming bench's perfect knowledge
 
-Stands in for the tracker on the aiming bench (`shot_hit.launch.py`).
+Stands in for the tracker on the aiming bench (`shot_hit.launch.py`), upstream
+of the same target manager used by the robot. Estimation fixtures score every
+raw `/cv/tracker/target_state` while the stand-in consumes `/cv/target_state`;
+their input acknowledgment comes from the manager, including suppressed sends.
+`bench_world` gates on the driving capture stamp on `/cv/manager/input_ack`,
+including empty frames, rather than counting unrelated model and measurement
+messages. Tracker TF drops use that topic for their no-model acknowledgment.
 For each `/target/ground_truth_odom` sample it
 publishes the target's `TargetState` at once, stamped with that sample's time:
 the contract `TargetState.msg` sets for the tracker, a state describing the target

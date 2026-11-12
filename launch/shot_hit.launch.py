@@ -18,8 +18,8 @@ Aiming bench: the MCB's aim planner against a perfectly known target, no gz.
 `ros2 launch sim shot_hit.launch.py [speeds:='0.5 1'] [only_stationary:=true]`.
 sim_clock publishes /clock, point_shooter puts root at POINT_SHOOTER
 (bouncing along y at shooter_speed), target_driver moves the phantom target,
-target_state_truth publishes its true TargetState, mcb_aim_standin runs the firmware's
-AimPlanner on it, and the C++ harness sends each shot from the shooter toward the newest
+target_state_truth feeds the target manager, mcb_aim_standin runs the firmware's
+AimPlanner on the managed state, and the C++ harness sends each shot toward the newest
 aim (a perfect gimbal). Every miss is the planner's. The separate tracking bench scores
 target estimation.
 Stops when the tests finish; Ctrl-C stops the whole stack. `run_tests:=false`
@@ -107,7 +107,7 @@ def _point_stack(context, harness, headless):
     # within one of its periods of sim time (truth and our pose at 60 Hz,
     # the aim and the scorer at TEST_FIRE_HZ).
     aim_period = 1.0 / harness.TEST_FIRE_HZ
-    pace = ['/cv/target_state dji_serial_bridge/msg/TargetState 0.0167',
+    pace = ['/cv/manager/input_ack std_msgs/msg/Header 0.0167',
             '/dji_serial_bridge/pose dji_serial_bridge/msg/RobotPose 0.0167',
             f'/cv/target/tick std_msgs/msg/Header {aim_period}',
             f'/bench/progress std_msgs/msg/Header {aim_period}']
@@ -128,7 +128,9 @@ def _point_stack(context, harness, headless):
                 yaw_offset=(float(context.launch_configurations['target_yaw_deg']) *
                             3.141592653589793 / 180.0)),
         cv_node('target_state_truth', package='sim',
+                output_topic='/cv/tracker/target_state',
                 model_yaw_jitter_rad=float(context.launch_configurations['model_yaw_jitter_rad'])),
+        cv_node('target_manager', state_ack_topic='/cv/manager/input_ack'),
         _aim_node(context, harness),
     ]
     if not headless:

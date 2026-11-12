@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Route truth-state and tracking fixtures through the Jetson target manager.
+  Estimation scoring retains every raw estimate; clock pacing acknowledges every
+  consumed input even when a managed send is suppressed. Deterministic E2E
+  startup also waits for the manager's epoch-zero timer initialization. Deploy
+  with thornbots_pkg #76, bridge #46 and MCBV3 #141; firmware C++ changes are separate.
+
 - Correct the Season 2 side wall position and regenerate its field meshes.
 
 - `OpponentMover` with `path_hz` no longer waits 5 s wall for a path sample no producer makes. Its

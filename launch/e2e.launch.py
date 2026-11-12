@@ -200,7 +200,8 @@ def _barrier_nodes(stage):
     """
     nodes = ['detector_standin', 'dji_serial_bridge', 'mcb_relay', 'waypoint_nav',
              'mcb_emulator', 'lidar_scan', 'head_slider_relay', 'opponent_driver',
-             'point_to_cv_target', 'target_selector', 'target_tracker', 'pose_translator',
+             'point_to_cv_target', 'target_selector', 'target_tracker', 'target_manager',
+             'pose_translator',
              'odom_tf_broadcaster', 'robot_state_publisher', 'lidar_self_filter',
              'ekf_input_publisher', 'ekf_filter_node', 'rf2o_laser_odometry',
              'scan_navigation_publisher', 'map_pose_publisher']
@@ -411,6 +412,7 @@ def generate_launch_description():
         if deterministic:
             params.update(strict_startup=True, readiness_topics=[
                 '/detector_standin/ready', '/point_to_cv_target/epoch_zero_ready',
+                '/target_manager/epoch_zero_ready',
                 '/opponent_driver/ready', '/mcb_emulator/epoch_zero_ready',
                 '/robot_spawn_ready/ready', '/startup_barrier/ready',
                 '/match_environment/ready' if stage in DRIVING else '/target_driver/ready'] +
