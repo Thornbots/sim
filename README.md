@@ -225,8 +225,9 @@ shows it reads the last `/clock`, since it stamps `TargetState` with `now()`;
 `/clock` then waits for the tracker to echo each one on
 `/cv/tracker/measurement`, and for the stand-in's aim on each aim tick. The scorer
 only paces, up to `pace_slack_s` behind. The loop also waits for
-`mcb_aim_standin` to acknowledge model consumption on `/cv/target/state_ack`
-and for a publish tick's indicated aim point to arrive. Separate DDS topics
+the manager's input acknowledgment, which waits for the stand-in's consumption
+acknowledgments on `/cv/target/managed_ack`, and for a publish tick's indicated
+aim point to arrive. Separate DDS topics
 can arrive in either order; a publication acknowledgment alone does not
 prove that the next consumer has processed its input. A wait that passes `max_wait_s`
 (0.5 s wall) is logged as a lockstep timeout, and that run may not repeat.

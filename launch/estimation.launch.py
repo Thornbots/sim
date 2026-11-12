@@ -106,6 +106,7 @@ def _stack(context):
              parameters=[world]),
         robot_tf, cv_node('target_selector'), cv_node('target_tracker', **tracker),
         cv_node('target_manager', state_ack_topic='/cv/manager/input_ack',
+                consumer_ack_topic='/cv/target/managed_ack',
                 target_state_none_topic='/cv/manager/no_send',
                 confidence_decay_tau_s=float(cfg['confidence_decay_tau_s'])),
         # The MCB's planner stands in: aim only, nothing fires.

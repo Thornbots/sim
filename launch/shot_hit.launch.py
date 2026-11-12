@@ -129,7 +129,8 @@ def _point_stack(context, harness, headless):
         cv_node('target_state_truth', package='sim',
                 output_topic='/cv/tracker/target_state',
                 model_yaw_jitter_rad=float(context.launch_configurations['model_yaw_jitter_rad'])),
-        cv_node('target_manager', state_ack_topic='/cv/manager/input_ack'),
+        cv_node('target_manager', state_ack_topic='/cv/manager/input_ack',
+                consumer_ack_topic='/cv/target/state_ack'),
         _aim_node(context, harness),
     ]
     if not headless:
