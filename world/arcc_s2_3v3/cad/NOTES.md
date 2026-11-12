@@ -20,7 +20,9 @@ Read off the drawing (not dimensioned in text):
   x 850..1050 (centre 950) vs platform centre ~1001 — drawing as published.
 - Central Wall base starts 600 mm past the limbo post's face (post 38.1 at the
   High Ground face), so the base spans y -1638..1362, not centred on the road.
-- Centre Bumpy Road: 2 x 3200 mm (8 x 4 tiles) either side of the 170 mm base.
+- Centre Bumpy Road: this generator uses u=2715..5915 on the red side to retain
+  the 3200 mm width and centred wall face. It relaxes the labelled u=2700
+  L-road endpoint by 15 mm; see the [dimension conflict](../../../../docs/rules/season2-geometry.md#3v3-placement-chains--e27-fig-3-3-p16).
 - Side Limbo Bar spacer positions, Central Wall panel thickness (25), bucket
   wall, pipe arrangement and the 400 mm green tape pad are estimates.
 - Zig-zag pole bend shape is a placeholder (rules: details in a later release).

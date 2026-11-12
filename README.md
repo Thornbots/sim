@@ -819,10 +819,11 @@ x = ±6.37 m, y = ±4.37 m (floor plate), z = -0.02..1.406 m (Central Wall panel
 Geometry that shapes the routes (red side; blue mirrors x): the Central Wall
 base spans x = ±0.085, y = -1.638..1.362 m, so the field centre is inside it;
 the 0.42 m Central and 0.30 m Side Limbo Bars stop the 0.52 m sentry; and the
-Starting Zone (x = -6..-4.5, y = -4..-2) opens only through a 0.745 m doorway at
-x = -4 between the Side Wall's end (y = -0.255) and the Side High Ground
-(y < -1, 0.21/0.41 m). The sentry's 0.84 m spin sweep does not fit, so routes
-cross it square at y = -0.635 (`test_match_routes`).
+Starting Zone (x = -6..-4.5, y = -4..-2) opens through a nominal 0.915 m gap at
+x = -4 between the Side Wall's near face (y = -0.085) and the Side High Ground
+(y < -1, 0.21/0.41 m). At the route lane y = -0.635, the sentry's 0.84 m spin sweep overlaps the
+high ground, so routes cross square
+(`test_match_routes`).
 The 2026 ARCC field (`ARCC_Field_2026.sdf` and its Onshape export) is retired;
 E27 forbids reusing its geometry. `Spooky_Scrim_2v2.sdf` remains selectable with
 `world:=`.

@@ -55,7 +55,7 @@ TEST(FieldGeometry, DefaultWorldIsTheS2BattlefieldInTheFieldFrame) {
 TEST(FieldGeometry, LidarPlaneSeesWallsAndUpperTierButNotLowFeatures) {
   const double z = lidar_z;
   EXPECT_NEAR(*hit({-0.2, 0, z}, {0.2, 0, z}), 0.115 / 0.4, 1e-6);  // Central Wall base
-  EXPECT_NEAR(*hit({4.5, -0.5, z}, {4.5, 0, z}), 0.245 / 0.5, 1e-6);  // Side Wall
+  EXPECT_NEAR(*hit({4.5, -0.5, z}, {4.5, 0, z}), 0.415 / 0.5, 1e-6);  // Side Wall near face, drawing v=3915
   EXPECT_NEAR(*hit({-2.5, -2.5, z}, {-4.5, -2.5, z}), 0.25, 1e-6);  // 0.41 m upper tier
   EXPECT_FALSE(hit({-2.5, -1.5, z}, {-4.5, -1.5, z}));  // 0.21 m lower tier
   EXPECT_FALSE(hit({-0.3, 1.6, z}, {0.3, 1.6, z}));  // under the 0.42 m Central Limbo Bar
@@ -155,7 +155,7 @@ TEST(FieldGeometry, DoorwayFitsTheSquareChassisButNotItsSpin) {
   assert_clear({4.0, -0.635}, data, kSquare);
   EXPECT_TRUE(std::any_of(data.begin(), data.end(), [](const Triangle &t) {
     return square_overlaps({4.0, -0.635}, route::kSpinRadius, t);
-  })) << "the 0.745 m doorway must block the spinning chassis";
+  })) << "the y=-0.635 lane must block the spinning chassis";
   // The firmware spins again only after the doorway, on its last leg to the centre.
   const auto &sentry = route::routes().at("sentry");
   for (double t = 0; t <= 1.0; t += 0.01) {
