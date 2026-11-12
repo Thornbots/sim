@@ -875,9 +875,7 @@ collision hulls, sensor/muzzle frames, head joint origins and armor faces. It wa
 imported once into `urdf/sentry_v2/`; there is no generator, so edit the URDF and
 meshes directly when the CAD changes. `thornbots_pkg` carries matching visual
 assets and TF geometry, and `test_cv_bench.cpp` checks the two agree. See
-[robot geometry](../thornbots_pkg/README.md#robot-geometry) for frame conventions
-and the [dated investigation](../docs/investigations/sentry-cad-2026-10-26.html)
-for the archive checksum, derivation and validation.
+[robot geometry](../thornbots_pkg/README.md#robot-geometry) for frame conventions.
 
 The yaw bearing is centred on the chassis axis; zero pitch points the gun
 horizontally along +x, and the origin is on the ground under the chassis centre.
@@ -905,8 +903,8 @@ the plates are corrected.
 Not from the CAD: mass/inertia (the export's gram-scale values are not
 credible), chassis collision, wheels and suspension (travel +-2 cm, 2200 N/m
 per corner, damping), pitch limits (+-0.6 rad), controllers, plugins and topics
-remain the earlier approximations. The two odometry pods are omitted; see the
-[odometry pod table](../docs/investigations/sentry-cad-2026-10-26.html#odometry-pods).
+remain the earlier approximations. The two
+[odometry pods](../thornbots_pkg/README.md#odometry-pods) are omitted.
 
 `sentry_v2.urdf.xacro` wraps the URDF for gz: colours, the lidar and camera
 sensors and the plugins.
