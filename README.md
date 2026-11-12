@@ -127,13 +127,12 @@ no publisher left (the scorer between cases) stops holding it. A fixed
 `real_time_factor` above 0 does not wait. Use `:=1` as the control;
 [dated pacing comparisons](docs/cv-bench-results-2026-09-28.md#clock-pacing-observations-2026-09-25-and-2026-10-01) record the measured tradeoff.
 
-`chase_settle_s` picks the stand-in's spin mode: `>= 0` (the default,
-0) chases the facing panel and fires every tick, `< 0` is the firmware's own
-shotgating: hold the center line and time the fire. `gimbal_lag_s` defaults to 0,
-the perfect gimbal (the firmware's constant is 0.05 s). These two, `chase_margin_s` and
-`panel_switch_margin_rad` are the only planner tuning the stand-in exposes, as
-overrides of `AimTuning`; everything else is the firmware's constant, and the
-firmware itself shotgates. The recorded floors below were measured in chase mode. Each cell has
+`spin_mode:=firmware` uses the firmware's spin policy and chase windows;
+`spin_mode:=shotgating` holds the center line and times fire for comparison.
+`spin_mode:=chase` permits `chase_settle_s` and `chase_margin_s` overrides,
+which otherwise use the firmware values. `gimbal_lag_s` defaults to 0 for the
+perfect gimbal (the firmware's constant is 0.05 s). The recorded floors below
+were measured in chase mode. Each cell has
 its own floor in `FLOORS` (`include/sim/shot_floors_data.hpp`), the lowest score
 over three runs minus 10 points. Forty cells are measured: both layouts on
 lateral, radial and diagonal with a still shooter, and lateral at
@@ -1921,11 +1920,9 @@ yaw/rate by eight 1 ms ticks to match the firmware predictor; the board path
 runs the full IMU filter, which owns sample age. CAN feedback stays current.
 The hosted E2E profile uses zero residual yaw lag after setpoint-rate
 filtering and the robot-timed 20 ms indexing delay (the chamber-exit point
-`ProjectileExit::kExitTravel` is placed to match the first feed from rest). Spinning uses alignment gating on the
-steady center-to-shooter line; chasing each rotating panel is opt-in through
-nonnegative `chase_settle_s` (the previous fixture used 25 ms windows); the
-planner now lives in the firmware and E2E no longer passes those arguments. These
-are model calibrations; board gimbal timing remains uncalibrated.
+`ProjectileExit::kExitTravel` is placed to match the first feed from rest).
+Spinning uses the firmware's default chase policy; E2E does not override it.
+These are model calibrations; board gimbal timing remains uncalibrated.
 Calibration and rejected treatments are recorded in the
 [accuracy investigation](docs/aim-accuracy-2026-10-12.md), hosted
 fixture measurements rather than board accuracy evidence.
