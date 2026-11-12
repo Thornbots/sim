@@ -74,6 +74,11 @@ protected:
   std::vector<double> loop[2];
   std::vector<double> periods[2];
   size_t poseCount = 0, refCount = 0;
+  double podScale = 1.0, driftStart = 0.0, driftRate = 0.0;
+  std::vector<double> heldErrors, globalErrors, localErrors, globalStd, globalAges, backendAges, correctionSteps;
+  std::optional<double> backendStamp;
+  std::optional<nav_msgs::msg::Odometry> mapOdom;
+  bool scoreNavigation = false;
   bool stall = false, driveSim = true, holdRef = false, dropFirstFix = false, holdFix = false;
   size_t heldRefs = 0, fixes = 0;
   size_t droppedFixes = 0;
@@ -138,6 +143,18 @@ protected:
     subscriptions.push_back(node->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
       "/pose", 10, [&](geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr m) {
         if (!firstMapPose) firstMapPose = *m;
+      }));
+    subscriptions.push_back(node->create_subscription<nav_msgs::msg::Odometry>(
+      "/localization/map_odom", 10, [&](nav_msgs::msg::Odometry::ConstSharedPtr m) {
+        mapOdom = *m;
+        trace << Json{{"map_stamp", rclcpp::Time(m->header.stamp).seconds()},
+          {"map_xy", {m->pose.pose.position.x, m->pose.pose.position.y}},
+          {"cov_xy", {m->pose.covariance[0], m->pose.covariance[1], m->pose.covariance[7]}},
+          {"yaw_var", m->pose.covariance[35]}}.dump() << '\n';
+      }));
+    subscriptions.push_back(node->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+      "/amcl_pose", 10, [&](geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr m) {
+        backendStamp = rclcpp::Time(m->header.stamp).seconds();
       }));
     buffer = std::make_unique<tf2_ros::Buffer>(node->get_clock());
     listener = std::make_unique<tf2_ros::TransformListener>(*buffer);
@@ -219,6 +236,13 @@ protected:
         if (holdFix) { ++heldFixes; continue; }
         lastFix = wire::unpack<wire::Relocalize>(frame.payload);
         ++fixes;
+        if (scoreNavigation && status.navigationLocalized) {
+          const double step = std::hypot(lastFix->x-status.navigationX, lastFix->y-status.navigationY);
+          correctionSteps.push_back(step);
+          trace << Json{{"fix_sim_s", node->now().seconds()},
+            {"fix_xy", {lastFix->x, lastFix->y}}, {"correction_step_m", step}}.dump() << '\n';
+        }
+
       }
       auto packet = wire::encode_frame(frame.msg_type, frame.payload);
       if (frame.msg_type == wire::kPing) {
@@ -251,7 +275,30 @@ protected:
     executor->spin_some();
     relay(1);
     auto readings = hardware.ready ? firmware->gz_readings(hardware, referee) : std::array<double, 10>{};
+    for (int i = 0; i < 4; ++i) readings[i] *= podScale;
+    // At the fixture's pi/2 boot heading, pod X is field X and pod Y field Y.
+    readings[0] += driftRate * std::max(0.0, node->now().seconds() - driftStart);
+    readings[2] += driftRate;
     output = firmware->step(cycles, readings, referee);
+    if (scoreNavigation && status.navigationLocalized && hardware.ready) {
+      const double held = std::hypot(status.navigationX - hardware.pos[0],
+        status.navigationY - hardware.pos[1]);
+      if (status.navigationLocalized) heldErrors.push_back(held);
+      const auto error = [&](const nav_msgs::msg::Odometry &m) {
+        return std::hypot(m.pose.pose.position.x - hardware.pos[0],
+          m.pose.pose.position.y - hardware.pos[1]);
+      };
+      if (backendStamp) backendAges.push_back(node->now().seconds() - *backendStamp);
+      if (navOdom) localErrors.push_back(error(*navOdom));
+      if (mapOdom && std::isfinite(mapOdom->pose.pose.position.x)) {
+        globalErrors.push_back(error(*mapOdom));
+        globalStd.push_back(std::sqrt(.5*(mapOdom->pose.covariance[0]+mapOdom->pose.covariance[7] +
+          std::hypot(mapOdom->pose.covariance[0]-mapOdom->pose.covariance[7], 2*mapOdom->pose.covariance[1]))));
+        globalAges.push_back(node->now().seconds() - rclcpp::Time(mapOdom->header.stamp).seconds());
+      }
+      trace << Json{{"sim_s", node->now().seconds()}, {"held_mcb_navigation_error_m", held},
+        {"truth_xy", hardware.pos}, {"held_xy", {status.navigationX, status.navigationY}}}.dump() << '\n';
+    }
     ASSERT_EQ(recv(control[0], &status, sizeof(status), 0), sizeof(status));
     for (const auto &[number, sent] : firmwareAcks) latencies[0][number].push_back(seconds() - sent);
     firmwareAcks.clear();
@@ -474,16 +521,76 @@ TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
   report["held_goal_check_fixes"] = heldFixes;
 }
 
+TEST_P(TeamBoot, GatedNavigationTracksTruthUnderDrift) {
+  referee.robot_id = GetParam();
+  driveSim = false;
+  dropFirstFix = true;
+  const bool baseline = std::getenv("AMCL_RELAY_BASELINE") != nullptr;
+  navigationRelay = std::make_unique<sim::LaunchTree>("navigation-relay",
+    std::vector<std::string>{"ros2", "run", "thornbots_pkg", "mcb_relay", "--ros-args",
+      "-p", "use_sim_time:=true"}, (directory / "navigation-relay.log").string());
+  launchStack(false, "amcl", true);
+  ASSERT_TRUE(wait([&] { return lastFix.has_value() && mapOdom.has_value(); }, 60));
+  scoreNavigation = true;
+  podScale = 1.15;
+  driftStart = node->now().seconds();
+  driftRate = 0.025;
+  // Stay inside each starting zone: a 0.6 x 1.2 m loop, twice, at 0.4 m/s.
+  for (int lap = 0; lap < 2; ++lap) {
+    for (const auto &leg : std::vector<std::array<double, 3>>{
+        {0, .4, 3}, {GetParam() > 100 ? -.4 : .4, 0, 1.5},
+        {0, -.4, 3}, {GetParam() > 100 ? .4 : -.4, 0, 1.5}}) {
+      const double end = node->now().seconds() + leg[2];
+      ASSERT_TRUE(wait([&] {
+        geometry_msgs::msg::Twist cmd;
+        cmd.linear.x = leg[0]; cmd.linear.y = leg[1]; drive->publish(cmd);
+        return node->now().seconds() >= end;
+      }, 30));
+    }
+  }
+  drive->publish(geometry_msgs::msg::Twist{});
+  scoreNavigation = false;
+  ASSERT_GT(heldErrors.size(), 100U);
+  const auto summarize = [](std::vector<double> v) {
+    if (v.empty()) return Json(nullptr);
+    std::sort(v.begin(), v.end());
+    double squares = 0; for (double x : v) squares += x*x;
+    return Json{{"samples", v.size()}, {"rms", std::sqrt(squares/v.size())},
+      {"p95", v[static_cast<size_t>(.95*(v.size()-1))]}, {"max", v.back()}};
+  };
+  report["held_mcb_navigation_error_m"] = summarize(heldErrors);
+  report["map_pose_error_m"] = summarize(globalErrors);
+  report["local_pose_error_m"] = summarize(localErrors);
+  report["map_pose_std_m"] = summarize(globalStd);
+  report["map_pose_age_s"] = summarize(globalAges);
+  report["backend_age_s"] = summarize(backendAges);
+  report["correction_step_m"] = summarize(correctionSteps);
+  report["dropped_startup_fixes"] = droppedFixes;
+  report["delivered_fixes"] = fixes;
+  report["baseline"] = baseline;
+  // Deliberately measure the old policy without asserting the proposed floor.
+  if (!baseline) {EXPECT_LT(report["held_mcb_navigation_error_m"]["p95"].get<double>(), .35);}
+}
+
 TEST_P(TeamBoot, BlankMappingStartsAtMapZero) {
   referee.robot_id = GetParam();
   driveSim = false;
+  navigationRelay = std::make_unique<sim::LaunchTree>("navigation-relay",
+    std::vector<std::string>{"ros2", "run", "thornbots_pkg", "mcb_relay", "--ros-args",
+      "-p", "use_sim_time:=true", "-p", "absolute_pose:=false",
+      "-p", "localization_odom_topic:=/localization/odom", "-p", "navigation_frame:=nav_odom"},
+    (directory / "navigation-relay.log").string());
   launchStack();
-  ASSERT_TRUE(wait([&] { return firstMapPose.has_value() && navOdom.has_value(); }));
+  ASSERT_TRUE(wait([&] { return firstMapPose.has_value() && navOdom.has_value() && lastFix; }));
   EXPECT_NEAR(firstMapPose->pose.pose.position.x, 0.0, 1e-6);
   EXPECT_NEAR(firstMapPose->pose.pose.position.y, 0.0, 1e-6);
   const auto start = GetParam() > 100 ? sim::field::kBlueStart : sim::field::kRedStart;
   EXPECT_NEAR(navOdom->pose.pose.position.x, start[0], 0.02);
   EXPECT_NEAR(navOdom->pose.pose.position.y, start[1], 0.02);
+  ASSERT_TRUE(status.navigationLocalized);
+  EXPECT_NEAR(status.navigationX, start[0], .02);
+  EXPECT_NEAR(status.navigationY, start[1], .02);
+  report["mapping_mcb_xy"] = {status.navigationX, status.navigationY};
   report["mapping_first_map_xy"] = {firstMapPose->pose.pose.position.x,
     firstMapPose->pose.pose.position.y};
 }

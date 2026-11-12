@@ -84,6 +84,10 @@ def _stack(context):
                   'load_map': 'false' if backend == 'mapping' else 'true',
                   'enable_target_tracker': 'false', 'enable_target_selector': 'false',
                   'enable_cv_target_bridge': 'false'}
+    if backend == 'none':
+        # This fixture boots at the drive loop, not the physical blue start.
+        robot_args.update(blue_start_x=str(LOOP_CENTRE[0]),
+                          blue_start_y=str(LOOP_CENTRE[1]))
     if backend == 'slam':
         # slam_toolbox's localization mode needs a .posegraph, and none ships.
         raise RuntimeError('backend:=slam needs a saved pose graph; none ships '
