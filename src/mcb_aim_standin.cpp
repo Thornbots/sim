@@ -59,8 +59,10 @@ public:
     const auto mode = declare_parameter("spin_mode", std::string("firmware"));
     if (mode == "chase") {
       t.chase = true;
-      t.chase_settle_s = static_cast<float>(declare_parameter("chase_settle_s", 0.0));
-      t.chase_margin_s = static_cast<float>(declare_parameter("chase_margin_s", 0.0));
+      t.chase_settle_s = static_cast<float>(
+        declare_parameter("chase_settle_s", static_cast<double>(t.chase_settle_s)));
+      t.chase_margin_s = static_cast<float>(
+        declare_parameter("chase_margin_s", static_cast<double>(t.chase_margin_s)));
     } else if (mode == "shotgating") {
       t.chase = false;
     } else if (mode != "firmware") {

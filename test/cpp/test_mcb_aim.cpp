@@ -44,6 +44,9 @@ TEST(McbAim, TuningMatchesTheSentryShotSpeed)
 {
   EXPECT_DOUBLE_EQ(aim::AimTuning{}.v_muzzle_mps, sim::combat::kMuzzleSpeed);
   EXPECT_FLOAT_EQ(aim::AimTuning{}.firmware_latency_s, 0.020f);
+  EXPECT_TRUE(aim::AimTuning{}.chase);
+  EXPECT_FLOAT_EQ(aim::AimTuning{}.chase_settle_s, 0.025f);
+  EXPECT_FLOAT_EQ(aim::AimTuning{}.chase_margin_s, 0.025f);
 }
 
 TEST(McbAim, AimsAtAHeldStateEveryTickAndFiresOnlyAfterTheLock)

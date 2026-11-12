@@ -83,17 +83,16 @@ def cv_node(executable, package='thornbots_pkg', **params):
 
 def _aim_node(context, harness):
     cfg = context.launch_configurations
-    # The firmware's AimPlanner with the bench's overrides: a perfect gimbal
-    # (gimbal_lag_s), and the spin mode the recorded floors were measured in.
+    # The bench models a perfect gimbal; spin mode defaults to firmware tuning.
     params = {'tick_topic': '/cv/target/tick', 'state_ack_topic': '/cv/target/state_ack',
               'shooter_z': harness.POINT_SHOOTER[2],
-              'gimbal_lag_s': float(cfg['gimbal_lag_s'])}
-    settle = float(cfg['chase_settle_s'])
-    if settle >= 0.0:
-        params.update(spin_mode='chase', chase_settle_s=settle,
-                      chase_margin_s=float(cfg['chase_margin_s']))
-    else:
-        params['spin_mode'] = 'shotgating'
+              'gimbal_lag_s': float(cfg['gimbal_lag_s']), 'spin_mode': cfg['spin_mode']}
+    if cfg['spin_mode'] != 'chase' and (cfg['chase_settle_s'] or cfg['chase_margin_s']):
+        raise ValueError('chase window overrides require spin_mode:=chase')
+    if cfg['spin_mode'] == 'chase':
+        for name in ('chase_settle_s', 'chase_margin_s'):
+            if cfg[name]:
+                params[name] = float(cfg[name])
     if cfg['panel_switch_margin_rad']:
         params['panel_switch_margin_rad'] = float(cfg['panel_switch_margin_rad'])
     return cv_node('mcb_aim_standin', package='sim', **params)
@@ -204,12 +203,13 @@ def generate_launch_description():
         DeclareLaunchArgument('gimbal_lag_s', default_value='0.0',
                               description="mcb_aim_standin's gimbal_lag_s; 0 is the "
                                           "perfect gimbal (the firmware's is 0.05)"),
-        DeclareLaunchArgument('chase_settle_s', default_value='0.0',
-                              description="spin mode: < 0 the firmware's shotgating "
-                                          '(timed fire), >= 0 chase the facing panel '
-                                          '(the recorded floors)'),
-        DeclareLaunchArgument('chase_margin_s', default_value='0.0',
-                              description="chase mode's chase_margin_s"),
+        DeclareLaunchArgument('spin_mode', default_value='firmware',
+                              choices=['firmware', 'chase', 'shotgating'],
+                              description='spin policy; firmware uses its constants'),
+        DeclareLaunchArgument('chase_settle_s', default_value='',
+                              description='chase override; empty uses firmware tuning'),
+        DeclareLaunchArgument('chase_margin_s', default_value='',
+                              description='chase override; empty uses firmware tuning'),
         DeclareLaunchArgument('panel_switch_margin_rad', default_value='',
                               description='optional panel switch margin; empty keeps '
                                           "the firmware's"),
