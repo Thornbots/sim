@@ -108,8 +108,7 @@ def _stack(context):
         cv_node('target_manager', state_ack_topic='/cv/manager/input_ack',
                 target_state_none_topic='/cv/manager/no_send',
                 confidence_decay_tau_s=float(cfg['confidence_decay_tau_s'])),
-        # The MCB's planner stands in: aim only, nothing fires, and the head's
-        # own lag is real, so the firmware's gimbal_lag_s stays in force.
+        # The MCB's planner stands in: aim only, nothing fires.
         cv_node('mcb_aim_standin', package='sim', fire_enabled=False,
                 tick_topic='/cv/target/tick', state_ack_topic='/cv/target/managed_ack'),
     ]

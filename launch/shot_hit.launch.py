@@ -85,8 +85,7 @@ def _aim_node(context, harness):
     cfg = context.launch_configurations
     # The bench models a perfect gimbal; spin mode defaults to firmware tuning.
     params = {'tick_topic': '/cv/target/tick', 'state_ack_topic': '/cv/target/state_ack',
-              'shooter_z': harness.POINT_SHOOTER[2],
-              'gimbal_lag_s': float(cfg['gimbal_lag_s']), 'spin_mode': cfg['spin_mode']}
+              'shooter_z': harness.POINT_SHOOTER[2], 'spin_mode': cfg['spin_mode']}
     if cfg['spin_mode'] != 'chase' and (cfg['chase_settle_s'] or cfg['chase_margin_s']):
         raise ValueError('chase window overrides require spin_mode:=chase')
     if cfg['spin_mode'] == 'chase':
@@ -202,9 +201,6 @@ def generate_launch_description():
         DeclareLaunchArgument('shooter_speed', default_value='0.0',
                               description='our own chassis speed (m/s), bouncing along y '
                                           'through every case; 0 holds it still'),
-        DeclareLaunchArgument('gimbal_lag_s', default_value='0.0',
-                              description="mcb_aim_standin's gimbal_lag_s; 0 is the "
-                                          "perfect gimbal (the firmware's is 0.05)"),
         DeclareLaunchArgument('spin_mode', default_value='firmware',
                               choices=['firmware', 'chase', 'shotgating'],
                               description='spin policy; firmware uses its constants'),
