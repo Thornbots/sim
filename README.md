@@ -52,7 +52,7 @@ The `BothTeams/TeamBoot.*` cases use the real firmware/bridge and Gazebo scans
 with REF_SYS held at the UART relay. They assert AMCL is absent through missing
 and invalid team data, then release the real team frame and check raw `/odom`
 near zero, `/localization/odom` near the red/blue field start, and the absolute
-wire RELOCALIZE within the relay's 0.05 m threshold with rf2o/EKF enabled.
+wire RELOCALIZE at the field start with rf2o/EKF enabled.
 This case overrides red to `(-5.0, -2.6)` and blue to `(5.4, -3.35)`,
 with matching Gazebo spawns, to catch mirrored/default-only team seeding.
 They drop the first RELOCALIZE and require a later absolute retry to unlock
@@ -64,6 +64,18 @@ with a fresh evidence directory:
 ```sh
 MMM_EVIDENCE_DIR=/tmp/team-boot-evidence ros2 run sim mmm_suite --gtest_filter='BothTeams/TeamBoot.*'
 ```
+
+`BothTeams/TeamBoot.GatedNavigationTracksTruthUnderDrift` drives two 0.6 × 1.2 m
+loops at 0.4 m/s with 15% pod scale error and 0.025 m/s accumulating x drift.
+It drops the first startup fix and scores **actual firmware-held navigation**
+x/y from the private hosted `MappingStatus`, not TF or the last requested fix.
+It reports RMS/p95/max error against current Gazebo truth, together with local
+and global pose errors, global xy std and pose age. The proposed held-position
+p95 gate is 0.35 m; `AMCL_RELAY_BASELINE=1` records the old policy without
+applying that new gate. Use a fresh `MMM_EVIDENCE_DIR` for every repeat.
+The [dated investigation](../docs/investigations/absolute-relocalize-2026-11-11.md)
+records three runs per team before and after. Hosted scheduling and this
+low-speed fixture do not establish physical robot accuracy.
 
 No scored stage runs YOLO or camera occlusion; detections are truth stand-ins.
 
@@ -1551,15 +1563,17 @@ Each holds physics at its node's own tick and waits for an ack group `a|b`: the 
 send this tick). Chains: `cv_target` (40 Hz), `detector` (60 Hz, through selector and
 tracker; the tracker is told to run `process_delay_s` 25 ms after the capture so it, and
 its stamp, sit on a hold), `nav` (10 Hz), `ekf` (counted acks: one relay frame or mark
-per tick; the stock EKF's period is set to 34 ms, a whole number of ms, and it takes its
+per tick, including a none-mark for invalid map results when stamped TF or
+fresh backend covariance is unavailable; the stock EKF's period is set to 34 ms, a whole number of ms, and it takes its
 phase from the first non-zero clock, which `boot_hold_s` fixes) and `scan` (rf2o's quality
 diagnostic per lidar scan, 89 ms apart on gz's whole-ms grid). MCB POSE frames are not a
 chain: the plugin holds at a delivered POSE until `pose_consumed` reports `/odom`, the EKF
 input, the relay and TF `odom<-camera/muzzle` at its stamp. The bridge queues frames
 (`sim_tx_queue`) and the coordinator flushes the queue after each hold's chains answer, so
 frames from producers that fire at the same instant reach the PTY in a fixed order (type,
-stamp) and are gated on the hold time, not on a clock that may trail. The relay decides on
-the localization sample's stamp (`message_clock`). `mmm`, whose ping protocol runs on wall
+stamp) and are gated on the hold time, not on a clock that may trail. The map-pose publisher produces a valid or invalid result per EKF input; it
+never waits for a future scan while physics is held. The relay decides on
+that result's input stamp (`message_clock`). `mmm`, whose ping protocol runs on wall
 time, is not launched.
 
 rf2o's result reaches the stock EKF through `scan_odom_gate` (a sim node): it holds each
@@ -1599,7 +1613,10 @@ The other inputs that used to depend on message timing are keyed by stamp too:
 - The scorer counts its windows in chain ticks (`run_to`, `tick_s()`), not in the clock it has
   seen, and waits for the coordinator's status without stepping. AMCL's map-frame errors
   (`localization_*`, `navigation_*`, `map_navigation_*`) are only in `poses.jsonl`: AMCL is
-  off the hit path and not run-to-run identical.
+  not run-to-run identical. Its absolute corrections now affect firmware
+  navigation; parked aim continues in raw odometry. A per-EKF map result
+  (including invalid results) keeps lockstep live without making AMCL particles
+  deterministic.
 
 Run-to-run differences are located with `MCB_UART_TRACE=<file>`, which makes the MCB
 plugin log `<sim ns> <bytes> <hex>` for every Jetson-to-MCB read; diff two runs' traces to see

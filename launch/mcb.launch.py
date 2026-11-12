@@ -54,12 +54,14 @@ def stack(context):
                           'real_hardware': 'false', 'localization_mode': 'none',
                           'use_rf2o': 'false', 'idle_direction': 'hold'}.items())
     relay = Node(package='thornbots_pkg', executable='mcb_relay', output='screen',
-                 parameters=[{'use_sim_time': True}])
+                 parameters=[{'use_sim_time': True, 'absolute_pose': False,
+                              'localization_odom_topic': '/localization/odom',
+                              'navigation_frame': 'nav_odom'}])
     # NAV_GOALs for drive:=simple/auto; auto.launch.py starts it only on real hardware.
     waypoint_nav = Node(package='thornbots_nav', executable='waypoint_nav', output='screen',
                         parameters=[os.path.join(get_package_share_directory('thornbots_nav'),
                                                  'config', 'route.yaml'),
-                                    {'use_sim_time': True}])
+                                    {'use_sim_time': True, 'goal_frame': 'nav_odom'}])
     ready = Node(package='sim', executable='mcb_ready', output='screen',
                  arguments=[LaunchConfiguration('device_link'), PythonExpression([
                      "'600' if '", LaunchConfiguration('backend'), "' == 'renode' else '30'"])])

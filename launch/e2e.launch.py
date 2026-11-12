@@ -135,7 +135,9 @@ PRODUCER_CHAINS = {
     # clock, which `boot_hold_s` makes 1 ms. EKF_PERIOD_S is a whole number of milliseconds so
     # every tick lands on one clock value. Its odometry is stamped with its newest
     # measurement and the relay's clock can trail the EKF's, so the ack is a count: one
-    # relay frame or mark per tick.
+    # relay frame or mark per tick. map_pose_publisher emits one result per EKF
+    # input, including invalid poses when TF/backend covariance is unavailable;
+    # the relay answers those with a none-mark, so global-data loss cannot hold physics.
     'ekf': {'period_s': EKF_PERIOD_S, 'phase_s': 0.001, 'start_s': 0.002, 'lag_s': 0.0,
             'acks': ['~/dji_serial_bridge/tx_ack/relocalize|~/sim/e2e/relocalize_none']},
     # point_to_cv_target's 40 Hz idle look.
