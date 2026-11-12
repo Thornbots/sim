@@ -178,6 +178,8 @@ def red_side():
 
     def add(label, shape, color):
         shape.label, shape.color = f'red_{label}', color
+        for i, tile in enumerate(shape.children):  # unique Onshape part names
+            tile.label = f'{shape.label}_tile_{i}'
         items.append(shape)
 
     add('starting_zone_tape', tape_ring(0, 1500, 0, 2000), RED)
@@ -213,7 +215,16 @@ def red_side():
 def mirrored(items):
     out = []
     for s in items:
-        m = s.mirror(Plane.YZ)
+        # STEP placements cannot reflect, so mirror each tile's own geometry.
+        if s.children:
+            kids = []
+            for k in s.children:
+                mk = k.mirror(Plane.YZ)
+                mk.label = k.label.replace('red_', 'blue_')
+                kids.append(mk)
+            m = Compound(children=kids)
+        else:
+            m = s.mirror(Plane.YZ)
         m.label = s.label.replace('red_', 'blue_')
         m.color = BLUE if tuple(s.color) == tuple(RED) else s.color
         out.append(m)
