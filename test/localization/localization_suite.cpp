@@ -1485,7 +1485,10 @@ TEST(EkfGroundTruth, BeatsRawOdometry) {
                                              tf2::durationFromSec(0.5));
       if (truth_copy && odom_copy) {
         return std::array<Point, 3>{
-            *truth_copy, *odom_copy,
+            *truth_copy,
+            // Raw POSE boots at zero; compare both estimates in field coordinates.
+            Point{(*odom_copy)[0] + sim::field::kLoopCentre[0],
+                  (*odom_copy)[1] + sim::field::kLoopCentre[1]},
             Point{tf.transform.translation.x, tf.transform.translation.y}};
       }
     } catch (const tf2::TransformException &) {

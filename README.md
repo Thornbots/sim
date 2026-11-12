@@ -69,7 +69,8 @@ MMM_EVIDENCE_DIR=/tmp/team-boot-evidence ros2 run sim mmm_suite --gtest_filter='
 loops at 0.4 m/s with 15% pod scale error and 0.025 m/s accumulating x drift.
 It drops the first startup fix and scores **actual firmware-held navigation**
 x/y from the private hosted `MappingStatus`, not TF or the last requested fix.
-It reports RMS/p95/max error against current Gazebo truth, together with local
+It compares the last received firmware status (one 5 ms fixture tick old) with
+current Gazebo truth and reports RMS/p95/max error, together with local
 and global pose errors, global xy std and pose age. The proposed held-position
 p95 gate is 0.35 m; `AMCL_RELAY_BASELINE=1` records the old policy without
 applying that new gate. Use a fresh `MMM_EVIDENCE_DIR` for every repeat.
@@ -1303,7 +1304,9 @@ EKF. Those scenarios also score `map->nav_odom`, while the EKF's edge is
 
 It turns on drift and continuous slip, drives the same loop, scores both
 estimators against `/sim/raw_odom` (mean, RMS, max Euclidean error), and
-asserts the EKF's mean error beats raw `/odom`'s.
+asserts the EKF's mean error beats raw `/odom`'s. The `none` fixture seeds the
+EKF at its actual drive-loop spawn and adds that known boot translation to raw
+POSE before scoring; both estimates are compared in field coordinates.
 
 ### Target driver / CV target emulator
 
