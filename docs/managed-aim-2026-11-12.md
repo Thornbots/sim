@@ -1,0 +1,131 @@
+# Managed firmware aiming validation, 2026-11-12
+
+The [stand-in](../README.md#mcb-aim-stand-in) now shares firmware `AimControl`,
+including receipt expiry, clear precedence, continuous rates and the measured
+impact gate. No launch files changed. Launch owners should remove obsolete
+`gimbal_lag_s` overrides; tick/ack topic interfaces are unchanged.
+
+## Builds and tests
+
+Validation used the task-owned four-CPU Linux arm64 Colima container and
+`--symlink-install`. Bridge `design/target-handoff` commit
+`2e9a435b709697f3fecb3f21034505daa4cf40eb` supplies the actual `bool clear`
+field in `msg/TargetState.msg`. Final builds do not use the earlier temporary
+uncommitted stub. No bridge source edits are part of this work.
+
+```sh
+colcon build --symlink-install --packages-up-to sim --parallel-workers 4
+colcon test --packages-select sim --return-code-on-test-failure
+colcon test-result --verbose
+```
+
+Colcon reports **269 result records, zero errors, four failure records and one
+skip**. This includes CTest aggregates: the unique GTest/pytest records are
+**237: 233 passed, three failed, one skipped**. The failures are the unchanged
+nightly `McbPitchBoot` parameter cases at 0/−0.2/+0.2 rad; CTest contributes the
+fourth failure record. The existing UART-relay test skips when its expected
+`T17_FIRMWARE_BINARY` environment is absent. No skip or exclusion was added.
+
+The eight stand-in unit tests pass. The real ROS bridge/PTY suite passes all
+three tests. Protocol tests pass all nine tests; hosted firmware UART tests
+pass 52/55 with the same three pitch-boot failures. Firing fixtures explicitly
+supply aligned measured feedback through a shared test-only Reticle reference;
+they isolate the known motor-fixture offset mismatch without changing the
+production adapter or pitch-boot tests. Miss-then-align and clear-over-valid
+tests exercise actual firmware over UART.
+
+Package quality and actionlint pass with zero new diagnostics. Firmware
+numerical, lifecycle and timing evidence is maintained in
+[MCBV3's results](../../firmware/MCBV3/docs/managed-aim-2026-11-12.md).
+
+## Identical-fixture comparison
+
+Baseline: sim nightly `b40ada7fd5efce3091590baeb3318a12c05cc6d0` stand-in and
+MCBV3 nightly `e7605e5` planner, where chase is already the default. Both
+executables were built against the same actual bridge message commit. Only the
+stand-in executable was swapped; launch/scorer/fixture sources stayed identical.
+
+Input was raw perfect `target_state_truth`, not tracker detections and not
+Agent B's target manager. Both used the same deterministic lateral paths, fixed
+shooter at `(0, 0, 0.4)`, 22 m/s, 20 ms request latency, perfect gimbal,
+zero model-yaw jitter, flat and staggered layouts, three seconds settling and
+30 seconds scoring per cell. Each comparison was repeated three times. There
+is no random detection seed in this truth fixture.
+
+Each entry is mean shots per run, pooled fired-shot hit percentage, and mean
+native score with its three-run min–max. **120/120 final cells passed** across
+both implementations and the three campaigns, and every suite passed its native
+log checker. Floors were unchanged.
+
+```sh
+tools/run_suite.sh aim headless:=true log_dir:=/evidence/default-N
+tools/run_suite.sh aim headless:=true skip_stationary:=true target_spin_hz:=0.0 log_dir:=/evidence/moving-N
+tools/run_suite.sh aim headless:=true only_stationary:=true target_spin_hz:=2.0 log_dir:=/evidence/spinning-N
+```
+
+### Default stationary and combined translation/spin sweep
+
+| Layout | Speed m/s | Spin Hz | Nightly shots / hit % / score % (range) | Managed shots / hit % / score % (range) |
+| --- | ---: | ---: | --- | --- |
+| flat | 0 | 0 | 1200 / 99.3 / 99.30 (99.2–99.3) | 1201 / 99.3 / 99.30 (99.3–99.3) |
+| flat | 0.5 | 2 | 481 / 98.5 / 69.01 (68.9–69.2) | 791 / 98.4 / 81.68 (81.1–82.3) |
+| flat | 1 | 1.857 | 445 / 98.1 / 67.27 (67.0–67.5) | 891 / 98.2 / 85.61 (85.3–86.0) |
+| flat | 2 | 1.571 | 459 / 96.9 / 67.02 (66.5–67.7) | 907 / 97.6 / 85.71 (85.2–86.4) |
+| flat | 4 | 1 | 511 / 96.0 / 68.41 (67.1–70.2) | 1018 / 97.6 / 90.25 (89.8–90.6) |
+| staggered | 0 | 0 | 1200 / 99.2 / 99.22 (99.2–99.2) | 1200 / 99.2 / 99.20 (99.2–99.2) |
+| staggered | 0.5 | 2 | 479 / 98.9 / 69.16 (69.0–69.4) | 802 / 98.0 / 81.77 (80.0–83.0) |
+| staggered | 1 | 1.857 | 446 / 97.5 / 66.89 (66.9–66.9) | 891 / 98.1 / 85.43 (85.1–85.7) |
+| staggered | 2 | 1.571 | 462 / 97.1 / 67.27 (66.5–68.0) | 911 / 98.1 / 86.29 (85.7–86.7) |
+| staggered | 4 | 1 | 514 / 96.0 / 68.59 (67.6–69.3) | 1009 / 97.9 / 90.08 (89.6–90.3) |
+
+### Translation only (zero spin)
+
+| Layout | Speed m/s | Spin Hz | Nightly shots / hit % / score % (range) | Managed shots / hit % / score % (range) |
+| --- | ---: | ---: | --- | --- |
+| flat | 0.5 | 0 | 1200 / 98.3 / 98.30 (98.2–98.3) | 1200 / 98.7 / 98.70 (98.7–98.8) |
+| flat | 1 | 0 | 1200 / 97.4 / 97.36 (97.2–97.6) | 1200 / 98.3 / 98.33 (98.2–98.4) |
+| flat | 2 | 0 | 1200 / 96.5 / 96.50 (96.4–96.6) | 1200 / 98.0 / 97.97 (97.8–98.1) |
+| flat | 4 | 0 | 1200 / 97.3 / 97.31 (97.2–97.4) | 1201 / 98.7 / 98.69 (98.3–99.2) |
+| staggered | 0.5 | 0 | 1200 / 98.2 / 98.20 (98.2–98.2) | 1200 / 98.8 / 98.82 (98.8–98.9) |
+| staggered | 1 | 0 | 1200 / 97.3 / 97.28 (97.2–97.3) | 1200 / 98.2 / 98.21 (98.1–98.4) |
+| staggered | 2 | 0 | 1200 / 96.6 / 96.55 (96.3–96.8) | 1200 / 97.9 / 97.90 (97.6–98.1) |
+| staggered | 4 | 0 | 1200 / 97.1 / 97.16 (97.1–97.2) | 1200 / 98.2 / 98.21 (97.7–99.2) |
+
+### Spin only (stationary center, 2 Hz)
+
+| Layout | Speed m/s | Spin Hz | Nightly shots / hit % / score % (range) | Managed shots / hit % / score % (range) |
+| --- | ---: | ---: | --- | --- |
+| flat | 0 | 2 | 480 / 99.3 / 69.51 (69.4–69.6) | 778 / 99.4 / 81.87 (81.1–82.6) |
+| staggered | 0 | 2 | 479 / 99.3 / 69.48 (69.3–69.6) | 780 / 99.3 / 81.94 (81.3–82.4) |
+
+The native score combines fired-shot hit fraction and hits per 1,200 expected
+40 Hz shots with equal weights. It measures throughput as well as placement.
+Three-run ranges are retained; these observations do not establish a new
+repeatability floor. This scorer follows straight
+rays through published aim points, not calibrated gravity/drag. These runs do
+not establish ballistic accuracy, controller-plant behavior or Type C deadlines.
+
+An initial redesigned run was rejected by the native checker on both stationary
+floors because ROS `/clock` callback coalescing skipped control ticks and rounded
+up the indexer cooldown. The adapter now advances intervening 1 ms decisions
+before applying new input. Final comparisons use that corrected adapter;
+no floor was lowered and the rejected run is excluded. All trusted final runs
+pass the native checker. The checker accepts its pacing-gate-drop lifecycle notes;
+there are no accepted lockstep timeouts.
+
+## Integration
+
+Integrate this PR with MCBV3 #141 and bridge #46; use a coordinated workspace
+gitlink bump and a High changelog/reflash requirement. The parent owns that
+workspace PR and the end-to-end manager/firmware bench. No workspace PR or merge
+is included here. The wire-contract ambiguity concerning radius sanity and
+malformed assigned geometry is listed in the firmware evidence for review.
+
+## Nightly integration follow-up
+
+Merged sim nightly `83131d8` and firmware nightly `8405b0d` into the package
+branches without rewriting their history. The firmware uses the nearest-zero
+pitch reading on every robot; sim's encoder zero is now −0.26 with a source
+parity test. The managed UART firing fixture consequently supplies the requested
+pitch directly, removing its previous 0.17 rad offset compensation. The earlier
+pitch-boot failure counts above describe the historical baseline, not this merge.

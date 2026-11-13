@@ -12,130 +12,133 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The stand-in around the firmware's planner: cadence, fire lock, pending
-// shot, timeout and the idle fallback. Planner maths is the firmware's own
-// hosted AimPlannerTest.
-
 #include <gtest/gtest.h>
+
+#include <limits>
 
 #include "sim/combat.hpp"
 #include "sim/mcb_aim.hpp"
-
-namespace
-{
-using sim::mcb_aim::Pose;
-using sim::mcb_aim::Standin;
-
-aim::TargetInput still_target()
-{
+namespace {
+aim::TargetInput target() {
   aim::TargetInput in;
-  in.center = {3.0f, 0.0f, 0.3f};
-  in.radius = {0.25f, 0.25f};
-  in.confidence = 1.0f;
-  in.track_id = 1;
+  in.center = {3, 0, .3f};
+  in.yaw = aim::PI_F;
+  in.radius = {.25f, .25f};
   in.valid = true;
+  in.track_id = 1;
   return in;
 }
-
-constexpr uint32_t kPeriodMs = 25;
+using sim::mcb_aim::Pose;
+using sim::mcb_aim::Standin;
 }  // namespace
-
-TEST(McbAim, TuningMatchesTheSentryShotSpeed)
-{
+TEST(McbAim, SentryTuningAndContinuousFiveMsPlans) {
   EXPECT_DOUBLE_EQ(aim::AimTuning{}.v_muzzle_mps, sim::combat::kMuzzleSpeed);
-  EXPECT_FLOAT_EQ(aim::AimTuning{}.firmware_latency_s, 0.020f);
+  EXPECT_FLOAT_EQ(aim::AimTuning{}.firmware_latency_s, .020f);
+  EXPECT_FLOAT_EQ(aim::AimTuning{}.replan_period_s, .005f);
   EXPECT_TRUE(aim::AimTuning{}.chase);
-  EXPECT_FLOAT_EQ(aim::AimTuning{}.chase_settle_s, 0.025f);
-  EXPECT_FLOAT_EQ(aim::AimTuning{}.chase_margin_s, 0.025f);
-}
-
-TEST(McbAim, AimsAtAHeldStateEveryTickAndFiresOnlyAfterTheLock)
-{
-  Standin standin;
-  const Pose pose;
-  uint32_t now = 0;
-  int fires = 0;
-  std::optional<double> first_fire;
-  for (; now <= 3000; now += kPeriodMs) {
-    // A 30 Hz-ish feed: a fresh state each tick, stamped now.
-    standin.on_state(now, still_target());
-    const auto out = standin.tick(now, pose);
-    ASSERT_TRUE(out.aim.has_value());
-    EXPECT_TRUE(out.replanned || standin.holding_state());
-    EXPECT_NEAR(out.aim->x, 3.0 - 0.25, 0.01);  // the panel facing us, centre minus radius
-    if (out.fire) {
-      ++fires;
-      if (!first_fire) {first_fire = out.fire->request_s;}
-      EXPECT_NEAR(out.fire->latency_s, 0.020, 1e-9);
-      EXPECT_GT(out.fire->planned_delay_s, out.fire->latency_s - 1e-9);
-    }
+  Standin s;
+  auto in = target();
+  in.velocity = {0, 2, 0};
+  s.on_state(0, in);
+  auto a = s.tick(0, Pose{});
+  ASSERT_TRUE(a.aim);
+  EXPECT_TRUE(a.replanned);
+  for (uint32_t ms = 1; ms < 5; ++ms) {
+    const auto b = s.tick(ms, Pose{});
+    EXPECT_FALSE(b.replanned);
+    ASSERT_TRUE(b.aim);
+    EXPECT_GT(b.aim->y, a.aim->y);
   }
-  ASSERT_TRUE(first_fire.has_value()) << "a still, valid, confident target never fired";
-  // Stationary skips the 1 s dwell, so it fires almost at once; never before the first state.
-  EXPECT_GE(*first_fire, 0.0);
-  EXPECT_GT(fires, 10);
+  EXPECT_TRUE(s.tick(5, Pose{}).replanned);
 }
-
-TEST(McbAim, FireDisabledStillAimsButNeverFires)
-{
+TEST(McbAim, IdealGimbalFiresWithoutConfidenceDwellOrDetectionAgeGates) {
+  Standin s;
+  auto in = target();
+  in.confidence = 0;
+  in.detection_age_s = 65;
+  s.on_state(0, in);
+  const auto a = s.tick(0, Pose{});
+  ASSERT_TRUE(a.aim);
+  ASSERT_TRUE(a.fire);
+  EXPECT_NEAR(a.fire->request_s, 0, 1e-9);
+  EXPECT_NEAR(a.fire->latency_s, .020, 1e-8);
+  EXPECT_FALSE(s.tick(1, Pose{}).fire);
+  EXPECT_TRUE(s.tick(25, Pose{}).fire);
+}
+TEST(McbAim, MeasuredMissBlocksEveryRequestAndDoesNotFreezeReplans) {
+  Standin s;
+  s.on_state(0, target());
+  for (uint32_t ms = 0; ms < 100; ++ms) {
+    const auto out = s.tick(ms, Pose{}, aim::GimbalMotion{1, 0, 0, 0});
+    EXPECT_FALSE(out.fire);
+    EXPECT_EQ(out.replanned, ms % 5 == 0);
+  }
+}
+TEST(McbAim, ClearWinsAndIdleResumesWithoutAnOldPendingShot) {
+  Standin s;
+  s.on_state(0, target());
+  s.tick(0, Pose{});
+  s.on_idle(1, {1, 2, .2f});
+  auto clear = target();
+  clear.clear = true;
+  clear.track_id = 7;
+  clear.center.x = std::numeric_limits<float>::quiet_NaN();
+  s.on_state(1, clear);
+  const auto out = s.tick(1, Pose{});
+  EXPECT_FALSE(s.holding_state());
+  EXPECT_FALSE(out.fire);
+  ASSERT_TRUE(out.aim);
+  EXPECT_FLOAT_EQ(out.aim->x, 1);
+  EXPECT_FLOAT_EQ(out.aim->y, 2);
+}
+TEST(McbAim, ReceiptExpirySurvivesRolloverAndIgnoresUnassignedFrames) {
+  Standin s;
+  auto in = target();
+  in.state_age_s = 3;
+  const uint32_t start = UINT32_MAX - 300;
+  s.on_state(start, in);
+  EXPECT_TRUE(s.tick(start + 599, Pose{}).aim);
+  in.valid = false;
+  s.on_state(start + 599, in);
+  s.on_idle(start + 600, {1, 2, .2f});
+  const auto out = s.tick(start + 600, Pose{});
+  EXPECT_FALSE(s.holding_state());
+  ASSERT_TRUE(out.aim);
+  EXPECT_FLOAT_EQ(out.aim->x, 1);
+  EXPECT_FALSE(s.tick(start + 800, Pose{}).aim);
+}
+TEST(McbAim, InvalidInputCannotAssignOrUseTheRetiredPanelFallback) {
+  Standin s;
+  auto in = target();
+  in.valid = false;
+  in.panel = {2, 1, .3f};
+  s.on_state(0, in);
+  EXPECT_FALSE(s.tick(0, Pose{}).aim);
+  EXPECT_FALSE(s.holding_state());
+}
+TEST(McbAim, ClearAndReassignmentPreserveThePhysicalIndexerRateLimit) {
+  Standin s;
+  s.on_state(0, target());
+  ASSERT_TRUE(s.tick(0, Pose{}).fire);
+  auto clear = target();
+  clear.clear = true;
+  s.on_state(1, clear);
+  EXPECT_FALSE(s.tick(1, Pose{}).fire);
+  s.on_state(2, target());
+  EXPECT_FALSE(s.tick(2, Pose{}).fire);
+  EXPECT_TRUE(s.tick(25, Pose{}).fire);
+}
+TEST(McbAim, FireDisabledPreservesAimingAndShooterCompensation) {
   sim::mcb_aim::Config config;
   config.fire_enabled = false;
-  Standin standin(config);
-  for (uint32_t now = 0; now <= 2000; now += kPeriodMs) {
-    standin.on_state(now, still_target());
-    const auto out = standin.tick(now, Pose{});
-    EXPECT_TRUE(out.aim.has_value());
-    EXPECT_FALSE(out.fire.has_value());
-  }
-}
-
-TEST(McbAim, UnconvergedStateAimsAtThePanelWithoutFiring)
-{
-  Standin standin;
-  aim::TargetInput in = still_target();
-  in.valid = false;
-  in.panel = {2.7f, 0.1f, 0.3f};
-  for (uint32_t now = 0; now <= 1500; now += kPeriodMs) {
-    standin.on_state(now, in);
-    const auto out = standin.tick(now, Pose{});
-    ASSERT_TRUE(out.aim.has_value());
-    EXPECT_NEAR(out.aim->x, 2.7, 1e-5);
-    EXPECT_NEAR(out.aim->y, 0.1, 1e-5);
-    EXPECT_FALSE(out.fire.has_value());
-  }
-}
-
-TEST(McbAim, StateTimesOutThenTheFreshIdlePointIsAimedAt)
-{
-  Standin standin;
-  standin.on_state(0, still_target());
-  ASSERT_TRUE(standin.tick(0, Pose{}).aim.has_value());
-  // 0.5 s target timeout: held until the age reaches it.
-  EXPECT_TRUE(standin.tick(475, Pose{}).aim.has_value());
-  EXPECT_TRUE(standin.holding_state());
-  standin.on_idle(500, {1.0f, 2.0f, 0.15f});
-  const auto out = standin.tick(500, Pose{});
-  EXPECT_FALSE(standin.holding_state());
-  ASSERT_TRUE(out.aim.has_value());
-  EXPECT_FLOAT_EQ(out.aim->x, 1.0f);
-  EXPECT_FLOAT_EQ(out.aim->y, 2.0f);
-  // The idle point is good for 200 ms, then the head just holds.
-  EXPECT_FALSE(standin.tick(725, Pose{}).aim.has_value());
-}
-
-TEST(McbAim, ShooterMotionLeadsTheAim)
-{
-  sim::mcb_aim::Config config;
-  Standin still(config), moving(config);
-  Pose fast;
-  fast.vel_y = 2.0;
-  aim::TargetInput in = still_target();
-  in.center.y = 0.0f;
-  still.on_state(0, in);
-  moving.on_state(0, in);
-  const auto a = still.tick(0, Pose{});
-  const auto b = moving.tick(0, fast);
-  ASSERT_TRUE(a.aim && b.aim);
-  // The aim is the intercept less our motion over the flight, so it shifts against our velocity.
-  EXPECT_LT(b.aim->y, a.aim->y - 0.01);
+  Standin a(config), b(config);
+  a.on_state(0, target());
+  b.on_state(0, target());
+  Pose moving;
+  moving.vel_y = 2;
+  const auto still = a.tick(0, Pose{}), led = b.tick(0, moving);
+  ASSERT_TRUE(still.aim && led.aim);
+  EXPECT_FALSE(still.fire);
+  EXPECT_FALSE(led.fire);
+  EXPECT_LT(led.aim->y, still.aim->y - .01);
 }

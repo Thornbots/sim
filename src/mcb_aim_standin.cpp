@@ -14,7 +14,7 @@
 
 // The no-MCB benches' aim planner: the firmware's AimPlanner (compiled from
 // firmware/MCBV3) fed /cv/target_state and /dji_serial_bridge/pose, ticking
-// on the replan period. Publishes the aim (PointStamped, odom) and each
+// on a 1 ms control period. Publishes the aim (PointStamped, odom) and each
 // indexer request (Vector3Stamped; see sim/mcb_aim.hpp), and the bench
 // tick/ack seams point_to_cv_target used to own. README "MCB aim stand-in".
 
@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "dji_serial_bridge/msg/cv_target.hpp"
@@ -36,6 +37,7 @@
 namespace
 {
 using dji_serial_bridge::msg::TargetState;
+constexpr uint32_t kMaxCatchupMs = 100;
 
 uint32_t to_ms(const rclcpp::Time & t) {return static_cast<uint32_t>(t.nanoseconds() / 1000000);}
 rclcpp::Time to_time(const builtin_interfaces::msg::Time & s, rcl_clock_type_t type)
@@ -54,8 +56,6 @@ public:
     aim::AimTuning & t = config.tuning;
     // Overrides of the firmware's values for bench fixtures; a negative
     // number or "firmware" keeps AimPlannerConstants.hpp's.
-    const double lag = declare_parameter("gimbal_lag_s", -1.0);
-    if (lag >= 0.0) {t.gimbal_lag_s = static_cast<float>(lag);}
     const auto mode = declare_parameter("spin_mode", std::string("firmware"));
     if (mode == "chase") {
       t.chase = true;
@@ -91,15 +91,17 @@ public:
     pose_sub_ = create_subscription<dji_serial_bridge::msg::RobotPose>(
       pose_topic, rclcpp::SensorDataQoS(),
       [this](dji_serial_bridge::msg::RobotPose::ConstSharedPtr m) {
+        advance(now());
         pose_ = {m->x, m->y, m->vel_x, m->vel_y};
       });
     idle_sub_ = create_subscription<dji_serial_bridge::msg::CVTarget>(
       idle_topic, rclcpp::SensorDataQoS(),
       [this](dji_serial_bridge::msg::CVTarget::ConstSharedPtr m) {
+        advance(now());
         core_->on_idle(to_ms(now()), {m->x, m->y, m->z});
       });
     timer_ = rclcpp::create_timer(
-      this, get_clock(), rclcpp::Duration::from_seconds(t.replan_period_s), [this]() {on_tick();});
+      this, get_clock(), rclcpp::Duration::from_seconds(0.001), [this]() {advance(now());});
     RCLCPP_INFO(get_logger(), "mcb_aim_standin ready: firmware planner, %g s replan, fire %s",
       t.replan_period_s, config.fire_enabled ? "on" : "off");
   }
@@ -109,6 +111,7 @@ private:
   void on_state(const TargetState & s)
   {
     const rclcpp::Time now_t = now();
+    advance(now_t);
     auto age = [&](const builtin_interfaces::msg::Time & stamp) {
       const double ms = std::round((now_t - to_time(stamp, now_t.get_clock_type())).seconds() * 1e3);
       return static_cast<float>(std::clamp(ms, 0.0, 65535.0) * 1e-3);
@@ -131,14 +134,30 @@ private:
     in.track_id = s.robot_track_id & 0xFFFFu;
     in.confidence = std::round(std::clamp(s.confidence, 0.0f, 1.0f) * 255.0f) / 255.0f;
     in.valid = s.valid;
+    in.clear = s.clear;
     core_->on_state(to_ms(now_t), in);
     if (ack_pub_) {ack_pub_->publish(s.header);}
   }
 
-  void on_tick()
+  void advance(const rclcpp::Time & current)
   {
-    const rclcpp::Time stamp = now();
-    const auto out = core_->tick(to_ms(stamp), pose_);
+    const uint32_t now_ms = to_ms(current);
+    if (!last_tick_ms_ || now_ms - *last_tick_ms_ > kMaxCatchupMs) {
+      // Long gaps/clock resets discard missed decisions rather than replaying old shots.
+      last_tick_ms_ = now_ms - 1;
+    }
+    while (*last_tick_ms_ != now_ms) {
+      const uint32_t ms = ++*last_tick_ms_;
+      const auto lag = std::chrono::nanoseconds(
+        static_cast<int64_t>(now_ms - ms) * 1000000 + current.nanoseconds() % 1000000);
+      const auto stamp = current - rclcpp::Duration(lag);
+      publish_tick(ms, stamp);
+    }
+  }
+
+  void publish_tick(uint32_t ms, const rclcpp::Time & stamp)
+  {
+    const auto out = core_->tick(ms, pose_);
     if (out.aim) {
       geometry_msgs::msg::PointStamped p;
       p.header.stamp = stamp;
@@ -150,8 +169,7 @@ private:
     }
     if (out.fire) {
       geometry_msgs::msg::Vector3Stamped f;
-      f.header.stamp = rclcpp::Time(static_cast<int64_t>(std::llround(out.fire->request_s * 1e9)),
-          stamp.get_clock_type());
+      f.header.stamp = stamp;
       f.header.frame_id = "odom";
       f.vector.x = out.fire->latency_s;
       f.vector.y = out.fire->planned_delay_s;
@@ -167,6 +185,7 @@ private:
 
   std::unique_ptr<sim::mcb_aim::Standin> core_;
   sim::mcb_aim::Pose pose_;
+  std::optional<uint32_t> last_tick_ms_;
   rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr aim_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr fire_pub_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr tick_pub_, ack_pub_;

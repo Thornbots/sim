@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "mcb_aim_fixture.hpp"
 #include "dji_serial_bridge/msg/cv_target.hpp"
 #include "dji_serial_bridge/msg/ref_sys_status.hpp"
 #include "dji_serial_bridge/msg/robot_pose.hpp"
@@ -47,6 +48,8 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
   sim::mcb_firmware::PtyLink link((directory / "mcb").string());
   sim::mcb_firmware::Firmware firmware(link.master(), binary, "stop", true);
   sim::mcb_firmware::Referee ref;
+  sim::mcb_aim_fixture::prepare_alignment(firmware, ref);
+  const auto aligned = sim::mcb_aim_fixture::aligned_readings(-3, 1, .2);
   rclcpp::InitOptions init;
   init.set_domain_id(87);
   auto context = std::make_shared<rclcpp::Context>();
@@ -95,7 +98,7 @@ TEST(McbBridgePty, NativeMcbThroughRealRosBridge) {
       while (!stop) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
         if (!stop) {
-          shots += firmware.step(5, {}, ref).shots.size();
+          shots += firmware.step(5, aligned, ref).shots.size();
         }
       }
     } catch (const std::exception &e) {
