@@ -17,6 +17,7 @@
 #include "sim/e2e_test_core.hpp"
 #include "sim/process.hpp"
 #include "sim/suite_timing.hpp"
+#include <fstream>
 #include <gtest/gtest.h>
 namespace cb = sim::cv_bench;
 namespace ee = sim::e2e;
@@ -71,6 +72,7 @@ public:
                 "epoch_readiness_extra:=" +
                     std::string(cb::options.lockstep ? "/sim/e2e/harness_ready" : "")},
             cb::options.log_dir + "/stack.log");
+      scorer->stack_alive = [this]() { return !launch || launch->alive(); };
       auto wait = [&](std::function<bool()> predicate, double timeout,
                       const std::string &description) {
         if (!scorer->wait_until(
@@ -294,17 +296,29 @@ TEST_P(E2ESuite, MCB) {
     // Shots and TargetStates stamped inside the window are judged and received later, by
     // however many ticks that takes; keep stepping until they have, then drop the rest.
     s->run_to(s->score_until + 1.0, 60);
+    // Physics stays held at this tick until the next cell's first step: this wall time
+    // grows with host load, which the lockstep waits must tolerate (README#lockstep-waits-and-load).
+    const auto held_from = std::chrono::steady_clock::now();
     s->scoring = false;
     s->check_nodes(environment->nodes);
     s->check_lockstep();
+    const auto checked = std::chrono::steady_clock::now();
     for (const auto &e :
          std::vector<std::pair<std::string, std::vector<cb::Json>>>{
-             {"states.jsonl", s->states}, {"poses.jsonl", s->route_records}})
+             {"states.jsonl", s->states}, {"poses.jsonl", s->route_records}}) {
+      std::ofstream file(cb::options.log_dir + "/" + e.first, std::ios::app);
       for (const auto &r : e.second) {
         auto out = r;
         out.update({{"speed", c.speed}, {"path", c.path}, {"spin_hz", c.spin}});
-        cb::append_json(cb::options.log_dir + "/" + e.first, out);
+        file << out.dump() << '\n';
       }
+    }
+    std::cout << "cell boundary held at " << s->tick_s() << " s: checks "
+              << std::chrono::duration<double>(checked - held_from).count()
+              << " s, records "
+              << std::chrono::duration<double>(std::chrono::steady_clock::now() - checked)
+                     .count()
+              << " s wall\n";
     std::cout << ee::state_summary(s->states) << '\n';
     environment->record_score(c.name, duration);
     ASSERT_FALSE(s->route_records.empty()) << "No chassis truth samples";

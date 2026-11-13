@@ -16,9 +16,11 @@
 // released it to (gz.msgs.Time on <release_topic>), so a slow machine waits
 // instead of computing something else. It holds in PostUpdate: gz publishes
 // /clock before a step's PreUpdate, so the clock nodes see while held is the
-// held state's time. Each hold is announced on <held_topic>. A wait past
-// <max_wait_s> wall is a lockstep timeout: logged, sent on <timeout_topic>,
-// and physics runs free until the next release. see README.md for design rationale
+// held state's time. Each hold is announced on <held_topic>. The coordinator
+// repeats its release while it waits on slow producers, so only <max_wait_s>
+// wall with no release at all (a dead coordinator) is a lockstep timeout:
+// logged, sent on <timeout_topic>, and physics runs free until the next
+// release. see README.md for design rationale
 
 #include <gz/msgs/time.pb.h>
 
@@ -129,11 +131,12 @@ public:
       return;
     }
     held_pub_.Publish(to_msg(t));
-    const auto deadline = std::chrono::steady_clock::now() +
-      std::chrono::duration_cast<std::chrono::steady_clock::duration>(max_wait_);
+    const auto wait = std::chrono::duration_cast<std::chrono::steady_clock::duration>(max_wait_);
+    // Silence is measured from the later of this hold and the last release (a repeat counts).
+    heard_ = std::max(heard_, std::chrono::steady_clock::now());
     // Wait in short slices so a stop request is noticed within 10 ms.
-    while (released_ns_ <= t && !*stopping_ && std::chrono::steady_clock::now() < deadline) {
-      cv_.wait_until(lock, std::min(deadline, std::chrono::steady_clock::now() +
+    while (released_ns_ <= t && !*stopping_ && std::chrono::steady_clock::now() < heard_ + wait) {
+      cv_.wait_until(lock, std::min(heard_ + wait, std::chrono::steady_clock::now() +
         std::chrono::milliseconds(10)));
       if (strict_startup_ && released_ns_ <= t) {held_pub_.Publish(to_msg(t));}
     }
@@ -165,12 +168,14 @@ private:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       released_ns_ = ns;  // one in-order publisher; a release behind gz holds at the next step
+      heard_ = std::chrono::steady_clock::now();
     }
     cv_.notify_all();
   }
 
   gz::transport::Node::Publisher held_pub_, timeout_pub_;
   std::chrono::duration<double> max_wait_{2.0};
+  std::chrono::steady_clock::time_point heard_{};  // last release, or this hold's start
   std::mutex mutex_;  // gz-transport calls OnRelease on its own thread
   std::condition_variable cv_;
   int64_t released_ns_ = kFree;

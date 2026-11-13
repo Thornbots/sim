@@ -168,7 +168,8 @@ public:
     physics_step_ns_ = std::llround(physics_step_s_ * 1e9);
     substeps_ = std::max(1, static_cast<int>(std::lround(clock_step_s_ / physics_step_s_)));
     pace_slack_s_ = declare_parameter("pace_slack_s", 0.005);  // the scorer's gate only
-    max_wait_s_ = declare_parameter("max_wait_s", 0.5);  // wall, per lockstep wait
+    // Wall deadlock guard per lockstep wait on a live publisher: a slow host waits, never times out.
+    max_wait_s_ = declare_parameter("max_wait_s", 60.0);
     // mcb_aim_standin's replan rate; its timer starts at sim time 0.
     aim_tick_ns_ = static_cast<int64_t>(1e9 / declare_parameter("aim_rate_hz", 40.0));
     // A whole number of aim ticks (4 at 40 Hz), so each case sees the same tick phase.
@@ -387,7 +388,7 @@ private:
   int64_t step_ns() const {return substeps_ * physics_step_ns_;}
 
   // Wait (gate_mutex_ held) until done() or topic has no publisher left.
-  // false if max_wait_s ran out first.
+  // false if max_wait_s ran out first: a live publisher that is stuck.
   bool wait_for(
     std::unique_lock<std::mutex> & lock, const std::string & topic,
     const std::function<bool()> & done)
@@ -400,9 +401,9 @@ private:
       const auto now = std::chrono::steady_clock::now();
       if (now >= deadline) {
         ++timeouts_;
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
-          "lockstep: %s timed out after %.2f s wall; this run may not repeat",
-          topic.c_str(), max_wait_s_);
+        RCLCPP_ERROR(get_logger(),
+          "lockstep: %s silent for %.1f s wall with a live publisher (stuck); "
+          "this run may not repeat", topic.c_str(), max_wait_s_);
         return false;
       }
       gate_cv_.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(10)));

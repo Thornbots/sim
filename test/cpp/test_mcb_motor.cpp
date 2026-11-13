@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include <gtest/gtest.h>
+#include <fstream>
+#include <regex>
+#include <sstream>
 #include "sim/mcb_motor.hpp"
 #include "sim/field.hpp"
 #include "sim/mcb_sensors.hpp"
@@ -229,3 +232,23 @@ TEST(BootTranslation, BothTeamsStartAtZeroAndKeepFieldDisplacementAxes) {
     EXPECT_DOUBLE_EQ(returned[1], 0.0);
   }
 }
+
+#ifdef SIM_FIRMWARE_GIMBAL_CONSTANTS
+// The emulated encoder zero must be the firmware's, or hosted/Renode boots read
+// a pitch a whole unwrap period away from the joint.
+TEST(McbMotor, PitchEncoderZeroMatchesTheFirmwareSentryOffset) {
+  std::ifstream in(SIM_FIRMWARE_GIMBAL_CONSTANTS);
+  ASSERT_TRUE(in) << SIM_FIRMWARE_GIMBAL_CONSTANTS;
+  std::stringstream text;
+  text << in.rdbuf();
+  const std::string source = text.str();
+  const auto sentry = source.find("#elif defined(SENTRY)");
+  ASSERT_NE(sentry, std::string::npos);
+  const auto end = source.find("#elif", sentry + 1);
+  const std::string block = source.substr(sentry, end - sentry);
+  std::smatch match;
+  ASSERT_TRUE(std::regex_search(
+      block, match, std::regex(R"(PITCH_OFFSET\s*=\s*(-?[0-9.]+)f?\s*;)")));
+  EXPECT_NEAR(motor::kPitchOffset, std::stod(match[1]), 1e-9);
+}
+#endif
