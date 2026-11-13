@@ -74,7 +74,7 @@ current Gazebo truth and reports RMS/p95/max error, together with local
 and global pose errors, global xy std and pose age. The proposed held-position
 p95 gate is 0.35 m; `AMCL_RELAY_BASELINE=1` records the old policy without
 applying that new gate. Use a fresh `MMM_EVIDENCE_DIR` for every repeat.
-The [dated investigation](../docs/investigations/absolute-relocalize-2026-11-11.md)
+The [dated investigation](../docs/investigations/absolute-relocalize-2026-11-11.html)
 records three runs per team before and after. Hosted scheduling and this
 low-speed fixture do not establish physical robot accuracy.
 
@@ -877,9 +877,7 @@ collision hulls, sensor/muzzle frames, head joint origins and armor faces. It wa
 imported once into `urdf/sentry_v2/`; there is no generator, so edit the URDF and
 meshes directly when the CAD changes. `thornbots_pkg` carries matching visual
 assets and TF geometry, and `test_cv_bench.cpp` checks the two agree. See
-[robot geometry](../thornbots_pkg/README.md#robot-geometry) for frame conventions
-and the [dated investigation](../docs/investigations/sentry-cad-2026-10-26.md)
-for the archive checksum, derivation and validation.
+[robot geometry](../thornbots_pkg/README.md#robot-geometry) for frame conventions.
 
 The yaw bearing is centred on the chassis axis; zero pitch points the gun
 horizontally along +x, and the origin is on the ground under the chassis centre.
@@ -907,8 +905,8 @@ the plates are corrected.
 Not from the CAD: mass/inertia (the export's gram-scale values are not
 credible), chassis collision, wheels and suspension (travel +-2 cm, 2200 N/m
 per corner, damping), pitch limits (+-0.6 rad), controllers, plugins and topics
-remain the earlier approximations. The two odometry pods are omitted; see the
-[odometry pod table](../docs/investigations/sentry-cad-2026-10-26.md#odometry-pods).
+remain the earlier approximations. The two
+[odometry pods](../thornbots_pkg/README.md#odometry-pods) are omitted.
 
 `sentry_v2.urdf.xacro` wraps the URDF for gz: colours, the lidar and camera
 sensors and the plugins.
