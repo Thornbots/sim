@@ -721,7 +721,8 @@ def generate_launch_description():
     # falling back to the idle /cv/target look point. cv_head_aim turns its
     # aim into /head_pan_cmd + /head_pitch_cmd so the head tracks detections.
     # Needs thornbots_pkg's auto.launch.py running alongside this (for
-    # target_tracker -> /cv/target_state), and the firmware checkout at build time.
+    # target_tracker -> target_manager -> /cv/target_state), and the firmware
+    # checkout at build time.
     # Same spawn_target gate as cv_target_emulator above. Aim only: nothing fires.
     aim_standin_exe = os.path.join(
         get_package_prefix('sim'), 'lib', 'sim', 'mcb_aim_standin')

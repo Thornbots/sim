@@ -76,6 +76,7 @@ public:
   std::string stage, log_path;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
   std::map<std::string, std::vector<Json>> shots;
+  std::vector<double> physical_shot_times;
   std::vector<Json> states, route_records;
   std::vector<dji_serial_bridge::msg::RefSysStatus> referee_messages;
   std::optional<double> match_start, target_stamp, state_stamp;

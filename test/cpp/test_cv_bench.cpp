@@ -333,6 +333,22 @@ TEST(UrdfConstants, BenchPanels) {
   EXPECT_NEAR(value("\"panel_radius_y\", ([0-9.]+)"), radius[1], .001);
 }
 
+TEST(E2ELifecycle, UsesExitStampAndIncludesTheDisappearanceBoundary) {
+  const auto metrics = sim::e2e::lifecycle_metrics({9.9, 12.0, 10.25, 11.99, 12.1}, 10, 12);
+  EXPECT_DOUBLE_EQ(metrics.at("time_to_first_shot_s"), .25);
+  EXPECT_EQ(metrics.at("shots_fired"), 4);
+  EXPECT_EQ(metrics.at("shots_after_disappearance"), 2);
+}
+
+TEST(E2ELifecycle, ReportsNoShotAndNoDisappearanceExplicitly) {
+  const auto hidden = sim::e2e::lifecycle_metrics({}, 10, 12);
+  EXPECT_TRUE(hidden.at("time_to_first_shot_s").is_null());
+  EXPECT_EQ(hidden.at("shots_after_disappearance"), 0);
+  const auto visible = sim::e2e::lifecycle_metrics({10.5}, 10, std::nullopt);
+  EXPECT_TRUE(visible.at("shots_after_disappearance").is_null());
+  EXPECT_TRUE(visible.at("target_disappears_s").is_null());
+}
+
 TEST(E2ELocalization, RejectsParkedDriftDespitePerfectShotScores) {
   std::vector<cb::Json> records;
   for (int i = 0; i < 100; ++i)

@@ -292,9 +292,9 @@ public:
           on_aim(rclcpp::Time(m->stamp).nanoseconds(), !m->frame_id.empty());
         }));
     subs_.push_back(create_subscription<std_msgs::msg::Header>(
-        "/cv/target/state_ack", rclcpp::QoS(100), [this](std_msgs::msg::Header::ConstSharedPtr) {
+        "/cv/manager/input_ack", rclcpp::QoS(100), [this](std_msgs::msg::Header::ConstSharedPtr m) {
           std::lock_guard<std::mutex> lock(gate_mutex_);
-          ++states_consumed_;
+          manager_input_ns_ = std::max(manager_input_ns_, rclcpp::Time(m->stamp).nanoseconds());
           gate_cv_.notify_all();
         }));
     // The tracker stamps TargetState at publish time, so a backlog doesn't
@@ -351,7 +351,6 @@ private:
   {
     std::lock_guard<std::mutex> lock(gate_mutex_);
     tracker_live_ = true;
-    ++measurements_;
     while (!owed_.empty() && owed_.front() <= stamp + 1e-9) {owed_.pop_front();}
     gate_cv_.notify_all();
   }
@@ -420,7 +419,7 @@ private:
       std::chrono::duration<double>(startup_wait_s_));
     while (!stop_ && rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
       if (count_publishers("/cv/target/tick") > 0 &&
-        count_publishers("/cv/target/state_ack") > 0 &&
+        count_publishers("/cv/manager/input_ack") > 0 &&
         count_publishers("/cv/tracker/measurement") > 0) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         aim_live_ = true;
@@ -474,7 +473,9 @@ private:
           owed_.clear();
         }
         // Publication on separate DDS topics does not imply consumer completion.
-        wait_for(lock, "/cv/target/state_ack", [&] {return states_consumed_ >= measurements_;});
+        wait_for(lock, "/cv/manager/input_ack", [&] {
+          return manager_input_ns_ >= last_input_ns_;
+        });
       }
       publish_clock();
       if (rate_ <= 0.0 && aim_live_ && tick_due(t_ns)) {
@@ -827,6 +828,10 @@ private:
     std::lock_guard<std::mutex> lock(mutex_);
     while (!pending_.empty() && pending_.front().publish_at <= t_ + 1e-9) {
       const PanelDetectionArray & msg = pending_.front().msg;
+      {
+        std::lock_guard<std::mutex> gate_lock(gate_mutex_);
+        last_input_ns_ = rclcpp::Time(msg.header.stamp).nanoseconds();
+      }
       if (!msg.detections.empty()) {  // the tracker echoes nothing for an empty frame
         std::lock_guard<std::mutex> gate_lock(gate_mutex_);
         if (tracker_live_) {owed_.push_back(from_stamp(msg.header.stamp));}
@@ -960,7 +965,7 @@ private:
   std::deque<double> owed_;  // stamps of published non-empty frames not yet echoed
   std::atomic<bool> aim_live_{false};
   int64_t last_aim_ns_ = -1, last_point_ns_ = -1, expected_point_ns_ = -1;
-  uint64_t measurements_ = 0, states_consumed_ = 0;
+  int64_t manager_input_ns_ = -1, last_input_ns_ = -1;
   int64_t tracker_clock_ns_ = -1;
   bool warned_phase_ = false;
   std::optional<double> progress_;

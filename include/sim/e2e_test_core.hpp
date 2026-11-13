@@ -19,8 +19,27 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <vector>
 namespace sim::e2e {
+// Physical chamber-exit stamps, independent of whether a shot could be adjudicated.
+inline cv_bench::Json lifecycle_metrics(const std::vector<double> &shots,
+                                      double window_start,
+                                      std::optional<double> disappears) {
+  cv_bench::Json first = nullptr;
+  size_t count = 0, after = 0;
+  for (double t : shots) {
+    if (t < window_start) continue;
+    ++count;
+    const double delay = t - window_start;
+    if (first.is_null() || delay < first.get<double>()) first = delay;
+    if (disappears && t >= *disappears) ++after;
+  }
+  return {{"window_start_s", window_start},
+          {"target_disappears_s", disappears ? cv_bench::Json(*disappears) : cv_bench::Json(nullptr)},
+          {"time_to_first_shot_s", first}, {"shots_fired", count},
+          {"shots_after_disappearance", disappears ? cv_bench::Json(after) : cv_bench::Json(nullptr)}};
+}
 inline cv_bench::Json localization_accuracy(
     const std::vector<cv_bench::Json> &records) {
   std::vector<double> errors;

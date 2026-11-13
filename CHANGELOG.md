@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Share firmware's π/2 rad/s shot-gating cutout in the aim stand-in, with
+  threshold/refresh parity coverage and an explicit chase comparison override.
+
+- Score `mcb_parked` through tracker, target manager and bridge, accepting
+  input-frame acknowledgements after bridge queue handoff in lockstep. Add a capture-time detection
+  disappearance cell and record first-shot latency and post-disappearance
+  physical-shot counts alongside shot/state scores. Existing scoring and
+  chassis-settle criteria are unchanged.
+
+- Route truth-state and tracking fixtures through the Jetson target manager.
+  Estimation scoring retains every raw estimate; clock pacing acknowledges every
+  consumed input even when a managed send is suppressed. Deterministic E2E
+  startup also waits for the manager's epoch-zero timer initialization. Deploy
+  with thornbots_pkg #76, bridge #46 and MCBV3 #141; firmware C++ changes are separate.
+
 - The emulated pitch encoder zero (`kPitchOffset`) is now -0.26, the firmware SENTRY `PITCH_OFFSET`
   after MCBV3 `ce4aebe` (was a stale -0.09). It is only the absolute-encoder zero, not head geometry.
   `test_mcb_motor` now parses the firmware header and fails if the two differ.

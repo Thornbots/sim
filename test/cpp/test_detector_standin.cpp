@@ -62,6 +62,7 @@ protected:
       [this](dji_serial_bridge::msg::PanelDetectionArray::ConstSharedPtr m) {
         outputs.push_back(m->header.stamp.nanosec);
         detection_counts.push_back(m->detections.size());
+        for (const auto & detection : m->detections) {confidences.push_back(detection.confidence);}
       });
     ours = gz.Advertise<gz::msgs::Pose_V>("/model/sentry/pose");
     theirs = gz.Advertise<gz::msgs::Pose_V>("/model/opponent_0/pose");
@@ -77,11 +78,12 @@ protected:
     executor.reset();
     rclcpp::shutdown();
   }
-  void start(bool deterministic)
+  void start(bool deterministic, double hidden_from = -1.0)
   {
     rclcpp::NodeOptions options;
     options.parameter_overrides({rclcpp::Parameter("use_sim_time", true),
       rclcpp::Parameter("robot_description", std::string(kRobot)),
+      rclcpp::Parameter("hidden_from_s", hidden_from),
       rclcpp::Parameter("deterministic_epoch_zero", deterministic)});
     auto classes = loader->getAvailableClasses<rclcpp_components::NodeFactory>();
     ASSERT_EQ(classes.size(), 1u);
@@ -106,13 +108,19 @@ protected:
     m.clock.nanosec = ns;
     clock->publish(m);
   }
-  void pose(gz::transport::Node::Publisher & pub, const std::string & name, int ns)
+  void pose(gz::transport::Node::Publisher & pub, const std::string & name, int ns,
+    bool visible_opponent = false)
   {
     gz::msgs::Pose_V msg;
     for (const auto & part : {name, name + "::root", name + "::head_pitch"}) {
       auto * p = msg.add_pose();
       p->set_name(part);
       p->mutable_orientation()->set_w(1.0);
+      if (visible_opponent && part == name) {
+        p->mutable_position()->set_x(2.0);
+        p->mutable_orientation()->set_w(0.0);
+        p->mutable_orientation()->set_z(1.0);
+      }
       p->mutable_header()->mutable_stamp()->set_nsec(ns);
     }
     pub.Publish(msg);
@@ -130,6 +138,7 @@ protected:
   int ready = 0;
   std::vector<uint32_t> acks, outputs;
   std::vector<size_t> detection_counts;
+  std::vector<float> confidences;
 };
 
 TEST_F(DetectorTest, EpochZeroWaitsForTruthAndAcknowledgesScheduledTick)
@@ -162,6 +171,31 @@ TEST_F(DetectorTest, EpochZeroWaitsForTruthAndAcknowledgesScheduledTick)
   ASSERT_TRUE(wait([this] {return acks.size() == 3 && outputs.size() == 3;}));
   EXPECT_EQ(acks.back(), 50000000u);
   EXPECT_EQ(outputs.back(), 50000000u);
+}
+
+TEST_F(DetectorTest, DisappearanceUsesCaptureTimeAndStillAcknowledgesEmptyFrames)
+{
+  start(true, .034);
+  time(0);
+  ASSERT_TRUE(wait([this] {return ready == 1;}));
+  ASSERT_TRUE(wait([this] {return ours.HasConnections() && theirs.HasConnections();}));
+  pose(ours, "sentry", 0);
+  pose(theirs, "opponent_0", 0, true);
+  pose(ours, "sentry", 50000000);
+  pose(theirs, "opponent_0", 50000000, true);
+  time(17000000);
+  ASSERT_TRUE(wait([this] {return outputs.size() == 1 && acks.size() == 1;}));
+  ASSERT_EQ(detection_counts.front(), 1u);
+  ASSERT_EQ(confidences.size(), 1u);
+  EXPECT_FLOAT_EQ(confidences.front(), .9f);
+  time(34000000);
+  ASSERT_TRUE(wait([this] {return outputs.size() == 2 && acks.size() == 2;}));
+  EXPECT_EQ(detection_counts.back(), 0u);
+  EXPECT_EQ(outputs.back(), 34000000u);
+  EXPECT_EQ(acks.back(), outputs.back());
+  time(50000000);
+  ASSERT_TRUE(wait([this] {return outputs.size() == 3 && acks.size() == 3;}));
+  EXPECT_EQ(detection_counts.back(), 0u);
 }
 
 TEST_F(DetectorTest, DelayedStartAndLateReadySubscriber)

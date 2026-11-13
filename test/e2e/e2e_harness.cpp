@@ -209,9 +209,9 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::TargetState>(
       "/cv/target_state", rclcpp::QoS(10), [this](const auto &m) {
-        state_validity_.push_back({stamp_s(m.header.stamp), m.valid});
+        state_validity_.push_back({stamp_s(m.header.stamp), m.valid && !m.clear});
         while (state_validity_.size() > 300) state_validity_.pop_front();
-        if (m.valid) {
+        if (m.valid && !m.clear) {
           state_history_.push_back(m);
           while (state_history_.size() > 300) state_history_.pop_front();
           state_stamp = stamp_s(m.header.stamp);
@@ -223,8 +223,10 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
   subscribe<std_msgs::msg::Header>("/mcb_emulator/shot", rclcpp::QoS(100),
                                    [this](const auto &m) {
                                      double t = stamp_s(m.stamp);
-                                     if (scoring && t >= score_from_ && t < score_until)
+                                     if (scoring && t >= score_from_ && t < score_until) {
+                                       physical_shot_times.push_back(t);
                                        pending_.push_back({"mcb", t});
+                                     }
                                    });
   // The 50 ms harness chain. In lockstep the coordinator holds physics at each tick
   // until step() releases it, so everything the harness decides happens on a tick.
@@ -390,6 +392,7 @@ void Scorer::tick_body() {
 }
 void Scorer::reset() {
   pending_.clear();
+  physical_shot_times.clear();
   for (auto &entry : shots)
     entry.second.clear();
   scoring = true;
@@ -781,7 +784,8 @@ void Scorer::fire_tick() {
         (*out)["scored_at"] = now;
         visualize_shot(e.first, *out);
         shots[e.first].push_back(*out);
-        cb::append_json(log_path, *out);
+        // Parked cells write after draining so each row carries final lifecycle counts.
+        if (driving()) cb::append_json(log_path, *out);
       }
     }
   }

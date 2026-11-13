@@ -119,6 +119,8 @@ def _is_true(context, name):
 # whose first field is a Header. Rates are the nodes' own timers and sources.
 ODOM = 'nav_msgs/msg/Odometry'
 EKF_PERIOD_S = 0.034  # simulation only: 29.4 Hz for the stock 30 Hz, a whole number of ms
+MANAGER_FRAME_ACK = '/target_manager/frame_ack'
+MANAGER_FRAME_ACK_PARAMETER = 'state_ack_topic'
 PRODUCER_CHAINS = {
     # rf2o's verdict on a lidar scan: its quality diagnostic, one per scan even when the
     # match fails (no odometry then). gz runs the 11.2 Hz lidar on whole milliseconds, 89 ms
@@ -143,10 +145,10 @@ PRODUCER_CHAINS = {
     # point_to_cv_target's 40 Hz idle look.
     'cv_target': {'period_s': 0.025, 'phase_s': 0.0, 'lag_s': 0.0, 'acks': [
         '/dji_serial_bridge/tx_ack/cv_target|/sim/e2e/cv_target_none']},
-    # detector_standin's 60 Hz frame through selector and tracker to TARGET_STATE; the
+    # detector_standin's 60 Hz frame through selector, tracker and manager to TARGET_STATE; the
     # tracker needs TF 10 ms past the capture (pose_latency_s) and gz poses on a 4 ms grid.
     'detector': {'period_s': 1.0 / 60.0, 'phase_s': 0.0, 'lag_s': 0.025, 'align_s': 0.004,
-                 'acks': ['/dji_serial_bridge/tx_ack/target_state@hold|'
+                 'acks': [f'{MANAGER_FRAME_ACK}@tick|'
                           '/sim/e2e/target_state_none@tick']},
     # waypoint_nav's 10 Hz NAV_GOAL, held 1 ms after its tick so the EKF chain (same
     # instant every third tick) has been released first.
@@ -200,7 +202,8 @@ def _barrier_nodes(stage):
     """
     nodes = ['detector_standin', 'dji_serial_bridge', 'mcb_relay', 'waypoint_nav',
              'mcb_emulator', 'lidar_scan', 'head_slider_relay', 'opponent_driver',
-             'point_to_cv_target', 'target_selector', 'target_tracker', 'pose_translator',
+             'point_to_cv_target', 'target_selector', 'target_tracker', 'target_manager',
+             'pose_translator',
              'odom_tf_broadcaster', 'robot_state_publisher', 'lidar_self_filter',
              'ekf_input_publisher', 'ekf_filter_node', 'rf2o_laser_odometry',
              'scan_navigation_publisher', 'map_pose_publisher']
@@ -323,6 +326,7 @@ def generate_launch_description():
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
         launch_arguments={**team_start_args(),
                           'real_hardware': 'false', 'localization_mode': 'amcl',
+                          'enable_target_manager': 'true',
                           'allow_latest_tf': PythonExpression([
                               "'false' if '", LaunchConfiguration('deterministic_epoch_zero'),
                               "' == 'true' else 'true'"]),
@@ -411,6 +415,7 @@ def generate_launch_description():
         if deterministic:
             params.update(strict_startup=True, readiness_topics=[
                 '/detector_standin/ready', '/point_to_cv_target/epoch_zero_ready',
+                '/target_manager/epoch_zero_ready',
                 '/opponent_driver/ready', '/mcb_emulator/epoch_zero_ready',
                 '/robot_spawn_ready/ready', '/startup_barrier/ready',
                 '/match_environment/ready' if stage in DRIVING else '/target_driver/ready'] +
@@ -477,11 +482,20 @@ def generate_launch_description():
                     remappings=[(f'/model/{name}/path', topic)],
                     parameters=[{'use_sim_time': True}])]
         robot_bringup = robot
+        producers = _is_true(context, 'producer_chains')
+        robot_params = {}
+        if producers:
+            robot_params['target_manager'] = {'ros__parameters': {
+                MANAGER_FRAME_ACK_PARAMETER: MANAGER_FRAME_ACK,
+                'consumer_ack_topic': '/dji_serial_bridge/tx_ack/target_state',
+                'target_state_none_topic': ''}}
         if stage == 'mcb_parked':
+            robot_params['point_to_cv_target'] = {'ros__parameters': {
+                'idle_zone': parked_paths['idle_zone']}}
+        if robot_params:
             # Jazzy's global SetParameter stringifies arrays as Python tuples.
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as params:
-                json.dump({'point_to_cv_target': {'ros__parameters': {
-                    'idle_zone': parked_paths['idle_zone']}}}, params)
+                json.dump(robot_params, params)
             atexit.register(os.unlink, params.name)
             robot_bringup = GroupAction([
                 SetParametersFromFile(params.name), robot])
@@ -496,7 +510,6 @@ def generate_launch_description():
         harness_chain = _is_true(context, 'harness_chain')
         if harness_chain and not deterministic:
             raise ValueError('harness_chain requires epoch-zero startup')
-        producers = _is_true(context, 'producer_chains')
         # A stock EKF would silently ignore ekf_deterministic_order and order ties by timing.
         if producers and not os.path.exists(os.path.join(
                 get_package_share_directory('robot_localization'), 'thornbots_fork')):
