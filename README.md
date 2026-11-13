@@ -225,8 +225,10 @@ only paces, up to `pace_slack_s` behind. The loop also waits for
 `mcb_aim_standin` to acknowledge model consumption on `/cv/target/state_ack`
 and for a publish tick's indicated aim point to arrive. Separate DDS topics
 can arrive in either order; a publication acknowledgment alone does not
-prove that the next consumer has processed its input. A wait that passes `max_wait_s`
-(0.5 s wall) is logged as a lockstep timeout, and that run may not repeat.
+prove that the next consumer has processed its input. A loaded host only slows
+these waits ([why](#lockstep-waits-and-load)); a topic whose publisher is gone stops
+gating, and one that stays silent past `max_wait_s` (60 s wall, a deadlock guard)
+is logged as a lockstep timeout, and that run may not repeat.
 The estimation scorer uses `/bench/pacing` (`std_srvs/SetBool`) to hand off
 its progress gate between cells. It waits for the inactive acknowledgement
 while still servicing truth, then writes results without holding the clock.
@@ -1115,6 +1117,40 @@ The suite runs them in this order.
    parked pose, against hiding motion under their drop distance.
    [Parked-push measurements and removed checks](docs/simulation-history-2026-11-02.md#parked-push-and-removed-checks) record the historical calibration.
 
+`long_park_patrol` is an additional **opt-in** rf2o regression, leaving the
+standard ten scenarios unchanged. Run it in the container after building:
+
+```bash
+src/sim/tools/run_suite.sh drift scenario:=long_park_patrol use_rf2o:=true
+```
+
+It scores 180 simulated seconds parked with still wheel odometry
+(`odom_slip_ratio=1`, noise disabled), then a 3.5 cm/s shove for about
+1.143 s (the same commanded +X 4 cm displacement) and 10 s settling interval.
+The final shove tick is shortened to preserve that displacement. This stays
+below 4 cm/s to exercise slow motion while the wheel prior remains still.
+Throughout parking and the shove, a 0.3 m box crosses
+back and forth from x=-1.5 to +1.5 m at y=-2 m, at 0.5 m/s, and the head
+sweeps sinusoidally through +/-0.8 rad with a 12 s period. These are scripted
+match-patrol disturbances, not firmware execution or calibrated patrol rates.
+The box uses acknowledged gz pose updates and remains outside the chassis;
+the measured head joint must reach alternating +/-0.6 rad extremes at least
+20 times, and the box must cross between x<-0.5 and x>+0.5 at least 20 times.
+
+During parking, **every consecutive `/scan_odom` XY step must be <=0.005 m**
+and truth must remain within 0.005 m of its starting position. Maximum scan
+and localized displacement from the park origin must each stay <=0.03 m.
+At least 900
+finite, strictly increasing stamped samples must span >=179 s, with no
+gap >0.5 s and a fresh endpoint. After the shove, truth must move
+0.025-0.05 m; both `/scan_odom` and `parent->root` displacement **vectors**
+must miss truth by <0.01 m. Successful scan increments, zero failed quality
+grades during parking and the shove/settling interval, a fresh scan endpoint and clean
+stack logs are required. A 600 s wall deadline rejects stalled simulated
+time. `use_rf2o:=false` fails this scenario explicitly. The suite wrapper
+runs the native log checker; retain that output alongside the suite log.
+
+
 #### Geometry and helpers
 
 Every cornering scenario traces `loop_legs()`: a 2 m square centred on
@@ -1529,7 +1565,7 @@ the first positive release. Readiness may arrive before discovery; duplicate
 zero messages are harmless. A nonzero readiness stamp, advance before the
 barrier, gate failure or missing readiness stops the coordinator without a
 positive release. `startup_timeout_s` bounds this wait independently of
-`max_wait_s`, which still bounds each subsequent tick. Set the strict gate's
+`max_wait_s`, the deadlock guard on each subsequent tick. Set the strict gate's
 timeout longer than both waits to preserve coordinator diagnostics. Status
 includes the missing topics and startup failure reason. These primitives are
 not yet wired into the e2e launch or the remaining robot readiness gates.
@@ -1551,6 +1587,20 @@ parameters from a thread of its own and applies a change on the first step after
 the harness's referee and drive changes land on a known step even while physics is held.
 `check_lockstep` prints each chain's holds and wall wait, the longest-holding chain and
 RTF with its summary.
+
+##### Lockstep waits and load
+
+A held tick lasts as long as its producer's wall-clock work: `e2e_suite` writes a
+cell's results, checks the graph and sets the next cell's target while physics is held
+at the cell boundary. That work scales with host load; at RTF 0.62 it passed the
+coordinator's former 2 s per-wait limit and failed a correct run. So no lockstep wait
+measures speed. The coordinator waits on a live producer, repeating its release every
+100 ms so the gate's `max_wait_s` counts only coordinator silence. It fails the tick
+at once, naming the topic, when a missing ack group (or the UART flush) has lost
+a publisher it had, and after `max_wait_s` (default 60 s wall) of a live but silent producer:
+deadlock detection, set above the harness's own bounded waits. Status reports each
+chain's `longest_s` hold. The harness throws as soon as the launched stack exits, and
+calls a clock with no tick for 90 wall seconds stalled, after the coordinator's guard.
 
 Random draws are keyed, not streamed ([`keyed_noise.hpp`](include/sim/keyed_noise.hpp)):
 `detector_standin`'s ray noise (when enabled) is drawn per (seed, opponent, capture
@@ -1833,8 +1883,8 @@ The motor device exposes generated-feedback counts separately from commands;
 counts alone do not prove firmware reception.
 
 The E2E harness allows 120 wall seconds per scored sim second for this backend,
-versus 20 for hosted execution. Its five-wall-second clock-stall guard and
-lockstep timeout rejection remain active; a slow emulator is not a passed test.
+versus 20 for hosted execution. Its clock-stall guard and lockstep timeout
+rejection remain active; a slow emulator is not a passed test.
 Board lockstep learns a hold one firmware batch ahead, rather than using the
 hosted look-ahead. A long simulated look-ahead can exceed the coordinator's
 wall deadline on a slow board emulator; reducing that startup distance keeps
