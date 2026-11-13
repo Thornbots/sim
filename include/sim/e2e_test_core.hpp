@@ -43,7 +43,8 @@ inline cv_bench::Json localization_accuracy(
 inline void score_window(double seconds, const std::function<double()> &sim_now,
                          const std::function<double()> &wall_now,
                          const std::function<void()> &spin_once,
-                         double wall_seconds_per_sim_second = 20) {
+                         double wall_seconds_per_sim_second = 20,
+                         double stall_wall_s = 5) {
   double start = sim_now(), previous = start, wall_start = wall_now(),
          last_progress = wall_start;
   while (sim_now() - start < seconds) {
@@ -53,8 +54,10 @@ inline void score_window(double seconds, const std::function<double()> &sim_now,
       throw std::runtime_error("E2E clock moved backwards during scoring");
     if (now > previous)
       last_progress = wall;
-    if (wall - last_progress > 5)
-      throw std::runtime_error("E2E clock stalled for five wall seconds");
+    if (wall - last_progress > stall_wall_s)
+      throw std::runtime_error("E2E clock stalled for " +
+                               std::to_string(static_cast<int>(stall_wall_s)) +
+                               " wall seconds");
     if (wall - wall_start > std::max(30., seconds * wall_seconds_per_sim_second))
       throw std::runtime_error("E2E scoring exceeded its wall-time budget");
     previous = now;

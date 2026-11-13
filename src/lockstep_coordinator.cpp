@@ -24,9 +24,11 @@
 // mark (or the previous tick's ack) must not release this one. A topic is a std_msgs/Header, or `topic#pkg/msg/Type` for
 // any message whose first field is a Header. A chain may hold `lag_s` after its tick and
 // round that hold up to `align_s`; `start_s` skips earlier ticks (data that is only complete a few steps later); the
-// acks still need the tick's own stamp. At each hold it waits for every group. A wait past max_wait_s wall is
-// a lockstep timeout. Publishes counts and per-chain wall time held on
-// /sim/lockstep/status (latched, each wall second). see README.md for design rationale
+// acks still need the tick's own stamp. At each hold it waits for every group, however long a
+// live producer takes. A timeout is a dead or stuck producer: a missing group's publisher gone
+// (immediate), or no answer within max_wait_s wall (a deadlock guard, not a speed limit). While it
+// waits it repeats the release so the gate knows it is alive. Publishes counts and per-chain wall
+// time held on /sim/lockstep/status (latched, each wall second). see README.md for design rationale
 // With `flush_topic`/`flushed_topic`, after every hold's chains answer it publishes the hold
 // time on the first and waits for the same stamp on the second (the bridge writes its queued
 // UART frames, in a fixed order, at that hold). Strict startup may also wait on `readiness_topics`: one transient-local Header
@@ -78,7 +80,9 @@ public:
   {
     step_ns_ = static_cast<int64_t>(declare_parameter("step_s", 0.001) * 1e9);
     strict_startup_ = declare_parameter("strict_startup", false);
-    max_wait_ = std::chrono::duration<double>(declare_parameter("max_wait_s", 2.0));
+    // Deadlock guard: a producer holds a tick for as long as its own (bounded) work takes, e.g.
+    // e2e_suite between cells; on a loaded host that passed 2 s. Load must never fail a run.
+    max_wait_ = std::chrono::duration<double>(declare_parameter("max_wait_s", 60.0));
     startup_timeout_ = std::chrono::duration<double>(declare_parameter("startup_timeout_s", 30.0));
     margin_ns_ = static_cast<int64_t>(declare_parameter("learn_margin_s", 0.05) * 1e9);
     // Strict startup only: the first release stops at boot_hold_s and waits boot_settle_s
@@ -244,6 +248,7 @@ private:
     std::set<int64_t> stamps;  // every stamp received, for the exact matches
     int64_t count = 0;
     int64_t newest_ns = kNever;
+    bool published = false;  // a publisher was seen, so none left means it exited
     rclcpp::SubscriptionBase::SharedPtr sub;
   };
 
@@ -255,7 +260,7 @@ private:
     std::vector<std::vector<size_t>> acks;  // each group: any one satisfies
     int holds = 0, timeouts = 0;
     int64_t ticks = 0;  // ticks completed
-    double wait_s = 0.0;
+    double wait_s = 0.0, longest_s = 0.0;  // total and longest single hold, wall
   };
 
   struct Readiness
@@ -339,6 +344,7 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     a.newest_ns = std::max(a.newest_ns, ns);
+    a.published = true;
     if (a.match != Ack::Match::Newest) {a.stamps.insert(ns);}
     ++a.count;
     cv_.notify_all();
@@ -439,11 +445,37 @@ private:
     released_ns_ = ns;
   }
 
-  // Wait on cv_ for pred, up to max_wait_; false on a timeout or a stop.
-  template<typename Pred>
-  bool wait(std::unique_lock<std::mutex> & lock, Pred pred)
+  // True once `sub` had a publisher and has none left: its producer exited.
+  static bool gone(const rclcpp::SubscriptionBase & sub, bool & published)
   {
-    return cv_.wait_for(lock, max_wait_, [&] {return stop_ || pred();}) && !stop_;
+    const bool any = sub.get_publisher_count() > 0;
+    published = published || any;
+    return published && !any;
+  }
+
+  enum class Waited {Done, Gone, Stalled, Stopped};
+
+  // Wait on cv_ for pred. Gone as soon as `dead` says the producer exited; Stalled only after
+  // max_wait_ (the deadlock guard). Re-sends the current release every 100 ms meanwhile.
+  template<typename Pred, typename Dead>
+  Waited wait(std::unique_lock<std::mutex> & lock, Pred pred, Dead dead)
+  {
+    const auto deadline = std::chrono::steady_clock::now() +
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(max_wait_);
+    while (true) {
+      if (stop_) {return Waited::Stopped;}
+      if (pred()) {return Waited::Done;}
+      if (dead()) {return Waited::Gone;}
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {return Waited::Stalled;}
+      cv_.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(100)));
+      if (released_ns_ != kNever && !pred()) {release(released_ns_);}
+    }
+  }
+  template<typename Pred>
+  Waited wait(std::unique_lock<std::mutex> & lock, Pred pred)
+  {
+    return wait(lock, pred, [] {return false;});
   }
 
   void run()
@@ -558,7 +590,7 @@ private:
       }
       if (!readiness_error_.empty()) {startup_fail(readiness_error_, lock); return;}
       const bool reached = strict_startup_ ? held_ns_ >= hold :
-        wait(lock, [&] {return held_ns_ >= hold;});
+        wait(lock, [&] {return held_ns_ >= hold;}) == Waited::Done;
       if (!reached) {
         if (stop_) {break;}
         // A gate timeout already ran gz free; otherwise gz is slow or gone.
@@ -593,16 +625,36 @@ private:
                   return a.stamps.count(a.match == Ack::Match::Hold ? hold_of(c, tick) : tick) > 0;
                 });
           };
+        // Alternatives are stages of one pipeline (e.g. bridge ack | tracker's none-mark): once
+        // any of them has exited, the tick cannot be answered. Names the first such topic.
+        std::string exited;
+        const auto group_gone = [&](const std::vector<size_t> & group) {
+            for (size_t i : group) {
+              if (gone(*acks_[i]->sub, acks_[i]->published)) {
+                exited = acks_[i]->topic;
+                return true;
+              }
+            }
+            return false;
+          };
         const auto t1 = std::chrono::steady_clock::now();
-        const bool ok = wait(lock, [&] {
+        const Waited result = wait(lock, [&] {
               return !readiness_error_.empty() ||
               std::all_of(c.acks.begin(), c.acks.end(), satisfied);
+            }, [&] {
+              for (const auto & group : c.acks) {
+                if (!satisfied(group) && group_gone(group)) {return true;}
+              }
+              return false;
             });
-        if (stop_) {break;}
+        if (result == Waited::Stopped) {break;}
         if (!readiness_error_.empty()) {startup_fail(readiness_error_, lock); return;}
-        c.wait_s += std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
+        const double held = std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - t1).count();
+        c.wait_s += held;
+        c.longest_s = std::max(c.longest_s, held);
         ++c.holds;
-        if (!ok) {
+        if (result != Waited::Done) {
           ++c.timeouts;
           std::string missing;
           for (const auto & group : c.acks) {
@@ -612,8 +664,15 @@ private:
               missing += (j ? "|" : "") + acks_[group[j]]->topic;
             }
           }
-          RCLCPP_ERROR(get_logger(), "lockstep timeout: %s at %.3f s, no ack on%s",
-            c.name.c_str(), tick * 1e-9, missing.c_str());
+          if (result == Waited::Gone) {
+            RCLCPP_ERROR(get_logger(), "lockstep timeout: %s at %.3f s, no ack on%s: "
+              "producer exited (no publisher left on %s)", c.name.c_str(), tick * 1e-9,
+              missing.c_str(), exited.c_str());
+          } else {
+            RCLCPP_ERROR(get_logger(), "lockstep timeout: %s at %.3f s, no ack on%s after %.1f s "
+              "wall with a live publisher: producer stuck", c.name.c_str(), tick * 1e-9,
+              missing.c_str(), max_wait_.count());
+          }
           if (strict_startup_) {fail(); return;}
         }
         ++c.ticks;
@@ -624,12 +683,15 @@ private:
         flush.stamp = rclcpp::Time(at);
         flush_pub_->publish(flush);
         const auto t2 = std::chrono::steady_clock::now();
-        const bool flushed = wait(lock, [&] {return flushed_ns_ >= at;});
+        const Waited flushed = wait(lock, [&] {return flushed_ns_ >= at;},
+            [&] {return gone(*flushed_sub_, flush_published_);});
         flush_wait_s_ += std::chrono::duration<double>(std::chrono::steady_clock::now() - t2).count();
-        if (stop_) {break;}
-        if (!flushed) {
+        if (flushed == Waited::Stopped) {break;}
+        if (flushed != Waited::Done) {
           ++hold_timeouts_;
-          RCLCPP_ERROR(get_logger(), "lockstep timeout: no UART flush at %.3f s", at * 1e-9);
+          RCLCPP_ERROR(get_logger(), "lockstep timeout: no UART flush at %.3f s on %s: %s",
+            at * 1e-9, flushed_sub_->get_topic_name(),
+            flushed == Waited::Gone ? "bridge exited" : "bridge stuck");
           if (strict_startup_) {fail(); return;}
         }
       }
@@ -658,6 +720,7 @@ private:
       kv("chain." + c.name + ".holds", std::to_string(c.holds));
       kv("chain." + c.name + ".wait_s", std::to_string(c.wait_s));
       kv("chain." + c.name + ".timeouts", std::to_string(c.timeouts));
+      kv("chain." + c.name + ".longest_s", std::to_string(c.longest_s));
       line << " " << c.name << " " << c.wait_s << " s";
     }
     const double sim_s = std::max<int64_t>(gz_ns_, 0) * 1e-9;
@@ -712,6 +775,7 @@ private:
   int holds_ = 0, gate_timeouts_ = 0, hold_timeouts_ = 0;
   double gz_wait_s_ = 0.0, flush_wait_s_ = 0.0;
   int64_t flushed_ns_ = kNever;
+  bool flush_published_ = false;  // guarded by mutex_
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr flush_pub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr flushed_sub_;
   std::atomic<bool> stop_{false};
