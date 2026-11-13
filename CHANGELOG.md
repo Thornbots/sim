@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Share firmware's π/2 rad/s shot-gating cutout in the aim stand-in, with
+  threshold/refresh parity coverage and an explicit chase comparison override.
+
 - Score `mcb_parked` through tracker, target manager and bridge, accepting
   input-frame acknowledgements after bridge queue handoff in lockstep. Add a capture-time detection
   disappearance cell and record first-shot latency and post-disappearance

@@ -130,10 +130,8 @@ no publisher left (the scorer between cases) stops holding it. A fixed
 `real_time_factor` above 0 does not wait. Use `:=1` as the control;
 [dated pacing comparisons](docs/cv-bench-results-2026-09-28.md#clock-pacing-observations-2026-09-25-and-2026-10-01) record the measured tradeoff.
 
-`spin_mode:=firmware` uses the firmware's spin policy and chase windows;
-`spin_mode:=shotgating` uses a narrow face-on diagnostic firing window.
-`spin_mode:=chase` permits `chase_settle_s` and `chase_margin_s` overrides,
-which otherwise use the firmware values. The perfect gimbal follows planner
+The [MCB aim stand-in](#mcb-aim-stand-in) owns planner modes and overrides.
+The perfect gimbal follows planner
 rates between 5 ms replans. The recorded floors below
 were measured in chase mode. Each cell has
 its own floor in `FLOORS` (`include/sim/shot_floors_data.hpp`), the lowest score
@@ -1477,6 +1475,8 @@ bridge messages are required to build the stand-in.
   `tick_topic` and `state_ack_topic` retain the bench's lockstep seams.
 - Tuning uses the sentry firmware defaults. Overrides: `spin_mode` (`firmware`,
   `chase`, diagnostic `shotgating`), chase settle/margin and panel switch margin.
+  Firmware mode shares the high-spin cutout in the linked firmware design.
+  Explicit `chase` disables that cutout for controlled comparisons.
   `fire_enabled:=false` keeps aiming without requests. `gimbal_lag_s` is removed;
   launch owners should remove that obsolete override.
 
@@ -1487,6 +1487,8 @@ validate drag/gravity and the measured-angle panel intersection. Neither this
 fixture nor hosted wall timing establishes Type C scheduler timing. Three-run
 nightly comparisons and validation are recorded in
 [managed aiming, 2026-11-12](docs/managed-aim-2026-11-12.md).
+The [spin-cutout measurement](docs/managed-aim-cutout-2026-11-13.md) compares
+the parked pipeline with nightly and the managed chase planner.
 
 ### point_shooter
 
