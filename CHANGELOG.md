@@ -8,6 +8,10 @@
   startup also waits for the manager's epoch-zero timer initialization. Deploy
   with thornbots_pkg #76, bridge #46 and MCBV3 #141; firmware C++ changes are separate.
 
+- The emulated pitch encoder zero (`kPitchOffset`) is now -0.26, the firmware SENTRY `PITCH_OFFSET`
+  after MCBV3 `ce4aebe` (was a stale -0.09). It is only the absolute-encoder zero, not head geometry.
+  `test_mcb_motor` now parses the firmware header and fails if the two differ.
+
 - Correct the Season 2 side wall position and regenerate its field meshes.
 
 - `OpponentMover` with `path_hz` no longer waits 5 s wall for a path sample no producer makes. Its

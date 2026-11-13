@@ -29,12 +29,16 @@ void Scorer::check_lockstep() {
   // meanwhile would end the window at a different tick in every run.
   // The coordinator's sim_s is the last hold it completed: the one before the tick held now.
   const double end = tick_s() - .1;
-  const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  const auto limit = std::chrono::steady_clock::now() +
+                     std::chrono::duration<double>(kStallWallS);
   const auto fresh = [&] {
     return lockstep_status_.count("sim_s") && std::stod(lockstep_status_.at("sim_s")) >= end;
   };
-  while (rclcpp::ok() && !fresh() && std::chrono::steady_clock::now() < limit)
+  while (rclcpp::ok() && !fresh() && std::chrono::steady_clock::now() < limit) {
+    if (stack_alive && !stack_alive())
+      throw std::runtime_error("E2E stack exited; see stack.log");
     spin_once();
+  }
   if (!fresh())
     throw std::runtime_error("lockstep: missing or stale coordinator status");
   const auto &s = lockstep_status_;
@@ -56,8 +60,11 @@ void Scorer::check_lockstep() {
       continue;
     const std::string name = key.substr(6, key.size() - 6 - tail.size());
     const double wait = std::stod(value);
+    const auto longest_hold = s.find("chain." + name + ".longest_s");
     std::cout << ' ' << name << " holds=" << s.at("chain." + name + ".holds")
               << " wait=" << value << "s";
+    if (longest_hold != s.end())
+      std::cout << " longest=" << longest_hold->second << "s";
     if (wait > longest_s) {
       longest_s = wait;
       longest = name;
@@ -281,7 +288,7 @@ void Scorer::spin_for(double seconds) {
         if (!rclcpp::ok())
           throw std::runtime_error("E2E ROS context stopped during scoring");
         step();
-      }, cv_bench::options.backend == "renode" ? 120 : 20);
+      }, cv_bench::options.backend == "renode" ? 120 : 20, kStallWallS);
 }
 bool Scorer::wait_until(const std::function<bool()> &predicate, double timeout,
                         const std::string &description) {
@@ -314,6 +321,14 @@ void Scorer::retire() {
   retired_ = true;
 }
 bool Scorer::step(double wall_timeout_s) {
+  if (stack_alive && !stack_alive()) {
+    const auto t = lockstep_status_.find("timeouts");
+    throw std::runtime_error(
+        "E2E stack exited" +
+        (t == lockstep_status_.end() ? std::string()
+                                     : " (lockstep reported " + t->second + " timeouts)") +
+        "; see stack.log");
+  }
   release_tick();
   const auto end = std::chrono::steady_clock::now() +
                    std::chrono::duration<double>(wall_timeout_s);
@@ -328,9 +343,18 @@ bool Scorer::step(double wall_timeout_s) {
 }
 void Scorer::align(double period_s) {
   const auto period_ms = std::llround(period_s * 1000);
-  while (rclcpp::ok())
-    if (step() && (std::llround(tick_s() * 1000) - kPhaseMs) % period_ms == 0)
-      return;
+  auto progress = std::chrono::steady_clock::now();
+  while (rclcpp::ok()) {
+    if (step()) {
+      progress = std::chrono::steady_clock::now();
+      if ((std::llround(tick_s() * 1000) - kPhaseMs) % period_ms == 0)
+        return;
+    } else if (std::chrono::steady_clock::now() - progress >
+               std::chrono::duration<double>(kStallWallS)) {
+      throw std::runtime_error("E2E clock stalled while aligning; see stack.log");
+    }
+  }
+  throw std::runtime_error("E2E ROS context stopped while aligning");
 }
 void Scorer::run_to(double tick_target, double wall_budget_s) {
   const auto begin = std::chrono::steady_clock::now();
@@ -348,8 +372,10 @@ void Scorer::run_to(double tick_target, double wall_budget_s) {
         return;
     }
     const auto wall = std::chrono::steady_clock::now();
-    if (wall - progress > std::chrono::seconds(5))
-      throw std::runtime_error("E2E clock stalled for five wall seconds");
+    if (wall - progress > std::chrono::duration<double>(kStallWallS))
+      throw std::runtime_error("E2E clock stalled (no tick in " +
+                               std::to_string(static_cast<int>(kStallWallS)) +
+                               " wall s); see stack.log");
     if (wall - begin > std::chrono::duration<double>(wall_budget_s))
       throw std::runtime_error("E2E scoring exceeded its wall-time budget");
   }
