@@ -120,3 +120,12 @@ gitlink bump and a High changelog/reflash requirement. The parent owns that
 workspace PR and the end-to-end manager/firmware bench. No workspace PR or merge
 is included here. The wire-contract ambiguity concerning radius sanity and
 malformed assigned geometry is listed in the firmware evidence for review.
+
+## Nightly integration follow-up
+
+Merged sim nightly `83131d8` and firmware nightly `8405b0d` into the package
+branches without rewriting their history. The firmware uses the nearest-zero
+pitch reading on every robot; sim's encoder zero is now −0.26 with a source
+parity test. The managed UART firing fixture consequently supplies the requested
+pitch directly, removing its previous 0.17 rad offset compensation. The earlier
+pitch-boot failure counts above describe the historical baseline, not this merge.

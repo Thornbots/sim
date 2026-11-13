@@ -39,10 +39,8 @@ inline std::array<double, 10> aligned_readings(double x = 3, double y = 1,
              hw::kPi / (4 << i);
   }
   std::array<double, 10> out{};
-  // Isolate the known nightly motor-fixture offset mismatch in these gate
-  // tests.
   out[4] = std::atan2(y, x) + std::asin(-0.0019 / range) - hw::kStartYaw;
-  out[8] = pitch - .17;
+  out[8] = pitch;
   return out;
 }
 inline void prepare_alignment(hw::Firmware& firmware, const hw::Referee& ref) {
