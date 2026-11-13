@@ -616,7 +616,7 @@ cells/segments, checker verdicts and comparison with the previous status.
 
 | Stage | Test | What it scores |
 |---|---|---|
-| `mcb_parked` (default) | `test/e2e/e2e_suite.cpp` | firmware ingress from team start, then our robot parked against `target_driver`; one test per speed and path |
+| `mcb_parked` (default) | `test/e2e/e2e_suite.cpp` | firmware ingress from team start, then our robot parked against `target_driver`; one test per speed and path, plus detection disappearance |
 | `mcb_drive` | `test/e2e/e2e_suite.cpp` | our robot drives spawn to center against one red sentry |
 | `mcb_match` | `test/e2e/e2e_suite.cpp` | the 2v2 center fight with ballistic shots and HP |
 
@@ -634,7 +634,7 @@ Stages default to board execution: follow the [Type C build](#type-c-board-execu
 first, or pass `backend:=hosted` after the [hosted build](#mcb-emulator).
 
 ```bash
-ros2 launch sim e2e.launch.py                                 # mcb_parked, all 12 cells
+ros2 launch sim e2e.launch.py                                 # mcb_parked, 12 motion cells + disappearance
 ros2 launch sim e2e.launch.py speeds:='0 2' paths:=lateral duration:=15
 ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:=1.5
 ```
@@ -658,6 +658,28 @@ opposing team's start as their idle look point. The parked scoring gates
 and firmware control laws are unchanged.
 Each requested cell sets its speed/spin and settles for three sim seconds
 before scoring.
+
+The detector feeds selector, tracker, target manager and then the UART bridge,
+as in the robot launch. `detector_standin` supplies capture-time confidence on
+each panel. Its `hidden_from_s` parameter suppresses detections from that capture
+timestamp onward while empty frames and their acknowledgements continue. The
+extra `disappears-lateral` cell hides a stationary target during settling,
+reveals it at the scoring-window start, then hides it halfway through the
+window; Gazebo truth remains available to adjudicate shots. The detector
+lockstep group waits for the manager's input-frame `frame_ack`, including
+held-model refreshes, clears and suppressed sends. The manager waits for the
+bridge queue handoff before acknowledging; the coordinator then flushes that
+queue and waits for `sim_tx_flushed`. Tracker TF-drop none marks remain an
+alternative when the tracker publishes no state for the manager to consume.
+
+Parked shot and state rows carry the cell's `lifecycle` metrics: scoring-window
+start, disappearance boundary, time to first physical chamber exit from that
+start (null if none), total physical shots, and exits at or after disappearance
+(null for cells without disappearance). Counts use exit stamps, independently
+of delayed shot adjudication. `scores.jsonl` retains these metrics even when no
+shots or valid states exist. Parked shot rows are written after the window drains
+so they contain final counts. Time to first shot starts after settling; only
+the disappearance cell begins that window with fresh target acquisition.
 
 `shots.jsonl` in `log_dir` (`/tmp/e2e_test_logs`) splits every miss into
 the barrel's angle off the aim and the aim's distance from the panel, and

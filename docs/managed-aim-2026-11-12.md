@@ -2,7 +2,7 @@
 
 The [stand-in](../README.md#mcb-aim-stand-in) now shares firmware `AimControl`,
 including receipt expiry, clear precedence, continuous rates and the measured
-impact gate. No launch files changed. Launch owners should remove obsolete
+impact gate. That original stand-in change made no launch edits. Launch owners should remove obsolete
 `gimbal_lag_s` overrides; tick/ack topic interfaces are unchanged.
 
 ## Builds and tests
@@ -118,8 +118,8 @@ there are no accepted lockstep timeouts.
 Integrate this PR with MCBV3 #141 and bridge #46; use a coordinated workspace
 gitlink bump and a High changelog/reflash requirement. The parent owns that
 workspace PR and the end-to-end manager/firmware bench. No workspace PR or merge
-is included here. The wire-contract ambiguity concerning radius sanity and
-malformed assigned geometry is listed in the firmware evidence for review.
+is included here. The accepted radius and malformed-assignment dispositions
+are maintained in the firmware evidence.
 
 ## Nightly integration follow-up
 
@@ -129,3 +129,96 @@ pitch reading on every robot; sim's encoder zero is now −0.26 with a source
 parity test. The managed UART firing fixture consequently supplies the requested
 pitch directly, removing its previous 0.17 rad offset compensation. The earlier
 pitch-boot failure counts above describe the historical baseline, not this merge.
+
+The stacked managed-fixture change explicitly enables the manager in E2E and
+includes it in graph checks. Node-specific launch parameters configure its
+input-frame acknowledgement without changing tracker none marks. The new
+detector test checks a visible panel's confidence and exact capture-time
+disappearance, including continued empty-frame acknowledgements; lifecycle
+tests check physical exit stamps, inclusive disappearance boundaries and
+explicit no-shot results. No arrival, localization, hit-rate or timeout limits
+were changed. The previous ingress failure did not reproduce in this task's
+full-run attempt: the chassis settled at `(−0.0058, −2.3904)` after 11.8 simulated
+seconds. Full acceptance results follow below.
+
+The first managed full-run attempt used thornbots_pkg `eeb09f9`, bridge
+`a71ab63` and the skip-only acknowledgement. It passed ingress, then stopped in
+the stationary lateral cell at detector frame `37.317 s`: neither bridge
+`tx_ack/target_state@hold` nor manager `skip_ack@tick` answered. The existing
+60 s stuck-producer guard failed the run; all 13 cells failed and the native
+checker rejected it. No scores from this attempt are accepted. A held-model
+refresh retains its original model stamp, so it cannot satisfy the hold-stamped
+bridge acknowledgement and is not a skipped send. This interface gap was
+reported to the manager/bridge owner; no peer sources were edited here.
+
+The replacement uses thornbots_pkg `15e5647` and bridge `6232e4f`.
+E2E configures manager `state_ack_topic=/target_manager/frame_ack` and
+`consumer_ack_topic=/dji_serial_bridge/tx_ack/target_state`. Its input-frame
+Header acknowledges every consumed input after all emitted states have reached
+the bridge queue. The coordinator subsequently flushes and awaits completion;
+model header stamps retain their original meaning. The detector group uses
+this frame acknowledgement rather than accepting a hold-stamped bridge packet
+acknowledgement. Only tracker TF-drop none marks remain as an alternative;
+the manager's unused skip-mark output is disabled in this fixture.
+
+After the fixture correction, colcon reports **273 result records, zero errors,
+zero failures and zero skips**. `T17_FIRMWARE_BINARY` points at the rebuilt
+hosted sentry binary so the UART-relay backend test runs instead of skipping.
+All six detector tests and both new lifecycle tests pass. The standalone
+lockstep suite passes **23/23** and its native log checker accepts the run.
+
+### Managed parked run
+
+```sh
+tools/run_suite.sh mcb_parked backend:=hosted headless:=true log_dir:=/evidence/parked-frame-ack
+```
+
+All **13/13 cells pass**, and the native checker reports `bench ok`. This is one
+full run, not a three-repeat accuracy floor. Input is `detector_standin` panels
+from Gazebo truth, with confidence 0.9, through the real selector, tracker,
+manager, bridge and hosted firmware. It uses the launch defaults: 20 s nominal
+scoring duration, three seconds settling, all three paths, speeds 0/1/2/4 m/s
+and their normal spin sweep, plus disappearance. No truth TargetState bypass is
+used in this run. The previous chase-default stand-in comparison above uses a
+different, explicitly described fixture; it is not a baseline for this table.
+The integrator's parallel nightly parked campaign supplies that comparison.
+
+| Cell | Shots | Hit % | First shot from window start, s | Shots after disappearance |
+| --- | ---: | ---: | ---: | ---: |
+| stationary-lateral | 259 | 97.30 | 4.485 | — |
+| speed1-lateral | 18 | 55.56 | 3.525 | — |
+| speed2-lateral | 71 | 45.07 | 0.186 | — |
+| speed4-lateral | 202 | 25.25 | 0.336 | — |
+| stationary-radial | 270 | 98.89 | 0.014 | — |
+| speed1-radial | 7 | 85.71 | 1.212 | — |
+| speed2-radial | 55 | 72.73 | 0.257 | — |
+| speed4-radial | 232 | 73.28 | 0.157 | — |
+| stationary-diagonal | 250 | 100.00 | 0.010 | — |
+| speed1-diagonal | 16 | 56.25 | 1.648 | — |
+| speed2-diagonal | 72 | 70.83 | 0.372 | — |
+| speed4-diagonal | 197 | 42.13 | 0.364 | — |
+| disappears-lateral | 194 | 98.97 | 0.074 | 6 |
+
+There are 1,843 physical shots, all adjudicated. The disappearance cell reveals
+at `329.001 s` and hides at `339.001 s`; its final post-disappearance exit is
+257 ms after hiding. These are physical chamber exits, not fire requests. The
+run reports zero lockstep timeouts and zero latest-TF fallbacks. Worst cell
+localization p95/max are 0.05021/0.05039 m; maximum chassis displacement is
+0.02637 m, below the unchanged 0.03 m gate. The native elapsed result is
+`13 passed in 478.45s`.
+
+The epoch-zero launch regression also passes all nine scenarios: ordinary and
+six-second-delayed coordinator startup plus missing-readiness failure for each
+of parked, drive and match. It now observes manager readiness and asserts the
+first two `frame_ack` stamps are the detector input stamps, 17/34 ms. Missing
+readiness still fails closed before a positive firmware tick. These short
+checks do not score complete drive/match campaigns.
+
+Final colcon validation against those updated peer pins again reports 273
+records: **241 individual package cases pass**, plus their CTest aggregates,
+with no errors, failures or skips. Quality and actionlint pass in both changed
+packages. The real ROS/PTY unit fixtures use their existing 15 s bridge-stop
+fallback for two bridge processes, before and after the peer update; those
+process groups are killed and reaped by the fixture. The full parked run and
+epoch-zero stacks leave no running installed nodes or Gazebo/launch processes.
+No Type C board timing or complete drive/match scoring campaign was run here.

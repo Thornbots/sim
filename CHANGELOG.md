@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Score `mcb_parked` through tracker, target manager and bridge, accepting
+  input-frame acknowledgements after bridge queue handoff in lockstep. Add a capture-time detection
+  disappearance cell and record first-shot latency and post-disappearance
+  physical-shot counts alongside shot/state scores. Existing scoring and
+  chassis-settle criteria are unchanged.
+
 - Route truth-state and tracking fixtures through the Jetson target manager.
   Estimation scoring retains every raw estimate; clock pacing acknowledges every
   consumed input even when a managed send is suppressed. Deterministic E2E
