@@ -37,8 +37,9 @@ public:
   }
   double now_s() { return get_clock()->now().seconds(); }
   void spin_once() { executor_.spin_once(std::chrono::milliseconds(100)); }
-  bool wait_until(const std::function<bool()> &predicate, double timeout,
-                  const std::string &description) {
+  virtual ~SimTimeNode() = default;
+  virtual bool wait_until(const std::function<bool()> &predicate, double timeout,
+                          const std::string &description) {
     const auto end = std::chrono::steady_clock::now() +
                      std::chrono::duration<double>(timeout);
     while (rclcpp::ok() && std::chrono::steady_clock::now() < end) {
@@ -49,6 +50,12 @@ public:
     std::cout << "[wait_until] timed out after " << timeout
               << "s waiting for: " << description << std::endl;
     return false;
+  }
+  // Spin until `future` is ready or `timeout` wall seconds pass.
+  template <class Future> bool wait_future(Future &future, double timeout) {
+    return executor_.spin_until_future_complete(
+               future, std::chrono::duration<double>(timeout)) ==
+           rclcpp::FutureReturnCode::SUCCESS;
   }
   virtual void spin_for(double seconds) {
     const auto end =

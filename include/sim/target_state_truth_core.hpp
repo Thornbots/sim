@@ -49,6 +49,7 @@ public:
     const auto v = velocity_in_parent(truth);
     dji_serial_bridge::msg::TargetState out;
     out.header = truth.header;
+    out.detection_stamp = truth.header.stamp;
     out.robot_track_id = 1;
     out.confidence = 1.0F;
     out.center = p;

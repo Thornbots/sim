@@ -256,45 +256,26 @@
     <visual>
       <visibility_flags>0xFFFFFFFE</visibility_flags>
     </visual>
-    <!-- RPLIDAR A2M8 in its typical mode, as sllidar_node runs it with no
-         scan_mode: 10 Hz, 8000 samples/s, so 800 beams at 0.45 deg. Range
-         0.15-12 m. Noise is 1% of range per the datasheet's distance
-         resolution; gz only takes a constant, so 0.01 m is 1% at the
-         ~1 m ranges the sentry usually sees. -->
+    <!-- Angle-compensated A2M8 grid measured on the sentry; see
+         README.md#lidar-format-and-model-limits for timing/noise limits. -->
     <sensor name="lidar" type="gpu_lidar">
       <always_on>true</always_on>
       <visualize>true</visualize>
-      <update_rate>10</update_rate>
+      <update_rate>11.2</update_rate>
       <topic>scan</topic>
       <gz_frame_id>lidar</gz_frame_id>
       <lidar>
         <scan>
           <horizontal>
-            <samples>800</samples>
+            <samples>720</samples>
             <resolution>1.000000</resolution>
-            <!-- Symmetric about the sensor's forward axis (-pi to +pi), NOT
-                 0 to 2pi. Two reasons, and this is not cosmetic:
-                 1. It matches what real RPLIDAR ROS drivers publish, so sim
-                    and hardware agree on the scan convention.
-                 2. rf2o_laser_odometry ignores angle_min outright and
-                    assumes the scan is centered on zero. See
-                    CLaserOdometry2D.cpp, which derives each beam's bearing
-                    as `tita = -0.5*fovh + u*fovh/(cols-1)`. Under the old
-                    0 to 6.28 range every beam was therefore mis-assigned by
-                    exactly pi, so rf2o perceived the world rotated 180
-                    degrees and reported /scan_odom displacement of the
-                    right magnitude in precisely the wrong direction
-                    (measured 2026-07-25: 179.81 deg mean error over all
-                    four drive axes). That made EKF fusion catastrophically
-                    worse than raw wheel odometry.
-                 thornbots_pkg's lidar_self_filter derives bearings as
-                 angle_min + i*angle_increment, so it is unaffected. -->
-            <min_angle>-3.140000</min_angle>
-            <max_angle>3.140000</max_angle>
+            <!-- rf2o assumes bearings symmetric about zero. -->
+            <min_angle>-3.141592653589793</min_angle>
+            <max_angle>3.141592653589793</max_angle>
           </horizontal>
         </scan>
         <range>
-          <min>0.15</min>
+          <min>0.05</min>
           <max>12.0</max>
           <resolution>0.015000</resolution>
         </range>

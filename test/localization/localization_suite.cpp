@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "dji_serial_bridge/msg/ref_sys_status.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rcl_interfaces/srv/get_parameters.hpp"
@@ -21,8 +22,11 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sim/gazebo_helpers.hpp"
+#include "sim/field.hpp"
+#include "sim/match_scenario.hpp"
 #include "sim/process.hpp"
 #include "sim/suite_timing.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
@@ -61,6 +65,7 @@ struct Options {
   std::string suite = "drift", backend = "amcl", scenario, rtf = "0";
   bool gui = true, rf2o = true, restart = false;
   double speed = 4.0, accel = 20.0, spawn_yaw = sim::gazebo::kSpawnYaw;
+  double spawn_x = sim::field::kLoopCentre[0], spawn_y = sim::field::kLoopCentre[1];
   double slip = 0.05, drift = 0.002, seconds = 45.0;
 } options;
 std::vector<std::string> scenario_names = {
@@ -68,9 +73,12 @@ std::vector<std::string> scenario_names = {
     "drift_correction", "drift_correction_obstacle",
     "moving_obstacles", "real_accel",
     "jerk_with_motion", "odom_stuck",
-    "scan_degraded"};
+    "scan_degraded",    "parked_push"};
+// Side of the square loop around sim::field::kLoopCentre; 2 m fits between the
+// Central Wall and blue's Side High Ground (README "Geometry and helpers").
+constexpr double kLoopSide = 2.0;
 std::array<Leg, 4> loop_legs() {
-  const double s = options.speed, d = 3.0 / s;
+  const double s = options.speed, d = kLoopSide / s;
   return {{{0.0, -s, d}, {s, 0.0, d}, {0.0, s, d}, {-s, 0.0, d}}};
 }
 std::string fixed(double value, int precision = 4) {
@@ -134,14 +142,31 @@ public:
                  {rclcpp::Parameter("use_sim_time", true)})),
         parent(parent_frame), child(child_frame), buffer(get_clock()),
         listener(buffer) {
+    referee = create_publisher<dji_serial_bridge::msg::RefSysStatus>(
+        "/dji_serial_bridge/ref_sys", 10);
+    // Team assignment is independent of truth and the simulated clock.
+    referee_timer = create_wall_timer(std::chrono::milliseconds(100),
+                                     [this] { publish_referee(); });
     command = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
     scan_sub = create_subscription<sensor_msgs::msg::LaserScan>(
         "/scan", 10,
-        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr) { ++scan_count; });
+        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr scan) {
+          ++scan_count;
+          check_scan(*scan);
+        });
+    raw_scan_sub = create_subscription<sensor_msgs::msg::LaserScan>(
+        "/scan_raw", 10,
+        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr scan) {
+          ++raw_scan_count;
+          check_scan(*scan);
+        });
     truth_sub = create_subscription<nav_msgs::msg::Odometry>(
         "/sim/raw_odom", 10,
         [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
-          truth = Point{msg->pose.pose.position.x, msg->pose.pose.position.y};
+          // Blank-map backends boot at the spawn, so their frames start there.
+          const bool booted = options.backend == "none" || options.backend == "mapping";
+          truth = Point{msg->pose.pose.position.x - (booted ? options.spawn_x : 0.0),
+                        msg->pose.pose.position.y - (booted ? options.spawn_y : 0.0)};
           const auto &q = msg->pose.pose.orientation;
           truth_yaw = std::atan2(2 * (q.w * q.z + q.x * q.y),
                                  1 - 2 * (q.y * q.y + q.z * q.z));
@@ -166,8 +191,21 @@ public:
   tf2_ros::Buffer buffer;
   tf2_ros::TransformListener listener;
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr command;
-  int scan_count = 0;
+  rclcpp::Publisher<dji_serial_bridge::msg::RefSysStatus>::SharedPtr referee;
+  double last_referee = -1.0;
+  size_t referee_count = 0;
+  void publish_referee() {
+    dji_serial_bridge::msg::RefSysStatus msg;
+    msg.header.stamp = now();
+    msg.robot_id = 7;
+    msg.is_on_blue_team = true;
+    referee->publish(msg);
+    ++referee_count;
+    last_referee = now_s();
+  }
+  int scan_count = 0, raw_scan_count = 0, invalid_scans = 0;
   std::optional<Point> truth;
+  std::optional<std::vector<rclcpp::Parameter>> ingress_params;
   double truth_yaw = 0.0;
   std::optional<double> head_yaw;
   Pose yaw_range{}, head_range{};
@@ -217,11 +255,11 @@ public:
     return false;
   }
   bool scans_flowing(int count = 10, double timeout = 60.0) {
-    scan_count = 0;
+    scan_count = raw_scan_count = invalid_scans = 0;
     const auto end = Clock::now() + std::chrono::duration<double>(timeout);
     while (Clock::now() < end) {
-      if (scan_count >= count) {
-        return true;
+      if (scan_count >= count && raw_scan_count >= count) {
+        return invalid_scans == 0;
       }
       spin_wall(0.1);
     }
@@ -229,17 +267,22 @@ public:
   }
   std::optional<Pose> transform(const std::string &from, const std::string &to,
                                 double timeout = 2.0) {
-    try {
-      const auto tf = buffer.lookupTransform(from, to, tf2::TimePointZero,
-                                             tf2::durationFromSec(timeout));
-      const auto &t = tf.transform.translation;
-      const auto &q = tf.transform.rotation;
-      return Pose{t.x, t.y,
-                  std::atan2(2 * (q.w * q.z + q.x * q.y),
-                             1 - 2 * (q.y * q.y + q.z * q.z))};
-    } catch (const tf2::TransformException &) {
-      return std::nullopt;
-    }
+    const auto end = Clock::now() + std::chrono::duration<double>(timeout);
+    do {
+      try {
+        const auto tf = buffer.lookupTransform(from, to, tf2::TimePointZero);
+        const auto &t = tf.transform.translation;
+        const auto &q = tf.transform.rotation;
+        return Pose{t.x, t.y,
+                    std::atan2(2 * (q.w * q.z + q.x * q.y),
+                               1 - 2 * (q.y * q.y + q.z * q.z))};
+      } catch (const tf2::TransformException &) {
+        if (Clock::now() >= end) return std::nullopt;
+        // TF's listener has its own thread; the fixture must also keep spinning.
+        spin_wall(0.01);
+      }
+    } while (rclcpp::ok());
+    return std::nullopt;
   }
   std::optional<Pose> correction(double timeout = 2.0) {
     return transform(parent, child, timeout);
@@ -363,8 +406,27 @@ public:
   }
 
 private:
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub;
+  void check_scan(const sensor_msgs::msg::LaserScan &scan) {
+    const bool valid = scan.ranges.size() == 720 &&
+        scan.intensities.size() == scan.ranges.size() &&
+        scan.header.frame_id == "lidar" &&
+        std::abs(scan.angle_min + M_PI) < 1e-6 &&
+        std::abs(scan.angle_max - M_PI) < 1e-6 &&
+        std::abs(scan.angle_increment - 2 * M_PI / 719) < 1e-7 &&
+        std::abs(scan.range_min - 0.05) < 1e-6 &&
+        std::abs(scan.range_max - 12.0) < 1e-6 &&
+        scan.scan_time > 0.08 && scan.scan_time < 0.10 &&
+        std::abs(scan.time_increment * 719 - scan.scan_time) < 1e-6 &&
+        std::all_of(scan.ranges.begin(), scan.ranges.end(), [&scan](float r) {
+          return r == INFINITY ||
+                 (std::isfinite(r) && r >= scan.range_min && r <= scan.range_max);
+        });
+    if (!valid && invalid_scans++ == 0)
+      RCLCPP_ERROR(get_logger(), "sim lidar scan format violates the A2M8 contract");
+  }
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub, raw_scan_sub;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr truth_sub;
+  rclcpp::TimerBase::SharedPtr referee_timer;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub;
 };
 std::unique_ptr<sim::LaunchTree> sim_tree, actor_tree;
@@ -424,8 +486,8 @@ std::unique_ptr<Stack> run_stack(bool noise,
   if (backend.empty()) {
     backend = options.backend;
   }
-  const std::string parent = backend == "none" ? "odom" : "map",
-                    child = backend == "none" ? "root" : "odom";
+  const std::string parent = backend == "none" ? "nav_odom" : "map",
+                    child = backend == "none" ? "root" : "nav_odom";
   std::filesystem::create_directories(kLogDir);
   auto stack = std::make_unique<Stack>();
   const auto helper_for = [&] {
@@ -454,8 +516,22 @@ std::unique_ptr<Stack> run_stack(bool noise,
       })) {
     params.emplace_back("odom_slip_ratio", 0.02);
   }
+  const auto prepare_ingress = [&](Helper &helper) {
+    helper.ingress_params.reset();
+    if (backend != "amcl") return;
+    helper.ingress_params = params;
+    // Fault injection begins at the scenario origin, after production startup.
+    for (auto &p : params) {
+      if (p.get_name() == "odom_noise_enabled") {
+        p = rclcpp::Parameter("odom_noise_enabled", false);
+      } else if (p.get_name() == "odom_slip_ratio") {
+        p = rclcpp::Parameter("odom_slip_ratio", 0.0);
+      }
+    }
+  };
   if (options.restart) {
     stack->helper = std::make_shared<Helper>(parent, child);
+    prepare_ingress(*stack->helper);
     timing::set_sim_clock([helper = stack->helper] { return helper->now_s(); });
     for (const auto &p : params) {
       args[p.get_name()] = p.value_to_string();
@@ -478,12 +554,14 @@ std::unique_ptr<Stack> run_stack(bool noise,
   }
   timing::set_sim_clock([helper = stack->helper] { return helper->now_s(); });
   auto &helper = *stack->helper;
+  prepare_ingress(helper);
   if (!sim_tree) {
     timing::Phase phase("sim_start");
     sim_tree = std::make_unique<sim::LaunchTree>(
         "sim",
         launch_command({{"run_tests", "false"},
                         {"part", "sim"},
+                        {"backend", backend},
                         {"headless", options.gui ? "false" : "true"},
                         {"real_time_factor", options.rtf}}),
         std::string(kLogDir) + "/sim.log");
@@ -522,7 +600,9 @@ std::unique_ptr<Stack> run_stack(bool noise,
                                  "' from the world");
       }
     }
-    if (!sim::gazebo::teleport(0, 0, sim::gazebo::kZ, options.spawn_yaw)) {
+    // Raw odometry boots at this spawn; the EKF seed requires it near zero.
+    if (!sim::gazebo::teleport(options.spawn_x, options.spawn_y, sim::gazebo::kZ,
+                               options.spawn_yaw)) {
       throw std::runtime_error("teleport back to spawn failed");
     }
     helper.spin_for(0.5);
@@ -553,47 +633,76 @@ std::unique_ptr<Stack> run_stack(bool noise,
   }
   {
     timing::Phase phase("bringup");
-    for (int attempt = 1; attempt <= 2; ++attempt) {
-      args["part"] = "robot";
-      ++robot_runs;
-      stack->robot = std::make_unique<sim::LaunchTree>(
-          "robot", launch_command(args),
-          std::string(kLogDir) + "/robot_" + std::to_string(robot_runs) + ".log");
-      const auto end = Clock::now() + std::chrono::seconds(30);
-      bool ready = false;
-      if (attempt == 1) {
-        while (Clock::now() < end) {
-          if (helper.root(0.0)) {
-            ready = true;
-            break;
-          }
-          helper.spin_wall(0.1);
-        }
-      }
-      if (attempt == 2 || ready) {
+    args["part"] = "robot";
+    ++robot_runs;
+    const auto log = std::string(kLogDir) + "/robot_" +
+                     std::to_string(robot_runs) + ".log";
+    stack->robot = std::make_unique<sim::LaunchTree>(
+        "robot", launch_command(args), log);
+    const auto referee_start = helper.referee_count;
+    const auto end = Clock::now() + std::chrono::seconds(30);
+    while (Clock::now() < end) {
+      if (helper.root(0.0)) {
         stack->sim_log_start = sim_tree->read_log().size();
         return stack;
       }
-      std::cout << "[robot] " << parent
-                << "->root not up after 30s; restarting the robot stack once "
-                   "(bring-up race, see _wait_for_root_chain)"
-                << std::endl;
-      stack->robot.reset();
+      helper.spin_wall(0.1);
     }
+    const auto available = [&](const std::string &from, const std::string &to) {
+      return helper.transform(from, to, 0.0) ? "ready" : "missing";
+    };
+    throw std::runtime_error(
+        "localization startup failed after 30s: referee published=" +
+        std::to_string(helper.referee_count - referee_start) + " readers=" +
+        std::to_string(helper.referee->get_subscription_count()) +
+        " sim=" + fixed(helper.now_s()) + " last_referee=" + fixed(helper.last_referee) +
+        " odom->root=" +
+        std::string(available("odom", "root")) + ", nav_odom->odom=" +
+        available("nav_odom", "odom") + ", map->nav_odom=" +
+        (backend == "none" ? "not requested" : available("map", "nav_odom")) +
+        "; see " + log);
   }
-  return stack;
 }
 bool ready(Scenario &sc, Helper &helper) {
   timing::Phase phase("bringup");
   const bool ok = helper.scans_flowing();
-  sc.log(ok ? "stack ready: >= 10 /scan messages received"
-            : "stack NOT ready: fewer than 10 /scan messages received within "
-              "60.0s -- treating as an unhealthy/too-slow run, not a "
-              "correctness result");
+  sc.log(ok ? "stack ready: >= 10 valid A2M8 /scan and /scan_raw messages"
+            : "stack NOT ready: A2M8 format invalid or fewer than 10 scans "
+              "on both topics within 60.0s");
   if (!ok) {
     sc.result(
         false,
         "stack failed to reach a healthy /scan rate in time -- see log above");
+    return false;
+  }
+  if (helper.ingress_params) {
+    if (!helper.wait_correction(45.0) || !helper.root(30.0) ||
+        !helper.wait_truth()) {
+      sc.result(false, "AMCL ingress requires the seeded navigation TF and truth");
+      return false;
+    }
+    auto route = sim::match_scenario::routes().at("sentry");
+    route.push_back(sim::field::kLoopCentre);
+    for (const auto &target : route) {
+      const double dx = target[0] - (*helper.truth)[0],
+                   dy = target[1] - (*helper.truth)[1],
+                   dist = std::hypot(dx, dy);
+      if (dist > 0.03) {
+        constexpr double speed = sim::match_scenario::kRouteSpeed;
+        helper.drive(speed * dx / dist, speed * dy / dist, dist / speed,
+                     sim::match_scenario::kRouteAccel);
+      }
+      const double miss = distance(target, *helper.truth);
+      sc.log("AMCL ingress waypoint (" + fixed(target[0]) + ", " +
+             fixed(target[1]) + "): truth miss=" + fixed(miss) + " m");
+      if (miss > 0.03) {
+        sc.result(false, "AMCL ingress did not reach its waypoint within 0.03 m");
+        return false;
+      }
+    }
+    helper.set_params("/pose_emulator/set_parameters", *helper.ingress_params);
+    helper.trigger("/pose_emulator/reset");
+    helper.ingress_params.reset();
   }
   return ok;
 }
@@ -606,8 +715,8 @@ bool correction_ready(Scenario &sc, Helper &helper, std::optional<Pose> &p) {
   return p.has_value();
 }
 void reposition(Helper &helper) {
-  helper.drive(0.0, options.speed, 1.5 / options.speed);
-  helper.drive(-options.speed, 0.0, 1.5 / options.speed);
+  helper.drive(0.0, options.speed, kLoopSide / 2 / options.speed);
+  helper.drive(-options.speed, 0.0, kLoopSide / 2 / options.speed);
 }
 std::optional<double> truth_error(Helper &helper) {
   const auto root = helper.root();
@@ -659,7 +768,7 @@ void noise_correction(Scenario &sc) {
     return;
   }
   reposition(helper);
-  sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner (-1.5,-1.5) before "
+  sc.log("repositioned to the loop's start corner (-x, +y) before "
          "tracing it");
   const auto edge = helper.parent + "->" + helper.child,
              metric = truth_scored() ? "truth error" : "|" + edge + " xy|";
@@ -702,7 +811,8 @@ void noise_correction(Scenario &sc) {
           ", growth_ratio=" + fixed(growth, 2) +
           " (threshold 2.0), log_errors=" + std::to_string(errors.size()));
 }
-void spawn_box() {
+void spawn_box(double x = sim::field::kLoopCentre[0],
+               double y = sim::field::kLoopCentre[1]) {
   const std::string name = "unmapped_test_obstacle";
   const std::string sdf =
       "<sdf version=\"1.6\"><model name=\"" + name +
@@ -713,10 +823,21 @@ void spawn_box() {
       "0.8</size></box></geometry><material><ambient>0.1 0.1 0.8 "
       "1</ambient><diffuse>0.1 0.1 0.8 "
       "1</diffuse></material></visual></link></model></sdf>";
-  if (!sim::gazebo::spawn_model(name, sdf, 0.0, 0.0, 0.4)) {
+  if (!sim::gazebo::spawn_model(name, sdf, x, y, 0.4)) {
     throw std::runtime_error("spawning obstacle '" + name + "' failed");
   }
   spawned.push_back(name);
+}
+// Keep the actors' metre-scale escape ends outside the smaller drive loop.
+const std::vector<double> kActorPaths{-0.2, -0.4, -2.1, -0.4, -0.4, 0.2,
+                                     -0.4, 2.3,  0.2,  0.4,  2.1, 0.4};
+// Translate scaled loop-relative x/y pairs to a world-frame ROS list.
+std::string loop_points(const std::vector<double> &unit, double scale) {
+  std::string out = "[";
+  for (size_t i = 0; i < unit.size(); ++i) {
+    out += (i ? ", " : "") + fixed(sim::field::kLoopCentre[i % 2] + scale * unit[i]);
+  }
+  return out + "]";
 }
 bool start_actor(Helper &helper) {
   stop_actor();
@@ -730,7 +851,8 @@ bool start_actor(Helper &helper) {
           "ros2", "run", "sim", "actor_driver", "--ros-args", "-p",
           "use_sim_time:=true", "-p", "count:=3", "-p",
           "name_prefix:=moving_actor", "-p",
-          "route:=[-1.5, 1.5, -1.5, -1.5, 1.5, -1.5, 1.5, 1.5]", "-p",
+          "route:=" + loop_points({-1, 1, -1, -1, 1, -1, 1, 1}, kLoopSide / 2), "-p",
+          "paths:=" + loop_points(kActorPaths, 1.0), "-p",
           "route_speed:=" + fixed(options.speed, 1)},
       std::string(kLogDir) + "/actor_driver_" + std::to_string(actor_runs) + ".log");
   const auto end = Clock::now() + std::chrono::seconds(60);
@@ -760,11 +882,11 @@ void cornering(Scenario &sc, const std::string &obstacle, double accel = -1.0) {
   sc.log(edge + " before loop start = " + pose_string(*p));
   const int scans_before = helper.scan_count;
   reposition(helper);
-  sc.log("repositioned to the loop's start corner (-1.5,-1.5) before tracing "
+  sc.log("repositioned to the loop's start corner (-x, +y) before tracing "
          "its perimeter");
   if (obstacle == "box") {
     spawn_box();
-    sc.log("spawned 0.3x0.3x0.8m box obstacle at (0.0, 0.0) (not present in "
+    sc.log("spawned 0.3x0.3x0.8m box obstacle at the loop centre (not present in "
            "the saved map) -- at the center of the loop this scenario is about "
            "to drive, see OBSTACLE_LOOP_LEGS");
   }
@@ -845,14 +967,14 @@ void jerk_with_motion(Scenario &sc) {
   auto stack =
       run_stack(false, {rclcpp::Parameter("odom_jerk_stddev", 0.24),
                         rclcpp::Parameter("odom_jerk_bias_enabled", true),
-                        rclcpp::Parameter("odom_jerk_bias_x", 0.0),
-                        rclcpp::Parameter("odom_jerk_bias_y", 0.0)});
+                        rclcpp::Parameter("odom_jerk_bias_x", sim::field::kLoopCentre[0]),
+                        rclcpp::Parameter("odom_jerk_bias_y", sim::field::kLoopCentre[1])});
   auto &helper = *stack->helper;
   if (!ready(sc, helper)) {
     return;
   }
   reposition(helper);
-  sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner (-1.5,-1.5) before "
+  sc.log("repositioned to the loop's start corner (-x, +y) before "
          "tracing it");
   int passed = 0;
   std::string summary;
@@ -939,7 +1061,7 @@ void odom_stuck(Scenario &sc) {
   const auto edge = helper.parent + "->" + helper.child;
   sc.log(edge + " before trigger = " + pose_string(*p));
   reposition(helper);
-  sc.log("repositioned to OBSTACLE_LOOP_LEGS's start corner (-1.5,-1.5) before "
+  sc.log("repositioned to the loop's start corner (-x, +y) before "
          "tracing it");
   if (options.backend == "mapping") {
     for (int i = 0; i < 8; ++i) {
@@ -963,11 +1085,11 @@ void odom_stuck(Scenario &sc) {
     if (p_now) {
       samples.push_back(*p_now);
       const auto truth = truth_error(helper);
-      const auto odom = helper.transform("odom", "root", 0.0);
+      const auto odom = helper.transform("nav_odom", "root", 0.0);
       std::string detail =
           truth ? "  ground_truth_error=" + fixed(*truth) + " m" : "";
       if (odom && helper.truth) {
-        detail += "  odom->root=(" + fixed((*odom)[0], 3) + ", " +
+        detail += "  nav_odom->root=(" + fixed((*odom)[0], 3) + ", " +
                   fixed((*odom)[1], 3) + ")  truth=(" +
                   fixed((*helper.truth)[0]) + ", " + fixed((*helper.truth)[1]) +
                   ")  true_yaw=" + fixed(helper.truth_yaw * 180 / kPi, 2) +
@@ -1031,6 +1153,20 @@ void scan_degraded(Scenario &sc) {
               ++grades[{phase, tier}];
             }
           });
+  auto request = std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
+  request->names = {"blind_angle_start", "blind_angle_end"};
+  const auto original = helper.call<rcl_interfaces::srv::GetParameters>(
+      "/lidar_self_filter/get_parameters", request);
+  std::vector<rclcpp::Parameter> original_sector;
+  for (size_t i = 0; i < request->names.size(); ++i) {
+    rcl_interfaces::msg::Parameter param;
+    param.name = request->names[i];
+    param.value = original->values.at(i);
+    original_sector.push_back(rclcpp::Parameter::from_parameter_msg(param));
+  }
+  const auto restore_sector = [&] {
+    helper.set_params("/lidar_self_filter/set_parameters", original_sector);
+  };
   const auto sector = [&](double start, double end) {
     helper.set_params("/lidar_self_filter/set_parameters",
                       {rclcpp::Parameter("blind_angle_start", start),
@@ -1063,7 +1199,7 @@ void scan_degraded(Scenario &sc) {
     for (int i = 4; i < 6; ++i) {
       leg(i, "during");
     }
-    sector(0.09, 1.41);
+    restore_sector();
     blanked = false;
     phase = "after";
     for (int i = 6; i < 14; ++i) {
@@ -1072,7 +1208,7 @@ void scan_degraded(Scenario &sc) {
   } catch (...) {
     if (blanked) {
       try {
-        sector(0.09, 1.41);
+        restore_sector();
       } catch (...) {
       }
     }
@@ -1126,6 +1262,271 @@ Stats stats(const std::vector<double> &samples) {
   return {mean, std::sqrt(square / samples.size()),
           *std::max_element(samples.begin(), samples.end())};
 }
+// A parked robot shoved 4 cm with its wheels held (odom_slip_ratio 1: /odom
+// reads still): the map pose follows the shove. Guards rf2o's reference
+// scans, which anchor a parked pose, against hiding a shove. Either
+// way the still wheel prior reads it a little short (README).
+void parked_push(Scenario &sc) {
+  auto stack = run_stack(false, {rclcpp::Parameter("odom_slip_ratio", 0.0)});
+  auto &helper = *stack->helper;
+  if (!ready(sc, helper)) {
+    return;
+  }
+  // Use the northern straight's midpoint for the centimetre-scale fixture.
+  // Enable held-wheel slip only after driving there with healthy odometry.
+  helper.drive(0.0, options.speed, kLoopSide / 2 / options.speed);
+  helper.set_params("/pose_emulator/set_parameters",
+                    {rclcpp::Parameter("odom_slip_ratio", 1.0)});
+  helper.trigger("/pose_emulator/reset");
+  std::optional<Pose> p;
+  if (!correction_ready(sc, helper, p)) {
+    return;
+  }
+  std::optional<Point> scan_pose;
+  bool pushing = false;
+  int scan_matches = 0, failed_matches = 0;
+  auto scan_odom = helper.create_subscription<nav_msgs::msg::Odometry>(
+      "/scan_odom", 50, [&](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
+        scan_pose = Point{msg->pose.pose.position.x, msg->pose.pose.position.y};
+      });
+  auto quality = helper.create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+      "/scan_odom/quality", 50,
+      [&](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr msg) {
+        if (!pushing) return;
+        for (const auto &status : msg->status) {
+          std::string tier, increment;
+          for (const auto &value : status.values) {
+            if (value.key == "tier") tier = value.value;
+            if (value.key == "increment") increment = value.value;
+          }
+          if (tier == "failed") ++failed_matches;
+          if ((tier == "good" || tier == "degraded") && increment == "scan") ++scan_matches;
+        }
+      });
+  helper.spin_for(20.0);
+  const auto scan0 = scan_pose;
+  pushing = true;
+  const auto root0 = helper.root();
+  const auto truth0 = helper.truth;
+  // Open loop: drive() stops within 3 cm of its target.
+  geometry_msgs::msg::Twist push;
+  push.linear.x = 0.01;
+  const double end = helper.now_s() + 4.0;
+  while (helper.now_s() < end) {
+    helper.command->publish(push);
+    helper.spin_for(0.1);
+  }
+  helper.command->publish(geometry_msgs::msg::Twist{});
+  helper.spin_for(5.0);
+  pushing = false;
+  const auto scan1 = scan_pose;
+  const auto root1 = helper.root();
+  const auto truth1 = helper.truth;
+  if (!root0 || !root1 || !truth0 || !truth1) {
+    sc.result(false, "no map->root or ground truth around the shove");
+    return;
+  }
+  const Point est{(*root1)[0] - (*root0)[0], (*root1)[1] - (*root0)[1]};
+  const Point tru{(*truth1)[0] - (*truth0)[0], (*truth1)[1] - (*truth0)[1]};
+  const double moved = std::hypot(tru[0], tru[1]);
+  const double miss = distance(est, tru);
+  sc.log("shove: truth moved (" + fixed(tru[0]) + ", " + fixed(tru[1]) +
+         "), map->root moved (" + fixed(est[0]) + ", " + fixed(est[1]) + ")");
+  const Point scan_delta = scan0 && scan1
+      ? Point{(*scan1)[0] - (*scan0)[0], (*scan1)[1] - (*scan0)[1]}
+      : Point{NAN, NAN};
+  const double scan_miss = distance(scan_delta, tru);
+  const bool scan_ok = !options.rf2o ||
+      (scan0 && scan1 && scan_miss < 0.015 && scan_matches > 0 && failed_matches == 0);
+  sc.log("/scan_odom moved (" + fixed(scan_delta[0]) + ", " + fixed(scan_delta[1]) +
+         "), miss=" + fixed(scan_miss) + ", scan matches=" + std::to_string(scan_matches) +
+         ", failed=" + std::to_string(failed_matches));
+  const auto errors = log_errors(stack->log_text());
+  sc.result(moved > 0.025 && moved < 0.05 && miss < 0.015 && scan_ok && errors.empty(),
+            "truth moved " + fixed(moved) + " m (want 0.025-0.05), estimate missed by " +
+                fixed(miss) + " m (threshold 0.015), scan_ok=" +
+                (scan_ok ? "true" : "false") + ", log_errors=" +
+                std::to_string(errors.size()));
+}
+// Exercise reference ageing with a live scan disturbance and head patrol,
+// then prove that a still wheel prior cannot hide a real shove.
+void long_park_patrol(Scenario &sc) {
+  if (!options.rf2o) {
+    sc.result(false, "long_park_patrol requires use_rf2o:=true");
+    return;
+  }
+  auto stack = run_stack(false, {rclcpp::Parameter("odom_slip_ratio", 1.0)});
+  auto &helper = *stack->helper;
+  if (!ready(sc, helper)) return;
+  std::optional<Pose> correction;
+  if (!correction_ready(sc, helper, correction)) return;
+  auto head = helper.create_publisher<std_msgs::msg::Float64>("/head_pan_cmd", 10);
+  struct ResetCommands {
+    Helper &helper;
+    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr head;
+    ~ResetCommands() {
+      helper.command->publish(geometry_msgs::msg::Twist{});
+      head->publish(std_msgs::msg::Float64{});
+    }
+  } reset{helper, head};
+  spawn_box(-1.5, -2.0);
+  std::optional<Point> scan_pose, previous;
+  double first_stamp = 0.0, last_stamp = 0.0, latest_stamp = 0.0;
+  double max_gap = 0.0, max_step = 0.0;
+  int park_samples = 0, scan_matches = 0, failed_matches = 0;
+  bool parking = false, pushing = false, valid = true;
+  auto scan_odom = helper.create_subscription<nav_msgs::msg::Odometry>(
+      "/scan_odom", 100, [&](nav_msgs::msg::Odometry::ConstSharedPtr msg) {
+        const Point p{msg->pose.pose.position.x, msg->pose.pose.position.y};
+        const double stamp = rclcpp::Time(msg->header.stamp).seconds();
+        valid = valid && std::isfinite(p[0]) && std::isfinite(p[1]) &&
+                std::isfinite(stamp);
+        if (parking) {
+          if (!previous) first_stamp = stamp;
+          if (previous) {
+            max_step = std::max(max_step, distance(*previous, p));
+            max_gap = std::max(max_gap, stamp - last_stamp);
+            valid = valid && stamp > last_stamp;
+          }
+          ++park_samples;
+          previous = p;
+          last_stamp = stamp;
+        }
+        scan_pose = p;
+        latest_stamp = stamp;
+      });
+  auto quality = helper.create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+      "/scan_odom/quality", 100,
+      [&](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr msg) {
+        if (!parking && !pushing) return;
+        for (const auto &status : msg->status) {
+          std::string tier, increment;
+          for (const auto &value : status.values) {
+            if (value.key == "tier") tier = value.value;
+            if (value.key == "increment") increment = value.value;
+          }
+          if (tier == "failed") ++failed_matches;
+          if ((tier == "good" || tier == "degraded") && increment == "scan")
+            ++scan_matches;
+        }
+      });
+  helper.spin_for(2.0);
+  if (!helper.truth || !scan_pose || !helper.head_yaw) {
+    sc.result(false, "missing truth, /scan_odom or head joint state");
+    return;
+  }
+  const Point parked_truth = *helper.truth;
+  const Point parked_scan = *scan_pose;
+  const auto parked_root = helper.root();
+  if (!parked_root) {
+    sc.result(false, "missing localization at park start");
+    return;
+  }
+  double max_truth_motion = 0.0, max_scan_drift = 0.0, max_root_drift = 0.0;
+  int head_extremes = 0, last_extreme = 0, crossings = 0, last_side = -1;
+  helper.reset_yaw_range();
+  parking = true;
+  const double start = helper.now_s();
+  const auto wall_end = Clock::now() + std::chrono::seconds(600);
+  const auto patrol = [&](double t) {
+    std_msgs::msg::Float64 command;
+    command.data = 0.8 * std::sin(2.0 * kPi * t / 12.0);
+    head->publish(command);
+    // Cross the forward scan at 2 m range, safely outside the chassis.
+    const double phase = std::fmod(t * 0.5, 6.0);
+    const double x = phase < 3.0 ? -1.5 + phase : 4.5 - phase;
+    if (!sim::gazebo::set_model_pose("unmapped_test_obstacle", x, -2.0, 0.4))
+      throw std::runtime_error("patrol obstacle set_pose failed");
+    const int side = x > 0.5 ? 1 : x < -0.5 ? -1 : 0;
+    if (side && side != last_side) {
+      ++crossings;
+      last_side = side;
+    }
+    const int extreme = *helper.head_yaw > 0.6    ? 1
+                        : *helper.head_yaw < -0.6 ? -1
+                                                  : 0;
+    if (extreme && extreme != last_extreme) {
+      ++head_extremes;
+      last_extreme = extreme;
+    }
+  };
+  while (helper.now_s() - start < 180.0) {
+    if (Clock::now() > wall_end)
+      throw std::runtime_error(
+          "long park failed to complete 180 simulated seconds in 600s wall");
+    patrol(helper.now_s() - start);
+    helper.command->publish(geometry_msgs::msg::Twist{});
+    helper.spin_for(0.1);
+    max_truth_motion =
+        std::max(max_truth_motion, distance(parked_truth, *helper.truth));
+    max_scan_drift = std::max(max_scan_drift, distance(parked_scan, *scan_pose));
+    const auto root = helper.root();
+    valid = valid && root.has_value();
+    if (root) max_root_drift = std::max(max_root_drift, distance(*parked_root, *root));
+  }
+  parking = false;
+  const double park_span = last_stamp - first_stamp;
+  valid = valid && helper.now_s() - latest_stamp <= 0.5;
+  const auto scan0 = scan_pose;
+  const auto root0 = helper.root();
+  const Point truth0 = *helper.truth;
+  pushing = true;
+  const double push_speed = 0.035;
+  const double push_duration = 0.04 / push_speed;
+  const double push_start = helper.now_s();
+  while (helper.now_s() - push_start < push_duration + 10.0) {
+    if (Clock::now() > wall_end)
+      throw std::runtime_error("long park shove exceeded wall deadline");
+    patrol(helper.now_s() - start);
+    geometry_msgs::msg::Twist push;
+    const double push_remaining = push_duration - (helper.now_s() - push_start);
+    if (push_remaining > 0.0) push.linear.x = push_speed;
+    helper.command->publish(push);
+    helper.spin_for(push_remaining > 0.0 ? std::min(0.1, push_remaining) : 0.1);
+  }
+  pushing = false;
+  valid = valid && helper.now_s() - latest_stamp <= 0.5;
+  const auto root1 = helper.root();
+  if (!root0 || !root1 || !scan0 || !scan_pose) {
+    sc.result(false, "missing localization around the long-park shove");
+    return;
+  }
+  const Point truth_delta{(*helper.truth)[0] - truth0[0],
+                          (*helper.truth)[1] - truth0[1]};
+  const Point scan_delta{(*scan_pose)[0] - (*scan0)[0],
+                         (*scan_pose)[1] - (*scan0)[1]};
+  const Point root_delta{(*root1)[0] - (*root0)[0], (*root1)[1] - (*root0)[1]};
+  const double moved = distance(truth_delta, Point{});
+  const double scan_miss = distance(scan_delta, truth_delta);
+  const double root_miss = distance(root_delta, truth_delta);
+  sc.log("park: samples=" + std::to_string(park_samples) +
+         ", stamp span=" + fixed(park_span) + " s, max step=" + fixed(max_step, 6) +
+         " m, max stamp gap=" + fixed(max_gap) +
+         " s, truth motion=" + fixed(max_truth_motion) +
+         " m, scan/root drift=" + fixed(max_scan_drift) + "/" + fixed(max_root_drift) +
+         " m, obstacle crossings=" + std::to_string(crossings) +
+         ", alternating head extremes=" + std::to_string(head_extremes) +
+         ", " + helper.yaw_ranges());
+  sc.log("shove vectors: truth=(" + fixed(truth_delta[0]) + ", " +
+         fixed(truth_delta[1]) + "), scan=(" + fixed(scan_delta[0]) + ", " +
+         fixed(scan_delta[1]) + "), root=(" + fixed(root_delta[0]) + ", " +
+         fixed(root_delta[1]) + ")");
+  const auto errors = log_errors(stack->log_text());
+  sc.result(valid && park_samples >= 900 && park_span >= 179.0 &&
+                max_gap <= 0.5 && max_step <= 0.005 && max_truth_motion <= 0.005 &&
+                max_scan_drift <= 0.03 && max_root_drift <= 0.03 &&
+                crossings >= 20 && head_extremes >= 20 && moved > 0.025 &&
+                moved < 0.05 && scan_miss < 0.01 && root_miss < 0.01 &&
+                scan_matches > 0 && failed_matches == 0 && errors.empty(),
+            "180s park: step <=0.005m, truth motion <=0.005m, "
+            ">=900 samples, span >=179s, gap <=0.5s, scan/root drift <=0.03m; "
+            "shove miss scan=" + fixed(scan_miss) + " m, root=" + fixed(root_miss) +
+            " m (<0.01), moved=" + fixed(moved) +
+            " m (0.025-0.05), scan matches=" + std::to_string(scan_matches) +
+            ", failed=" + std::to_string(failed_matches) +
+            ", valid=" + (valid ? "true" : "false") +
+            ", log_errors=" + std::to_string(errors.size()));
+}
 Point leg_error(const Point &start, const Point &end, const Point &truth_start,
                 const Point &truth_end) {
   const double dx = end[0] - start[0], dy = end[1] - start[1],
@@ -1157,6 +1558,10 @@ TEST_P(DriftSuite, Scenario) {
       odom_stuck(sc);
     } else if (name == "scan_degraded") {
       scan_degraded(sc);
+    } else if (name == "parked_push") {
+      parked_push(sc);
+    } else if (name == "long_park_patrol") {
+      long_park_patrol(sc);
     } else {
       cornering(sc,
                 name == "drift_correction_obstacle" ? "box"
@@ -1258,11 +1663,14 @@ TEST(EkfGroundTruth, BeatsRawOdometry) {
       odom_copy = odom;
     }
     try {
-      const auto tf = buffer.lookupTransform("odom", "root", tf2::TimePointZero,
+      const auto tf = buffer.lookupTransform("nav_odom", "root", tf2::TimePointZero,
                                              tf2::durationFromSec(0.5));
       if (truth_copy && odom_copy) {
         return std::array<Point, 3>{
-            *truth_copy, *odom_copy,
+            *truth_copy,
+            // Raw POSE boots at zero; compare both estimates in field coordinates.
+            Point{(*odom_copy)[0] + sim::field::kLoopCentre[0],
+                  (*odom_copy)[1] + sim::field::kLoopCentre[1]},
             Point{tf.transform.translation.x, tf.transform.translation.y}};
       }
     } catch (const tf2::TransformException &) {
@@ -1277,7 +1685,7 @@ TEST(EkfGroundTruth, BeatsRawOdometry) {
   ASSERT_TRUE(ready(sc, helper))
       << "FAIL: stack never reached a healthy /scan rate";
   ASSERT_TRUE(helper.wait_correction(45.0))
-      << "FAIL: odom->root never became available within 45s";
+      << "FAIL: nav_odom->root never became available within 45s";
   const auto end = Clock::now() + std::chrono::seconds(15);
   while (Clock::now() < end && !sample()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1416,6 +1824,10 @@ void parse_options(int &argc, char **argv) {
       options.speed = std::stod(value());
     } else if (arg == "--drive-accel") {
       options.accel = std::stod(value());
+    } else if (arg == "--spawn-x") {
+      options.spawn_x = std::stod(value());
+    } else if (arg == "--spawn-y") {
+      options.spawn_y = std::stod(value());
     } else if (arg == "--spawn-yaw-deg") {
       options.spawn_yaw =
           sim::gazebo::kSpawnYaw + std::stod(value()) * kPi / 180;
@@ -1433,7 +1845,8 @@ void parse_options(int &argc, char **argv) {
   argc = write;
   if (!options.scenario.empty()) {
     if (std::find(scenario_names.begin(), scenario_names.end(),
-                  options.scenario) == scenario_names.end()) {
+                  options.scenario) == scenario_names.end() &&
+        options.scenario != "long_park_patrol") {
       throw std::invalid_argument("unknown --scenario: " + options.scenario);
     }
     scenario_names = {options.scenario};
@@ -1448,6 +1861,7 @@ void parse_options(int &argc, char **argv) {
 }
 } // namespace
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   try {
     parse_options(argc, argv);
   } catch (const std::exception &e) {

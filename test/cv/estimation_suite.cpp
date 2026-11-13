@@ -19,8 +19,10 @@
 #include "sim/suite_timing.hpp"
 #include <dji_serial_bridge/msg/target_state.hpp>
 #include <gtest/gtest.h>
+#include <future>
 #include <nav_msgs/msg/odometry.hpp>
 #include <std_msgs/msg/header.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 namespace cb = sim::cv_bench;
 namespace timing = sim::suite_timing;
 class EstimationSampler : public sim::SimTimeNode {
@@ -53,9 +55,11 @@ public:
           while (!truth.empty() && t - truth.front().t > 2)
             truth.pop_front();
           resolve(t);
-          std_msgs::msg::Header h;
-          h.stamp = m.header.stamp;
-          progress_->publish(h);
+          if (pacing_) {
+            std_msgs::msg::Header h;
+            h.stamp = m.header.stamp;
+            progress_->publish(h);
+          }
         });
     state_sub_ = create_subscription<dji_serial_bridge::msg::TargetState>(
         "/cv/target_state", 50,
@@ -73,11 +77,18 @@ public:
         });
   }
   void start_case(double s) {
+    pacing_ = true;
     stagger = s;
     truth.clear();
     pending.clear();
     records.clear();
     current_case.reset();
+    set_pacing(true);
+  }
+  void pause_progress() {
+    if (!pacing_) return;
+    set_pacing(false);
+    pacing_ = false;
   }
   void resolve(double newest) {
     std::vector<std::pair<double, dji_serial_bridge::msg::TargetState>> keep;
@@ -108,6 +119,23 @@ public:
   }
 
 private:
+  void set_pacing(bool active) {
+    auto client = create_client<std_srvs::srv::SetBool>("/bench/pacing");
+    if (!client->wait_for_service(std::chrono::seconds(10)))
+      throw std::runtime_error("stack NOT ready: /bench/pacing unavailable");
+    auto request = std::make_shared<std_srvs::srv::SetBool::Request>();
+    request->data = active;
+    auto future = client->async_send_request(request);
+    if (!wait_until([&] {
+          return future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+        }, 10, "/bench/pacing acknowledgement")) {
+      client->remove_pending_request(future);
+      throw std::runtime_error("/bench/pacing acknowledgement timed out");
+    }
+    if (!future.get()->success)
+      throw std::runtime_error("stack NOT ready: /bench/pacing rejected handoff");
+  }
+  bool pacing_ = false;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr progress_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr case_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr truth_sub_,
@@ -129,7 +157,7 @@ public:
   std::shared_ptr<EstimationSampler> sampler;
   std::unique_ptr<sim::LaunchTree> launch;
   std::vector<std::string> nodes{"bench_world", "target_selector",
-                                 "target_tracker", "point_to_cv_target"};
+                                 "target_tracker", "mcb_aim_standin"};
   std::string error;
   void SetUp() override {
     try {
@@ -170,6 +198,9 @@ EstimationEnvironment *environment = nullptr;
 class EstimationSuite : public testing::TestWithParam<cb::Cell> {};
 TEST_P(EstimationSuite, Estimation) {
   ASSERT_TRUE(environment->error.empty()) << environment->error;
+  // After SIGINT every remaining cell fails at once, so TearDown stops the stack
+  // within the launch's SIGINT window.
+  ASSERT_TRUE(rclcpp::ok()) << "interrupted: ROS shut down";
   const auto c = GetParam();
   timing::Case timing_case(
       "test_estimation[" + c.layout + "-" +
@@ -177,6 +208,15 @@ TEST_P(EstimationSuite, Estimation) {
                     : "speed" + cb::python_float(c.speed)) +
       "]");
   auto s = environment->sampler;
+  struct PacingGuard {
+    EstimationSampler &sampler;
+    ~PacingGuard() {
+      try { sampler.pause_progress(); }
+      catch (const std::exception &e) {
+        std::cerr << "stack NOT ready: pacing cleanup: " << e.what() << '\n';
+      }
+    }
+  } pacing_guard{*s};
   double duration = cb::options.duration ? cb::options.duration : 30;
   std::cout << "\n=== " << c.name << ", spin=" << std::fixed
             << std::setprecision(2) << c.spin << " Hz ===\n";
@@ -199,10 +239,16 @@ TEST_P(EstimationSuite, Estimation) {
     params.push_back(rclcpp::Parameter("blackout_s", .3));
   {
     timing::Phase phase("reset");
-    s->set_params("bench_world", params);
     s->start_case(c.stagger);
+    s->set_params("bench_world", params);
   }
   timing::set_sim_clock([s]() { return s->now_s(); });
+  // The clock holds the sampler node. Every exit from this body (a failed ASSERT after
+  // an interrupt included) must drop it, or the node is destroyed in static
+  // destruction against Fast DDS's singleton and the process hangs or aborts.
+  struct SimClockGuard {
+    ~SimClockGuard() { timing::set_sim_clock({}); }
+  } sim_clock_guard;
   double start = 0;
   {
     timing::Phase phase("reset");
@@ -221,6 +267,7 @@ TEST_P(EstimationSuite, Estimation) {
     timing::Phase phase("scored");
     s->spin_until_truth(end + .2);
   }
+  s->pause_progress();
   s->check_nodes(environment->nodes);
   timing::set_sim_clock({});
   std::vector<cb::Json> records;
@@ -268,6 +315,7 @@ INSTANTIATE_TEST_SUITE_P(Cells, EstimationSuite,
                            return cb::gtest_name(info.param.name);
                          });
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   cb::options.stage = "estimation";
   cb::parse_options(argc, argv);
   if (!cb::options.headless) {

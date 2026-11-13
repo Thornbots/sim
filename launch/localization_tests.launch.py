@@ -36,7 +36,9 @@ from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from sim.dds_switch import FOXGLOVE_DEFAULT, udp_env
 from sim.display import display_error
+from sim.field import BLUE_START, LOOP_CENTRE, team_start_args
 from sim.suite_exit import finish_suite
 
 # sim.launch.py's odom noise model, forwarded when given (the harness sets them
@@ -47,6 +49,11 @@ SIM_PASSTHROUGH = ('odom_noise_enabled', 'odom_drift_stddev', 'odom_jitter_stdde
 # Head start for gz and the robot spawn before localization subscribes, so
 # its early "waiting for transform" noise stays out of the scanned logs.
 LOCALIZATION_DELAY_S = 8.0
+
+
+def _spawn(backend):
+    """Spawn AMCL's blue referee fixture at its start, blank-map backends at the loop."""
+    return BLUE_START if backend == 'amcl' else LOOP_CENTRE
 
 
 def _is_true(context, name):
@@ -61,6 +68,7 @@ def _stack(context):
     # foxglove: this launch's own bridge (_foxglove) covers the whole run.
     sim_args = {'gui': gui, 'rviz': gui, 'foxglove': 'false',
                 'real_time_factor': config['real_time_factor']}
+    sim_args['x'], sim_args['y'] = (str(v) for v in _spawn(config['backend']))
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
     sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -69,13 +77,17 @@ def _stack(context):
 
     backend = config['backend']
     # No CV: nothing here scores it, and it costs CPU the stack under test needs.
-    robot_args = {'real_hardware': 'false', 'localization_mode': backend,
+    robot_args = {**team_start_args(),
+                  'real_hardware': 'false', 'localization_mode': backend,
                   'use_rf2o': config['use_rf2o'],
-                  # mapping builds its map from a blank one at spawn, so its
-                  # map frame matches the world's (drift_harness.TRUTH_SCORED).
+                  # Blank-map SLAM starts at its own (0, 0) boot origin.
                   'load_map': 'false' if backend == 'mapping' else 'true',
                   'enable_target_tracker': 'false', 'enable_target_selector': 'false',
                   'enable_cv_target_bridge': 'false'}
+    if backend == 'none':
+        # This fixture boots at the drive loop, not the physical blue start.
+        robot_args.update(blue_start_x=str(LOOP_CENTRE[0]),
+                          blue_start_y=str(LOOP_CENTRE[1]))
     if backend == 'slam':
         # slam_toolbox's localization mode needs a .posegraph, and none ships.
         raise RuntimeError('backend:=slam needs a saved pose graph; none ships '
@@ -111,6 +123,8 @@ def _tests(context):
     if suite == 'drift':
         cmd += ['--backend', config['backend'],
                 '--use-rf2o' if _is_true(context, 'use_rf2o') else '--no-use-rf2o']
+        spawn = _spawn(config['backend'])
+        cmd += ['--spawn-x', str(spawn[0]), '--spawn-y', str(spawn[1])]
         if config['scenario']:
             cmd += ['--scenario', config['scenario']]
     else:
@@ -120,8 +134,11 @@ def _tests(context):
     cmd += config['gtest_args'].split()
     cmd += config['pytest_args'].split()
 
+    # Keep the long-lived fixture and restarted team waiters on one UDP profile;
+    # their REF_SYS delivery must not depend on reused Fast DDS SHM channels.
     # A scenario's teardown can take ~15s before its process group is stopped.
     tests = ExecuteProcess(cmd=cmd, name='localization_tests', output='screen',
+                           additional_env=udp_env(),
                            sigterm_timeout='30')
     done = RegisterEventHandler(OnProcessExit(
         target_action=tests,
@@ -156,9 +173,10 @@ def generate_launch_description():
                               description='sim speed cap; 0 = as fast as it runs'),
         DeclareLaunchArgument('backend', default_value='amcl',
                               choices=['slam', 'mapping', 'amcl', 'none'],
-                              description='who owns map->odom (drift suite)'),
+                              description='who owns map->nav_odom (drift suite)'),
         DeclareLaunchArgument('use_rf2o', default_value='true',
-                              description='fuse rf2o into odom->root (drift suite)'),
+                              description='fuse rf2o into nav_odom->root navigation '
+                                          'pose (drift suite)'),
         DeclareLaunchArgument('scenario', default_value='',
                               description='one drift scenario; empty = all'),
         DeclareLaunchArgument('speed', default_value='',
@@ -173,7 +191,7 @@ def generate_launch_description():
                               description='ekf suite; empty = the suite default'),
         DeclareLaunchArgument('ekf_seconds', default_value='',
                               description='ekf suite; empty = the suite default'),
-        DeclareLaunchArgument('foxglove', default_value='true',
+        DeclareLaunchArgument('foxglove', default_value=FOXGLOVE_DEFAULT,
                               description='Foxglove bridge on :8765'),
         DeclareLaunchArgument('gtest_args', default_value='',
                               description='extra GoogleTest arguments'),

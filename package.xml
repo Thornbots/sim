@@ -3,7 +3,7 @@
 <package format="3">
   <name>sim</name>
   <version>0.1.0</version>
-  <description>Launches gz sim (Gazebo Harmonic) with the ARCC_Field_2026 world and spawns the sentry robot from URDF/xacro.</description>
+  <description>Launches gz sim (Gazebo Harmonic) with the default field world (ARCC Season 2 3v3) and spawns the sentry robot from URDF/xacro.</description>
   <maintainer email="baptisbc@RHIT.edu">Thornbots</maintainer>
   <license>Apache-2.0</license>
 
@@ -11,12 +11,15 @@
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <exec_depend>ros_gz_sim</exec_depend>
-  <exec_depend>ros_gz_bridge</exec_depend>
+  <depend>ros_gz_bridge</depend>
+  <exec_depend>thornbots_pkg</exec_depend>
+  <exec_depend>thornbots_nav</exec_depend>
   <depend>ros_gz_interfaces</depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rviz2</exec_depend>
+  <exec_depend>rclpy</exec_depend>
   <exec_depend>foxglove_bridge</exec_depend>
   <depend>tf2_msgs</depend>
   <depend>rclcpp</depend>
@@ -27,8 +30,6 @@
   <depend>eigen</depend>
   <depend>nlohmann-json-dev</depend>
   <depend>yaml-cpp</depend>
-  <depend>assimp</depend>
-  <depend>libqhull</depend>
   <depend>gtest</depend>
   <depend>ament_index_python</depend>
   <depend>geometry_msgs</depend>
@@ -52,6 +53,8 @@
   <depend>diagnostic_msgs</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>class_loader</test_depend>
+  <test_depend>rosbag2_cpp</test_depend>
   <test_depend>ament_cmake_pytest</test_depend>
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

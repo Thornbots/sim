@@ -14,6 +14,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -48,7 +50,9 @@ uint16_t read_u16(const std::vector<uint8_t> & bytes, size_t offset)
 
 TEST(McbProtocol, StructSizesAreTheFirmwares)
 {
-  EXPECT_EQ(wire::CvTarget::kSize, 15U);
+  EXPECT_EQ(wire::CvTarget::kSize, 13U);
+  EXPECT_EQ(wire::TargetState::kSize, 80U);
+  EXPECT_EQ(wire::pack(wire::TargetState{}).size(), wire::TargetState::kSize);
   EXPECT_EQ(wire::Relocalize::kSize, 8U);
   EXPECT_EQ(wire::NavGoal::kSize, 8U);
   EXPECT_EQ(wire::Pose::kSize, 25U);
@@ -98,7 +102,7 @@ TEST(McbProtocol, FrameLayout)
 TEST(McbProtocol, ParserFindsFramesInNoiseAndSplitReads)
 {
   const auto a = wire::encode_frame(
-    wire::kCvTarget, wire::pack(wire::CvTarget{0, 0, 2.0F, 0, wire::kCvTargetFlagFire}));
+    wire::kCvTarget, wire::pack(wire::CvTarget{0, 0, 2.0F, wire::kCvTargetFlagTurnToHit}));
   const auto b = wire::encode_frame(wire::kRelocalize, wire::pack(wire::Relocalize{1, 2}));
   std::vector<uint8_t> stream{0x00, 0x13};
   stream.insert(stream.end(), a.begin(), a.end());
@@ -132,4 +136,74 @@ TEST(McbProtocol, ParserDropsBadCrcAndResyncs)
   EXPECT_EQ(frames[0].msg_type, wire::kNavGoal);
   EXPECT_EQ(parser.errors().crc16, 1U);
   EXPECT_EQ(parser.errors().crc8, 1U);
+}
+
+TEST(McbProtocol, CvTargetIsThirteenBytesWithOnlyTheTwoPermissionBits)
+{
+  for (uint8_t flags = 0; flags < 16; ++flags) {
+    const auto payload = wire::pack(wire::CvTarget{3, 1, 0.2F, flags});
+    ASSERT_EQ(payload.size(), 13U);
+    EXPECT_EQ(payload.back(), flags);
+    EXPECT_EQ(wire::unpack<wire::CvTarget>(payload).flags, flags);
+  }
+  EXPECT_EQ(wire::kCvTargetFlagTypeCBasedPatrol, 0x02);
+  EXPECT_EQ(wire::kCvTargetFlagTurnToHit, 0x04);
+  EXPECT_EQ(wire::kCvTargetFlagsDefault, 0x06);
+  // The retired 15-byte fire/delay format is not accepted.
+  EXPECT_THROW(wire::unpack<wire::CvTarget>(std::vector<uint8_t>(15)), std::invalid_argument);
+}
+
+TEST(McbProtocol, TargetStateLayoutMatchesTheContract)
+{
+  wire::TargetState state;
+  state.center[0] = 1.0F;
+  state.center[2] = 3.0F;
+  state.velocity[1] = -2.0F;
+  state.acceleration[2] = 0.5F;
+  state.yaw = 0.25F;
+  state.yaw_rate = -4.0F;
+  state.radius[1] = 0.26F;
+  state.z_offset[0] = 0.03F;
+  state.panel[0] = 9.0F;
+  state.state_age_ms = 0x1234;
+  state.detection_age_ms = 0x0102;
+  state.track_id = 0xBEEF;
+  state.confidence = 128;
+  state.flags = wire::kTargetStateFlagValid | wire::kTargetStateFlagTypeCBasedPatrol;
+  const auto payload = wire::pack(state);
+  ASSERT_EQ(payload.size(), 80U);
+  float yaw = 0.0F, yaw_rate = 0.0F, panel_x = 0.0F;
+  std::memcpy(&yaw, payload.data() + 36, 4);
+  std::memcpy(&yaw_rate, payload.data() + 40, 4);
+  std::memcpy(&panel_x, payload.data() + 60, 4);
+  EXPECT_EQ(yaw, 0.25F);
+  EXPECT_EQ(yaw_rate, -4.0F);
+  EXPECT_EQ(panel_x, 9.0F);
+  EXPECT_EQ(read_u16(payload, 72), 0x1234);
+  EXPECT_EQ(read_u16(payload, 74), 0x0102);
+  EXPECT_EQ(read_u16(payload, 76), 0xBEEF);
+  EXPECT_EQ(payload[78], 128);
+  EXPECT_EQ(payload[79], 0x03);
+  const auto back = wire::unpack<wire::TargetState>(payload);
+  EXPECT_EQ(back.center[2], 3.0F);
+  EXPECT_EQ(back.velocity[1], -2.0F);
+  EXPECT_EQ(back.radius[1], 0.26F);
+  EXPECT_EQ(back.z_offset[0], 0.03F);
+  EXPECT_EQ(back.track_id, 0xBEEF);
+  EXPECT_THROW(wire::unpack<wire::TargetState>(std::vector<uint8_t>(79)), std::invalid_argument);
+  EXPECT_EQ(wire::frame(state).size(), 89U);
+}
+
+TEST(McbProtocol, OpaqueDebugBlob) {
+  EXPECT_EQ(sim::mcb_protocol::kDebugMaxPayload, 128u);
+  using namespace sim::mcb_protocol;
+  for (const auto &data : {std::vector<uint8_t>{}, std::vector<uint8_t>{0, 0xa5, 0xff},
+                          std::vector<uint8_t>(kDebugMaxPayload, 0xff)}) {
+    DJISerial parser;
+    const auto frames = parser.feed(frame(DebugBlob{data}));
+    ASSERT_EQ(frames.size(), 1u);
+    EXPECT_EQ(frames[0].msg_type, kDebug);
+    EXPECT_EQ(unpack<DebugBlob>(frames[0].payload).data, data);
+  }
+  EXPECT_THROW(pack(DebugBlob{std::vector<uint8_t>(kDebugMaxPayload + 1)}), std::length_error);
 }

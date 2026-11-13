@@ -17,9 +17,12 @@
 #include "sim/shot_floors_data.hpp"
 #include "sim/suite_node.hpp"
 #include "sim/suite_timing.hpp"
-#include <dji_serial_bridge/msg/cv_target.hpp>
+#include "sim/mcb_aim_topics.hpp"
+#include <geometry_msgs/msg/point_stamped.hpp>
+#include <geometry_msgs/msg/vector3_stamped.hpp>
 #include <gtest/gtest.h>
 #include <nav_msgs/msg/odometry.hpp>
+#include <optional>
 #include <std_msgs/msg/header.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 namespace cb = sim::cv_bench;
@@ -46,6 +49,8 @@ public:
   std::vector<cb::Json> records;
   std::vector<double> misses;
   int fired = 0, hits = 0;
+  double aim_yaw_tv = 0, aim_pitch_tv = 0;
+  int panel_flips = 0, scored_aims = 0;
   double stagger, lifetime;
   explicit ShotSampler(double stagger_ = 0, double lifetime_ = 5)
       : SimTimeNode("shot_hit_test_sampler"), stagger(stagger_),
@@ -60,7 +65,11 @@ public:
           if (!truth.empty())
             y = truth.back().yaw + std::atan2(std::sin(y - truth.back().yaw),
                                               std::cos(y - truth.back().yaw));
-          truth.push_back({t, {p.x, p.y, p.z}, cb::Vec::Zero(), y, 0});
+          const auto &q = m.pose.pose.orientation;
+          const auto &v = m.twist.twist.linear;
+          truth.push_back({t, {p.x, p.y, p.z},
+              Eigen::Quaterniond(q.w, q.x, q.y, q.z) * cb::Vec{v.x, v.y, v.z},
+              y, m.twist.twist.angular.z});
           while (t - truth.front().t > 1)
             truth.pop_front();
           launch_due(t);
@@ -82,17 +91,52 @@ public:
           while (t - shooter.front().t > 1)
             shooter.pop_front();
         });
-    cv_sub_ = create_subscription<dji_serial_bridge::msg::CVTarget>(
-        "/dji_serial_bridge/cv_target", rclcpp::SensorDataQoS(),
-        [this](const dji_serial_bridge::msg::CVTarget &m) {
+    // An indexer request: shot_hit's exit is the request plus the firmware's
+    // request-to-exit latency (x); y is plan time to exit, for the log.
+    fire_sub_ = create_subscription<geometry_msgs::msg::Vector3Stamped>(
+        sim::mcb_aim::kFireTopic, rclcpp::QoS(100),
+        [this](const geometry_msgs::msg::Vector3Stamped &m) {
+          if (truth.empty())
+            return;
+          ++fired;
+          unlaunched_.push_back({stamp_s(m.header.stamp) + m.vector.x,
+                                 static_cast<int>(std::lround(m.vector.y * 1000))});
+        });
+    cv_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
+        sim::mcb_aim::kAimTopic, rclcpp::QoS(100),
+        [this](const geometry_msgs::msg::PointStamped &m) {
           double t = stamp_s(m.header.stamp);
-          aims.push_back({t, {m.x, m.y, m.z}});
+          aims.push_back({t, {m.point.x, m.point.y, m.point.z}});
           while (t - aims.front().first > 1)
             aims.pop_front();
-          if (m.fire && !truth.empty()) {
-            ++fired;
-            unlaunched_.push_back(
-                {t + m.delay_ms / 1000. + cb::kFireLatency, m.delay_ms});
+          if (scoring_ && !shooter.empty() && !truth.empty()) {
+            const cb::Vec delta = cb::Vec{m.point.x, m.point.y, m.point.z} - shooter.back().center;
+            const double horizontal = std::hypot(delta.x(), delta.y());
+            const double yaw = std::atan2(delta.y(), delta.x());
+            const double pitch = std::atan2(delta.z(), horizontal);
+            if (last_aim_angles_) {
+              aim_yaw_tv += std::abs(std::atan2(std::sin(yaw - last_aim_angles_->first),
+                                                std::cos(yaw - last_aim_angles_->first)));
+              aim_pitch_tv += std::abs(std::atan2(std::sin(pitch - last_aim_angles_->second),
+                                                  std::cos(pitch - last_aim_angles_->second)));
+            }
+            last_aim_angles_ = std::pair{yaw, pitch};
+            const double arrival = t + delta.norm() / cb::kMuzzleSpeed;
+            auto predicted = cb::interpolate(truth, arrival);
+            predicted.center += predicted.velocity * (arrival - predicted.t);
+            predicted.yaw += predicted.yaw_rate * (arrival - predicted.t);
+            const auto panels = cb::panel_poses(predicted.center,
+                                                cb::rpy(0, 0, predicted.yaw), stagger);
+            int selected = 0;
+            double nearest = std::numeric_limits<double>::infinity();
+            for (int k = 0; k < 4; ++k) {
+              const double distance = (panels[k].pos - cb::Vec{m.point.x, m.point.y, m.point.z}).squaredNorm();
+              if (distance < nearest) { nearest = distance; selected = k; }
+            }
+            if (last_selected_panel_ && selected != *last_selected_panel_)
+              ++panel_flips;
+            last_selected_panel_ = selected;
+            ++scored_aims;
           }
         });
     progress_ = create_publisher<std_msgs::msg::Header>("/bench/progress", 10);
@@ -106,6 +150,11 @@ public:
   }
   void reset() {
     fired = hits = 0;
+    aim_yaw_tv = aim_pitch_tv = 0;
+    panel_flips = scored_aims = 0;
+    last_aim_angles_.reset();
+    last_selected_panel_.reset();
+    scoring_ = true;
     records.clear();
     misses.clear();
     pending_.clear();
@@ -241,12 +290,16 @@ public:
   }
 
 private:
+  bool scoring_ = false;
+  std::optional<std::pair<double, double>> last_aim_angles_;
+  std::optional<int> last_selected_panel_;
   std::vector<Fire> unlaunched_;
   std::vector<Shot> pending_;
   std::vector<Mark> marks_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr truth_sub_,
       shooter_sub_;
-  rclcpp::Subscription<dji_serial_bridge::msg::CVTarget>::SharedPtr cv_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr cv_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::Vector3Stamped>::SharedPtr fire_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr tick_sub_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr progress_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_;
@@ -351,8 +404,7 @@ public:
   std::unique_ptr<sim::LaunchTree> launch;
   std::vector<std::string> nodes{"sim_clock",          "target_driver",
                                  "shooter_driver",     "point_shooter",
-                                 "target_state_truth", "point_to_cv_target",
-                                 "mcb_relay"};
+                                 "target_state_truth", "mcb_aim_standin"};
   std::string error;
   void SetUp() override {
     try {
@@ -392,6 +444,9 @@ ShotEnvironment *environment = nullptr;
 class ShotSuite : public testing::TestWithParam<cb::Cell> {};
 TEST_P(ShotSuite, ShotHit) {
   ASSERT_TRUE(environment->error.empty()) << environment->error;
+  // After SIGINT every remaining cell fails at once, so TearDown stops the stack
+  // within the launch's SIGINT window.
+  ASSERT_TRUE(rclcpp::ok()) << "interrupted: ROS shut down";
   auto c = GetParam();
   timing::Case timing_case("test_shot_hit[" + c.layout + "-" +
                            (c.speed == 0
@@ -416,10 +471,12 @@ TEST_P(ShotSuite, ShotHit) {
     auto params = cb::path_params(cb::options.path);
     params.push_back(rclcpp::Parameter("target_speed", c.speed));
     params.push_back(rclcpp::Parameter("spin_hz", c.spin));
+    params.push_back(rclcpp::Parameter("yaw_offset", c.yaw * cb::kPi / 180));
     environment->control->set_params("target_driver", params);
     environment->control->set_params(
         "target_state_truth",
-        {rclcpp::Parameter("panel_stagger_m", c.stagger)});
+        {rclcpp::Parameter("panel_stagger_m", c.stagger),
+         rclcpp::Parameter("model_yaw_jitter_rad", cb::options.model_yaw_jitter_rad)});
     std::cout << "[stack] target set to speed=" << cb::python_float(c.speed)
               << " m/s, spin=" << std::fixed << std::setprecision(2) << c.spin
               << " Hz, panel stagger=" << std::setprecision(3) << c.stagger
@@ -428,6 +485,12 @@ TEST_P(ShotSuite, ShotHit) {
     s->wait_until([&]() { return s->now_s() > 0; }, 5, "the first /clock");
   }
   timing::set_sim_clock([s]() { return s->now_s(); });
+  // The clock holds the sampler node. Every exit from this body (a failed ASSERT after
+  // an interrupt included) must drop it, or the node is destroyed in static
+  // destruction against Fast DDS's singleton and the process hangs or aborts.
+  struct SimClockGuard {
+    ~SimClockGuard() { timing::set_sim_clock({}); }
+  } sim_clock_guard;
   {
     timing::Phase phase("settle");
     s->spin_for(3);
@@ -444,7 +507,13 @@ TEST_P(ShotSuite, ShotHit) {
                       {"spin_hz", cb::rounded(c.spin, 3)},
                       {"panel_stagger_m", c.stagger},
                       {"target_path", cb::options.path},
-                      {"shooter_speed", cb::options.shooter}};
+                      {"shooter_speed", cb::options.shooter},
+                      {"target_yaw_deg", c.yaw},
+                      {"model_yaw_jitter_rad", cb::options.model_yaw_jitter_rad},
+                      {"panel_switch_margin_rad",
+                       cb::options.panel_switch_margin_rad
+                           ? cb::Json(*cb::options.panel_switch_margin_rad)
+                           : cb::Json(nullptr)}};
   for (const auto &r : s->records) {
     auto record = details;
     record.update(r);
@@ -459,12 +528,17 @@ TEST_P(ShotSuite, ShotHit) {
          hit_rate = s->fired ? static_cast<double>(s->hits) / s->fired : 0,
          total = .5 * (hit_rate + s->hits / expected),
          keep_up = s->fired / expected;
-  cb::append_json(cb::options.log_dir + "/scores.jsonl",
-                  {{"cell", c.name},
+  auto summary = details;
+  summary.update({{"cell", c.name},
                    {"score", cb::rounded(total, 4)},
                    {"hits", s->hits},
                    {"shots", s->fired},
-                   {"keep_up", cb::rounded(keep_up, 4)}});
+                   {"keep_up", cb::rounded(keep_up, 4)},
+                   {"aim_yaw_total_variation_rad", cb::rounded(s->aim_yaw_tv, 6)},
+                   {"aim_pitch_total_variation_rad", cb::rounded(s->aim_pitch_tv, 6)},
+                   {"scored_aim_samples", s->scored_aims},
+                   {"selected_panel_flips", s->panel_flips}});
+  cb::append_json(cb::options.log_dir + "/scores.jsonl", summary);
   // Python's {x:5.1%}: the percent sign sits inside the width.
   const auto percent = [](double fraction) {
     std::ostringstream text;
@@ -537,6 +611,7 @@ INSTANTIATE_TEST_SUITE_P(Cells, ShotSuite, testing::ValuesIn(cb::cells(false)),
                            return cb::gtest_name(info.param.name);
                          });
 int main(int argc, char **argv) {
+  sim::die_with_parent();
   if (argc == 2 && std::string(argv[1]) == "--print-launch-constants") {
     std::cout << cb::Json{{"MUZZLE_SPEED", cb::kMuzzleSpeed},
                           {"POINT_SHOOTER", {0., 0., .4}},

@@ -23,7 +23,7 @@ namespace
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kPanelWidth = 0.135;
 constexpr double kPanelHeight = 0.125;
-constexpr double kPanelPitch = -kPi / 12.0;  // S122 panel normal points 15 degrees up
+constexpr double kPanelPitch = -kPi / 12.0;  // R27 S120; README armor rules comparison
 constexpr uint32_t kLifetimeNs = 500000000;
 
 using TargetState = dji_serial_bridge::msg::TargetState;
