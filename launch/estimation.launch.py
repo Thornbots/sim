@@ -18,8 +18,8 @@ Estimation bench: target_tracker's TargetState against the truth, no gz.
 `ros2 launch sim estimation.launch.py [speeds:='0.5 1'] [blackout:=true]`.
 bench_world (C++, one lockstep loop) is the clock, the phantom target, our
 chassis and head, /dji_serial_bridge/pose, the head controller and the detections off our
-head's camera. target_selector and target_tracker build the TargetState, and
-mcb_aim_standin (the firmware's planner) aims the head through bench_world's controller.
+head's camera. target_selector and target_tracker build the raw TargetState;
+target_manager feeds mcb_aim_standin, which aims through bench_world's controller.
 Nothing fires. The C++ estimation harness scores each state at its stamp.
 Stops when the tests finish; Ctrl-C stops everything. `run_tests:=false`
 brings up the stack alone.
@@ -85,13 +85,16 @@ def _stack(context):
             'real_hardware': 'false', 'localization_mode': 'none', 'use_rf2o': 'false',
             'enable_cv_target_bridge': 'false', 'enable_target_selector': 'false',
             'enable_target_tracker': 'false',
+            'enable_target_manager': 'false',
         }.items())
 
     # Sim stamps /dji_serial_bridge/pose at the true sample time, so no pose latency to undo.
     tracker = {'camera_latency_s': float(cfg['tracker_camera_latency_s'] or camera_latency),
                'pose_latency_s': 0.0,
                # bench_world waits on it so the tracker's now() repeats run to run.
-               'clock_ack_topic': '/cv/tracker/clock_ack'}
+               'clock_ack_topic': '/cv/tracker/clock_ack',
+               'target_state_none_topic': '/cv/manager/input_ack',
+               'confidence_decay_tau_s': float(cfg['confidence_decay_tau_s'])}
     for name in ('process_noise_accel', 'process_noise_radius', 'panel_radius_m',
                  'radius_prior_std'):
         if cfg[name]:
@@ -102,10 +105,13 @@ def _stack(context):
         Node(package='sim', executable='bench_world', name='bench_world', output='screen',
              parameters=[world]),
         robot_tf, cv_node('target_selector'), cv_node('target_tracker', **tracker),
-        # The MCB's planner stands in: aim only, nothing fires, and the head's
-        # own lag is real, so the firmware's gimbal_lag_s stays in force.
+        cv_node('target_manager', state_ack_topic='/cv/manager/input_ack',
+                consumer_ack_topic='/cv/target/managed_ack',
+                target_state_none_topic='/cv/manager/no_send',
+                confidence_decay_tau_s=float(cfg['confidence_decay_tau_s'])),
+        # The MCB's planner stands in: aim only, nothing fires.
         cv_node('mcb_aim_standin', package='sim', fire_enabled=False,
-                tick_topic='/cv/target/tick', state_ack_topic='/cv/target/state_ack'),
+                tick_topic='/cv/target/tick', state_ack_topic='/cv/target/managed_ack'),
     ]
     if not headless:
         actions.append(cv_node('target_state_markers', package='sim'))
@@ -153,6 +159,7 @@ def _foxglove():
 
 def generate_launch_description():
     args = [
+        DeclareLaunchArgument('confidence_decay_tau_s', default_value='0.30'),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),
         DeclareLaunchArgument('headless', default_value='false',

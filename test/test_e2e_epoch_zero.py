@@ -80,12 +80,12 @@ def stop(proc, partition):
 
 def run(firmware, delay, stage):
     node = rclpy.create_node('e2e_epoch_observer')
-    ready, clock, detection, aim, tick, path = {}, [], [], [], [], []
+    ready, clock, detection, aim, tick, path, frame_ack = {}, [], [], [], [], [], []
     qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                      durability=DurabilityPolicy.TRANSIENT_LOCAL)
     topics = ['/detector_standin/ready', '/point_to_cv_target/epoch_zero_ready',
               '/opponent_driver/ready', '/mcb_emulator/epoch_zero_ready',
-              '/robot_spawn_ready/ready']
+              '/robot_spawn_ready/ready', '/target_manager/epoch_zero_ready']
     topics += ['/target_driver/ready' if stage == 'mcb_parked' else '/match_environment/ready']
     if stage == 'mcb_match':
         topics += ['/opponent_driver_opponent_1/ready', '/opponent_driver_ally_0/ready']
@@ -97,6 +97,7 @@ def run(firmware, delay, stage):
                                       detection.append, 100),
              node.create_subscription(Header, '/sim/e2e/aim_tick', aim.append, 100),
              node.create_subscription(Header, '/mcb_emulator/tick', tick.append, 100),
+             node.create_subscription(Header, '/target_manager/frame_ack', frame_ack.append, 100),
              node.create_subscription(Odometry, '/target/ground_truth_odom' if stage ==
                                       'mcb_parked' else '/sim/match/opponent_0/path',
                                       path.append, 100)]
@@ -123,15 +124,16 @@ def run(firmware, delay, stage):
                 observer_ready.publish(Header())
                 announced = True
             if (len(ready) == len(topics) and len(detection) >= 2 and len(aim) >= 2 and
-                    len(tick) >= 2 and len(path) >= 2):
+                    len(tick) >= 2 and len(path) >= 2 and len(frame_ack) >= 2):
                 break
         if (len(ready) != len(topics) or len(detection) < 2 or len(aim) < 2 or
-                len(tick) < 2 or len(path) < 2):
+                len(tick) < 2 or len(path) < 2 or len(frame_ack) < 2):
             log.seek(0)
             raise AssertionError(f'incomplete: {ready} {len(clock)} {len(detection)} '
                                  f'{len(aim)} {len(tick)}\n{log.read()}')
         assert all(value == 0 for value in ready.values()), ready
         assert any(ns(msg.clock) == 0 for msg in clock), 'no observed zero clock'
+        assert [ns(msg.stamp) for msg in frame_ack[:2]] == [17000000, 34000000], frame_ack
         values = ([ns(msg.header.stamp) for msg in detection[:2]],
                   [ns(msg.stamp) for msg in aim[:2]], [ns(msg.stamp) for msg in tick[:2]],
                   [ns(msg.header.stamp) for msg in path[:2]])

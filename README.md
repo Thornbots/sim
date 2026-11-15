@@ -108,8 +108,10 @@ blend in `test/cv/shot_hit_suite.cpp`), so falling behind 40 Hz costs points.
 There is no gz, robot or tracker. `sim_clock` publishes `/clock`,
 `point_shooter` puts `root` in `odom` (`POINT_SHOOTER`, 0.4 m up) and
 publishes `/dji_serial_bridge/pose`, `target_driver` moves the phantom target and
-`target_state_truth` publishes its true `TargetState`. `mcb_aim_standin` runs the
-firmware's `AimPlanner` on that state. Each shot leaves
+`target_state_truth` publishes its true `TargetState` on `/cv/tracker/target_state`.
+The Jetson [target manager](../thornbots_pkg/README.md#target_manager) feeds
+managed assignments, updates and clears to `mcb_aim_standin`, which runs the
+firmware's `AimPlanner`. Each shot leaves
 `root` toward the newest stand-in aim (an `odom` point) before its exit time, carrying
 `root`'s velocity: a perfect gimbal that holds each 40 Hz aim until the
 next. So a miss is the MCB planner's math and nothing else. It draws the
@@ -120,17 +122,16 @@ the Jetson planner's numbers.
 
 `real_time_factor:=0` (the default) runs it as fast as the stack keeps up.
 `sim_clock` steps sim time 2 ms at a time and stops exactly one period past
-the newest stamp on `/cv/target_state`, `/dji_serial_bridge/pose`, the stand-in's `/cv/target/tick` and the
+the newest consumed-input acknowledgment on `/cv/manager/input_ack`,
+`/dji_serial_bridge/pose`, the stand-in's `/cv/target/tick` and the
 scorer's `/bench/progress` until that topic publishes, so no node falls
 behind and each control tick is stamped on its deadline; a topic with
 no publisher left (the scorer between cases) stops holding it. A fixed
 `real_time_factor` above 0 does not wait. Use `:=1` as the control;
 [dated pacing comparisons](docs/cv-bench-results-2026-09-28.md#clock-pacing-observations-2026-09-25-and-2026-10-01) record the measured tradeoff.
 
-`spin_mode:=firmware` uses the firmware's spin policy and chase windows;
-`spin_mode:=shotgating` uses a narrow face-on diagnostic firing window.
-`spin_mode:=chase` permits `chase_settle_s` and `chase_margin_s` overrides,
-which otherwise use the firmware values. The perfect gimbal follows planner
+The [MCB aim stand-in](#mcb-aim-stand-in) owns planner modes and overrides.
+The perfect gimbal follows planner
 rates between 5 ms replans. The recorded floors below
 were measured in chase mode. Each cell has
 its own floor in `FLOORS` (`include/sim/shot_floors_data.hpp`), the lowest score
@@ -222,8 +223,9 @@ shows it reads the last `/clock`, since it stamps `TargetState` with `now()`;
 `/clock` then waits for the tracker to echo each one on
 `/cv/tracker/measurement`, and for the stand-in's aim on each aim tick. The scorer
 only paces, up to `pace_slack_s` behind. The loop also waits for
-`mcb_aim_standin` to acknowledge model consumption on `/cv/target/state_ack`
-and for a publish tick's indicated aim point to arrive. Separate DDS topics
+the manager's input acknowledgment, which waits for the stand-in's consumption
+acknowledgments on `/cv/target/managed_ack`, and for a publish tick's indicated
+aim point to arrive. Separate DDS topics
 can arrive in either order; a publication acknowledgment alone does not
 prove that the next consumer has processed its input. A loaded host only slows
 these waits ([why](#lockstep-waits-and-load)); a topic whose publisher is gone stops
@@ -612,7 +614,7 @@ cells/segments, checker verdicts and comparison with the previous status.
 
 | Stage | Test | What it scores |
 |---|---|---|
-| `mcb_parked` (default) | `test/e2e/e2e_suite.cpp` | firmware ingress from team start, then our robot parked against `target_driver`; one test per speed and path |
+| `mcb_parked` (default) | `test/e2e/e2e_suite.cpp` | firmware ingress from team start, then our robot parked against `target_driver`; one test per speed and path, plus detection disappearance |
 | `mcb_drive` | `test/e2e/e2e_suite.cpp` | our robot drives spawn to center against one red sentry |
 | `mcb_match` | `test/e2e/e2e_suite.cpp` | the 2v2 center fight with ballistic shots and HP |
 
@@ -630,7 +632,7 @@ Stages default to board execution: follow the [Type C build](#type-c-board-execu
 first, or pass `backend:=hosted` after the [hosted build](#mcb-emulator).
 
 ```bash
-ros2 launch sim e2e.launch.py                                 # mcb_parked, all 12 cells
+ros2 launch sim e2e.launch.py                                 # mcb_parked, 12 motion cells + disappearance
 ros2 launch sim e2e.launch.py speeds:='0 2' paths:=lateral duration:=15
 ros2 launch sim e2e.launch.py run_tests:=false target_speed:=2.0 target_spin_hz:=1.5
 ```
@@ -654,6 +656,28 @@ opposing team's start as their idle look point. The parked scoring gates
 and firmware control laws are unchanged.
 Each requested cell sets its speed/spin and settles for three sim seconds
 before scoring.
+
+The detector feeds selector, tracker, target manager and then the UART bridge,
+as in the robot launch. `detector_standin` supplies capture-time confidence on
+each panel. Its `hidden_from_s` parameter suppresses detections from that capture
+timestamp onward while empty frames and their acknowledgements continue. The
+extra `disappears-lateral` cell hides a stationary target during settling,
+reveals it at the scoring-window start, then hides it halfway through the
+window; Gazebo truth remains available to adjudicate shots. The detector
+lockstep group waits for the manager's input-frame `frame_ack`, including
+held-model refreshes, clears and suppressed sends. The manager waits for the
+bridge queue handoff before acknowledging; the coordinator then flushes that
+queue and waits for `sim_tx_flushed`. Tracker TF-drop none marks remain an
+alternative when the tracker publishes no state for the manager to consume.
+
+Parked shot and state rows carry the cell's `lifecycle` metrics: scoring-window
+start, disappearance boundary, time to first physical chamber exit from that
+start (null if none), total physical shots, and exits at or after disappearance
+(null for cells without disappearance). Counts use exit stamps, independently
+of delayed shot adjudication. `scores.jsonl` retains these metrics even when no
+shots or valid states exist. Parked shot rows are written after the window drains
+so they contain final counts. Time to first shot starts after settling; only
+the disappearance cell begins that window with fresh target acquisition.
 
 `shots.jsonl` in `log_dir` (`/tmp/e2e_test_logs`) splits every miss into
 the barrel's angle off the aim and the aim's distance from the panel, and
@@ -1404,7 +1428,13 @@ datasheet estimates; measure them on the robot. Set both to 0 for the old
 
 ### target_state_truth: the aiming bench's perfect knowledge
 
-Stands in for the tracker on the aiming bench (`shot_hit.launch.py`).
+Stands in for the tracker on the aiming bench (`shot_hit.launch.py`), upstream
+of the same target manager used by the robot. Estimation fixtures score every
+raw `/cv/tracker/target_state` while the stand-in consumes `/cv/target_state`;
+their input acknowledgment comes from the manager, including suppressed sends.
+`bench_world` gates on the driving capture stamp on `/cv/manager/input_ack`,
+including empty frames, rather than counting unrelated model and measurement
+messages. Tracker TF drops use that topic for their no-model acknowledgment.
 For each `/target/ground_truth_odom` sample it
 publishes the target's `TargetState` at once, stamped with that sample's time:
 the contract `TargetState.msg` sets for the tracker, a state describing the target
@@ -1445,6 +1475,8 @@ bridge messages are required to build the stand-in.
   `tick_topic` and `state_ack_topic` retain the bench's lockstep seams.
 - Tuning uses the sentry firmware defaults. Overrides: `spin_mode` (`firmware`,
   `chase`, diagnostic `shotgating`), chase settle/margin and panel switch margin.
+  Firmware mode shares the high-spin cutout in the linked firmware design.
+  Explicit `chase` disables that cutout for controlled comparisons.
   `fire_enabled:=false` keeps aiming without requests. `gimbal_lag_s` is removed;
   launch owners should remove that obsolete override.
 
@@ -1455,6 +1487,8 @@ validate drag/gravity and the measured-angle panel intersection. Neither this
 fixture nor hosted wall timing establishes Type C scheduler timing. Three-run
 nightly comparisons and validation are recorded in
 [managed aiming, 2026-11-12](docs/managed-aim-2026-11-12.md).
+The [spin-cutout measurement](docs/managed-aim-cutout-2026-11-13.md) compares
+the parked pipeline with nightly and the managed chase planner.
 
 ### point_shooter
 

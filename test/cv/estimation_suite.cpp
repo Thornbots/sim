@@ -62,7 +62,7 @@ public:
           }
         });
     state_sub_ = create_subscription<dji_serial_bridge::msg::TargetState>(
-        "/cv/target_state", 50,
+        "/cv/tracker/target_state", 50,
         [this](const dji_serial_bridge::msg::TargetState &m) {
           pending.emplace_back(now_s(), m);
         });
@@ -157,7 +157,7 @@ public:
   std::shared_ptr<EstimationSampler> sampler;
   std::unique_ptr<sim::LaunchTree> launch;
   std::vector<std::string> nodes{"bench_world", "target_selector",
-                                 "target_tracker", "mcb_aim_standin"};
+                                 "target_tracker", "target_manager", "mcb_aim_standin"};
   std::string error;
   void SetUp() override {
     try {

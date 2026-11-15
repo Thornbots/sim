@@ -142,3 +142,39 @@ TEST(McbAim, FireDisabledPreservesAimingAndShooterCompensation) {
   EXPECT_FALSE(led.fire);
   EXPECT_LT(led.aim->y, still.aim->y - .01);
 }
+
+TEST(McbAim, SpinCutoutMatchesFirmwareAcrossThresholdAndRefresh) {
+  Standin standin;
+  aim::AimControl firmware;
+  uint32_t ms = 0;
+  for (float rate : {0.f, aim::SHOT_GATING_RAD_S, aim::SHOT_GATING_RAD_S + .001f,
+      9.f, -9.f, -aim::SHOT_GATING_RAD_S - .001f, -aim::SHOT_GATING_RAD_S, 0.f})
+  {
+    auto in = target();
+    in.yaw += .2f;
+    in.yaw_rate = rate;
+    standin.on_state(ms, in);
+    firmware.observe(ms, in);
+    const auto p = firmware.tick(ms, {}, {});
+    const auto out = standin.tick(ms, Pose{});
+    ASSERT_TRUE(p.valid && out.aim);
+    EXPECT_FLOAT_EQ(out.aim->x, p.aim.x);
+    EXPECT_FLOAT_EQ(out.aim->y, p.aim.y);
+    EXPECT_EQ(out.fire.has_value(), firmware.can_fire(ms, {}, {},
+      {p.yaw, p.pitch, p.yaw_rate, p.pitch_rate}));
+    if (std::abs(rate) > aim::SHOT_GATING_RAD_S) {
+      EXPECT_NEAR(out.aim->y, 0, 1e-6);
+    } else if (rate != 0) {
+      EXPECT_GT(std::abs(out.aim->y), .001);
+    }
+    ms += 25;
+  }
+}
+
+TEST(McbAim, ExplicitShotGatingStillFiresAtAStationaryPanel) {
+  sim::mcb_aim::Config config;
+  config.tuning.chase = false;
+  Standin s(config);
+  s.on_state(0, target());
+  EXPECT_TRUE(s.tick(0, Pose{}).fire);
+}

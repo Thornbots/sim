@@ -108,7 +108,13 @@ public:
     opponents_ = declare_parameter("opponents", std::vector<std::string>{"opponent_0"});
     class_ids_ = declare_parameter("class_ids", std::vector<int64_t>{6});
     half_angle_ = declare_parameter("exposure_half_angle_deg", 72.5) * M_PI / 180.0;
+    // Synthetic capture-time detection confidence copied to every visible panel.
     score_ = declare_parameter("score", 0.9);
+    if (!std::isfinite(score_) || score_ < 0 || score_ > 1) {
+      throw std::invalid_argument("score must be a finite confidence in [0, 1]");
+    }
+    // Capture-time disappearance boundary; negative disables it. Empty frames and acks continue.
+    declare_parameter("hidden_from_s", -1.0);
     frame_id_ = declare_parameter("frame_id", "camera");
     depth_coeff_ = declare_parameter("noise_depth_range_coeff", 0.0);
     lateral_rad_ = declare_parameter("noise_lateral_rad", 0.0);
@@ -341,7 +347,11 @@ private:
     dji_serial_bridge::msg::PanelDetectionArray out;
     out.header.stamp = stamp;
     out.header.frame_id = frame_id_;
+    const double hidden_from = get_parameter("hidden_from_s").as_double();
     for (size_t i = 0; i < theirs.size(); ++i) {
+      if (hidden_from >= 0 && stamp.seconds() >= hidden_from) {
+        break;
+      }
       size_t panel_index = 0;
       for (const auto & root_T_panel : root_T_panels_) {
         const size_t panel = panel_index++;

@@ -29,7 +29,7 @@ public:
   std::shared_ptr<sim::SimTimeNode> control;
   std::unique_ptr<sim::LaunchTree> launch;
   std::vector<std::string> nodes{
-      "detector_standin",   "target_selector",   "target_tracker",
+      "detector_standin",   "target_selector",   "target_tracker", "target_manager",
       "point_to_cv_target", "opponent_driver",   "target_driver",
       "mcb_emulator",       "dji_serial_bridge", "mcb_relay"};
   std::string error;
@@ -209,20 +209,23 @@ public:
                          // The tick the clock is held at: the driver applies this from the next.
                          rclcpp::Parameter("effective_s", scorer->tick_s())});
   }
-  void record_score(const std::string &cell, double duration) {
+  void record_score(const std::string &cell, double duration,
+                    const cb::Json &lifecycle = nullptr) {
     const auto &shots = scorer->shots;
     cb::append_json(
         cb::options.log_dir + "/scores.jsonl",
         {{"cell", cell},
          {"duration_s", duration},
          {"mcb_shots", shots.at("mcb").size()},
-         {"mcb_hit_rate", cb::rounded(ee::hit_rate(shots.at("mcb")), 4)}});
+         {"mcb_hit_rate", cb::rounded(ee::hit_rate(shots.at("mcb")), 4)},
+         {"lifecycle", lifecycle}});
   }
 };
 Environment *environment = nullptr;
 struct Cell {
   double speed, spin;
   std::string path, name;
+  bool disappears = false;
 };
 std::vector<Cell> cases() {
   std::vector<Cell> out;
@@ -257,6 +260,9 @@ std::vector<Cell> cases() {
                          *std::max_element(moving.begin(), moving.end()))),
            path, name});
     }
+  const std::string disappearance = "mcb_parked-disappears-lateral";
+  if (cb::options.filter.empty() || disappearance.find(cb::options.filter) != std::string::npos)
+    out.push_back({0, 0, "lateral", disappearance, true});
   return out;
 }
 class E2ESuite : public testing::TestWithParam<Cell> {};
@@ -282,6 +288,8 @@ TEST_P(E2ESuite, MCB) {
     {
       timing::Phase phase("reset");
       environment->set_target(c.speed, c.spin, c.path);
+      environment->control->set_params("detector_standin",
+                                       {rclcpp::Parameter("hidden_from_s", c.disappears ? 0.0 : -1.0)});
       s->scoring = false;
     }
     {
@@ -291,6 +299,12 @@ TEST_P(E2ESuite, MCB) {
       s->run_to(s->tick_s() + 3, 120);
     }
     s->reset();
+    const double window_start = s->tick_s();
+    const std::optional<double> disappears = c.disappears
+        ? std::optional<double>(window_start + duration / 2) : std::nullopt;
+    if (disappears)
+      environment->control->set_params("detector_standin",
+                                       {rclcpp::Parameter("hidden_from_s", *disappears)});
     s->score_until = s->tick_s() + duration + .5;
     s->run_to(s->score_until, std::max(30., (duration + .5) * 20));
     // Shots and TargetStates stamped inside the window are judged and received later, by
@@ -303,13 +317,17 @@ TEST_P(E2ESuite, MCB) {
     s->check_nodes(environment->nodes);
     s->check_lockstep();
     const auto checked = std::chrono::steady_clock::now();
+    const auto lifecycle = ee::lifecycle_metrics(s->physical_shot_times, window_start, disappears);
     for (const auto &e :
          std::vector<std::pair<std::string, std::vector<cb::Json>>>{
+             {"shots.jsonl", s->shots.at("mcb")},
              {"states.jsonl", s->states}, {"poses.jsonl", s->route_records}}) {
       std::ofstream file(cb::options.log_dir + "/" + e.first, std::ios::app);
       for (const auto &r : e.second) {
         auto out = r;
         out.update({{"speed", c.speed}, {"path", c.path}, {"spin_hz", c.spin}});
+        out["cell"] = c.name;
+        out["lifecycle"] = lifecycle;
         file << out.dump() << '\n';
       }
     }
@@ -320,7 +338,7 @@ TEST_P(E2ESuite, MCB) {
                      .count()
               << " s wall\n";
     std::cout << ee::state_summary(s->states) << '\n';
-    environment->record_score(c.name, duration);
+    environment->record_score(c.name, duration, lifecycle);
     ASSERT_FALSE(s->route_records.empty()) << "No chassis truth samples";
     const auto start = s->route_records.front().at("truth_xy");
     double chassis_displacement = 0;

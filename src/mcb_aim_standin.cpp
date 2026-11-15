@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -59,6 +60,7 @@ public:
     const auto mode = declare_parameter("spin_mode", std::string("firmware"));
     if (mode == "chase") {
       t.chase = true;
+      t.shot_gating_rad_s = std::numeric_limits<float>::infinity();
       t.chase_settle_s = static_cast<float>(
         declare_parameter("chase_settle_s", static_cast<double>(t.chase_settle_s)));
       t.chase_margin_s = static_cast<float>(
