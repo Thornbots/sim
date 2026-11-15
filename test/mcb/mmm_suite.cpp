@@ -489,6 +489,10 @@ TEST_P(TeamBoot, WaitsForRefereeThenRelocalizesNavigationOnly) {
   holdRef = false;
   ASSERT_TRUE(wait([&] { return refCount > beforeRef && hasAmcl() && navOdom && lastFix; }, 60));
   EXPECT_EQ(droppedFixes, 1U);
+  ASSERT_TRUE(wait([&] { return counts[0][7] > 0; }));
+  const auto fixesAfterAck = fixes;
+  dwell(0.4);
+  EXPECT_EQ(fixes, fixesAfterAck) << "ack should stop startup retries";
   const auto start = GetParam() > 100 ? blueStart : redStart;
   const auto p = navOdom->pose.pose.position;
   EXPECT_NEAR(p.x, start[0], 0.05);
