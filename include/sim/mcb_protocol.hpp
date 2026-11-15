@@ -33,6 +33,7 @@ constexpr uint8_t kCvTargetFlagsDefault =
   kCvTargetFlagTurnToHit | kCvTargetFlagTypeCBasedPatrol;
 constexpr uint8_t kTargetStateFlagValid = 0x01;
 constexpr uint8_t kTargetStateFlagTypeCBasedPatrol = 0x02;
+constexpr uint8_t kTargetStateFlagClear = 0x04;
 
 struct NavGoal
 {

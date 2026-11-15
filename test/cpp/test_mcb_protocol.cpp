@@ -207,3 +207,13 @@ TEST(McbProtocol, OpaqueDebugBlob) {
   }
   EXPECT_THROW(pack(DebugBlob{std::vector<uint8_t>(kDebugMaxPayload + 1)}), std::length_error);
 }
+
+TEST(McbProtocol, ClearFlagStaysIndependentOfValidAndGeometry) {
+  wire::TargetState state;
+  state.flags = wire::kTargetStateFlagClear | wire::kTargetStateFlagValid;
+  state.track_id = 789;
+  const auto decoded = wire::unpack<wire::TargetState>(wire::pack(state));
+  EXPECT_EQ(decoded.flags & wire::kTargetStateFlagClear, 4);
+  EXPECT_EQ(decoded.flags & wire::kTargetStateFlagValid, 1);
+  EXPECT_EQ(decoded.track_id, 789);
+}
