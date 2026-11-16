@@ -403,6 +403,9 @@ TEST_F(McbFirmware, RelocalizationPreservesRawPoseAndHeldAim) {
   const auto aim = wire::frame(wire::CvTarget{3.0F, 1, 0.2F, 0});
   const auto before = run(200, aim);
   const auto after = run(100, wire::frame(wire::Relocalize{1.25F, -0.75F}));
+  const auto pings = messages<wire::Ping>(after);
+  ASSERT_EQ(pings.size(), 1U);
+  EXPECT_EQ(pings.front().number, 7);
   const auto poses = messages<wire::Pose>(after);
   ASSERT_FALSE(poses.empty());
   EXPECT_NEAR(poses.back().x, 0.0, 1e-6);
@@ -415,6 +418,11 @@ TEST_F(McbFirmware, RelocalizationPreservesRawPoseAndHeldAim) {
   EXPECT_NEAR(moving_poses.back().x, 0.25, 1e-6);
   EXPECT_NEAR(moving_poses.back().y, 0.5, 1e-6);
   EXPECT_NEAR(moving.outputs.back().yaw, aim_yaw(0.5, 2.75), 1e-6);
+}
+TEST_F(McbFirmware, RejectedRelocalizationHasNoAck) {
+  const auto result = run(100, wire::frame(wire::Relocalize{
+      std::numeric_limits<float>::quiet_NaN(), 0.0F}));
+  EXPECT_TRUE(messages<wire::Ping>(result).empty());
 }
 TEST_F(McbFirmware, RejectsCorruptTargetState) {
   auto packet = state_frame(2, 0, 0.2F);
