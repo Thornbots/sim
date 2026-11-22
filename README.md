@@ -347,6 +347,11 @@ outside the launch tree to clean up:
   Renode and `ros2 run`), then expects the whole group to be gone. A member
   that survives is SIGKILLed and reported (`clean()` is false, the E2E suite
   fails, the checker rejects the log).
+- The E2E stack launch marks shutdown before forwarding signals to its nodes.
+  This lets the lockstep coordinator stop waiting if a UART or other producer
+  exits first. A producer that disappears during a run still fails immediately.
+  The harness holds its last tick while the stack stops. The X11 recorder sends
+  SIGINT to the launch leader on interruption.
 - The firmware process has its own process group on purpose, so a group SIGINT
   cannot kill it mid-tick; it exits when gz closes its stdin.
 - The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero node

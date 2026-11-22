@@ -67,8 +67,8 @@ def capture(args):
         command += ['speeds:=' + args.speeds, 'paths:=' + args.paths,
                     'duration:=' + str(args.duration)]
     launch_log = (directory / 'launch.log').open('w')
-    launch = subprocess.Popen(command, stdout=launch_log, stderr=subprocess.STDOUT,
-                              start_new_session=True)
+    launch = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=launch_log,
+                              stderr=subprocess.STDOUT, start_new_session=True)
     preset = 'e2e-parked-gz.config' if args.stage == 'mcb_parked' else 'e2e-gz.config'
     config = (Path(__file__).resolve().parents[1] / 'rviz' / preset).read_text()
     xyzrpy = [float(v) for v in re.search(r'<camera_pose>(.*?)</camera_pose>', config)[1].split()]
@@ -112,7 +112,7 @@ def capture(args):
                     camera_set = result.returncode == 0 and 'true' in result.stdout
     finally:
         if launch.poll() is None:
-            os.killpg(launch.pid, signal.SIGINT)
+            launch.send_signal(signal.SIGINT)
             try:
                 launch.wait(timeout=30)
             except subprocess.TimeoutExpired:
@@ -124,7 +124,7 @@ def capture(args):
         video_log.close()
         launch_log.close()
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
     checker = subprocess.run(['ros2', 'run', 'sim', 'check_bench_log',
                               str(directory / 'launch.log'), str(directory / 'stack.log')],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
