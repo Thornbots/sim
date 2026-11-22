@@ -137,13 +137,15 @@ public:
   }
   void TearDown() override {
     timing::Phase phase("teardown");
-    if (scorer)
-      scorer->retire();
     if (launch) {
+      // Keep the final physics hold through shutdown so producers don't have
+      // to acknowledge a new tick while they are exiting.
       launch->stop();
       EXPECT_TRUE(launch->clean())
           << "stack shutdown needed SIGKILL; see the SIGKILLing line above";
     }
+    if (scorer)
+      scorer->retire();
     timing::set_sim_clock({});
     scorer.reset();
     control.reset();
