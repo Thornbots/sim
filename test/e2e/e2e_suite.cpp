@@ -137,11 +137,10 @@ public:
   }
   void TearDown() override {
     timing::Phase phase("teardown");
-    if (scorer) {
+    if (scorer)
       EXPECT_EQ(scorer->locked_shots, 0u) << "projectile exits that triggered or ignored a heat lock";
-      scorer->retire();
-    }
     if (launch) {
+      // Keep the last harness tick held until the stack stops.
       launch->stop();
       EXPECT_TRUE(launch->clean())
           << "stack shutdown needed SIGKILL; see the SIGKILLing line above";
