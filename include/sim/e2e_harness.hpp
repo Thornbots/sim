@@ -74,6 +74,7 @@ public:
   // than the coordinator's 60 s guard, so its diagnosis (naming the topic) comes first.
   static constexpr double kStallWallS = 90;
   std::string stage, log_path;
+  size_t locked_shots = 0;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
   std::map<std::string, std::vector<Json>> shots;
   std::vector<double> physical_shot_times;

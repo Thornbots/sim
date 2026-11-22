@@ -137,8 +137,10 @@ public:
   }
   void TearDown() override {
     timing::Phase phase("teardown");
-    if (scorer)
+    if (scorer) {
+      EXPECT_EQ(scorer->locked_shots, 0u) << "projectile exits that triggered or ignored a heat lock";
       scorer->retire();
+    }
     if (launch) {
       launch->stop();
       EXPECT_TRUE(launch->clean())

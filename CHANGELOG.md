@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Apply sentry referee heat to both firmware backends and enforce the launcher
+  lock at physical projectile exit.
+- Score cold aim bench cases against the firmware's chosen mode, the sentry
+  heat budget and its 10 Hz launcher limit.
+- Wait for matched DDS links before starting the paced aim bench clock.
+
 - Share firmware's π/2 rad/s shot-gating cutout in the aim stand-in, with
   threshold/refresh parity coverage and an explicit chase comparison override.
 

@@ -45,6 +45,7 @@
 
 #include "sim/mcb_protocol.hpp"
 #include "sim/mcb_motor.hpp"
+#include "sim/referee_launcher.hpp"
 extern char **environ;
 namespace sim::mcb_firmware {
 constexpr double kPi = 3.14159265358979323846;
@@ -128,6 +129,9 @@ struct Referee {
   bool restoration_zone = false, exchange_zone = false,
        central_buff_zone = false;
   bool shooter_power = true, chassis_power = true;
+  uint16_t barrel_heat = 0;
+  int64_t barrel_cooling = RefereeLauncher::kCoolingPerSecond;
+  int64_t barrel_heat_limit = RefereeLauncher::kHeatLimit;
 
   template <typename Parameter> void apply(const Parameter &p) {
     const auto &n = p.get_name();
@@ -172,8 +176,8 @@ inline std::vector<uint8_t> referee_frames(const Referee &ref) {
   frame(0x0001, game);
   frame(0x0206, {static_cast<uint8_t>(ref.hurt_armor_id & 3)});
   std::vector<uint8_t> robot{referee_u8(ref.robot_id), 1};
-  for (const auto value : {ref.current_hp, ref.max_hp, int64_t{100},
-                           int64_t{1000}, int64_t{240}}) {
+  for (const auto value : {ref.current_hp, ref.max_hp, ref.barrel_cooling,
+                           ref.barrel_heat_limit, int64_t{240}}) {
     append_u16(robot, referee_u16(value));
   }
   robot.push_back(1 | static_cast<uint8_t>(ref.chassis_power) << 1 |
@@ -183,7 +187,7 @@ inline std::vector<uint8_t> referee_frames(const Referee &ref) {
   append_u16(power, 24000);
   append_u16(power, 0);
   append_float(power, 0.0);
-  for (const uint16_t value : {60, 0, 0, 0}) {
+  for (const uint16_t value : std::array<uint16_t, 4>{60, ref.barrel_heat, 0, 0}) {
     append_u16(power, value);
   }
   frame(0x0202, power);
