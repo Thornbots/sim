@@ -1,0 +1,6 @@
+<library path="sim_rviz_tf">
+  <class name="sim/TF" type="sim::RvizTf"
+         base_class_type="rviz_common::transformation::FrameTransformer">
+    <description>TF2 transformer for the sim RViz presets.</description>
+  </class>
+</library>

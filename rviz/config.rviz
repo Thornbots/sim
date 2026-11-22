@@ -302,7 +302,7 @@ Visualization Manager:
         Value: /clicked_point
   Transformation:
     Current:
-      Class: rviz_default_plugins/TF
+      Class: sim/TF
   Value: true
   Views:
     Current:

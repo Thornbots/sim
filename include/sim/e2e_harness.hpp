@@ -26,6 +26,7 @@
 #include <dji_serial_bridge/msg/ref_sys_status.hpp>
 #include <dji_serial_bridge/msg/robot_pose.hpp>
 #include <dji_serial_bridge/msg/target_state.hpp>
+#include <geometry_msgs/msg/point.hpp>
 #include <gz/transport/Node.hh>
 #include <chrono>
 #include <deque>
@@ -133,8 +134,10 @@ private:
   std::optional<Json> judge_match(const std::string &kind, double t);
   void judge_state(const dji_serial_bridge::msg::TargetState &m);
   void fire_tick();
+  void visualize_scene();
   void visualize_shot(const std::string &kind, const Json &shot);
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr visual_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr visual_pub_, scene_pub_;
+  std::vector<geometry_msgs::msg::Point> visual_route_;
   int visual_id_ = 0;
   void sync_referee();
 };
