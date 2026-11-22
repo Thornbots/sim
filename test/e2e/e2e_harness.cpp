@@ -132,6 +132,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     : SimTimeNode("e2e_scorer"), stage(stage_), log_path(logpath),
       tf(get_clock()), offsets_(urdf_offsets()), listener_(tf, this, false) {
   visual_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/markers", 10);
+  scene_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/scene", 1);
   subscribe<diagnostic_msgs::msg::DiagnosticStatus>(
       "/sim/lockstep/status", rclcpp::QoS(1).reliable().transient_local(),
       [this](const auto &m) {
@@ -185,10 +186,10 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           try {
             auto muzzle = tf.lookupTransform(point.header.frame_id, "muzzle", tf2::TimePointZero);
             auto ray = point;
-            ray.header.stamp = get_clock()->now();
+            ray.header.stamp = muzzle.header.stamp;
             ray.ns = "idle_look_ray"; ray.type = visualization_msgs::msg::Marker::LINE_STRIP;
             ray.pose.position = geometry_msgs::msg::Point{};
-            ray.scale.x = .015;
+            ray.scale.x = .025;
             geometry_msgs::msg::Point origin;
             origin.x = muzzle.transform.translation.x;
             origin.y = muzzle.transform.translation.y;
@@ -387,6 +388,7 @@ void Scorer::tick_body() {
   ++ticks_;
   if (scoring && tick_s() < score_until)
     pending_poses_.push_back(tick_s());
+  visualize_scene();
   if (ticks_ % 2 == 0)
     fire_tick();
 }
@@ -830,6 +832,59 @@ void Scorer::fire_tick() {
   if (driving())
     sync_referee();
 }
+void Scorer::visualize_scene() {
+  if (!scene_pub_->get_subscription_count()) return;
+  using Marker = visualization_msgs::msg::Marker;
+  visualization_msgs::msg::MarkerArray scene;
+  for (const auto &[name, history] : histories) {
+    const auto newest = history->newest();
+    if (!newest) continue;
+    const auto stamp = std::min(*newest, tick_s());
+    const auto pose = history->at(stamp);
+    if (!pose) continue;
+    Marker marker;
+    // The saved arena map and Gazebo world use the same field coordinates.
+    marker.header.frame_id = "map";
+    marker.header.stamp = rclcpp::Time(static_cast<int64_t>(stamp * 1e9), RCL_ROS_TIME);
+    marker.frame_locked = true;
+    marker.pose.orientation.w = 1.;
+    marker.color.a = 1.;
+    geometry_msgs::msg::Point position;
+    position.x = pose->root(0, 3);
+    position.y = pose->root(1, 3);
+    if (name == "sentry") {
+      if (!driving()) continue;
+      position.z = .02;
+      if (visual_route_.empty() ||
+          std::hypot(position.x - visual_route_.back().x,
+                     position.y - visual_route_.back().y) >= .08) {
+        constexpr std::size_t kMaxRoutePoints = 512;
+        if (visual_route_.size() == kMaxRoutePoints) visual_route_.erase(visual_route_.begin());
+        visual_route_.push_back(position);
+      }
+      if (visual_route_.size() < 2) continue;
+      marker.ns = "sentry_route";
+      marker.type = Marker::LINE_STRIP;
+      marker.scale.x = .045;
+      marker.color.g = .35F;
+      marker.color.b = 1.F;
+      marker.points = visual_route_;
+    } else {
+      position.z = pose->root(2, 3) + .1;
+      marker.ns = name;
+      marker.type = Marker::CYLINDER;
+      marker.pose.position = position;
+      marker.scale.x = marker.scale.y = .44;
+      marker.scale.z = .20;
+      marker.color.g = .12F;
+      const bool ally = match_scenario::teams().at(name) == "blue";
+      marker.color.b = ally ? 1.F : 0.F;
+      marker.color.r = ally ? 0.F : .88F;
+    }
+    scene.markers.push_back(std::move(marker));
+  }
+  scene_pub_->publish(scene);
+}
 void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
   if (kind != "mcb" || !visual_pub_->get_subscription_count()) return;
   const double launch = shot.at("t").get<double>();
@@ -848,7 +903,7 @@ void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
   line.header.frame_id = "odom"; line.header.stamp = rclcpp::Time(static_cast<int64_t>(launch * 1e9), RCL_ROS_TIME);
   line.ns = "scored_shot"; line.id = visual_id_++ % 64;
   line.type = Marker::LINE_STRIP; line.pose.orientation.w = 1.;
-  line.scale.x = .025; line.color.a = 1.;
+  line.scale.x = .035; line.color.a = 1.;
   const bool hit = shot.value("enemy_hit", shot.value("hit", false));
   line.color.g = hit ? 1.F : .2F; line.color.r = hit ? .15F : 1.F;
   line.lifetime.nanosec = 750000000;

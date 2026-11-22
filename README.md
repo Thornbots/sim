@@ -406,6 +406,16 @@ under `sim/` do nothing until the next rebuild. If a change seems to have no
 effect, check this before anything else, then `rm -rf build/sim install/sim`
 and rebuild.
 
+The sim RViz presets drain a short TF queue in batches on the GUI thread.
+This keeps pose updates recent under rendering load and puts display teardown
+on SIGINT on the same thread as pending transform callbacks. Older Jazzy
+TF2 also invoked callbacks while holding the transform-request lock, which
+could block cleanup of display message filters. See the
+[Jazzy TF2 fix](https://github.com/ros2/geometry2/pull/989).
+The sim launch entry point releases display resources before closing the
+render window and shutting down ROS. Stock RViz can fail in OGRE map
+swatch teardown when it closes the window first.
+
 ## More on the tests
 
 `test_mcb_debug_bag` opts into the hosted-only [firmware debug flood fixture](../firmware/MCBV3/README.md#opaque-debug-blobs),
@@ -771,15 +781,21 @@ doesn't have; only sim and its tests should read them.
 
 [Mac recording evidence](docs/e2e-video-2026-10-13.md).
 
-The E2E GUI uses scene-only gz views and robot-following RViz views:
-[a parked close-up](rviz/e2e-parked.rviz) and [a driving/match view](rviz/e2e.rviz). They show robot, TF, lidar, map, tracked armor,
-cyan aim point/ray and scored MCB shot traces. The GUI-only `e2e_map_view`
-fetches the initial map through the read-only map service and mirrors updates
-to `/sim/e2e/map` once per wall second, so a missed initial DDS sample does
-not leave RViz empty. The map viewer and RViz use the existing thornbots UDP
-profile to avoid depending on shared-memory delivery of the large map. Green denotes an enemy hit and
-red a miss. Traces appear after the scorer resolves the shot; they show the
-historical ballistic path, not animated ammunition. Parked/drive endpoints use
+The E2E GUI pairs scene-only gz views with field-fixed RViz views.
+The [drive and match view](rviz/e2e.rviz) frames the arena and draws the
+sentry's driven route in blue. The [parked view](rviz/e2e-parked.rviz) frames
+the scoring area near the central wall. The sentry model uses ROS TF. Blue
+and red cylindrical markers show the other robots' Gazebo poses. Both views
+show lidar, the saved map, tracked armor, the cyan aim point and ray, and
+scored MCB shot traces. The camera targets `map` while RViz draws the sentry
+in `odom` so pose updates can use the direct raw transform.
+
+The GUI-only `e2e_map_view` publishes each changed map on `/sim/e2e/map`.
+Its transient-local publisher retains the current map for new viewers.
+The read-only map service provides a fallback during startup. The mirror
+and RViz use the existing Thornbots UDP profile for map delivery.
+Green denotes an enemy hit and red a miss. Traces show the historical
+ballistic path after the scorer resolves the shot. Parked/drive endpoints use
 scored flight range; match endpoints use the resolved first-impact time.
 The aim ray connects the current muzzle TF to the held aim point. The
 [chassis-yaw wire limitation](../ros2_dji_serial_bridge/UART_PROTOCOL.md#proposed-pose-chassis-yaw)
