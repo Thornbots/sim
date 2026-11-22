@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Scale the tracking bench truth watchdog with the configured simulation pace and
+  fail the current test cell when a required truth sample never arrives.
+
 - Share firmware's π/2 rad/s shot-gating cutout in the aim stand-in, with
   threshold/refresh parity coverage and an explicit chase comparison override.
 
