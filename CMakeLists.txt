@@ -513,6 +513,9 @@ if(BUILD_TESTING)
   ament_add_pytest_test(sim_dds_switch test/test_dds_switch.py TIMEOUT 60
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENV "PYTEST_ADDOPTS=-p no:anyio")
+  ament_add_pytest_test(sim_record_e2e test/test_record_e2e.py TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENV "PYTEST_ADDOPTS=-p no:anyio")
   foreach(lint copyright flake8 pep257)
     ament_add_pytest_test(sim_${lint} test/test_${lint}.py TIMEOUT 120
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

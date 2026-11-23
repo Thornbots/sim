@@ -785,34 +785,38 @@ The aim ray connects the current muzzle TF to the held aim point. The
 [chassis-yaw wire limitation](../ros2_dji_serial_bridge/UART_PROTOCOL.md#proposed-pose-chassis-yaw)
 applies to RViz body orientation; gz shows physical chassis spin.
 
-In a ROS container terminal with a 1920x1080 X11 desktop, install the optional
-recording tools (`ffmpeg`, `wmctrl`, `python3-pil`, `python3-numpy`, `rclpy`).
-Build the selected firmware backend first as in [MCB emulator](#mcb-emulator).
-Use an idle ROS domain, a separate gz partition and a fresh output directory.
-Then run from the workspace root:
+## Record a suite video
+
+From a built and sourced workspace in the ROS container, use an idle
+`ROS_DOMAIN_ID` and `GZ_PARTITION`. Install `ffmpeg`, `wmctrl`, `xdotool`,
+`x11-utils`, and `python3-pil` (Pillow 10.1 or newer). Capture uses the workspace's ROS
+Python environment and needs `xvfb` and `openbox` when no display is available.
+With an existing 1920×1080 X11 display and window manager, capture records the
+entire desktop. Use a fresh directory for each take.
 
 ```sh
-python3 src/sim/tools/record_e2e.py capture mcb_parked /tmp/demo/parked
-python3 src/sim/tools/record_e2e.py render /tmp/demo/parked /tmp/parked.mp4
+python3 src/sim/tools/record_e2e.py capture ekf /tmp/ekf-take
+python3 src/sim/tools/record_e2e.py render /tmp/ekf-take /tmp/ekf.mp4 --pr-clip
 ```
 
-Replace the stage with `mcb_drive` or `mcb_match`. Capture defaults to the
-explicit hosted fixture; `--backend renode` selects the normal board ELF.
-Parked capture defaults to lateral speeds 0/1 m/s with 35 scored seconds per
-cell. `--speeds`, `--paths` and `--duration` choose the
-recorded cells/settings without changing the tests' scoring gates.
+Capture accepts every [suite runner](#run-the-tests) suite and forwards
+`name:=value` launch arguments, for example `scenario:=odom_stuck` for
+`localization_drift`. For the MCB stages, build the selected firmware backend
+as described in [MCB emulator](#mcb-emulator). Capture shows Gazebo for
+localization and EKF, RViz for aim and tracking, and both for the three MCB
+stages. The default capture pace is `real_time_factor:=1.0` for aim and
+tracking and `0.5` for the other suites. The take directory keeps the desktop
+video, clock samples, suite and checker output, and verdict. Rendering
+requires a successful suite, checker, and capture.
 
-RViz and gz share one desktop and capture stream. The tool caps simulation at
-RTF 0.25, records 20 wall-time frames/s and saves `/clock` against wall time.
-Rendering crops the window chrome and enlarges the gz centre crop
-(`--gz-zoom 1` keeps the full arena), then resamples the panes at 30 frames per
-sim second: playback is 1x
-sim time even when the actual RTF varies. The default scored telemetry window trims
-bring-up and gaps between parked cells; `--start`/`--end` override it in sim seconds. Captions use absolute
-sim time and resolved MCB hits/shots (`scored_at` in `shots.jsonl`), not fire
-requests or ghost shots. Output is 1080p H.264/YUV420 MP4, with a JSON sidecar.
-A failed test/log check retains raw capture/logs but cannot be rendered as a
-passing demo.
+Rendering writes a 1080p H.264 MP4 and a JSON sidecar. It uses recorded
+`/clock` samples to play at 1× sim time, trimming to the suite's scored
+intervals where available and cutting jumps in the simulation clock. The
+banner shows the suite verdict, absolute sim time, and available cell or
+segment labels and hits/shots. Use `--start` and `--end` with absolute sim
+seconds to choose a window or `--gz-zoom` to crop the MCB Gazebo pane.
+`--pr-clip` also writes a 960×540
+`<output-stem>-pr.mp4` with up to 30 seconds of the render, under 10 MB.
 
 ## Notes
 
