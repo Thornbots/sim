@@ -279,7 +279,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     referee_client_ = create_client<rcl_interfaces::srv::SetParameters>(
         "/mcb_emulator/set_parameters");
     referee_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-        "/sim/match/referee", 10);
+        "/sim/match/referee", rclcpp::QoS(1).reliable().transient_local());
   }
 }
 void Scorer::spin_for(double seconds) {
@@ -802,15 +802,14 @@ void Scorer::fire_tick() {
       impact.panel = shot["panel"].get<int>();
     impact.eligible = shot["eligible"];
     impact.normal_speed = shot["normal_speed"];
-    bool hit = referee->apply(impact),
-         friendly =
-             impact.victim &&
-             match_scenario::teams().at(shot["shooter"].get<std::string>()) ==
-                 match_scenario::teams().at(*impact.victim);
-    shot["hit"] = hit;
-    shot["friendly_intersection"] = friendly;
-    shot["enemy_hit"] = hit && !friendly;
-    if (hit &&
+    const auto ruling = referee->apply(shot.at("shooter"), shot.at("t"), impact);
+    shot["hit"] = ruling.credited;
+    shot["enemy_hit"] = ruling.credited;
+    shot["friendly_intersection"] = ruling.friendly_contact;
+    shot["defeated_robot_contact"] = ruling.defeated_contact;
+    shot["valid_enemy_panel_contact"] = ruling.valid_enemy_panel_contact;
+    shot["after_all_opponents_defeated"] = ruling.after_all_opponents_defeated;
+    if (ruling.credited &&
         impact.victim == std::optional<std::string>("sentry"))
       hurt_armor_id = impact.panel.value_or(0);
     Json hp = Json::object();
@@ -870,10 +869,14 @@ void Scorer::visualize_scene() {
       marker.pose.position = position;
       marker.scale.x = marker.scale.y = .44;
       marker.scale.z = .20;
-      marker.color.g = .12F;
-      const bool ally = match_scenario::teams().at(name) == "blue";
-      marker.color.b = ally ? 1.F : 0.F;
-      marker.color.r = ally ? 0.F : .88F;
+      if (referee && referee->hp(name) == 0) {
+        marker.color.r = marker.color.g = marker.color.b = .24F;
+      } else {
+        marker.color.g = .12F;
+        const bool ally = match_scenario::teams().at(name) == "blue";
+        marker.color.b = ally ? 1.F : 0.F;
+        marker.color.r = ally ? 0.F : .88F;
+      }
     }
     scene.markers.push_back(std::move(marker));
   }
@@ -988,6 +991,28 @@ double hit_rate(const std::vector<Json> &shots) {
   for (const auto &s : shots)
     hits += s["hit"].get<bool>();
   return shots.empty() ? 0 : static_cast<double>(hits) / shots.size();
+}
+Json match_shot_counts(const std::vector<Json> &shots) {
+  size_t credited = 0, valid = 0, friendly = 0, defeated = 0, after_defeat = 0, attempts = 0;
+  for (const auto &shot : shots) {
+    const bool on_defeated = shot.at("defeated_robot_contact");
+    const bool after_all_defeated = shot.at("after_all_opponents_defeated");
+    credited += shot.at("enemy_hit").get<bool>();
+    valid += shot.at("valid_enemy_panel_contact").get<bool>();
+    friendly += shot.at("friendly_intersection").get<bool>();
+    defeated += on_defeated;
+    after_defeat += after_all_defeated;
+    attempts += !on_defeated && !after_all_defeated;
+  }
+  return {{"shots", shots.size()},
+          {"referee_credited_hits", credited},
+          {"valid_enemy_panel_contacts", valid},
+          {"friendly_contacts", friendly},
+          {"defeated_robot_contacts", defeated},
+          {"shots_after_all_opponents_defeated", after_defeat},
+          {"accuracy_attempts", attempts},
+          {"valid_enemy_panel_contact_rate",
+           attempts ? Json(static_cast<double>(valid) / attempts) : Json(nullptr)}};
 }
 std::string state_summary(const std::vector<Json> &states) {
   if (states.empty())

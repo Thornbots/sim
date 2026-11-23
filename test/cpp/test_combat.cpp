@@ -103,22 +103,45 @@ TEST(Combat, PanelCrossingIsInShooterRightAndFaceUpAxes)
 TEST(Combat, DamageDeadTimeIsPerPanelAndHpCannotGoNegative)
 {
   Referee referee({{"red", "red"}, {"blue", "blue"}});
-  EXPECT_TRUE(referee.apply(hit("red", 0, 1.0)));
-  EXPECT_FALSE(referee.apply(hit("red", 0, 1.049)));
-  EXPECT_TRUE(referee.apply(hit("red", 1, 1.01)));
+  EXPECT_TRUE(referee.apply("blue", .9, hit("red", 0, 1.0)).credited);
+  const auto dead_time = referee.apply("blue", 1.0, hit("red", 0, 1.049));
+  EXPECT_FALSE(dead_time.credited);
+  EXPECT_TRUE(dead_time.valid_enemy_panel_contact);
+  EXPECT_TRUE(referee.apply("blue", .9, hit("red", 1, 1.01)).credited);
   EXPECT_EQ(referee.hp("red"), 360);
-  for (int tick = 0; tick < 25; ++tick) {
-    referee.apply(hit("red", 0, 2.0 + tick * 0.1));
+  for (int tick = 0; tick < 18; ++tick) {
+    EXPECT_TRUE(referee.apply("blue", 1.9 + tick * .1, hit("red", 0, 2.0 + tick * .1)).credited);
   }
   EXPECT_EQ(referee.hp("red"), 0);
   EXPECT_EQ(referee.hp("blue"), 400);
-  EXPECT_FALSE(referee.apply(hit("red", 0, 6.0)));
+  const auto in_flight = referee.apply("blue", 3.6, hit("red", 0, 3.8));
+  EXPECT_TRUE(in_flight.defeated_contact);
+  EXPECT_FALSE(in_flight.credited);
+  EXPECT_FALSE(in_flight.valid_enemy_panel_contact);
+  EXPECT_FALSE(in_flight.after_all_opponents_defeated);
+  EXPECT_TRUE(referee.apply("blue", 3.8, hit("red", 0, 3.9)).after_all_opponents_defeated);
+}
+
+TEST(Combat, FriendlyContactDoesNotDamageArmorOrStartDeadTime)
+{
+  Referee referee({{"red", "red"}, {"blue", "blue"}, {"ally", "red"}});
+  const auto friendly = referee.apply("ally", .9, hit("red", 0, 1.0));
+  EXPECT_TRUE(friendly.friendly_contact);
+  EXPECT_FALSE(friendly.credited);
+  EXPECT_FALSE(friendly.valid_enemy_panel_contact);
+  EXPECT_EQ(referee.hp("red"), 400);
+
+  const auto enemy = referee.apply("blue", .91, hit("red", 0, 1.01));
+  EXPECT_FALSE(enemy.friendly_contact);
+  EXPECT_TRUE(enemy.credited);
+  EXPECT_TRUE(enemy.valid_enemy_panel_contact);
+  EXPECT_EQ(referee.hp("red"), 380);
 }
 
 TEST(Combat, IneligiblePhysicalImpactDoesNotDamageArmor)
 {
-  Referee referee({{"robot", "red"}});
-  EXPECT_FALSE(referee.apply(hit("robot", 0, 1.0, false)));
+  Referee referee({{"robot", "red"}, {"shooter", "blue"}});
+  EXPECT_FALSE(referee.apply("shooter", .9, hit("robot", 0, 1.0, false)).credited);
   EXPECT_EQ(referee.hp("robot"), 400);
 }
 

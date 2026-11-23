@@ -142,6 +142,7 @@ private:
   void sync_referee();
 };
 double hit_rate(const std::vector<Json> &shots);
+Json match_shot_counts(const std::vector<Json> &shots);
 std::string state_summary(const std::vector<Json> &states);
 Json segment_diagnostics(const Scorer &s, const std::string &segment,
                          const std::vector<Json> &shots);

@@ -393,18 +393,14 @@ TEST_P(E2ESuite, MCB) {
   auto actual = s->shots.at("mcb");
   bool match = cb::options.stage == "mcb_match";
   std::vector<cb::Json> all_impacts;
-  int allies = 0;
-  for (const auto &e : s->shots)
-    for (const auto &r : e.second)
-      all_impacts.push_back(r);
   if (match) {
+    for (const auto &entry : s->shots)
+      all_impacts.insert(all_impacts.end(), entry.second.begin(), entry.second.end());
     std::stable_sort(all_impacts.begin(), all_impacts.end(),
                      [](const auto &a, const auto &b) {
                        return a["impact_t"].template get<double>() <
                               b["impact_t"].template get<double>();
                      });
-    for (const auto &r : actual)
-      allies += r["friendly_intersection"].get<bool>();
   }
   cb::Json summaries = cb::Json::array();
   for (const auto &segment :
@@ -429,17 +425,9 @@ TEST_P(E2ESuite, MCB) {
     auto diagnosis = match && !fighting
                          ? cb::Json(nullptr)
                          : ee::segment_diagnostics(*s, segment, records);
-    double rate = ee::hit_rate(records);
-    if (match) {
-      int enemy = 0;
-      for (const auto &r : records)
-        enemy += r["enemy_hit"].get<bool>();
-      rate = records.empty() ? 0 : static_cast<double>(enemy) / records.size();
-    }
     cb::Json summary = {
         {"segment", segment},
         {"shots", records.size()},
-        {match ? "enemy_hit_rate" : "hit_rate", rate},
         {"diagnosis", diagnosis},
         {"start_displacement_max_m", displacement.empty() ? cb::Json(nullptr)
                                       : cb::Json(*std::max_element(displacement.begin(), displacement.end()))},
@@ -448,7 +436,10 @@ TEST_P(E2ESuite, MCB) {
         {"localization_p95_m", pose.empty()
                                    ? cb::Json(nullptr)
                                    : cb::Json(cb::percentile(pose, 95))}};
+    cb::Json rate;
     if (match) {
+      summary.update(ee::match_shot_counts(records));
+      rate = summary.at("valid_enemy_panel_contact_rate");
       summary["fighting"] = fighting;
       double end = telemetry.empty() ? *s->match_start
                                      : telemetry.back()["t"].get<double>();
@@ -459,17 +450,20 @@ TEST_P(E2ESuite, MCB) {
         if (shot["impact_t"].get<double>() <= end)
           hp = shot["hp"];
       summary["hp"] = hp;
+    } else {
+      rate = ee::hit_rate(records);
+      summary["hit_rate"] = rate;
     }
     summaries.push_back(summary);
     std::cout << cb::python_repr(summary) << '\n';
     EXPECT_FALSE(pose.empty())
         << segment << ": no stamped localization diagnostics";
-    if (!match || fighting) {
-      EXPECT_TRUE(rate >= .1 || !diagnosis.is_null())
-          << segment << ": low score without measured diagnosis";
-    } else {
+    if (match && !fighting) {
       EXPECT_TRUE(records.empty())
           << "firmware fired before every robot reached center";
+    } else if (!rate.is_null()) {
+      EXPECT_TRUE(rate.get<double>() >= .1 || !diagnosis.is_null())
+          << segment << ": low contact rate without measured diagnosis";
     }
   }
   EXPECT_TRUE(s->center_time.has_value()) << "firmware auto-drive never brought every robot to center";
@@ -496,8 +490,11 @@ TEST_P(E2ESuite, MCB) {
   for (const auto &name : {"opponent_0", "opponent_1", "ally_0"})
     counts[name] = s->shots.at(name).size();
   counts["sentry"] = actual.size();
+  const auto sentry_counts = ee::match_shot_counts(actual);
+  const auto all_counts = ee::match_shot_counts(all_impacts);
   cb::Json report = {{"segments", summaries},
-                     {"friendly_shots", allies},
+                     {"friendly_contacts", all_counts.at("friendly_contacts")},
+                     {"sentry_friendly_contacts", sentry_counts.at("friendly_contacts")},
                      {"damage_taken", 400 - s->referee->hp("sentry")},
                      {"hp", hp},
                      {"referee_uart_frames", s->referee_messages.size()},
@@ -513,7 +510,8 @@ TEST_P(E2ESuite, MCB) {
                           [](const auto &m) { return m.game_stage == 4; }));
   EXPECT_EQ(s->referee_messages.back().robot_hp, s->referee->hp("sentry"));
   EXPECT_TRUE(s->referee_messages.back().is_on_blue_team);
-  EXPECT_EQ(allies, 0) << "firmware shots intersected ally";
+  EXPECT_EQ(sentry_counts.at("friendly_contacts").get<size_t>(), 0u)
+      << "firmware shots intersected ally";
 }
 INSTANTIATE_TEST_SUITE_P(Cells, E2ESuite, testing::ValuesIn(cases()),
                          [](const auto &info) {

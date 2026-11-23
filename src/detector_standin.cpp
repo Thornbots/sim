@@ -21,6 +21,7 @@
 // noise_lateral_rad (std range) shift each panel along and across its ray,
 // both 0 by default. class_ids[i] tags opponents[i]. see README.md for design rationale
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <deque>
@@ -34,6 +35,7 @@
 #include <utility>
 #include <vector>
 
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <dji_serial_bridge/msg/panel_detection_array.hpp>
 #include <gz/msgs/pose_v.pb.h>
 #include <gz/transport/Node.hh>
@@ -148,6 +150,21 @@ public:
 
     pub_ = create_publisher<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", 10);
+    if (declare_parameter("match_referee", false)) {
+      referee_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+        "/sim/match/referee", rclcpp::QoS(1).reliable().transient_local(),
+        [this](const diagnostic_msgs::msg::DiagnosticArray & msg) {
+          std::lock_guard<std::mutex> lock(mutex_);
+          for (const auto & status : msg.status) {
+            if (status.message == "defeated" &&
+              std::find(opponents_.begin(), opponents_.end(), status.name) != opponents_.end())
+            {
+              defeated_from_.try_emplace(status.name, msg.header.stamp);
+            }
+          }
+          drain();
+        });
+    }
     rate_hz_ = declare_parameter("rate_hz", 60.0);
     deterministic_ = declare_parameter("deterministic_epoch_zero", false);
     if (deterministic_) {
@@ -304,7 +321,7 @@ private:
     return At::kOk;
   }
 
-  // Answers every pending tick whose stamp all the poses have reached.
+  // Answers every tick once the still-detectable robots' poses reach it.
   void drain()
   {
     if (failed_) {
@@ -314,10 +331,13 @@ private:
       const rclcpp::Time stamp = pending_.front();
       const double t = stamp.seconds();
       Sample ours;
-      std::vector<Sample> theirs(opponents_.size());
+      std::vector<std::optional<Sample>> theirs(opponents_.size());
       At at = sample_at(our_model_, t, ours);
       for (size_t i = 0; i < opponents_.size() && at == At::kOk; ++i) {
-        at = sample_at(opponents_[i], t, theirs[i]);
+        const auto defeated = defeated_from_.find(opponents_[i]);
+        if (defeated == defeated_from_.end() || stamp < defeated->second) {
+          at = sample_at(opponents_[i], t, theirs[i].emplace());
+        }
       }
       if (at == At::kWait) {
         return;
@@ -340,7 +360,9 @@ private:
 
   // Every panel the camera sees, as roi_depth_node would deproject it; empty
   // frames too, so downstream timeouts see the rate.
-  void publish(const rclcpp::Time & stamp, const Sample & ours, const std::vector<Sample> & theirs)
+  void publish(
+    const rclcpp::Time & stamp, const Sample & ours,
+    const std::vector<std::optional<Sample>> & theirs)
   {
     const Eigen::Isometry3d camera_T_world =
       (ours.world_T_root * ours.root_T_head_pitch * head_pitch_T_camera_).inverse();
@@ -352,11 +374,14 @@ private:
       if (hidden_from >= 0 && stamp.seconds() >= hidden_from) {
         break;
       }
+      if (!theirs[i]) {
+        continue;
+      }
       size_t panel_index = 0;
       for (const auto & root_T_panel : root_T_panels_) {
         const size_t panel = panel_index++;
         const Eigen::Isometry3d camera_T_panel =
-          camera_T_world * theirs[i].world_T_root * root_T_panel;
+          camera_T_world * theirs[i]->world_T_root * root_T_panel;
         const Eigen::Vector3d centre = camera_T_panel.translation();
         if (centre.norm() > max_range_ ||
           !view_panel(camera_T_panel, panel_w_, panel_h_, k_, half_angle_))
@@ -424,9 +449,11 @@ private:
   std::mutex mutex_;  // gz's callbacks run on its own threads
   std::deque<rclcpp::Time> pending_;
   std::map<std::string, std::deque<Sample>> history_;
+  std::map<std::string, rclcpp::Time> defeated_from_;
 
   gz::transport::Node gz_;
   rclcpp::Publisher<dji_serial_bridge::msg::PanelDetectionArray>::SharedPtr pub_;
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr referee_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
   bool deterministic_ = false, failed_ = false;
   double rate_hz_ = 60.0;

@@ -2266,19 +2266,25 @@ The scorer advances 22 m/s ballistic shots under gravity against the field
 mesh, chassis hulls and canted armor. It includes the physical muzzle velocity
 at launch, including chassis motion. 22 m/s matches the checked-out sentry
 firmware ballistic solver; the E2E Jetson planner uses the same value. The
-first impact absorbs the shot;
-damage requires more than 12 m/s relative normal speed, the exposure cone,
-and the panel's 50 ms dead time. Each robot starts with 400 HP; hits cost
-20 HP. Defeated robots stop moving and shooting. Referee HP, team, stage,
+first impact absorbs the shot. An enemy armor contact requires more than
+12 m/s relative normal speed and the exposure cone. The referee credits
+contacts on live enemies outside the panel's 50 ms dead time. Each robot
+starts with 400 HP and loses 20 HP on a credited hit. Same-team contacts deal
+no damage. At zero HP, the fixture darkens the armor, suppresses its panel
+detections, and stops the robot's motion and firing. Its hull and armor
+still absorb shots. Referee HP, team, stage,
 time and hurt panel feed the firmware's referee UART parser;
 the test checks HP and team return through `REF_SYS` on the Jetson UART.
 
-`match.json` reports per-segment measured motion and localization error, enemy hit
-rates, HP, friendly intersections, damage taken and shot counts per robot.
-`shots.jsonl` records first impacts and HP after each resolved impact.
-The approach checks routing with firing disabled; center segments retain the
-same route and localization diagnostic criterion as `mcb_drive`, while the
-match pass criterion is unchanged. Accuracy floors, repeated-run
+`match.json` reports Sentry referee credits and valid enemy panel contacts by
+segment, alongside motion, localization error and HP. The geometric contact
+rate counts contacts on live enemy panels before applying the 50 ms rule.
+Its denominator excludes shots launched after all enemies were defeated
+and first contacts with defeated robots. The report records both exclusions,
+all-robot and Sentry-only friendly contacts, damage taken and shots by robot.
+`shots.jsonl` records first impacts and their rulings, with HP after each impact.
+The approach checks routing with firing disabled. Center segments apply the
+existing 10% diagnostic threshold to the geometric contact rate. Accuracy floors, repeated-run
 spread and standalone-versus-sequence equivalence are tracked in
 [ROADMAP A](../docs/ROADMAP.md#a-acceptance-details).
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn

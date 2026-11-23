@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Darken defeated robots' armor, suppress their truth detections, and exempt
+  friendly contacts from damage in `mcb_match`. Report referee credits and
+  geometric accuracy separately.
 - Apply sentry referee heat to both firmware backends and enforce the launcher
   lock at physical projectile exit.
 - Score cold aim bench cases against the firmware's chosen mode, the sentry

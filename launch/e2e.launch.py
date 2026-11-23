@@ -253,7 +253,7 @@ def generate_launch_description():
     coordinated = LaunchConfiguration('uart_deterministic')  # resolved by _resolve_modes
     xacro_file = os.path.join(share, 'urdf', 'sentry_v2.urdf.xacro')
 
-    def detector(opponents):
+    def detector(opponents, match_referee):
         return Node(
             package='sim', executable='detector_standin_node', name='detector_standin',
             output='screen',
@@ -264,6 +264,7 @@ def generate_launch_description():
                 'robot_description': ParameterValue(
                     Command(['xacro ', xacro_file]), value_type=str),
                 'opponents': opponents,
+                'match_referee': match_referee,
                 'class_ids': [2 if name.startswith('ally') else OPPONENT_CLASS
                               for name in opponents],
             }])
@@ -559,7 +560,8 @@ def generate_launch_description():
                                parameters=[{'period_s': EKF_PERIOD_S,
                                             'queued_topic': '/ekf_filter_node/queued_stamps'}]))
         return (shutdown_handler
-                + [failure, coordinator_action, detector(opponents), opponent_driver] + extras
+                + [failure, coordinator_action, detector(opponents, stage == 'mcb_match'),
+                   opponent_driver] + extras
                 + ([barrier, pose_setter] if barrier else []) + common
                 + ([match_environment] if stage in DRIVING else [target_driver])
                 + ([GroupAction([SetParameter(name='tick_topic', value='/sim/e2e/aim_tick'),
