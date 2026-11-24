@@ -387,6 +387,11 @@ TEST_P(E2ESuite, MCB) {
     cb::append_json(cb::options.log_dir + "/route.jsonl", r);
   for (const auto &r : s->states)
     cb::append_json(cb::options.log_dir + "/states.jsonl", r);
+  if (cb::options.stage == "mcb_match") {
+    std::ofstream detections(cb::options.log_dir + "/detections.jsonl");
+    for (const auto &frame : s->detection_frames)
+      detections << frame.dump() << '\n';
+  }
   if (cb::options.stage == "mcb_drive") {
     environment->record_score(c.name, sim::match_scenario::match_duration());
   }
@@ -420,8 +425,8 @@ TEST_P(E2ESuite, MCB) {
             !r["localization_error_m"].is_null())
           pose.push_back(r["localization_error_m"]);
       }
-    if (telemetry.empty() && records.empty()) continue;
-    bool fighting = std::string(segment) != "approach";
+    const bool fighting = std::string(segment) != "approach";
+    if (telemetry.empty() && records.empty() && !(match && fighting)) continue;
     auto diagnosis = match && !fighting
                          ? cb::Json(nullptr)
                          : ee::segment_diagnostics(*s, segment, records);
@@ -441,6 +446,10 @@ TEST_P(E2ESuite, MCB) {
       summary.update(ee::match_shot_counts(records));
       rate = summary.at("valid_enemy_panel_contact_rate");
       summary["fighting"] = fighting;
+      if (fighting && rate.is_null()) {
+        summary["scenario_error"] = "no accuracy attempts against living opponents";
+        ADD_FAILURE() << segment << ": " << summary.at("scenario_error").get<std::string>();
+      }
       double end = telemetry.empty() ? *s->match_start
                                      : telemetry.back()["t"].get<double>();
       cb::Json hp = cb::Json::object();

@@ -2208,8 +2208,8 @@ velocity or reference route for our robot.
 `backend:=renode` is the default and uses the normal board ELF.
 `backend:=hosted` explicitly selects the faster fixture, whose remote switches
 now follow the same stop/simple and aim/fire selections. Startup holds drive
-in centred manual mode. At stage arm the right switch selects auto-drive;
-the left stays MID until every robot's truth root enters the estimated
+in centred manual mode. At stage arm the right switch selects auto-drive.
+The left switch stays MID until every robot's truth root enters the estimated
 field-centre fight zone, then switches UP to enable automatic aim/fire.
 Referee stage is IN_GAME so the firmware can advance waypoints during approach.
 The real AMCL + rf2o + EKF stack remains in the loop.
@@ -2256,9 +2256,12 @@ ros2 launch sim e2e.launch.py stage:=mcb_match headless:=true
 ```
 
 Two blue and two red sentries leave their respective spawns on separate
-field-safe routes. The second lane leaves four seconds later; firing stays
-disabled until every truth root reaches the centre zone. Our robot runs its
-firmware waypoint/spin behavior; the three ghosts spin and use a truth-fed aimer with seed 2026,
+field-safe routes. Both ghost lanes leave together so the all-robots-ready
+firing gate can open during the Sentry's final drive
+leg. Once the Sentry slows near the centre, the fixture holds its chassis
+for 0.5 seconds in centred manual mode while scoring
+continues, then returns it to firmware waypoint/spin control. The three
+ghosts spin and use a truth-fed aimer with seed 2026,
 0.015 rad Gaussian aim noise, and a 2 Hz fire rate. The selector sees both
 red opponents and the blue ally. Only our robot runs the real CV stack.
 
@@ -2283,8 +2286,11 @@ Its denominator excludes shots launched after all enemies were defeated
 and first contacts with defeated robots. The report records both exclusions,
 all-robot and Sentry-only friendly contacts, damage taken and shots by robot.
 `shots.jsonl` records first impacts and their rulings, with HP after each impact.
-The approach checks routing with firing disabled. Center segments apply the
-existing 10% diagnostic threshold to the geometric contact rate. Accuracy floors, repeated-run
+`detections.jsonl` records each truth frame's capture stamp and published class IDs.
+The approach checks routing with firing disabled. Drive, parked and spin each
+require accuracy attempts. Any missing segment or zero-attempt segment fails
+as a scenario error. The existing 10% diagnostic threshold uses the
+geometric contact rate. Accuracy floors, repeated-run
 spread and standalone-versus-sequence equivalence are tracked in
 [ROADMAP A](../docs/ROADMAP.md#a-acceptance-details).
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn

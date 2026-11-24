@@ -91,6 +91,16 @@ template <class Q, class P> Matrix iso(const Q &q, const P &p) {
 Vec transform(const Matrix &m, const Vec &p) {
   return m.block<3, 3>(0, 0) * p + m.block<3, 1>(0, 3);
 }
+struct ChassisMotion {
+  double speed = 0., spin = 0.;
+};
+ChassisMotion chassis_motion(const Pose &previous, const Pose &current) {
+  const auto speed =
+      (current.root.block<2, 1>(0, 3) - previous.root.block<2, 1>(0, 3)).norm() / .05;
+  const Eigen::Matrix3d rotation =
+      previous.root.block<3, 3>(0, 0).transpose() * current.root.block<3, 3>(0, 0);
+  return {speed, std::atan2(rotation(1, 0), rotation(0, 0)) / .05};
+}
 Vec xyz(const char *s) {
   Vec out = Vec::Zero();
   if (s) {
@@ -164,8 +174,15 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", rclcpp::QoS(10), [this](const auto &m) {
-        if (!m.detections.empty()) detections_.push_back({stamp_s(m.header.stamp), m.detections.size()});
+        const double stamp = stamp_s(m.header.stamp);
+        if (!m.detections.empty()) detections_.push_back({stamp, m.detections.size()});
         while (detections_.size() > 300) detections_.pop_front();
+        if (stage == "mcb_match" && scoring && stamp >= score_from_ && stamp < score_until) {
+          std::vector<int32_t> classes;
+          for (const auto &panel : m.detections)
+            classes.push_back(panel.class_id);
+          detection_frames.push_back({{"t", stamp}, {"class_ids", classes}});
+        }
       });
   subscribe<dji_serial_bridge::msg::CVTarget>(
       "/cv/target", rclcpp::SensorDataQoS(), [this](const auto &m) {
@@ -396,6 +413,8 @@ void Scorer::reset() {
   states.clear();
   pending_states_.clear();
   route_records.clear();
+  detection_frames.clear();
+  match_park_start_.reset();
   pending_poses_.clear();
   score_until = INFINITY;
   flight_steps_.clear();
@@ -451,12 +470,7 @@ Json Scorer::pose_errors(double t, bool map_frame) {
     }
   if (match_start) {
     const auto previous = histories.at("sentry")->at(t - .05);
-    double speed = 0, spin = 0;
-    if (previous) {
-      speed = (ours->root.block<2, 1>(0, 3) - previous->root.block<2, 1>(0, 3)).norm() / .05;
-      const Eigen::Matrix3d rotation = previous->root.block<3, 3>(0, 0).transpose() * ours->root.block<3, 3>(0, 0);
-      spin = std::atan2(rotation(1, 0), rotation(0, 0)) / .05;
-    }
+    const auto [speed, spin] = previous ? chassis_motion(*previous, *ours) : ChassisMotion{};
     out["speed_m_s"] = speed;
     out["spin_rad_s"] = spin;
     out["start_displacement_m"] = std::hypot(ours->root(0, 3) - field::kBlueStart[0],
@@ -919,6 +933,25 @@ void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
   markers.markers = {line, impact};
   visual_pub_->publish(markers);
 }
+bool Scorer::hold_match_park() {
+  if (stage != "mcb_match" || !center_time)
+    return false;
+  if (!match_park_start_) {
+    const auto &history = histories.at("sentry");
+    const auto current = history->at(tick_s() - .01);
+    const auto previous = history->at(tick_s() - .06);
+    if (current && previous) {
+      const auto &center = match_scenario::kCenter;
+      const auto [speed, spin] = chassis_motion(*previous, *current);
+      if (std::hypot(current->root(0, 3) - center[0], current->root(1, 3) - center[1]) < 1.0 &&
+          speed < .15 && std::abs(spin) < .5) {
+        match_park_start_ = tick_s();
+        RCLCPP_INFO(get_logger(), "Match parked hold started at %.3f s", *match_park_start_);
+      }
+    }
+  }
+  return match_park_start_ && tick_s() - *match_park_start_ < match_scenario::kMatchParkDurationS;
+}
 void Scorer::sync_referee() {
   double elapsed = tick_s() - match_start.value_or(tick_s());
   if (match_start && !center_time) {
@@ -956,9 +989,10 @@ void Scorer::sync_referee() {
     return;
   auto req = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
   const bool alive = !referee || referee->hp("sentry") > 0;
+  const bool drive = alive && match_start && !hold_match_park();
   for (const auto &p : std::vector<rclcpp::Parameter>{
            rclcpp::Parameter("current_hp", referee ? referee->hp("sentry") : 400),
-           rclcpp::Parameter("drive", std::string(match_start && alive ? "simple" : "stop")),
+           rclcpp::Parameter("drive", std::string(drive ? "simple" : "stop")),
            rclcpp::Parameter("auto_fire", alive && center_time.has_value()),
            rclcpp::Parameter(
                "game_stage",
