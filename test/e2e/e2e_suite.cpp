@@ -137,9 +137,8 @@ public:
   }
   void TearDown() override {
     timing::Phase phase("teardown");
-    if (scorer)
-      scorer->retire();
     if (launch) {
+      // Keep the last harness tick held until the stack stops.
       launch->stop();
       EXPECT_TRUE(launch->clean())
           << "stack shutdown needed SIGKILL; see the SIGKILLing line above";
