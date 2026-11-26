@@ -44,6 +44,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
@@ -80,6 +81,7 @@ public:
   {
     step_ns_ = static_cast<int64_t>(declare_parameter("step_s", 0.001) * 1e9);
     strict_startup_ = declare_parameter("strict_startup", false);
+    shutdown_file_ = declare_parameter("shutdown_file", std::string{});
     // Deadlock guard: a producer holds a tick for as long as its own (bounded) work takes, e.g.
     // e2e_suite between cells; on a loaded host that passed 2 s. Load must never fail a run.
     max_wait_ = std::chrono::duration<double>(declare_parameter("max_wait_s", 60.0));
@@ -455,6 +457,20 @@ private:
 
   enum class Waited {Done, Gone, Stalled, Stopped};
 
+  bool stopping() const {return stop_ || !rclcpp::ok();}
+
+  // The launch leader writes this before signaling any producer or the coordinator.
+  bool shutdown_requested() const
+  {
+    if (stopping()) {return true;}
+    std::error_code error;
+    if (!shutdown_file_.empty() && std::filesystem::exists(shutdown_file_, error)) {
+      RCLCPP_INFO(get_logger(), "lockstep: stopping on launch shutdown");
+      return true;
+    }
+    return false;
+  }
+
   // Wait on cv_ for pred. Gone as soon as `dead` says the producer exited; Stalled only after
   // max_wait_ (the deadlock guard). Re-sends the current release every 100 ms meanwhile.
   template<typename Pred, typename Dead>
@@ -463,11 +479,14 @@ private:
     const auto deadline = std::chrono::steady_clock::now() +
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(max_wait_);
     while (true) {
-      if (stop_) {return Waited::Stopped;}
+      if (stopping()) {return Waited::Stopped;}
       if (pred()) {return Waited::Done;}
-      if (dead()) {return Waited::Gone;}
+      const bool producer_gone = dead();
       const auto now = std::chrono::steady_clock::now();
-      if (now >= deadline) {return Waited::Stalled;}
+      if (producer_gone || now >= deadline) {
+        if (shutdown_requested()) {return Waited::Stopped;}
+        return producer_gone ? Waited::Gone : Waited::Stalled;
+      }
       cv_.wait_until(lock, std::min(deadline, now + std::chrono::milliseconds(100)));
       if (released_ns_ != kNever && !pred()) {release(released_ns_);}
     }
@@ -581,7 +600,7 @@ private:
       if (hold > released_ns_ || released_ns_ >= kFreeSec * 1000000000LL) {release(hold);}
       // Repeat the first bounded release until discovery has delivered it.
       const auto deadline = std::chrono::steady_clock::now() + max_wait_;
-      while (strict_startup_ && held_ns_ < hold && !stop_ &&
+      while (strict_startup_ && held_ns_ < hold && !stopping() &&
         readiness_error_.empty() &&
         std::chrono::steady_clock::now() < deadline)
       {
@@ -592,7 +611,7 @@ private:
       const bool reached = strict_startup_ ? held_ns_ >= hold :
         wait(lock, [&] {return held_ns_ >= hold;}) == Waited::Done;
       if (!reached) {
-        if (stop_) {break;}
+        if (shutdown_requested()) {break;}
         // A gate timeout already ran gz free; otherwise gz is slow or gone.
         ++hold_timeouts_;
         RCLCPP_ERROR(get_logger(), "lockstep timeout: gz not held at %.3f s after %.1f s wall",
@@ -647,7 +666,7 @@ private:
               }
               return false;
             });
-        if (result == Waited::Stopped) {break;}
+        if (result == Waited::Stopped) {return;}
         if (!readiness_error_.empty()) {startup_fail(readiness_error_, lock); return;}
         const double held = std::chrono::duration<double>(
           std::chrono::steady_clock::now() - t1).count();
@@ -762,6 +781,7 @@ private:
   std::vector<Readiness> readiness_;  // fixed after the constructor; indexed by callbacks
   std::chrono::duration<double> startup_timeout_{30.0};
   std::string readiness_error_, startup_error_;  // guarded by mutex_
+  std::string shutdown_file_;
   bool barrier_passed_ = false;  // guarded by mutex_
   int startup_failures_ = 0;     // guarded by mutex_
   int64_t step_ns_ = 1000000, margin_ns_ = 50000000, boot_hold_ns_ = 0;
