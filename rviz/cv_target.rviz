@@ -105,7 +105,7 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Shots (panels, aim, shots)
+      Name: Aim and shot traces
       Namespaces:
         {}
       Topic:
@@ -166,7 +166,7 @@ Visualization Manager:
       Pitch: 0.6
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 3.14
+      Yaw: 2.35
     Saved: ~
 Window Geometry:
   Displays:

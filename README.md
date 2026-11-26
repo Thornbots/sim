@@ -112,8 +112,8 @@ managed assignments, updates and clears to `mcb_aim_standin`, which runs the
 firmware's `AimPlanner`. Each shot leaves
 `root` toward the newest stand-in aim (an `odom` point) before its exit time, carrying
 `root`'s velocity. The perfect gimbal follows the planner's rates between
-5 ms replans. The bench draws the
-target's panels in rviz. The bench needs the firmware checkout at build time
+5 ms replans. RViz shows the target's panels and one-second shot traces with
+green hits and red misses. The bench needs the firmware checkout at build time
 (`mcb_aim_standin` is skipped without it). The
 [2026-11-04 measurement](docs/mcb-aim-planner-2026-11-04.md) compares it with
 the Jetson planner's numbers.

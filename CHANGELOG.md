@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Show fading hit and miss traces in the aim bench's RViz view.
+- Fail parked bench cells if a launcher exit in the scoring window goes unscored.
+
 - Stage ghost ingress and give the Sentry a measured parked interval in
   `mcb_match`. Fail the scenario if drive, parked or spin has zero accuracy
   attempts, and log the detections published during the match.
