@@ -27,6 +27,7 @@ struct Options {
   std::vector<double> speeds{.5, 1, 2, 4};
   std::vector<std::string> paths{"lateral", "radial", "diagonal"};
   std::string layout = "both", path = "lateral", log_dir, stage = "mcb_parked",
+              spin_mode = "firmware",
               rtf = "0", filter, backend = "renode";
   double duration = 0, shooter = 0, chassis = 0, latency = 0;
   std::optional<double> spin, shot_yaw, shot_spin, panel_switch_margin_rad;
@@ -95,6 +96,8 @@ inline void parse_options(int &argc, char **argv) {
       options.duration = std::stod(value());
     else if (arg == "--panel-layout")
       options.layout = value();
+    else if (arg == "--spin-mode")
+      options.spin_mode = value();
     else if (arg == "--target-path")
       options.path = value();
     else if (arg == "--shooter-speed")

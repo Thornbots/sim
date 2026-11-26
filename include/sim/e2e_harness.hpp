@@ -26,6 +26,7 @@
 #include <dji_serial_bridge/msg/ref_sys_status.hpp>
 #include <dji_serial_bridge/msg/robot_pose.hpp>
 #include <dji_serial_bridge/msg/target_state.hpp>
+#include <geometry_msgs/msg/point.hpp>
 #include <gz/transport/Node.hh>
 #include <chrono>
 #include <deque>
@@ -65,7 +66,6 @@ public:
   // now_s(), which is whatever /clock message this node has handled.
   double tick_s() { return unacked_ns_ ? *unacked_ns_ * 1e-9 : now_s(); }
   // Stop holding physics on this harness (teardown): later ticks need no release.
-  void retire();
   void check_lockstep();
   // Set by the suite: whether the launched stack still runs. step() throws once it does not,
   // so no wait outlives the stack (a wait on ticks would otherwise spin forever).
@@ -74,10 +74,11 @@ public:
   // than the coordinator's 60 s guard, so its diagnosis (naming the topic) comes first.
   static constexpr double kStallWallS = 90;
   std::string stage, log_path;
+  size_t locked_shots = 0;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
   std::map<std::string, std::vector<Json>> shots;
   std::vector<double> physical_shot_times;
-  std::vector<Json> states, route_records;
+  std::vector<Json> states, route_records, detection_frames;
   std::vector<dji_serial_bridge::msg::RefSysStatus> referee_messages;
   std::optional<double> match_start, target_stamp, state_stamp;
   std::optional<double> center_time;
@@ -106,11 +107,11 @@ private:
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subscriptions_;
   std::map<std::string, std::string> lockstep_status_;
   std::optional<uint32_t> latest_tf_fallbacks_;
+  std::optional<double> match_park_start_;
   static constexpr int kPhaseMs = 1;  // after the other chains' ticks at each boundary
   rclcpp::TimerBase::SharedPtr start_timer_, tick_timer_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ack_pub_, ready_pub_;
   std::optional<int64_t> tick_ns_, unacked_ns_;  // pending tick; tick being decided
-  bool retired_ = false;
   uint64_t ticks_ = 0;
   double score_from_ = 0;  // shots and states stamped earlier are not this window's
   void tick_body();
@@ -134,12 +135,16 @@ private:
   std::optional<Json> judge_match(const std::string &kind, double t);
   void judge_state(const dji_serial_bridge::msg::TargetState &m);
   void fire_tick();
+  void visualize_scene();
   void visualize_shot(const std::string &kind, const Json &shot);
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr visual_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr visual_pub_, scene_pub_;
+  std::vector<geometry_msgs::msg::Point> visual_route_;
   int visual_id_ = 0;
+  bool hold_match_park();
   void sync_referee();
 };
 double hit_rate(const std::vector<Json> &shots);
+Json match_shot_counts(const std::vector<Json> &shots);
 std::string state_summary(const std::vector<Json> &states);
 Json segment_diagnostics(const Scorer &s, const std::string &segment,
                          const std::vector<Json> &shots);

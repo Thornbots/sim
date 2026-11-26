@@ -37,6 +37,7 @@
 #include "rosidl_runtime_cpp/message_initialization.hpp"
 #include "rosidl_typesupport_introspection_cpp/field_types.hpp"
 #include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
+#include "std_msgs/msg/header.hpp"
 
 namespace
 {
@@ -156,6 +157,18 @@ public:
       return;
     }
 
+    const auto ready_topic = declare_parameter("pacing_ready_topic", std::string{});
+    if (!ready_topic.empty()) {
+      ready_ = false;
+      ready_subscription_ = create_subscription<std_msgs::msg::Header>(
+        ready_topic, rclcpp::QoS(1).reliable().transient_local(),
+        [this](std_msgs::msg::Header::ConstSharedPtr) {
+          std::lock_guard<std::mutex> lock(mutex_);
+          ready_ = true;
+          condition_.notify_one();
+        });
+    }
+
     for (const auto & spec : pace_topics) {
       std::istringstream stream(spec);
       std::string topic, type_name, period, extra;
@@ -168,7 +181,7 @@ public:
       gates_[topic] = {static_cast<int64_t>(std::stod(period) * 1e9), std::nullopt, false};
       auto pace_type = std::make_shared<PaceType>(type_name);
       subscriptions_.push_back(create_generic_subscription(
-        topic, type_name, rclcpp::SensorDataQoS(),
+        topic, type_name, rclcpp::QoS(100).reliable(),
         [this, topic, pace_type](const rclcpp::SerializedMessage & message) {
           on_paced(topic, pace_type->stamp_ns(message));
         }));
@@ -191,11 +204,24 @@ public:
 
   void run_paced()
   {
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      const auto deadline = Clock::now() + std::chrono::seconds(10);
+      while (!ready_ && rclcpp::ok() && Clock::now() < deadline) {
+        publish();
+        condition_.wait_for(lock, std::chrono::milliseconds(50));
+      }
+      if (!rclcpp::ok()) {return;}
+      if (!ready_) {
+        RCLCPP_ERROR(get_logger(), "sim_clock: timed out waiting for pacing readiness");
+        rclcpp::shutdown();
+        return;
+      }
+    }
     auto report_wall = Clock::now();
     int64_t report_sim = 0;
     while (rclcpp::ok()) {
       bool idle;
-      int64_t next_ns;
       {
         std::unique_lock<std::mutex> lock(mutex_);
         const auto deadline = Clock::now() + std::chrono::duration<double>(max_wait_s_);
@@ -207,21 +233,28 @@ public:
             }
           }
           const auto remaining = std::chrono::duration<double>(deadline - Clock::now());
-          condition_.wait_for(lock, std::min(remaining, std::chrono::duration<double>(0.01)));
+          if (condition_.wait_for(
+              lock, std::min(remaining, std::chrono::duration<double>(0.01))) ==
+            std::cv_status::timeout)
+          {
+            // A best-effort /clock reader may have missed the held tick.
+            publish();
+          }
           waiting = blocking();
         }
         for (const auto & topic : waiting) {
           gates_.at(topic).live = false;
-          RCLCPP_WARN(get_logger(), "sim_clock: %s silent, no longer pacing on it", topic.c_str());
+          RCLCPP_WARN(get_logger(),
+            "sim_clock: %s silent, no longer pacing on it at %.9f s (last stamp %.9f s)",
+            topic.c_str(), sim_ns_ / 1e9, *gates_.at(topic).last_ns / 1e9);
         }
         idle = std::none_of(gates_.begin(), gates_.end(),
             [](const auto & item) {return item.second.live;});
-        next_ns = next_step();
+        sim_ns_ = next_step();
       }
       if (idle) {
         std::this_thread::sleep_for(std::chrono::duration<double>(step_ns_ / 1e9));
       }
-      sim_ns_ = next_ns;
       publish();
       const auto wall = Clock::now();
       const double elapsed = std::chrono::duration<double>(wall - report_wall).count();
@@ -262,6 +295,11 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto & gate = gates_.at(topic);
+    if ((gate.last_ns && stamp_ns <= *gate.last_ns) ||
+      (!gate.live && stamp_ns + gate.period_ns <= sim_ns_))
+    {
+      return;
+    }
     gate.last_ns = gate.last_ns ? std::max(*gate.last_ns, stamp_ns) : stamp_ns;
     gate.live = true;
     condition_.notify_one();
@@ -294,9 +332,11 @@ private:
   int64_t step_ns_ = 0;
   double max_wait_s_ = 0.5;
   int64_t sim_ns_ = 0;
+  bool ready_ = true;
   Clock::time_point last_wall_;
   rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr ready_subscription_;
   std::vector<rclcpp::GenericSubscription::SharedPtr> subscriptions_;
   mutable std::mutex mutex_;
   std::condition_variable condition_;
@@ -317,7 +357,7 @@ int main(int argc, char ** argv)
       }
     });
     rclcpp::spin(node);
-    rclcpp::shutdown();
+    if (rclcpp::ok()) {rclcpp::shutdown();}
     thread.join();
   } else {
     rclcpp::spin(node);

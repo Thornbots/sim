@@ -91,6 +91,16 @@ template <class Q, class P> Matrix iso(const Q &q, const P &p) {
 Vec transform(const Matrix &m, const Vec &p) {
   return m.block<3, 3>(0, 0) * p + m.block<3, 1>(0, 3);
 }
+struct ChassisMotion {
+  double speed = 0., spin = 0.;
+};
+ChassisMotion chassis_motion(const Pose &previous, const Pose &current) {
+  const auto speed =
+      (current.root.block<2, 1>(0, 3) - previous.root.block<2, 1>(0, 3)).norm() / .05;
+  const Eigen::Matrix3d rotation =
+      previous.root.block<3, 3>(0, 0).transpose() * current.root.block<3, 3>(0, 0);
+  return {speed, std::atan2(rotation(1, 0), rotation(0, 0)) / .05};
+}
 Vec xyz(const char *s) {
   Vec out = Vec::Zero();
   if (s) {
@@ -132,6 +142,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     : SimTimeNode("e2e_scorer"), stage(stage_), log_path(logpath),
       tf(get_clock()), offsets_(urdf_offsets()), listener_(tf, this, false) {
   visual_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/markers", 10);
+  scene_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/scene", 1);
   subscribe<diagnostic_msgs::msg::DiagnosticStatus>(
       "/sim/lockstep/status", rclcpp::QoS(1).reliable().transient_local(),
       [this](const auto &m) {
@@ -163,8 +174,15 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", rclcpp::QoS(10), [this](const auto &m) {
-        if (!m.detections.empty()) detections_.push_back({stamp_s(m.header.stamp), m.detections.size()});
+        const double stamp = stamp_s(m.header.stamp);
+        if (!m.detections.empty()) detections_.push_back({stamp, m.detections.size()});
         while (detections_.size() > 300) detections_.pop_front();
+        if (stage == "mcb_match" && scoring && stamp >= score_from_ && stamp < score_until) {
+          std::vector<int32_t> classes;
+          for (const auto &panel : m.detections)
+            classes.push_back(panel.class_id);
+          detection_frames.push_back({{"t", stamp}, {"class_ids", classes}});
+        }
       });
   subscribe<dji_serial_bridge::msg::CVTarget>(
       "/cv/target", rclcpp::SensorDataQoS(), [this](const auto &m) {
@@ -185,10 +203,10 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
           try {
             auto muzzle = tf.lookupTransform(point.header.frame_id, "muzzle", tf2::TimePointZero);
             auto ray = point;
-            ray.header.stamp = get_clock()->now();
+            ray.header.stamp = muzzle.header.stamp;
             ray.ns = "idle_look_ray"; ray.type = visualization_msgs::msg::Marker::LINE_STRIP;
             ray.pose.position = geometry_msgs::msg::Point{};
-            ray.scale.x = .015;
+            ray.scale.x = .025;
             geometry_msgs::msg::Point origin;
             origin.x = muzzle.transform.translation.x;
             origin.y = muzzle.transform.translation.y;
@@ -228,6 +246,9 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
                                        pending_.push_back({"mcb", t});
                                      }
                                    });
+  subscribe<std_msgs::msg::Header>(
+      "/mcb_emulator/locked_shot", rclcpp::QoS(100),
+      [this](const auto &) { ++locked_shots; });
   // The 50 ms harness chain. In lockstep the coordinator holds physics at each tick
   // until step() releases it, so everything the harness decides happens on a tick.
   // Ticks fall kPhaseMs after each 50 ms boundary: the one-shot is the first, and the
@@ -275,7 +296,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     referee_client_ = create_client<rcl_interfaces::srv::SetParameters>(
         "/mcb_emulator/set_parameters");
     referee_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-        "/sim/match/referee", 10);
+        "/sim/match/referee", rclcpp::QoS(1).reliable().transient_local());
   }
 }
 void Scorer::spin_for(double seconds) {
@@ -306,21 +327,12 @@ bool Scorer::wait_until(const std::function<bool()> &predicate, double timeout,
   return false;
 }
 void Scorer::release_tick() {
-  if (!ack_pub_ || !unacked_ns_ || retired_)
+  if (!ack_pub_ || !unacked_ns_)
     return;
   std_msgs::msg::Header ack;
   ack.stamp = rclcpp::Time(*unacked_ns_, RCL_ROS_TIME);
   ack_pub_->publish(ack);
   unacked_ns_.reset();
-}
-void Scorer::retire() {
-  if (!ack_pub_ || retired_)
-    return;
-  release_tick();
-  std_msgs::msg::Header ack;  // far future: every later tick is already released
-  ack.stamp.sec = 1000000000;
-  ack_pub_->publish(ack);
-  retired_ = true;
 }
 bool Scorer::step(double wall_timeout_s) {
   if (stack_alive && !stack_alive()) {
@@ -387,6 +399,7 @@ void Scorer::tick_body() {
   ++ticks_;
   if (scoring && tick_s() < score_until)
     pending_poses_.push_back(tick_s());
+  visualize_scene();
   if (ticks_ % 2 == 0)
     fire_tick();
 }
@@ -400,6 +413,8 @@ void Scorer::reset() {
   states.clear();
   pending_states_.clear();
   route_records.clear();
+  detection_frames.clear();
+  match_park_start_.reset();
   pending_poses_.clear();
   score_until = INFINITY;
   flight_steps_.clear();
@@ -455,12 +470,7 @@ Json Scorer::pose_errors(double t, bool map_frame) {
     }
   if (match_start) {
     const auto previous = histories.at("sentry")->at(t - .05);
-    double speed = 0, spin = 0;
-    if (previous) {
-      speed = (ours->root.block<2, 1>(0, 3) - previous->root.block<2, 1>(0, 3)).norm() / .05;
-      const Eigen::Matrix3d rotation = previous->root.block<3, 3>(0, 0).transpose() * ours->root.block<3, 3>(0, 0);
-      spin = std::atan2(rotation(1, 0), rotation(0, 0)) / .05;
-    }
+    const auto [speed, spin] = previous ? chassis_motion(*previous, *ours) : ChassisMotion{};
     out["speed_m_s"] = speed;
     out["spin_rad_s"] = spin;
     out["start_displacement_m"] = std::hypot(ours->root(0, 3) - field::kBlueStart[0],
@@ -806,15 +816,14 @@ void Scorer::fire_tick() {
       impact.panel = shot["panel"].get<int>();
     impact.eligible = shot["eligible"];
     impact.normal_speed = shot["normal_speed"];
-    bool hit = referee->apply(impact),
-         friendly =
-             impact.victim &&
-             match_scenario::teams().at(shot["shooter"].get<std::string>()) ==
-                 match_scenario::teams().at(*impact.victim);
-    shot["hit"] = hit;
-    shot["friendly_intersection"] = friendly;
-    shot["enemy_hit"] = hit && !friendly;
-    if (hit &&
+    const auto ruling = referee->apply(shot.at("shooter"), shot.at("t"), impact);
+    shot["hit"] = ruling.credited;
+    shot["enemy_hit"] = ruling.credited;
+    shot["friendly_intersection"] = ruling.friendly_contact;
+    shot["defeated_robot_contact"] = ruling.defeated_contact;
+    shot["valid_enemy_panel_contact"] = ruling.valid_enemy_panel_contact;
+    shot["after_all_opponents_defeated"] = ruling.after_all_opponents_defeated;
+    if (ruling.credited &&
         impact.victim == std::optional<std::string>("sentry"))
       hurt_armor_id = impact.panel.value_or(0);
     Json hp = Json::object();
@@ -829,6 +838,63 @@ void Scorer::fire_tick() {
   }
   if (driving())
     sync_referee();
+}
+void Scorer::visualize_scene() {
+  if (!scene_pub_->get_subscription_count()) return;
+  using Marker = visualization_msgs::msg::Marker;
+  visualization_msgs::msg::MarkerArray scene;
+  for (const auto &[name, history] : histories) {
+    const auto newest = history->newest();
+    if (!newest) continue;
+    const auto stamp = std::min(*newest, tick_s());
+    const auto pose = history->at(stamp);
+    if (!pose) continue;
+    Marker marker;
+    // The saved arena map and Gazebo world use the same field coordinates.
+    marker.header.frame_id = "map";
+    marker.header.stamp = rclcpp::Time(static_cast<int64_t>(stamp * 1e9), RCL_ROS_TIME);
+    marker.frame_locked = true;
+    marker.pose.orientation.w = 1.;
+    marker.color.a = 1.;
+    geometry_msgs::msg::Point position;
+    position.x = pose->root(0, 3);
+    position.y = pose->root(1, 3);
+    if (name == "sentry") {
+      if (!driving()) continue;
+      position.z = .02;
+      if (visual_route_.empty() ||
+          std::hypot(position.x - visual_route_.back().x,
+                     position.y - visual_route_.back().y) >= .08) {
+        constexpr std::size_t kMaxRoutePoints = 512;
+        if (visual_route_.size() == kMaxRoutePoints) visual_route_.erase(visual_route_.begin());
+        visual_route_.push_back(position);
+      }
+      if (visual_route_.size() < 2) continue;
+      marker.ns = "sentry_route";
+      marker.type = Marker::LINE_STRIP;
+      marker.scale.x = .045;
+      marker.color.g = .35F;
+      marker.color.b = 1.F;
+      marker.points = visual_route_;
+    } else {
+      position.z = pose->root(2, 3) + .1;
+      marker.ns = name;
+      marker.type = Marker::CYLINDER;
+      marker.pose.position = position;
+      marker.scale.x = marker.scale.y = .44;
+      marker.scale.z = .20;
+      if (referee && referee->hp(name) == 0) {
+        marker.color.r = marker.color.g = marker.color.b = .24F;
+      } else {
+        marker.color.g = .12F;
+        const bool ally = match_scenario::teams().at(name) == "blue";
+        marker.color.b = ally ? 1.F : 0.F;
+        marker.color.r = ally ? 0.F : .88F;
+      }
+    }
+    scene.markers.push_back(std::move(marker));
+  }
+  scene_pub_->publish(scene);
 }
 void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
   if (kind != "mcb" || !visual_pub_->get_subscription_count()) return;
@@ -848,7 +914,7 @@ void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
   line.header.frame_id = "odom"; line.header.stamp = rclcpp::Time(static_cast<int64_t>(launch * 1e9), RCL_ROS_TIME);
   line.ns = "scored_shot"; line.id = visual_id_++ % 64;
   line.type = Marker::LINE_STRIP; line.pose.orientation.w = 1.;
-  line.scale.x = .025; line.color.a = 1.;
+  line.scale.x = .035; line.color.a = 1.;
   const bool hit = shot.value("enemy_hit", shot.value("hit", false));
   line.color.g = hit ? 1.F : .2F; line.color.r = hit ? .15F : 1.F;
   line.lifetime.nanosec = 750000000;
@@ -866,6 +932,25 @@ void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
   visualization_msgs::msg::MarkerArray markers;
   markers.markers = {line, impact};
   visual_pub_->publish(markers);
+}
+bool Scorer::hold_match_park() {
+  if (stage != "mcb_match" || !center_time)
+    return false;
+  if (!match_park_start_) {
+    const auto &history = histories.at("sentry");
+    const auto current = history->at(tick_s() - .01);
+    const auto previous = history->at(tick_s() - .06);
+    if (current && previous) {
+      const auto &center = match_scenario::kCenter;
+      const auto [speed, spin] = chassis_motion(*previous, *current);
+      if (std::hypot(current->root(0, 3) - center[0], current->root(1, 3) - center[1]) < 1.0 &&
+          speed < .15 && std::abs(spin) < .5) {
+        match_park_start_ = tick_s();
+        RCLCPP_INFO(get_logger(), "Match parked hold started at %.3f s", *match_park_start_);
+      }
+    }
+  }
+  return match_park_start_ && tick_s() - *match_park_start_ < match_scenario::kMatchParkDurationS;
 }
 void Scorer::sync_referee() {
   double elapsed = tick_s() - match_start.value_or(tick_s());
@@ -904,9 +989,10 @@ void Scorer::sync_referee() {
     return;
   auto req = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
   const bool alive = !referee || referee->hp("sentry") > 0;
+  const bool drive = alive && match_start && !hold_match_park();
   for (const auto &p : std::vector<rclcpp::Parameter>{
            rclcpp::Parameter("current_hp", referee ? referee->hp("sentry") : 400),
-           rclcpp::Parameter("drive", std::string(match_start && alive ? "simple" : "stop")),
+           rclcpp::Parameter("drive", std::string(drive ? "simple" : "stop")),
            rclcpp::Parameter("auto_fire", alive && center_time.has_value()),
            rclcpp::Parameter(
                "game_stage",
@@ -939,6 +1025,28 @@ double hit_rate(const std::vector<Json> &shots) {
   for (const auto &s : shots)
     hits += s["hit"].get<bool>();
   return shots.empty() ? 0 : static_cast<double>(hits) / shots.size();
+}
+Json match_shot_counts(const std::vector<Json> &shots) {
+  size_t credited = 0, valid = 0, friendly = 0, defeated = 0, after_defeat = 0, attempts = 0;
+  for (const auto &shot : shots) {
+    const bool on_defeated = shot.at("defeated_robot_contact");
+    const bool after_all_defeated = shot.at("after_all_opponents_defeated");
+    credited += shot.at("enemy_hit").get<bool>();
+    valid += shot.at("valid_enemy_panel_contact").get<bool>();
+    friendly += shot.at("friendly_intersection").get<bool>();
+    defeated += on_defeated;
+    after_defeat += after_all_defeated;
+    attempts += !on_defeated && !after_all_defeated;
+  }
+  return {{"shots", shots.size()},
+          {"referee_credited_hits", credited},
+          {"valid_enemy_panel_contacts", valid},
+          {"friendly_contacts", friendly},
+          {"defeated_robot_contacts", defeated},
+          {"shots_after_all_opponents_defeated", after_defeat},
+          {"accuracy_attempts", attempts},
+          {"valid_enemy_panel_contact_rate",
+           attempts ? Json(static_cast<double>(valid) / attempts) : Json(nullptr)}};
 }
 std::string state_summary(const std::vector<Json> &states) {
   if (states.empty())

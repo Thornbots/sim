@@ -421,7 +421,8 @@ def encode_video(source, output, plan, labels, shots, fps, capture_fps, suite, g
                 title += '   |   ' + labels[label - 1][1]
             details = '1x sim time'
             if shots:
-                details += f'   |   hits/shots {hit_counts[count]}/{count}'
+                hit_label = 'referee credits/shots' if suite == 'mcb_match' else 'hits/shots'
+                details += f'   |   {hit_label} {hit_counts[count]}/{count}'
             desktop_frame = Image.frombytes('RGB', (WIDTH, HEIGHT), raw)
             if gz_zoom > 1:
                 x, y = WIDTH * 3 // 4, HEIGHT // 2

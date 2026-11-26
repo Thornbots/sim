@@ -112,10 +112,14 @@ public:
     }
     pending = std::move(keep);
   }
-  void spin_until_truth(double t) {
-    if (!wait_until([&]() { return !truth.empty() && truth.back().t >= t; }, 60,
-                    "truth at " + cb::number(t) + " s"))
-      std::cout << "[spin_until_truth] wall-clock cap hit\n";
+  bool spin_until_truth(double t) {
+    const double rate = std::stod(cb::options.rtf);
+    const double latest = truth.empty() ? now_s() : truth.back().t;
+    const double sim_remaining = std::max(0., t - latest);
+    const double wall_wait = sim_remaining / (rate > 0. ? rate : 1.);
+    return wait_until([&]() { return !truth.empty() && truth.back().t >= t; },
+                      std::max(60., wall_wait + 10.),
+                      "truth at " + cb::number(t) + " s");
   }
 
 private:
@@ -169,6 +173,7 @@ public:
             std::vector<std::string>{
                 "ros2", "launch", "sim", "estimation.launch.py",
                 "run_tests:=false",
+                "real_time_factor:=" + cb::options.rtf,
                 "headless:=" +
                     std::string(cb::options.headless ? "true" : "false")},
             cb::options.log_dir + "/stack.log");
@@ -256,16 +261,16 @@ TEST_P(EstimationSuite, Estimation) {
         [&]() { return s->current_case && s->current_case->first == seed; }, 30,
         "/bench/case " + std::to_string(seed)));
     start = s->current_case->second + 1;
-    s->spin_until_truth(start);
+    ASSERT_TRUE(s->spin_until_truth(start));
   }
   {
     timing::Phase phase("settle");
-    s->spin_until_truth(start + 3);
+    ASSERT_TRUE(s->spin_until_truth(start + 3));
   }
   double end = start + 3 + duration;
   {
     timing::Phase phase("scored");
-    s->spin_until_truth(end + .2);
+    ASSERT_TRUE(s->spin_until_truth(end + .2));
   }
   s->pause_progress();
   s->check_nodes(environment->nodes);

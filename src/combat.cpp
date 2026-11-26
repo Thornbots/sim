@@ -359,10 +359,34 @@ int Referee::hp(const std::string & robot) const
   return found->second;
 }
 
-bool Referee::apply(const Impact & impact)
+ShotRuling Referee::apply(
+  const std::string & shooter, double launch, const Impact & impact)
 {
-  if (!impact.eligible || !impact.victim || hp(*impact.victim) == 0) {
-    return false;
+  const auto team_of = [this](const std::string & robot) -> const std::string & {
+      const auto found = std::find_if(
+        teams_.begin(), teams_.end(), [&robot](const auto & entry) {return entry.first == robot;});
+      if (found == teams_.end()) {
+        throw std::out_of_range("unknown robot: " + robot);
+      }
+      return found->second;
+    };
+  const auto & team = team_of(shooter);
+  ShotRuling ruling;
+  ruling.after_all_opponents_defeated = std::none_of(
+    teams_.begin(), teams_.end(), [&](const auto & entry) {
+      const auto defeated = defeated_at_.find(entry.first);
+      return entry.second != team &&
+             (defeated == defeated_at_.end() || launch < defeated->second);
+    });
+  if (!impact.victim) {
+    return ruling;
+  }
+  ruling.friendly_contact = team_of(*impact.victim) == team;
+  ruling.defeated_contact = hp(*impact.victim) == 0;
+  ruling.valid_enemy_panel_contact =
+    impact.eligible && !ruling.friendly_contact && !ruling.defeated_contact;
+  if (!ruling.valid_enemy_panel_contact) {
+    return ruling;
   }
   const auto key = std::make_pair(*impact.victim, impact.panel);
   auto previous = std::find_if(
@@ -371,7 +395,7 @@ bool Referee::apply(const Impact & impact)
   const double last_time = previous == last_hit_.end() ?
     -std::numeric_limits<double>::infinity() : previous->second;
   if (impact.impact_t - last_time < 0.05) {
-    return false;
+    return ruling;
   }
   if (previous == last_hit_.end()) {
     last_hit_.emplace_back(key, impact.impact_t);
@@ -382,7 +406,11 @@ bool Referee::apply(const Impact & impact)
     hp_.begin(), hp_.end(),
     [&impact](const auto & entry) {return entry.first == *impact.victim;});
   health->second = std::max(0, health->second - 20);
-  return true;
+  if (health->second == 0) {
+    defeated_at_.emplace(*impact.victim, impact.impact_t);
+  }
+  ruling.credited = true;
+  return ruling;
 }
 
 }  // namespace sim::combat

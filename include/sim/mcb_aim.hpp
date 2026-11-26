@@ -21,6 +21,7 @@
 // The firmware's pure planner, compiled from the checked-out firmware/MCBV3
 // (subsystems/jetson); never copied into sim. See README "MCB aim stand-in".
 #include "AimPlanner.hpp"
+#include "LauncherHeat.hpp"
 #include "sim/mcb_aim_topics.hpp"
 
 namespace sim::mcb_aim
@@ -66,6 +67,7 @@ public:
   void on_state(uint32_t now_ms, const aim::TargetInput & at_receipt);
   // An idle CV_TARGET look point arrived.
   void on_idle(uint32_t now_ms, const aim::Vec3 & point);
+  void set_firing_window(uint32_t start_ms, uint32_t stop_ms);
   Output tick(uint32_t now_ms, const Pose & pose,
     std::optional<aim::GimbalMotion> measured = std::nullopt);
   bool holding_state() const {return control_.state() == aim::AimControl::State::TRACKING;}
@@ -73,8 +75,10 @@ public:
 private:
   Config config_;
   aim::AimControl control_;
-  bool ever_requested_ = false;
-  uint32_t last_request_ms_ = 0;
+  subsystems::LauncherHeat heat_;
+  std::optional<uint32_t> last_request_ms_;
+  std::optional<uint32_t> fire_start_ms_;
+  uint32_t fire_duration_ms_ = 0;
   std::optional<aim::Vec3> idle_;
   uint32_t idle_ms_ = 0;
 };

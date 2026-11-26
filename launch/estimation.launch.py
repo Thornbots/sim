@@ -116,7 +116,7 @@ def _stack(context):
     if not headless:
         actions.append(cv_node('target_state_markers', package='sim'))
         actions.append(Node(
-            package='rviz2', executable='rviz2', name='rviz2', output='screen',
+            package='sim', executable='rviz2', name='rviz2', output='screen',
             arguments=['-d', os.path.join(get_package_share_directory('sim'), 'rviz',
                                           'estimation.rviz')],
             parameters=[{'use_sim_time': True}]))
@@ -128,6 +128,7 @@ def _stack(context):
 def _tests(context):
     cfg = context.launch_configurations
     cmd = [*suite_command('estimation_suite'), '--external-stack',
+           '--real-time-factor', cfg['real_time_factor'],
            '--panel-layout', cfg['panel_layout'], '--target-path', cfg['target_path'],
            '--shooter-speed', cfg['shooter_speed'], '--chassis-spin', cfg['chassis_spin'],
            '--camera-latency', cfg['camera_latency_s']]

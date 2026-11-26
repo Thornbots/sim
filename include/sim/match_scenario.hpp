@@ -27,8 +27,8 @@ struct ParkedPath {
 const std::map<std::string, ParkedPath> &parked_paths();
 const std::map<std::string, Route> &routes();
 const std::map<std::string, std::string> &teams();
-const std::map<std::string, double> &route_delays();
 constexpr double kRouteAccel = 2.0, kRouteSpeed = 2.0;
+constexpr double kMatchParkDurationS = 0.5;
 // Blue's end of the firmware route (red mirrors x): just south of the Central
 // Wall's tip, with open floor south of it for the parked target paths.
 constexpr Point kCenter{0.6, -1.8};

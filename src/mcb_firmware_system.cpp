@@ -116,6 +116,7 @@ public:
       return result;
     });
     shots_ = node_->create_publisher<std_msgs::msg::Header>("~/shot", 100);
+    locked_shots_ = node_->create_publisher<std_msgs::msg::Header>("~/locked_shot", 100);
     ticks_ = node_->create_publisher<std_msgs::msg::Header>("~/tick", 100);
     motors_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/motors", 10);
     setpoints_ = node_->create_publisher<sensor_msgs::msg::JointState>("~/gimbal_setpoint", 100);
@@ -375,7 +376,13 @@ public:
     if (relay_) relay_->before_step(uart_time);
     mcb_firmware::Firmware::Output output;
     try {
-      output = firmware_->step(1, readings, referee_, feedback, external_, imu);
+      launcher_.cool(static_cast<uint32_t>(uart_time / 1'000'000));
+      if (referee_.current_hp == 0 && was_alive_) launcher_.on_defeat();
+      was_alive_ = referee_.current_hp > 0;
+      auto frame = referee_;
+      frame.barrel_heat = launcher_.heat();
+      frame.shooter_power &= launcher_.powered();
+      output = firmware_->step(1, readings, frame, feedback, external_, imu);
     } catch (const std::runtime_error &) {
       // kill_launch.sh and Ctrl-C signal every process, so the firmware can die
       // of SIGINT/SIGTERM just before this process learns it is stopping.
@@ -438,7 +445,8 @@ public:
     const auto exits = projectiles_.update(feedback[2]);
     for (uint32_t shot = 0; shot < exits; ++shot) {
       tick.frame_id = "muzzle";
-      shots_->publish(tick);
+      if (launcher_.record_exit()) shots_->publish(tick);
+      if (!launcher_.powered()) locked_shots_->publish(tick);
     }
   }
 
@@ -486,6 +494,8 @@ private:
   gz::sim::Link head_{gz::sim::kNullEntity};
   gz::sim::Entity yaw_ = gz::sim::kNullEntity, pitch_ = gz::sim::kNullEntity;
   mcb_firmware::Referee referee_;
+  RefereeLauncher launcher_;
+  bool was_alive_ = true;
   mcb_motor::Plant plant_;
   mcb_motor::ProjectileExit projectiles_;
   McbImuDelay imu_;
@@ -508,7 +518,7 @@ private:
   std::array<double, 3> staged_external_{};
   bool has_staged_external_ = false;
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameters_;
-  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr shots_, ticks_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr shots_, locked_shots_, ticks_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr motors_, setpoints_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr command_;
   std::unique_ptr<mcb_firmware::PtyLink> pty_;

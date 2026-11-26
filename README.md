@@ -100,10 +100,8 @@ target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
 neighbouring panels staggered 10.39 cm apart vertically (about 83% of a
 panel's 12.5 cm height, with even-numbered panels lower)
 (`panel_layout:=` picks one). It launches the stack once and only changes the
-target between cases; each case settles for 3s, then scores 30s of sim time.
-The bench fires at up to 40 Hz, far above the real launcher, and scores each
-case on hit rate and hits per expected shot equally (the `total`
-blend in `test/cv/shot_hit_suite.cpp`), so falling behind 40 Hz costs points.
+target between cases. Each case settles disarmed for 3 s and then starts cold
+for a 30 s firing window. The score averages hit rate and hits per expected shot.
 
 There is no gz, robot or tracker. `sim_clock` publishes `/clock`,
 `point_shooter` puts `root` in `odom` (`POINT_SHOOTER`, 0.4 m up) and
@@ -113,27 +111,31 @@ The Jetson [target manager](../thornbots_pkg/README.md#target_manager) feeds
 managed assignments, updates and clears to `mcb_aim_standin`, which runs the
 firmware's `AimPlanner`. Each shot leaves
 `root` toward the newest stand-in aim (an `odom` point) before its exit time, carrying
-`root`'s velocity: a perfect gimbal that holds each 40 Hz aim until the
-next. So a miss is the MCB planner's math and nothing else. It draws the
+`root`'s velocity. The perfect gimbal follows the planner's rates between
+5 ms replans. The bench draws the
 target's panels in rviz. The bench needs the firmware checkout at build time
 (`mcb_aim_standin` is skipped without it). The
 [2026-11-04 measurement](docs/mcb-aim-planner-2026-11-04.md) compares it with
 the Jetson planner's numbers.
 
 `real_time_factor:=0` (the default) runs it as fast as the stack keeps up.
-`sim_clock` steps sim time 2 ms at a time and stops exactly one period past
-the newest consumed-input acknowledgment on `/cv/manager/input_ack`,
+`sim_clock` waits for the manager and stand-in to match their DDS endpoints
+before advancing time. It steps sim time by up to 2 ms and paces on
+`/cv/manager/input_ack`,
 `/dji_serial_bridge/pose`, the stand-in's `/cv/target/tick` and the
-scorer's `/bench/progress` until that topic publishes, so no node falls
-behind and each control tick is stamped on its deadline; a topic with
-no publisher left (the scorer between cases) stops holding it. A fixed
+scorer's `/bench/progress`. If a reader misses a held clock tick, the clock
+publishes it again. A topic with no publisher left (the scorer between cases)
+stops holding it. A fixed
 `real_time_factor` above 0 does not wait. Use `:=1` as the control;
 [dated pacing comparisons](docs/cv-bench-results-2026-09-28.md#clock-pacing-observations-2026-09-25-and-2026-10-01) record the measured tradeoff.
 
 The [MCB aim stand-in](#mcb-aim-stand-in) owns planner modes and overrides.
-The perfect gimbal follows planner
-rates between 5 ms replans. The recorded floors below
-were measured in chase mode. Each cell has
+The scorer replays the [launcher limits](#launcher-heat) over the whole
+firing window. Chase can fire whenever both gates permit it. Crossing mode
+gets one opportunity each time a panel faces the shooter, shifted back by
+the estimated flight and feed times. The default `spin_mode:=firmware` uses
+the firmware's own cutout (`AimPlannerConstants.hpp`). The floors were
+measured in this mode with the launcher limits active. Each cell has
 its own floor in `FLOORS` (`include/sim/shot_floors_data.hpp`), the lowest score
 over three runs minus 10 points. Forty cells are measured: both layouts on
 lateral, radial and diagonal with a still shooter, and lateral at
@@ -152,10 +154,13 @@ the target's velocity, the target rotation it arrived in, and the stand-in's
 plan-to-exit delay (`delay_ms`). Each case also prints the mean of those offsets over its misses.
 `panel_hits.jsonl` holds one line per case with the hits on each panel (front,
 left, back, right) in each target rotation. It is for reading, not scoring.
-`scores.jsonl` holds each case's score. Three runs' worth make the floors:
+`scores.jsonl` holds each case's score, expected shots and launcher violations.
+Each invocation overwrites its log files. For a full repeat, set a distinct
+`log_dir:=` for each configuration and concatenate the four checker-accepted
+`scores.jsonl` files into one file. Use the three combined files for the floors:
 
 ```bash
-ros2 run sim shot_floors run1/ run2/ run3/   # each a log_dir:=
+ros2 run sim shot_floors run1/ run2/ run3/
 ```
 
 ```bash
@@ -347,6 +352,11 @@ outside the launch tree to clean up:
   Renode and `ros2 run`), then expects the whole group to be gone. A member
   that survives is SIGKILLed and reported (`clean()` is false, the E2E suite
   fails, the checker rejects the log).
+- The E2E stack launch marks shutdown before forwarding signals to its nodes.
+  This lets the lockstep coordinator stop waiting if a UART or other producer
+  exits first. A producer that disappears during a run still fails immediately.
+  The harness holds its last tick while the stack stops. The X11 recorder sends
+  SIGINT to the launch leader on interruption.
 - The firmware process has its own process group on purpose, so a group SIGINT
   cannot kill it mid-tick; it exits when gz closes its stdin.
 - The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero node
@@ -405,6 +415,16 @@ Keep `--symlink-install`. Without it `install/sim` holds copies, and your edits
 under `sim/` do nothing until the next rebuild. If a change seems to have no
 effect, check this before anything else, then `rm -rf build/sim install/sim`
 and rebuild.
+
+The sim RViz presets drain a short TF queue in batches on the GUI thread.
+This keeps pose updates recent under rendering load and puts display teardown
+on SIGINT on the same thread as pending transform callbacks. Older Jazzy
+TF2 also invoked callbacks while holding the transform-request lock, which
+could block cleanup of display message filters. See the
+[Jazzy TF2 fix](https://github.com/ros2/geometry2/pull/989).
+The sim launch entry point releases display resources before closing the
+render window and shutting down ROS. Stock RViz can fail in OGRE map
+swatch teardown when it closes the window first.
 
 ## More on the tests
 
@@ -771,15 +791,21 @@ doesn't have; only sim and its tests should read them.
 
 [Mac recording evidence](docs/e2e-video-2026-10-13.md).
 
-The E2E GUI uses scene-only gz views and robot-following RViz views:
-[a parked close-up](rviz/e2e-parked.rviz) and [a driving/match view](rviz/e2e.rviz). They show robot, TF, lidar, map, tracked armor,
-cyan aim point/ray and scored MCB shot traces. The GUI-only `e2e_map_view`
-fetches the initial map through the read-only map service and mirrors updates
-to `/sim/e2e/map` once per wall second, so a missed initial DDS sample does
-not leave RViz empty. The map viewer and RViz use the existing thornbots UDP
-profile to avoid depending on shared-memory delivery of the large map. Green denotes an enemy hit and
-red a miss. Traces appear after the scorer resolves the shot; they show the
-historical ballistic path, not animated ammunition. Parked/drive endpoints use
+The E2E GUI pairs scene-only gz views with field-fixed RViz views.
+The [drive and match view](rviz/e2e.rviz) frames the arena and draws the
+sentry's driven route in blue. The [parked view](rviz/e2e-parked.rviz) frames
+the scoring area near the central wall. The sentry model uses ROS TF. Blue
+and red cylindrical markers show the other robots' Gazebo poses. Both views
+show lidar, the saved map, tracked armor, the cyan aim point and ray, and
+scored MCB shot traces. The camera targets `map` while RViz draws the sentry
+in `odom` so pose updates can use the direct raw transform.
+
+The GUI-only `e2e_map_view` publishes each changed map on `/sim/e2e/map`.
+Its transient-local publisher retains the current map for new viewers.
+The read-only map service provides a fallback during startup. The mirror
+and RViz use the existing Thornbots UDP profile for map delivery.
+Green denotes an enemy hit and red a miss. Traces show the historical
+ballistic path after the scorer resolves the shot. Parked/drive endpoints use
 scored flight range; match endpoints use the resolved first-impact time.
 The aim ray connects the current muzzle TF to the held aim point. The
 [chassis-yaw wire limitation](../ros2_dji_serial_bridge/UART_PROTOCOL.md#proposed-pose-chassis-yaw)
@@ -1471,8 +1497,8 @@ bridge messages are required to build the stand-in.
   newly received input, preserving decision stamps when accelerated `/clock`
   updates coalesce timer callbacks. Gaps above its bounded catch-up limit discard
   missed decisions. The ideal gimbal follows requested angles/rates. Unit fixtures can
-  supply physical measured motion to test misses. There is no pending request
-  queue or frozen aim. The bench ideal indexer retains its 40 Hz request cap.
+  supply physical measured motion to test misses. The ideal indexer uses the
+  sentry firmware's heat estimate and 100 ms cooldown for fire requests.
 - Outputs: `/mcb_aim_standin/aim` (`PointStamped`, raw odom, stamped at the current
   control decision) and `/mcb_aim_standin/fire` (`Vector3Stamped`, request stamp,
   `x` = request-to-muzzle latency, `y` = current decision-to-muzzle latency).
@@ -1573,6 +1599,21 @@ The accuracy investigation records hosted-fixture measurements from a source
 snapshot before track I; it does not establish board accuracy. Board boot,
 UART/CAN and gz validation are in the [Type C report](docs/mcb-type-c-2026-10-11.md)
 and [board auto-drive report](docs/mcb-auto-drive-2026-10-12.md).
+
+#### Launcher heat
+
+The hosted and Renode backends receive the sentry heat limit and cooling rate
+in referee frame `0x0201` and the actual barrel heat in `0x0202`. The referee
+charges heat at physical projectile exit and cuts launcher power when
+the [competition thresholds](../docs/ARCC_2026_SENTRY_CONTEXT.md#sentry-limits-autonomy-and-combat-3v3)
+are exceeded. Exits that trigger or occur during a lock publish on
+`/mcb_emulator/locked_shot` and fail the E2E suite. The aim bench applies
+the same rules to its exits and checks that requests are at least 100 ms apart.
+
+The cold referee budget holds 26 rounds before cooling, with 3 rounds/s
+of sustained cooling. Cooling continues during a burst. The firmware
+and stand-in estimate heat at request time and keep one extra round of
+headroom for feed timing. The bench denominator uses the full referee budget.
 
 #### Lockstep startup
 
@@ -2171,8 +2212,8 @@ velocity or reference route for our robot.
 `backend:=renode` is the default and uses the normal board ELF.
 `backend:=hosted` explicitly selects the faster fixture, whose remote switches
 now follow the same stop/simple and aim/fire selections. Startup holds drive
-in centred manual mode. At stage arm the right switch selects auto-drive;
-the left stays MID until every robot's truth root enters the estimated
+in centred manual mode. At stage arm the right switch selects auto-drive.
+The left switch stays MID until every robot's truth root enters the estimated
 field-centre fight zone, then switches UP to enable automatic aim/fire.
 Referee stage is IN_GAME so the firmware can advance waypoints during approach.
 The real AMCL + rf2o + EKF stack remains in the loop.
@@ -2219,9 +2260,12 @@ ros2 launch sim e2e.launch.py stage:=mcb_match headless:=true
 ```
 
 Two blue and two red sentries leave their respective spawns on separate
-field-safe routes. The second lane leaves four seconds later; firing stays
-disabled until every truth root reaches the centre zone. Our robot runs its
-firmware waypoint/spin behavior; the three ghosts spin and use a truth-fed aimer with seed 2026,
+field-safe routes. Both ghost lanes leave together so the all-robots-ready
+firing gate can open during the Sentry's final drive
+leg. Once the Sentry slows near the centre, the fixture holds its chassis
+for 0.5 seconds in centred manual mode while scoring
+continues, then returns it to firmware waypoint/spin control. The three
+ghosts spin and use a truth-fed aimer with seed 2026,
 0.015 rad Gaussian aim noise, and a 2 Hz fire rate. The selector sees both
 red opponents and the blue ally. Only our robot runs the real CV stack.
 
@@ -2229,19 +2273,28 @@ The scorer advances 22 m/s ballistic shots under gravity against the field
 mesh, chassis hulls and canted armor. It includes the physical muzzle velocity
 at launch, including chassis motion. 22 m/s matches the checked-out sentry
 firmware ballistic solver; the E2E Jetson planner uses the same value. The
-first impact absorbs the shot;
-damage requires more than 12 m/s relative normal speed, the exposure cone,
-and the panel's 50 ms dead time. Each robot starts with 400 HP; hits cost
-20 HP. Defeated robots stop moving and shooting. Referee HP, team, stage,
+first impact absorbs the shot. An enemy armor contact requires more than
+12 m/s relative normal speed and the exposure cone. The referee credits
+contacts on live enemies outside the panel's 50 ms dead time. Each robot
+starts with 400 HP and loses 20 HP on a credited hit. Same-team contacts deal
+no damage. At zero HP, the fixture darkens the armor, suppresses its panel
+detections, and stops the robot's motion and firing. Its hull and armor
+still absorb shots. Referee HP, team, stage,
 time and hurt panel feed the firmware's referee UART parser;
 the test checks HP and team return through `REF_SYS` on the Jetson UART.
 
-`match.json` reports per-segment measured motion and localization error, enemy hit
-rates, HP, friendly intersections, damage taken and shot counts per robot.
-`shots.jsonl` records first impacts and HP after each resolved impact.
-The approach checks routing with firing disabled; center segments retain the
-same route and localization diagnostic criterion as `mcb_drive`, while the
-match pass criterion is unchanged. Accuracy floors, repeated-run
+`match.json` reports Sentry referee credits and valid enemy panel contacts by
+segment, alongside motion, localization error and HP. The geometric contact
+rate counts contacts on live enemy panels before applying the 50 ms rule.
+Its denominator excludes shots launched after all enemies were defeated
+and first contacts with defeated robots. The report records both exclusions,
+all-robot and Sentry-only friendly contacts, damage taken and shots by robot.
+`shots.jsonl` records first impacts and their rulings, with HP after each impact.
+`detections.jsonl` records each truth frame's capture stamp and published class IDs.
+The approach checks routing with firing disabled. Drive, parked and spin each
+require accuracy attempts. Any missing segment or zero-attempt segment fails
+as a scenario error. The existing 10% diagnostic threshold uses the
+geometric contact rate. Accuracy floors, repeated-run
 spread and standalone-versus-sequence equivalence are tracked in
 [ROADMAP A](../docs/ROADMAP.md#a-acceptance-details).
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn
