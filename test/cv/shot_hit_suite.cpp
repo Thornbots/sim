@@ -18,6 +18,9 @@
 #include "sim/suite_node.hpp"
 #include "sim/suite_timing.hpp"
 #include "sim/mcb_aim_topics.hpp"
+#include "sim/referee_launcher.hpp"
+#include "AimPlannerConstants.hpp"
+#include "LauncherHeat.hpp"
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/vector3_stamped.hpp>
 #include <gtest/gtest.h>
@@ -27,6 +30,34 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 namespace cb = sim::cv_bench;
 namespace timing = sim::suite_timing;
+using sim::RefereeLauncher;
+
+int expected_shots(uint32_t start_ms, uint32_t stop_ms, bool gating,
+                   const std::vector<uint32_t> &crossings) {
+  subsystems::LauncherHeat heat;
+  heat.reset(start_ms - start_ms % RefereeLauncher::kTickMs);
+  uint32_t next_ms = start_ms;
+  int shots = 0;
+  const auto opportunity = [&](uint32_t ms) {
+    heat.cool(ms, RefereeLauncher::kCoolingPerSecond);
+    if (heat.canCharge(RefereeLauncher::kHeatLimit, RefereeLauncher::kHeatPerShot) &&
+        ms >= next_ms) {
+      heat.charge(RefereeLauncher::kHeatPerShot);
+      next_ms = ms + subsystems::kSentryShotIntervalMs;
+      ++shots;
+    }
+  };
+  if (gating) {
+    for (const auto ms : crossings)
+      if (ms >= start_ms && ms < stop_ms)
+        opportunity(ms);
+  } else {
+    for (uint32_t ms = start_ms; ms < stop_ms; ms = std::max(ms + 1, next_ms))
+      opportunity(ms);
+  }
+  return shots;
+}
+
 class ShotSampler : public sim::SimTimeNode {
   struct Fire {
     double exit;
@@ -48,10 +79,11 @@ public:
   std::deque<std::pair<double, cb::Vec>> aims;
   std::vector<cb::Json> records;
   std::vector<double> misses;
-  int fired = 0, hits = 0;
+  int fired = 0, hits = 0, launcher_violations = 0;
   double aim_yaw_tv = 0, aim_pitch_tv = 0;
   int panel_flips = 0, scored_aims = 0;
   double stagger, lifetime;
+  std::vector<uint32_t> crossings;
   explicit ShotSampler(double stagger_ = 0, double lifetime_ = 5)
       : SimTimeNode("shot_hit_test_sampler"), stagger(stagger_),
         lifetime(lifetime_) {
@@ -72,6 +104,7 @@ public:
               y, m.twist.twist.angular.z});
           while (t - truth.front().t > 1)
             truth.pop_front();
+          measure_crossings();
           launch_due(t);
           resolve(t);
         });
@@ -90,14 +123,20 @@ public:
                0});
           while (t - shooter.front().t > 1)
             shooter.pop_front();
+          measure_crossings();
         });
     // An indexer request: shot_hit's exit is the request plus the firmware's
     // request-to-exit latency (x); y is plan time to exit, for the log.
     fire_sub_ = create_subscription<geometry_msgs::msg::Vector3Stamped>(
         sim::mcb_aim::kFireTopic, rclcpp::QoS(100),
         [this](const geometry_msgs::msg::Vector3Stamped &m) {
-          if (truth.empty())
+          const auto ns = rclcpp::Time(m.header.stamp).nanoseconds();
+          if (!in_window(ns))
             return;
+          const auto ms = static_cast<uint32_t>(ns / 1'000'000);
+          if (last_request_ms_ && ms - *last_request_ms_ < subsystems::kSentryShotIntervalMs)
+            ++launcher_violations;
+          last_request_ms_ = ms;
           ++fired;
           unlaunched_.push_back({stamp_s(m.header.stamp) + m.vector.x,
                                  static_cast<int>(std::lround(m.vector.y * 1000))});
@@ -109,7 +148,8 @@ public:
           aims.push_back({t, {m.point.x, m.point.y, m.point.z}});
           while (t - aims.front().first > 1)
             aims.pop_front();
-          if (scoring_ && !shooter.empty() && !truth.empty()) {
+          if (in_window(rclcpp::Time(m.header.stamp).nanoseconds()) &&
+              !shooter.empty() && !truth.empty()) {
             const cb::Vec delta = cb::Vec{m.point.x, m.point.y, m.point.z} - shooter.back().center;
             const double horizontal = std::hypot(delta.x(), delta.y());
             const double yaw = std::atan2(delta.y(), delta.x());
@@ -148,17 +188,49 @@ public:
     marker_timer_ = create_wall_timer(std::chrono::duration<double>(1. / 30),
                                       [this]() { publish_markers(); });
   }
-  void reset() {
-    fired = hits = 0;
+  void score_window(uint32_t start_ms, uint32_t stop_ms, bool gating) {
+    start_ns_ = int64_t{start_ms} * 1'000'000;
+    stop_ns_ = int64_t{stop_ms} * 1'000'000;
+    gating_ = gating;
     aim_yaw_tv = aim_pitch_tv = 0;
     panel_flips = scored_aims = 0;
     last_aim_angles_.reset();
     last_selected_panel_.reset();
-    scoring_ = true;
     records.clear();
     misses.clear();
     pending_.clear();
     unlaunched_.clear();
+  }
+  bool in_window(int64_t ns) const {
+    return ns >= start_ns_ && ns < stop_ns_;
+  }
+  void measure_crossings() {
+    if (!gating_ || shooter.empty())
+      return;
+    for (const auto &p : truth) {
+      if (p.t <= last_crossing_sample_)
+        continue;
+      if (p.t > shooter.back().t)
+        break;
+      last_crossing_sample_ = p.t;
+      const cb::Vec delta = cb::interpolate(shooter, p.t).center - p.center;
+      const double phase = p.yaw - std::atan2(delta.y(), delta.x());
+      const double distance = std::max(0., delta.norm() - cb::kPanelRadiusX);
+      const double request = p.t - aim::AimTuning{}.firmware_latency_s -
+                             distance / cb::kMuzzleSpeed;
+      if (crossing_phase_) {
+        const auto [previous, previous_request] = *crossing_phase_;
+        const double relative = std::remainder(previous, cb::kQuarterTurn);
+        const double change = std::remainder(phase - previous, 2 * cb::kPi);
+        if (change != 0) {
+          const double fraction = -relative / change;
+          const double ms = (previous_request + (request - previous_request) * fraction) * 1000;
+          if (fraction > 0 && fraction <= 1 && ms >= 0)
+            crossings.push_back(static_cast<uint32_t>(std::lround(ms)));
+        }
+      }
+      crossing_phase_ = std::pair{phase, request};
+    }
   }
   int finish() {
     int dropped = static_cast<int>(pending_.size() + unlaunched_.size());
@@ -174,6 +246,11 @@ public:
     for (auto fire : unlaunched_) {
       if (fire.exit > now) {
         keep.push_back(fire);
+        continue;
+      }
+      launcher_.cool(static_cast<uint32_t>(std::lround(fire.exit * 1000)));
+      if (!launcher_.record_exit() || !launcher_.powered()) {
+        ++launcher_violations;
         continue;
       }
       cb::Vec aim = aims.front().second;
@@ -290,7 +367,12 @@ public:
   }
 
 private:
-  bool scoring_ = false;
+  int64_t start_ns_ = 0, stop_ns_ = 0;
+  std::optional<uint32_t> last_request_ms_;
+  RefereeLauncher launcher_;
+  bool gating_ = false;
+  double last_crossing_sample_ = -1;
+  std::optional<std::pair<double, double>> crossing_phase_;
   std::optional<std::pair<double, double>> last_aim_angles_;
   std::optional<int> last_selected_panel_;
   std::vector<Fire> unlaunched_;
@@ -404,7 +486,7 @@ public:
   std::unique_ptr<sim::LaunchTree> launch;
   std::vector<std::string> nodes{"sim_clock",          "target_driver",
                                  "shooter_driver",     "point_shooter",
-                                 "target_state_truth", "mcb_aim_standin"};
+                                 "target_state_truth", "mcb_aim_standin", "target_manager"};
   std::string error;
   void SetUp() override {
     try {
@@ -415,7 +497,9 @@ public:
         launch = std::make_unique<sim::LaunchTree>(
             std::vector<std::string>{
                 "ros2", "launch", "sim", "shot_hit.launch.py",
-                "run_tests:=false",
+                "run_tests:=false", "arm_per_case:=true",
+                "real_time_factor:=" + cb::options.rtf,
+                "spin_mode:=" + cb::options.spin_mode,
                 "headless:=" +
                     std::string(cb::options.headless ? "true" : "false"),
                 "shooter_speed:=" + cb::number(cb::options.shooter)},
@@ -495,14 +579,24 @@ TEST_P(ShotSuite, ShotHit) {
     timing::Phase phase("settle");
     s->spin_for(3);
   }
-  s->reset();
+  const auto speed_rad_s = static_cast<float>(2 * cb::kPi * std::abs(c.spin));
+  const std::string &mode = cb::options.spin_mode;
+  const bool gating = (mode == "shotgating" && speed_rad_s > 1e-6f) ||
+                      (mode == "firmware" && speed_rad_s > aim::AimTuning{}.shot_gating_rad_s);
+  const auto start_ms = static_cast<uint32_t>(std::ceil(s->now_s() * 10) + 1) * 100;
+  const auto stop_ms = start_ms + static_cast<uint32_t>(std::lround(duration * 1000));
+  s->score_window(start_ms, stop_ms, gating);
+  s->set_params("mcb_aim_standin", {rclcpp::Parameter(
+      "fire_window_ms", std::vector<int64_t>{start_ms, stop_ms})});
   {
     timing::Phase phase("scored");
-    s->spin_for(duration);
+    ASSERT_TRUE(s->wait_until([&]() { return s->now_s() >= stop_ms / 1000. + 0.5; },
+                              3 * duration + 5, "the end of the firing and flight window"));
   }
   s->check_nodes(environment->nodes);
   timing::set_sim_clock({});
   int dropped = s->finish();
+  EXPECT_EQ(s->launcher_violations, 0) << "the stand-in exceeded a launcher limit";
   cb::Json details = {{"speed", c.speed},
                       {"spin_hz", cb::rounded(c.spin, 3)},
                       {"panel_stagger_m", c.stagger},
@@ -524,16 +618,21 @@ TEST_P(ShotSuite, ShotHit) {
   panels.update({{"panels", {"front", "left", "back", "right"}},
                  {"hits_per_rotation", table}});
   cb::append_json(cb::options.log_dir + "/panel_hits.jsonl", panels);
-  double expected = cb::kFireHz * duration,
-         hit_rate = s->fired ? static_cast<double>(s->hits) / s->fired : 0,
-         total = .5 * (hit_rate + s->hits / expected),
-         keep_up = s->fired / expected;
+  const double expected = expected_shots(start_ms, stop_ms, gating, s->crossings);
+  ASSERT_GT(expected, 0) << "no firing opportunities in " << label;
+  const double hit_rate = s->fired ? static_cast<double>(s->hits) / s->fired : 0;
+  const double hits_per_opportunity = std::min(1., s->hits / expected);
+  const double total = .5 * (hit_rate + hits_per_opportunity);
+  const double keep_up = s->fired / expected;
   auto summary = details;
   summary.update({{"cell", c.name},
                    {"score", cb::rounded(total, 4)},
                    {"hits", s->hits},
                    {"shots", s->fired},
                    {"keep_up", cb::rounded(keep_up, 4)},
+                   {"expected_shots", static_cast<int>(expected)},
+                   {"launcher_violations", s->launcher_violations},
+                   {"firing", gating ? "crossing" : "chase"},
                    {"aim_yaw_total_variation_rad", cb::rounded(s->aim_yaw_tv, 6)},
                    {"aim_pitch_total_variation_rad", cb::rounded(s->aim_pitch_tv, 6)},
                    {"scored_aim_samples", s->scored_aims},
@@ -616,7 +715,7 @@ int main(int argc, char **argv) {
     std::cout << cb::Json{{"MUZZLE_SPEED", cb::kMuzzleSpeed},
                           {"POINT_SHOOTER", {0., 0., .4}},
                           {"SHOOTER_HALF_WIDTH", 1.},
-                          {"TEST_FIRE_HZ", cb::kFireHz}}
+                          {"TEST_PROGRESS_HZ", 40}}
                      .dump()
               << '\n';
     return 0;

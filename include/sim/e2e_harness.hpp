@@ -66,7 +66,6 @@ public:
   // now_s(), which is whatever /clock message this node has handled.
   double tick_s() { return unacked_ns_ ? *unacked_ns_ * 1e-9 : now_s(); }
   // Stop holding physics on this harness (teardown): later ticks need no release.
-  void retire();
   void check_lockstep();
   // Set by the suite: whether the launched stack still runs. step() throws once it does not,
   // so no wait outlives the stack (a wait on ticks would otherwise spin forever).
@@ -75,6 +74,7 @@ public:
   // than the coordinator's 60 s guard, so its diagnosis (naming the topic) comes first.
   static constexpr double kStallWallS = 90;
   std::string stage, log_path;
+  size_t locked_shots = 0;
   std::map<std::string, std::shared_ptr<PoseHistory>> histories;
   std::map<std::string, std::vector<Json>> shots;
   std::vector<double> physical_shot_times;
@@ -111,7 +111,6 @@ private:
   rclcpp::TimerBase::SharedPtr start_timer_, tick_timer_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ack_pub_, ready_pub_;
   std::optional<int64_t> tick_ns_, unacked_ns_;  // pending tick; tick being decided
-  bool retired_ = false;
   uint64_t ticks_ = 0;
   double score_from_ = 0;  // shots and states stamped earlier are not this window's
   void tick_body();

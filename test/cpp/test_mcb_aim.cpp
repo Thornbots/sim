@@ -63,7 +63,27 @@ TEST(McbAim, IdealGimbalFiresWithoutConfidenceDwellOrDetectionAgeGates) {
   EXPECT_NEAR(a.fire->request_s, 0, 1e-9);
   EXPECT_NEAR(a.fire->latency_s, .020, 1e-8);
   EXPECT_FALSE(s.tick(1, Pose{}).fire);
-  EXPECT_TRUE(s.tick(25, Pose{}).fire);
+  EXPECT_FALSE(s.tick(99, Pose{}).fire);
+  EXPECT_TRUE(s.tick(100, Pose{}).fire);
+}
+TEST(McbAim, FiringWindowStartsColdAndSustainedFireIsHeatLimited) {
+  Standin s;
+  s.set_firing_window(100, 20'100);
+  int sustained = 0;
+  int cold = 0;
+  for (uint32_t ms = 0; ms < 20'200; ++ms) {
+    if (ms % 100 == 0) {s.on_state(ms, target());}
+    if (s.tick(ms, Pose{}).fire) {
+      ASSERT_GE(ms, 100u);
+      ASSERT_LT(ms, 20'100u);
+      if (ms < 1100) {++cold;}
+      if (ms >= 10'100) {++sustained;}
+    }
+  }
+  EXPECT_EQ(cold, 10);
+  EXPECT_EQ(sustained, 30);
+  s.set_firing_window(20'200, 20'300);
+  EXPECT_TRUE(s.tick(20'200, Pose{}).fire);
 }
 TEST(McbAim, MeasuredMissBlocksEveryRequestAndDoesNotFreezeReplans) {
   Standin s;
@@ -126,7 +146,8 @@ TEST(McbAim, ClearAndReassignmentPreserveThePhysicalIndexerRateLimit) {
   EXPECT_FALSE(s.tick(1, Pose{}).fire);
   s.on_state(2, target());
   EXPECT_FALSE(s.tick(2, Pose{}).fire);
-  EXPECT_TRUE(s.tick(25, Pose{}).fire);
+  EXPECT_FALSE(s.tick(99, Pose{}).fire);
+  EXPECT_TRUE(s.tick(100, Pose{}).fire);
 }
 TEST(McbAim, FireDisabledPreservesAimingAndShooterCompensation) {
   sim::mcb_aim::Config config;
@@ -147,6 +168,7 @@ TEST(McbAim, SpinCutoutMatchesFirmwareAcrossThresholdAndRefresh) {
   Standin standin;
   aim::AimControl firmware;
   uint32_t ms = 0;
+  uint32_t next_request_ms = 0;
   for (float rate : {0.f, aim::SHOT_GATING_RAD_S, aim::SHOT_GATING_RAD_S + .001f,
       9.f, -9.f, -aim::SHOT_GATING_RAD_S - .001f, -aim::SHOT_GATING_RAD_S, 0.f})
   {
@@ -160,8 +182,10 @@ TEST(McbAim, SpinCutoutMatchesFirmwareAcrossThresholdAndRefresh) {
     ASSERT_TRUE(p.valid && out.aim);
     EXPECT_FLOAT_EQ(out.aim->x, p.aim.x);
     EXPECT_FLOAT_EQ(out.aim->y, p.aim.y);
-    EXPECT_EQ(out.fire.has_value(), firmware.can_fire(ms, {}, {},
-      {p.yaw, p.pitch, p.yaw_rate, p.pitch_rate}));
+    const bool expected = ms >= next_request_ms && firmware.can_fire(ms, {}, {},
+      {p.yaw, p.pitch, p.yaw_rate, p.pitch_rate});
+    EXPECT_EQ(out.fire.has_value(), expected);
+    if (expected) {next_request_ms = ms + subsystems::kSentryShotIntervalMs;}
     if (std::abs(rate) > aim::SHOT_GATING_RAD_S) {
       EXPECT_NEAR(out.aim->y, 0, 1e-6);
     } else if (rate != 0) {

@@ -90,6 +90,7 @@ protected:
     }
     gz_.reset();
     std::filesystem::remove(path_);
+    std::filesystem::remove(path_ + ".shutdown");
   }
   void start(bool hold_at_start, bool strict = false, double gate_wait_s = 5.0,
              bool epoch_zero_startup = false, bool force_running = false) {
@@ -269,19 +270,57 @@ TEST_F(Lockstep, SlowLiveProducerOnlySlowsTheRun) {
 TEST_F(Lockstep, ExitedProducerFailsFastNamingItsTopic) {
   start(true, true, 60.0);
   ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
-  coordinator(true, {}, 60.0);
+  coordinator(true, {"-p", "shutdown_file:=" + path_ + ".shutdown"}, 60.0);
   ASSERT_TRUE(wait([&] {return held_ == 5000000;}, 5)) << coordinator_->read_log();
   ASSERT_TRUE(wait([&] {return ack_->get_subscription_count() > 0;}, 2));
   ack(5000000);
   ASSERT_TRUE(wait([&] {return held_ == 10000000;}, 2)) << coordinator_->read_log();
-  const auto t0 = std::chrono::steady_clock::now();
   send_acks_ = false;
   ack_.reset();
-  ASSERT_TRUE(wait([&] {return exited();}, 10)) << coordinator_->read_log();
-  EXPECT_LT(std::chrono::steady_clock::now() - t0, 10s);
-  EXPECT_TRUE(log_has("producer exited (no publisher left on /lockstep_test/ack)"))
+  ASSERT_TRUE(wait([&] {
+    return log_has("producer exited (no publisher left on /lockstep_test/ack)");
+  }, 2))
     << coordinator_->read_log();
+  ASSERT_TRUE(wait([&] {return exited();})) << coordinator_->read_log();
   EXPECT_EQ(clock_, 10000000);
+}
+
+TEST_F(Lockstep, BridgeExitingAfterLaunchShutdownIsNotATimeout) {
+  start(true, true, 60.0);
+  ASSERT_TRUE(wait([&] {return held_ >= 0;}, 15));
+  int64_t flush_stamp = -1;
+  auto flush_sub = node_->create_subscription<std_msgs::msg::Header>(
+    "/lockstep_test/flush", 100, [&flush_stamp](std_msgs::msg::Header::ConstSharedPtr msg) {
+      flush_stamp = rclcpp::Time(msg->stamp).nanoseconds();
+    });
+  auto flushed = node_->create_publisher<std_msgs::msg::Header>(
+    "/lockstep_test/flushed", 100);
+  const std::string shutdown_file = path_ + ".shutdown";
+  coordinator(true, {
+    "-p", "flush_topic:=/lockstep_test/flush", "-p", "flushed_topic:=/lockstep_test/flushed",
+    "-p", "shutdown_file:=" + shutdown_file}, 60.0);
+  ASSERT_TRUE(wait([&] {
+    return held_ == 5000000 && ack_->get_subscription_count() > 0;
+  })) << coordinator_->read_log();
+  ack(5000000);
+  ASSERT_TRUE(wait([&] {return flush_stamp == 5000000;})) << coordinator_->read_log();
+  std_msgs::msg::Header reply;
+  reply.stamp = rclcpp::Time(flush_stamp);
+  flushed->publish(reply);
+  ASSERT_TRUE(wait([&] {return held_ == 10000000;})) << coordinator_->read_log();
+  ack(10000000);
+  ASSERT_TRUE(wait([&] {return flush_stamp == 10000000;})) << coordinator_->read_log();
+
+  std::ofstream{shutdown_file};
+  ASSERT_TRUE(std::filesystem::exists(shutdown_file));
+  flushed.reset();
+  ASSERT_TRUE(wait([&] {return log_has("stopping on launch shutdown");}))
+    << coordinator_->read_log();
+  EXPECT_FALSE(exited());
+  EXPECT_EQ(clock_, 10000000);
+  coordinator_->stop();
+  EXPECT_FALSE(log_has("lockstep timeout")) << coordinator_->read_log();
+  EXPECT_FALSE(log_has("Process exited with failure")) << coordinator_->read_log();
 }
 
 TEST_F(Lockstep, StrictCoordinatorBeforeGateFindsFirstRelease) {

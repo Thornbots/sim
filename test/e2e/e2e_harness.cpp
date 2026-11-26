@@ -229,6 +229,9 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
                                        pending_.push_back({"mcb", t});
                                      }
                                    });
+  subscribe<std_msgs::msg::Header>(
+      "/mcb_emulator/locked_shot", rclcpp::QoS(100),
+      [this](const auto &) { ++locked_shots; });
   // The 50 ms harness chain. In lockstep the coordinator holds physics at each tick
   // until step() releases it, so everything the harness decides happens on a tick.
   // Ticks fall kPhaseMs after each 50 ms boundary: the one-shot is the first, and the
@@ -307,21 +310,12 @@ bool Scorer::wait_until(const std::function<bool()> &predicate, double timeout,
   return false;
 }
 void Scorer::release_tick() {
-  if (!ack_pub_ || !unacked_ns_ || retired_)
+  if (!ack_pub_ || !unacked_ns_)
     return;
   std_msgs::msg::Header ack;
   ack.stamp = rclcpp::Time(*unacked_ns_, RCL_ROS_TIME);
   ack_pub_->publish(ack);
   unacked_ns_.reset();
-}
-void Scorer::retire() {
-  if (!ack_pub_ || retired_)
-    return;
-  release_tick();
-  std_msgs::msg::Header ack;  // far future: every later tick is already released
-  ack.stamp.sec = 1000000000;
-  ack_pub_->publish(ack);
-  retired_ = true;
 }
 bool Scorer::step(double wall_timeout_s) {
   if (stack_alive && !stack_alive()) {

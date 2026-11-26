@@ -85,7 +85,10 @@ def _aim_node(context, harness):
     cfg = context.launch_configurations
     # The bench models a perfect gimbal; spin mode defaults to firmware tuning.
     params = {'tick_topic': '/cv/target/tick', 'state_ack_topic': '/cv/target/state_ack',
-              'shooter_z': harness.POINT_SHOOTER[2], 'spin_mode': cfg['spin_mode']}
+              'shooter_z': harness.POINT_SHOOTER[2], 'spin_mode': cfg['spin_mode'],
+              'publish_pacing_ready': float(cfg['real_time_factor']) <= 0}
+    if _is_true(context, 'run_tests') or _is_true(context, 'arm_per_case'):
+        params['fire_window_ms'] = [0, 0]
     if cfg['spin_mode'] != 'chase' and (cfg['chase_settle_s'] or cfg['chase_margin_s']):
         raise ValueError('chase window overrides require spin_mode:=chase')
     if cfg['spin_mode'] == 'chase':
@@ -104,16 +107,17 @@ def _point_stack(context, harness, headless):
     rate = max(0.0, float(context.launch_configurations['real_time_factor']))
     # rate 0: as fast as every stage below keeps up, each output's stamp
     # within one of its periods of sim time (truth and our pose at 60 Hz,
-    # the aim and the scorer at TEST_FIRE_HZ).
-    aim_period = 1.0 / harness.TEST_FIRE_HZ
-    pace = ['/cv/manager/input_ack std_msgs/msg/Header 0.0167',
-            '/dji_serial_bridge/pose dji_serial_bridge/msg/RobotPose 0.0167',
+    # the aim and the scorer paced at TEST_PROGRESS_HZ).
+    aim_period = 1.0 / harness.TEST_PROGRESS_HZ
+    pace = ['/cv/manager/input_ack std_msgs/msg/Header 0.020',
+            '/dji_serial_bridge/pose dji_serial_bridge/msg/RobotPose 0.020',
             f'/cv/target/tick std_msgs/msg/Header {aim_period}',
             f'/bench/progress std_msgs/msg/Header {aim_period}']
     x, y, z = harness.POINT_SHOOTER
     actions = [
         Node(package='sim', executable='sim_clock', name='sim_clock', output='screen',
-             parameters=[{'rate': rate, 'pace_topics': pace}]),
+             parameters=[{'rate': rate, 'pace_topics': pace,
+                          'pacing_ready_topic': '/mcb_aim_standin/pacing_ready'}]),
         # Our chassis: a second target_driver, no spin, bouncing along y
         # through root at shooter_speed (0 holds it at POINT_SHOOTER).
         Node(package='sim', executable='target_driver', name='shooter_driver', output='screen',
@@ -147,7 +151,8 @@ def _tests(context):
     cmd = [*suite_command('shot_hit_suite'), '--external-stack',
            '--panel-layout', context.launch_configurations['panel_layout'],
            '--target-path', context.launch_configurations['target_path'],
-           '--shooter-speed', context.launch_configurations['shooter_speed']]
+           '--shooter-speed', context.launch_configurations['shooter_speed'],
+           '--spin-mode', context.launch_configurations['spin_mode']]
     speeds = context.launch_configurations['speeds'].replace(',', ' ').split()
     if speeds:
         cmd += ['--shot-speeds', ','.join(speeds)]
@@ -194,6 +199,8 @@ def generate_launch_description():
         DeclareLaunchArgument('speeds', default_value='',
                               description="target speeds (m/s), e.g. '0.5 1'; "
                                           'empty = the harness default sweep'),
+        DeclareLaunchArgument('arm_per_case', default_value='false',
+                              description='Start disarmed for an external scorer'),
         DeclareLaunchArgument('duration', default_value='',
                               description='sim-time seconds scored per case'),
         DeclareLaunchArgument('target_path', default_value='lateral',

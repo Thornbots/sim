@@ -25,6 +25,7 @@ import atexit
 import json
 import math
 import os
+from pathlib import Path
 import subprocess
 import tempfile
 
@@ -42,7 +43,7 @@ from launch.actions import (
     TimerAction,
 )
 from launch.conditions import IfCondition
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnShutdown
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
@@ -387,7 +388,7 @@ def generate_launch_description():
 
     # One board batch ahead avoids outrunning the wall deadline during learning.
     def coordinator(deterministic, stage, extra_ready, startup_timeout, harness_chain,
-                    producers):
+                    producers, shutdown_file):
         params = {'chains': ['mcb_batch'], 'mcb_batch.period_s': 0.005,
                   'learn_margin_s': ParameterValue(PythonExpression([
                       "'0.005' if '", LaunchConfiguration('backend'),
@@ -425,7 +426,7 @@ def generate_launch_description():
                 startup_timeout_s=startup_timeout)
         return Node(
             package='sim', executable='lockstep_coordinator', output='screen',
-            parameters=[params],
+            parameters=[params, {'shutdown_file': shutdown_file}],
             condition=IfCondition(LaunchConfiguration('lockstep')))
 
     def stack(context):
@@ -515,8 +516,21 @@ def generate_launch_description():
                 get_package_share_directory('robot_localization'), 'thornbots_fork')):
             raise RuntimeError('producer_chains needs the Thornbots robot_localization fork '
                                '(build the workspace robot_localization package)')
+        shutdown_handler = []
+        shutdown_file = ''
+        if _is_true(context, 'lockstep'):
+            shutdown_dir = tempfile.TemporaryDirectory(prefix='sim-lockstep-')
+            atexit.register(shutdown_dir.cleanup)
+            marker = Path(shutdown_dir.name) / 'shutdown'
+            shutdown_file = str(marker)
+
+            def mark_shutdown(event, context):
+                # Launch handles Shutdown before delivering queued process signals.
+                marker.touch()
+
+            shutdown_handler.append(RegisterEventHandler(OnShutdown(on_shutdown=mark_shutdown)))
         coordination = coordinator(deterministic, stage, extra_ready, startup_timeout,
-                                   harness_chain, producers)
+                                   harness_chain, producers, shutdown_file)
         delay = float(context.launch_configurations['epoch_coordinator_delay_s'])
         if not math.isfinite(delay) or delay < 0 or delay > 10 or (delay and not deterministic):
             raise ValueError('epoch_coordinator_delay_s requires deterministic mode and 0..10 s')
@@ -544,7 +558,8 @@ def generate_launch_description():
             extras.append(Node(package='sim', executable='scan_odom_gate', output='screen',
                                parameters=[{'period_s': EKF_PERIOD_S,
                                             'queued_topic': '/ekf_filter_node/queued_stamps'}]))
-        return ([failure, coordinator_action, detector(opponents), opponent_driver] + extras
+        return (shutdown_handler
+                + [failure, coordinator_action, detector(opponents), opponent_driver] + extras
                 + ([barrier, pose_setter] if barrier else []) + common
                 + ([match_environment] if stage in DRIVING else [target_driver])
                 + ([GroupAction([SetParameter(name='tick_topic', value='/sim/e2e/aim_tick'),
