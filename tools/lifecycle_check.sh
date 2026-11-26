@@ -162,7 +162,9 @@ run_case() {  # run_case SUITE ENDING INDEX
         fi
     fi
     if [ "$ending" = int ] || [ "$ending" = term ] || [ "$ending" = hup ]; then
-        [ "$status" = 130 ] || fail+=("interrupted run exited with $status, expected 130")
+        if [ "$status" != 1 ] || ! grep -q '"interrupted": true' "$dir/summary.json"; then
+            fail+=("interrupted run did not publish an interrupted FAIL (exit $status)")
+        fi
     fi
     local logs=("$dir/run.log")
     [ -f "$dir/stack.log" ] && logs+=("$dir/stack.log")

@@ -1,0 +1,5 @@
+[e2e_tests-1] [==========] Running 1 test from 1 test suite.
+[e2e_tests-1] [ RUN      ] Cells/E2ESuite.MCB/mcb_match_spawn_to_center
+[e2e_tests-1] [       OK ] Cells/E2ESuite.MCB/mcb_match_spawn_to_center (27361 ms)
+[e2e_tests-1] [==========] 1 test from 1 test suite ran. (46264 ms total)
+[e2e_tests-1] === 1 passed in 46.26s ===

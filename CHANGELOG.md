@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Publish one run summary for every guarded integration suite. Use its verdict
+  for the runner exit status and the recording banner.
+
 - Stage ghost ingress and give the Sentry a measured parked interval in
   `mcb_match`. Fail the scenario if drive, parked or spin has zero accuracy
   attempts, and log the detections published during the match.
