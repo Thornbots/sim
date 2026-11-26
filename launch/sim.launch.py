@@ -746,11 +746,9 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('spawn_target')),
     )
 
-    # --- rviz2, using thornbots_pkg's config (same one thornbots_pkg's own launch
-    # files use) so sim and real-hardware runs look the same. use_sim_time
-    # matches every other node above since sim's /clock is what's bridged in.
+    # Sim's entry point releases display resources before RViz shuts ROS down.
     rviz = Node(
-        package='rviz2',
+        package='sim',
         executable='rviz2',
         name='rviz2',
         output='screen',

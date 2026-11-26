@@ -53,8 +53,11 @@ Json camera(const YAML::Node &view) {
 Json convert(const std::filesystem::path &path) {
   const auto manager = YAML::LoadFile(path.string())["Visualization Manager"];
   const auto frame = manager["Global Options"]["Fixed Frame"].as<std::string>(), name = path.stem().string();
-  Json three_d{{"cameraState", camera(manager["Views"]["Current"])}, {"followMode", "follow-pose"},
-    {"followTf", frame}, {"scene", {{"meshUpAxis", "z_up"}}}, {"transforms", Json::object()},
+  const auto view = manager["Views"]["Current"];
+  const auto target = view["Target Frame"].as<std::string>("<Fixed Frame>");
+  const bool fixed_target = target == "<Fixed Frame>";
+  Json three_d{{"cameraState", camera(view)}, {"followMode", fixed_target ? "follow-pose" : "follow-position"},
+    {"followTf", fixed_target ? frame : target}, {"scene", {{"meshUpAxis", "z_up"}}}, {"transforms", Json::object()},
     {"topics", Json::object()}, {"layers", Json::object()}, {"publish", {{"type", "point"}}}, {"imageMode", Json::object()}};
   std::string image_topic;
   for (const auto &d : manager["Displays"]) {
