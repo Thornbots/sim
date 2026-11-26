@@ -67,7 +67,8 @@ def test_render_refuses_unaccepted_captures(tmp_path, verdict):
     output = tmp_path / 'suite.mp4'
     (tmp_path / 'recording.json').write_text(json.dumps({'suite_exit': 0, 'capture_ok': True}))
     if verdict is not None:
-        (tmp_path / 'summary.json').write_text(json.dumps({'schema_version': 1, 'verdict': verdict}))
+        report = {'schema_version': 1, 'verdict': verdict}
+        (tmp_path / 'summary.json').write_text(json.dumps(report))
     with pytest.raises(RuntimeError, match='Run failed|No readable run verdict'):
         RECORD.render(SimpleNamespace(directory=tmp_path, output=output))
     assert not output.exists()

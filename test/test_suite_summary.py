@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import time
 
@@ -50,6 +51,11 @@ else
         touch "$TEST_PREFIX/run/stack.log"
     fi
     cat "$TEST_LAUNCH"
+    if [ "${TEST_INTERRUPT:-0}" = 1 ]; then
+        trap 'exit 0' INT
+        touch "$TEST_PREFIX/launch-ready"
+        for _ in {1..100}; do sleep .05; done
+    fi
     exit "${TEST_LAUNCH_STATUS:-0}"
 fi
 """)
@@ -60,19 +66,21 @@ fi
     directory = tmp_path / 'run'
     directory.mkdir()
 
-    def run(suite, fixture, launch_status=0, capture=None):
+    def run(suite, fixture, launch_status=0, capture=None, interrupt=False):
         monkeypatch.setenv('TEST_LAUNCH', str(FIXTURES / (fixture + '.txt')))
         monkeypatch.setenv('TEST_LAUNCH_STATUS', str(launch_status))
         if capture is not None:
             monkeypatch.setenv('SIM_SUITE_CAPTURE', '1')
+        if interrupt:
+            monkeypatch.setenv('TEST_INTERRUPT', '1')
         command = [SIM / 'tools/run_suite.sh', suite, 'headless:=true', f'log_dir:={directory}']
         with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True) as process:
+            if interrupt:
+                await_file(directory.parent / 'launch-ready', process)
+                process.send_signal(signal.SIGTERM)
             if capture is not None:
-                deadline = time.monotonic() + 10
-                while not (directory / '.launch-complete').exists():
-                    assert process.poll() is None and time.monotonic() < deadline
-                    time.sleep(.01)
+                await_file(directory / '.launch-complete', process)
                 SUMMARY.write_json(directory / '.capture-result.json', capture)
             output = process.communicate(timeout=10)[0]
         summary = json.loads((directory / 'summary.json').read_text())
@@ -81,6 +89,14 @@ fi
         return summary
 
     return directory, run
+
+
+def await_file(path, process):
+    """Wait for the fixture to reach a known point in its lifecycle."""
+    deadline = time.monotonic() + 10
+    while not path.exists():
+        assert process.poll() is None and time.monotonic() < deadline
+        time.sleep(.01)
 
 
 def executable(path, contents):
@@ -111,6 +127,26 @@ def test_localization_passed_cases_do_not_override_wrapper(runner, launch_status
     assert result['checker']['verdict'] == 'PASS'
     assert result['verdict'] == 'FAIL'
     assert reason in result['reasons']
+
+
+def test_interrupt_after_all_cases_pass(runner):
+    """A runner signal takes precedence over completed native cases."""
+    _, run = runner
+    result = run('localization_drift', 'localization_drift-fixed', interrupt=True)
+    assert result['test_cases']['passed'] == 10
+    assert result['checker']['verdict'] == 'PASS'
+    assert result['interrupted'] is True
+    assert result['verdict'] == 'FAIL'
+    assert 'Run interrupted' in result['reasons']
+
+
+def test_capture_publishes_pass_after_its_own_completion(runner):
+    """The runner waits for the recorder before publishing the shared verdict."""
+    _, run = runner
+    capture = {'status': 'COMPLETE'}
+    result = run('localization_drift', 'localization_drift-fixed', capture=capture)
+    assert result['capture'] == capture
+    assert result['verdict'] == 'PASS'
 
 
 def test_ekf_teardown_escalation(runner):

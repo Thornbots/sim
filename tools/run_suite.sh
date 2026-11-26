@@ -57,7 +57,7 @@ trap forward INT TERM HUP
 preflight() {
     local live arg artifact
     for artifact in stack.log scores.jsonl estimation.jsonl segments.json match.json \
-        localization-logs .launch-complete .capture-result.json; do
+        localization-logs .launch-complete; do
         if [ -e "$DIR/$artifact" ]; then
             echo "run directory already contains $artifact"
             return 1

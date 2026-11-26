@@ -199,8 +199,8 @@ def summarize(directory, suite, launch, launch_status, interrupted, failure, che
         if launch_status:
             reasons.append(f'Launch exited with status {launch_status}')
         try:
-            lines = [PREFIX.sub('', ANSI.sub('', line))
-                     for line in (directory / 'launch.log').read_text(errors='replace').splitlines()]
+            log = (directory / 'launch.log').read_text(errors='replace')
+            lines = [PREFIX.sub('', ANSI.sub('', line)) for line in log.splitlines()]
             counts = native_results(lines, reasons)
             metrics = metrics_for(suite, directory, lines, reasons, counts)
         except OSError as error:

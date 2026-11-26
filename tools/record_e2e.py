@@ -5,7 +5,7 @@
 """Record a sim suite's X11 desktop and render it at one sim second per second."""
 import argparse
 from bisect import bisect_right
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager, ExitStack
 import json
 import math
 import os
@@ -261,7 +261,8 @@ def capture(args, launch_args):
                     raise RuntimeError('Incomplete X11 or /clock capture; see capture.log')
                 clock_axes(read_rows(directory / 'clock.jsonl'))
             except (Exception, KeyboardInterrupt) as error:
-                reason = 'Capture interrupted' if isinstance(error, KeyboardInterrupt) else str(error)
+                reason = ('Capture interrupted' if isinstance(error, KeyboardInterrupt)
+                          else str(error))
                 write_json(capture_result, {'status': 'FAILED', 'reason': reason})
                 raise RuntimeError(reason) from error
             write_json(capture_result, {'status': 'COMPLETE'})
@@ -389,7 +390,8 @@ def encode_video(source, output, plan, labels, fps, capture_fps, summary, gz_zoo
     seek = max(0., first / capture_fps - .000001)
     with ExitStack() as stack:
         decoder = stack.enter_context(subprocess.Popen([
-            'ffmpeg', '-v', 'error', '-threads', '2', '-ss', f'{seek:.6f}', '-i', str(source), '-an',
+            'ffmpeg', '-v', 'error', '-threads', '2', '-ss', f'{seek:.6f}',
+            '-i', str(source), '-an',
             '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-threads', '1', '-'], stdout=subprocess.PIPE))
         stack.callback(stop, decoder, signal.SIGKILL)
         encoder = stack.enter_context(subprocess.Popen([
@@ -456,7 +458,8 @@ def render(args):
     ranges, plan = frame_plan(sim, wall, spans, float(match[1]), metadata['capture_fps'],
                               args.fps, args.max_gap)
     output = Path(args.output).resolve()
-    if output.suffix != '.mp4' or output in {directory / 'wall-time.mp4', directory / 'recording.mp4'}:
+    capture_paths = {directory / 'wall-time.mp4', directory / 'recording.mp4'}
+    if output.suffix != '.mp4' or output in capture_paths:
         raise RuntimeError('Choose a separate .mp4 output path')
     output.parent.mkdir(parents=True, exist_ok=True)
     gz_zoom = args.gz_zoom if suite.startswith('mcb_') else 1.
