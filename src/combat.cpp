@@ -200,8 +200,8 @@ ShotResolver::ShotResolver(Mesh field_mesh, Mesh hull_mesh, std::vector<Eigen::M
 {
   for (auto & triangle : ghost_hull) {
     for (auto & vertex : triangle) {
-      vertex.x() *= 0.75;
-      vertex.y() *= 0.75;
+      vertex.x() *= kGhostHullScale;
+      vertex.y() *= kGhostHullScale;
     }
   }
 }
