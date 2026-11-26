@@ -60,8 +60,11 @@ struct Track {
     if (!latest) return;
     const rclcpp::Time stamp(latest->header.stamp, now.get_clock_type());
     if ((last_stamp && stamp <= *last_stamp) || (now - stamp).seconds() > 0.8) return;
-    last_stamp = stamp;
     Point point = latest->pose.pose.position;
+    // The map pose publisher uses nonfinite positions while a fix is unavailable.
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) return;
+    if (last_stamp && (stamp - *last_stamp).seconds() > 0.8) trail.clear();
+    last_stamp = stamp;
     point.x += offset[0];
     point.y += offset[1];
     point.z = height;
