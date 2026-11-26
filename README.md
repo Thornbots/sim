@@ -2208,8 +2208,8 @@ velocity or reference route for our robot.
 `backend:=renode` is the default and uses the normal board ELF.
 `backend:=hosted` explicitly selects the faster fixture, whose remote switches
 now follow the same stop/simple and aim/fire selections. Startup holds drive
-in centred manual mode. At stage arm the right switch selects auto-drive;
-the left stays MID until every robot's truth root enters the estimated
+in centred manual mode. At stage arm the right switch selects auto-drive.
+The left switch stays MID until every robot's truth root enters the estimated
 field-centre fight zone, then switches UP to enable automatic aim/fire.
 Referee stage is IN_GAME so the firmware can advance waypoints during approach.
 The real AMCL + rf2o + EKF stack remains in the loop.
@@ -2256,9 +2256,12 @@ ros2 launch sim e2e.launch.py stage:=mcb_match headless:=true
 ```
 
 Two blue and two red sentries leave their respective spawns on separate
-field-safe routes. The second lane leaves four seconds later; firing stays
-disabled until every truth root reaches the centre zone. Our robot runs its
-firmware waypoint/spin behavior; the three ghosts spin and use a truth-fed aimer with seed 2026,
+field-safe routes. Both ghost lanes leave together so the all-robots-ready
+firing gate can open during the Sentry's final drive
+leg. Once the Sentry slows near the centre, the fixture holds its chassis
+for 0.5 seconds in centred manual mode while scoring
+continues, then returns it to firmware waypoint/spin control. The three
+ghosts spin and use a truth-fed aimer with seed 2026,
 0.015 rad Gaussian aim noise, and a 2 Hz fire rate. The selector sees both
 red opponents and the blue ally. Only our robot runs the real CV stack.
 
@@ -2266,19 +2269,28 @@ The scorer advances 22 m/s ballistic shots under gravity against the field
 mesh, chassis hulls and canted armor. It includes the physical muzzle velocity
 at launch, including chassis motion. 22 m/s matches the checked-out sentry
 firmware ballistic solver; the E2E Jetson planner uses the same value. The
-first impact absorbs the shot;
-damage requires more than 12 m/s relative normal speed, the exposure cone,
-and the panel's 50 ms dead time. Each robot starts with 400 HP; hits cost
-20 HP. Defeated robots stop moving and shooting. Referee HP, team, stage,
+first impact absorbs the shot. An enemy armor contact requires more than
+12 m/s relative normal speed and the exposure cone. The referee credits
+contacts on live enemies outside the panel's 50 ms dead time. Each robot
+starts with 400 HP and loses 20 HP on a credited hit. Same-team contacts deal
+no damage. At zero HP, the fixture darkens the armor, suppresses its panel
+detections, and stops the robot's motion and firing. Its hull and armor
+still absorb shots. Referee HP, team, stage,
 time and hurt panel feed the firmware's referee UART parser;
 the test checks HP and team return through `REF_SYS` on the Jetson UART.
 
-`match.json` reports per-segment measured motion and localization error, enemy hit
-rates, HP, friendly intersections, damage taken and shot counts per robot.
-`shots.jsonl` records first impacts and HP after each resolved impact.
-The approach checks routing with firing disabled; center segments retain the
-same route and localization diagnostic criterion as `mcb_drive`, while the
-match pass criterion is unchanged. Accuracy floors, repeated-run
+`match.json` reports Sentry referee credits and valid enemy panel contacts by
+segment, alongside motion, localization error and HP. The geometric contact
+rate counts contacts on live enemy panels before applying the 50 ms rule.
+Its denominator excludes shots launched after all enemies were defeated
+and first contacts with defeated robots. The report records both exclusions,
+all-robot and Sentry-only friendly contacts, damage taken and shots by robot.
+`shots.jsonl` records first impacts and their rulings, with HP after each impact.
+`detections.jsonl` records each truth frame's capture stamp and published class IDs.
+The approach checks routing with firing disabled. Drive, parked and spin each
+require accuracy attempts. Any missing segment or zero-attempt segment fails
+as a scenario error. The existing 10% diagnostic threshold uses the
+geometric contact rate. Accuracy floors, repeated-run
 spread and standalone-versus-sequence equivalence are tracked in
 [ROADMAP A](../docs/ROADMAP.md#a-acceptance-details).
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn

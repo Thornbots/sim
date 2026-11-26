@@ -91,6 +91,16 @@ template <class Q, class P> Matrix iso(const Q &q, const P &p) {
 Vec transform(const Matrix &m, const Vec &p) {
   return m.block<3, 3>(0, 0) * p + m.block<3, 1>(0, 3);
 }
+struct ChassisMotion {
+  double speed = 0., spin = 0.;
+};
+ChassisMotion chassis_motion(const Pose &previous, const Pose &current) {
+  const auto speed =
+      (current.root.block<2, 1>(0, 3) - previous.root.block<2, 1>(0, 3)).norm() / .05;
+  const Eigen::Matrix3d rotation =
+      previous.root.block<3, 3>(0, 0).transpose() * current.root.block<3, 3>(0, 0);
+  return {speed, std::atan2(rotation(1, 0), rotation(0, 0)) / .05};
+}
 Vec xyz(const char *s) {
   Vec out = Vec::Zero();
   if (s) {
@@ -164,8 +174,15 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
       });
   subscribe<dji_serial_bridge::msg::PanelDetectionArray>(
       "/cv/panel_detections", rclcpp::QoS(10), [this](const auto &m) {
-        if (!m.detections.empty()) detections_.push_back({stamp_s(m.header.stamp), m.detections.size()});
+        const double stamp = stamp_s(m.header.stamp);
+        if (!m.detections.empty()) detections_.push_back({stamp, m.detections.size()});
         while (detections_.size() > 300) detections_.pop_front();
+        if (stage == "mcb_match" && scoring && stamp >= score_from_ && stamp < score_until) {
+          std::vector<int32_t> classes;
+          for (const auto &panel : m.detections)
+            classes.push_back(panel.class_id);
+          detection_frames.push_back({{"t", stamp}, {"class_ids", classes}});
+        }
       });
   subscribe<dji_serial_bridge::msg::CVTarget>(
       "/cv/target", rclcpp::SensorDataQoS(), [this](const auto &m) {
@@ -279,7 +296,7 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
     referee_client_ = create_client<rcl_interfaces::srv::SetParameters>(
         "/mcb_emulator/set_parameters");
     referee_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
-        "/sim/match/referee", 10);
+        "/sim/match/referee", rclcpp::QoS(1).reliable().transient_local());
   }
 }
 void Scorer::spin_for(double seconds) {
@@ -396,6 +413,8 @@ void Scorer::reset() {
   states.clear();
   pending_states_.clear();
   route_records.clear();
+  detection_frames.clear();
+  match_park_start_.reset();
   pending_poses_.clear();
   score_until = INFINITY;
   flight_steps_.clear();
@@ -451,12 +470,7 @@ Json Scorer::pose_errors(double t, bool map_frame) {
     }
   if (match_start) {
     const auto previous = histories.at("sentry")->at(t - .05);
-    double speed = 0, spin = 0;
-    if (previous) {
-      speed = (ours->root.block<2, 1>(0, 3) - previous->root.block<2, 1>(0, 3)).norm() / .05;
-      const Eigen::Matrix3d rotation = previous->root.block<3, 3>(0, 0).transpose() * ours->root.block<3, 3>(0, 0);
-      spin = std::atan2(rotation(1, 0), rotation(0, 0)) / .05;
-    }
+    const auto [speed, spin] = previous ? chassis_motion(*previous, *ours) : ChassisMotion{};
     out["speed_m_s"] = speed;
     out["spin_rad_s"] = spin;
     out["start_displacement_m"] = std::hypot(ours->root(0, 3) - field::kBlueStart[0],
@@ -802,15 +816,14 @@ void Scorer::fire_tick() {
       impact.panel = shot["panel"].get<int>();
     impact.eligible = shot["eligible"];
     impact.normal_speed = shot["normal_speed"];
-    bool hit = referee->apply(impact),
-         friendly =
-             impact.victim &&
-             match_scenario::teams().at(shot["shooter"].get<std::string>()) ==
-                 match_scenario::teams().at(*impact.victim);
-    shot["hit"] = hit;
-    shot["friendly_intersection"] = friendly;
-    shot["enemy_hit"] = hit && !friendly;
-    if (hit &&
+    const auto ruling = referee->apply(shot.at("shooter"), shot.at("t"), impact);
+    shot["hit"] = ruling.credited;
+    shot["enemy_hit"] = ruling.credited;
+    shot["friendly_intersection"] = ruling.friendly_contact;
+    shot["defeated_robot_contact"] = ruling.defeated_contact;
+    shot["valid_enemy_panel_contact"] = ruling.valid_enemy_panel_contact;
+    shot["after_all_opponents_defeated"] = ruling.after_all_opponents_defeated;
+    if (ruling.credited &&
         impact.victim == std::optional<std::string>("sentry"))
       hurt_armor_id = impact.panel.value_or(0);
     Json hp = Json::object();
@@ -870,10 +883,14 @@ void Scorer::visualize_scene() {
       marker.pose.position = position;
       marker.scale.x = marker.scale.y = .44;
       marker.scale.z = .20;
-      marker.color.g = .12F;
-      const bool ally = match_scenario::teams().at(name) == "blue";
-      marker.color.b = ally ? 1.F : 0.F;
-      marker.color.r = ally ? 0.F : .88F;
+      if (referee && referee->hp(name) == 0) {
+        marker.color.r = marker.color.g = marker.color.b = .24F;
+      } else {
+        marker.color.g = .12F;
+        const bool ally = match_scenario::teams().at(name) == "blue";
+        marker.color.b = ally ? 1.F : 0.F;
+        marker.color.r = ally ? 0.F : .88F;
+      }
     }
     scene.markers.push_back(std::move(marker));
   }
@@ -916,6 +933,25 @@ void Scorer::visualize_shot(const std::string &kind, const Json &shot) {
   markers.markers = {line, impact};
   visual_pub_->publish(markers);
 }
+bool Scorer::hold_match_park() {
+  if (stage != "mcb_match" || !center_time)
+    return false;
+  if (!match_park_start_) {
+    const auto &history = histories.at("sentry");
+    const auto current = history->at(tick_s() - .01);
+    const auto previous = history->at(tick_s() - .06);
+    if (current && previous) {
+      const auto &center = match_scenario::kCenter;
+      const auto [speed, spin] = chassis_motion(*previous, *current);
+      if (std::hypot(current->root(0, 3) - center[0], current->root(1, 3) - center[1]) < 1.0 &&
+          speed < .15 && std::abs(spin) < .5) {
+        match_park_start_ = tick_s();
+        RCLCPP_INFO(get_logger(), "Match parked hold started at %.3f s", *match_park_start_);
+      }
+    }
+  }
+  return match_park_start_ && tick_s() - *match_park_start_ < match_scenario::kMatchParkDurationS;
+}
 void Scorer::sync_referee() {
   double elapsed = tick_s() - match_start.value_or(tick_s());
   if (match_start && !center_time) {
@@ -953,9 +989,10 @@ void Scorer::sync_referee() {
     return;
   auto req = std::make_shared<rcl_interfaces::srv::SetParameters::Request>();
   const bool alive = !referee || referee->hp("sentry") > 0;
+  const bool drive = alive && match_start && !hold_match_park();
   for (const auto &p : std::vector<rclcpp::Parameter>{
            rclcpp::Parameter("current_hp", referee ? referee->hp("sentry") : 400),
-           rclcpp::Parameter("drive", std::string(match_start && alive ? "simple" : "stop")),
+           rclcpp::Parameter("drive", std::string(drive ? "simple" : "stop")),
            rclcpp::Parameter("auto_fire", alive && center_time.has_value()),
            rclcpp::Parameter(
                "game_stage",
@@ -988,6 +1025,28 @@ double hit_rate(const std::vector<Json> &shots) {
   for (const auto &s : shots)
     hits += s["hit"].get<bool>();
   return shots.empty() ? 0 : static_cast<double>(hits) / shots.size();
+}
+Json match_shot_counts(const std::vector<Json> &shots) {
+  size_t credited = 0, valid = 0, friendly = 0, defeated = 0, after_defeat = 0, attempts = 0;
+  for (const auto &shot : shots) {
+    const bool on_defeated = shot.at("defeated_robot_contact");
+    const bool after_all_defeated = shot.at("after_all_opponents_defeated");
+    credited += shot.at("enemy_hit").get<bool>();
+    valid += shot.at("valid_enemy_panel_contact").get<bool>();
+    friendly += shot.at("friendly_intersection").get<bool>();
+    defeated += on_defeated;
+    after_defeat += after_all_defeated;
+    attempts += !on_defeated && !after_all_defeated;
+  }
+  return {{"shots", shots.size()},
+          {"referee_credited_hits", credited},
+          {"valid_enemy_panel_contacts", valid},
+          {"friendly_contacts", friendly},
+          {"defeated_robot_contacts", defeated},
+          {"shots_after_all_opponents_defeated", after_defeat},
+          {"accuracy_attempts", attempts},
+          {"valid_enemy_panel_contact_rate",
+           attempts ? Json(static_cast<double>(valid) / attempts) : Json(nullptr)}};
 }
 std::string state_summary(const std::vector<Json> &states) {
   if (states.empty())

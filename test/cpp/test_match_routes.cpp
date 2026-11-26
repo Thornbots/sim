@@ -214,6 +214,13 @@ TEST(MatchRoutes, CommonBootHeadingPreservesFieldIngress) {
     EXPECT_TRUE(route::in_center_zone(end[0], end[1])) << name;
   }
 }
+TEST(MatchRoutes, GhostsReachFightZoneBeforeFastSentry) {
+  constexpr double sentry_zone_entry_s = 6.3;  // Earliest measured e80439c ingress.
+  for (const auto &name : {"opponent_0", "opponent_1", "ally_0"}) {
+    const auto sample = route::sample_robot(name, sentry_zone_entry_s);
+    EXPECT_TRUE(route::in_center_zone(sample.position[0], sample.position[1])) << name;
+  }
+}
 TEST(MatchRoutes, FourRobotsNeverOverlap) {
   for (double t = 0; t < route::match_duration("mcb_match"); t += 0.025) {
     std::vector<std::pair<std::string, route::Point>> positions{

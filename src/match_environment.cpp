@@ -27,6 +27,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -38,9 +39,13 @@
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include "builtin_interfaces/msg/time.hpp"
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "gz/msgs/boolean.pb.h"
 #include "gz/msgs/double.pb.h"
+#include "gz/msgs/empty.pb.h"
 #include "gz/msgs/pose.pb.h"
 #include "gz/msgs/pose_v.pb.h"
+#include "gz/msgs/scene.pb.h"
+#include "gz/msgs/visual.pb.h"
 #include "gz/transport/Node.hh"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
@@ -48,6 +53,7 @@
 #include "rosgraph_msgs/msg/clock.hpp"
 #include "sim/combat.hpp"
 #include "sim/cv_head_aim_core.hpp"
+#include "sim/field.hpp"
 #include "sim/keyed_noise.hpp"
 #include "sim/match_scenario.hpp"
 #include "std_msgs/msg/header.hpp"
@@ -460,17 +466,17 @@ private:
     std::map<std::string, nav_msgs::msg::Odometry> messages;
     for (const auto &name : path_names_) {
       auto robot = sample_robot(name, elapsed, stage_);
-      samples[name] = {robot.position, robot.velocity};
       if (hp_.at(name) == 0) {
         const auto found = truth.find(name);
         if (found != truth.end()) {
-          robot.position = found->second.root.topRightCorner<2, 1>();
-          robot.yaw =
-              std::atan2(found->second.root(1, 0), found->second.root(0, 0));
+          const auto &pose = stopped_roots_.try_emplace(name, found->second.root).first->second;
+          robot.position = pose.topRightCorner<2, 1>();
+          robot.yaw = std::atan2(pose(1, 0), pose(0, 0));
         }
         robot.velocity.setZero();
         robot.spin = 0.0;
       }
+      samples[name] = {robot.position, robot.velocity};
       messages[name] = path_message(name, robot.position, robot.velocity, robot.yaw,
                                     robot.spin, message_time(current));
     }
@@ -522,10 +528,51 @@ private:
       for (const auto &value : status.values) {
         if (value.key == "hp" && hp_.count(status.name)) {
           hp_.at(status.name) = std::stoi(value.value);
+          if (hp_.at(status.name) == 0 && !dark_armor_.count(status.name) &&
+              darken_armor(status.name)) {
+            dark_armor_.insert(status.name);
+            RCLCPP_INFO(get_logger(), "Darkened armor on defeated robot %s", status.name.c_str());
+          }
         }
         if (value.key == "center_ready") center_ready_ = value.value == "true";
       }
     }
+  }
+
+  bool darken_armor(const std::string &name) {
+    gz::msgs::Scene scene;
+    bool result = false;
+    if (!gz_->Request(sim::field::world_path("scene/info"), gz::msgs::Empty{}, 250u,
+                      scene, result) || !result) {
+      return false;
+    }
+    size_t darkened = 0;
+    for (const auto &model : scene.model()) {
+      if (model.name() != name) continue;
+      for (const auto &link : model.link()) {
+        for (const auto &visual : link.visual()) {
+          // URDF reduction can place the armor visuals directly on root.
+          if (link.name().rfind("armor_", 0) != 0 &&
+              visual.name().find("armor_") == std::string::npos) continue;
+          gz::msgs::Visual command;
+          command.set_id(visual.id());
+          auto *material = command.mutable_material();
+          for (auto *color : {material->mutable_ambient(), material->mutable_diffuse()}) {
+            color->set_r(.07);
+            color->set_g(.07);
+            color->set_b(.07);
+            color->set_a(1.);
+          }
+          material->mutable_emissive()->set_a(1.);
+          gz::msgs::Boolean reply;
+          if (gz_->Request(sim::field::world_path("visual_config"), command, 250u,
+                           reply, result) && result && reply.data()) {
+            ++darkened;
+          }
+        }
+      }
+    }
+    return darkened == armor_offsets_.size();
   }
 
   void on_truth(const std::string &name, const gz::msgs::Pose_V &message) {
@@ -645,6 +692,8 @@ private:
   std::string stage_;
   uint64_t seed_;
   std::map<std::string, int> hp_;
+  std::map<std::string, Matrix4> stopped_roots_;
+  std::set<std::string> dark_armor_;
   Vector2 world_velocity_ = Vector2::Zero();
   std::map<std::string, Truth> truth_;
   std::vector<std::string> truth_order_;

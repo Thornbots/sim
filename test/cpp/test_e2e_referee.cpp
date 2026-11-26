@@ -109,11 +109,12 @@ TEST_F(ScorerRefereeTest, LostReplyRetriesCurrentState) {
   scorer_->center_time = 0.;
   scorer_->hurt_armor_id = 3;
   scorer_->referee = std::make_unique<combat::Referee>(
-      std::vector<std::pair<std::string, std::string>>{{"sentry", "blue"}});
+      std::vector<std::pair<std::string, std::string>>{
+        {"sentry", "blue"}, {"opponent_0", "red"}});
   combat::Impact hit;
   hit.victim = "sentry";
   hit.eligible = true;
-  ASSERT_TRUE(scorer_->referee->apply(hit));
+  ASSERT_TRUE(scorer_->referee->apply("opponent_0", 0., hit).credited);
   EXPECT_NO_THROW(tick());
   ASSERT_EQ(received(), 2U);
   EXPECT_EQ(timeouts(), 0);
@@ -156,5 +157,33 @@ TEST_F(ScorerRefereeTest, ParameterRejectionIncludesServerReason) {
   } catch (const std::runtime_error &error) {
     EXPECT_NE(std::string(error.what()).find("injected rejection"), std::string::npos);
   }
+}
+
+TEST(MatchScoring, CreditsAndEligibleContactsUseSeparateCounts) {
+  const Json miss = {{"enemy_hit", false}, {"valid_enemy_panel_contact", false},
+    {"friendly_intersection", false}, {"defeated_robot_contact", false},
+    {"after_all_opponents_defeated", false}};
+  Json contact = miss;
+  contact["valid_enemy_panel_contact"] = true;
+  Json credit = contact;
+  credit["enemy_hit"] = true;
+  Json friendly = miss;
+  friendly["friendly_intersection"] = true;
+  friendly["shooter"] = "opponent_1";
+  Json defeated = miss;
+  defeated["defeated_robot_contact"] = true;
+  Json after_defeat = defeated;
+  after_defeat["after_all_opponents_defeated"] = true;
+
+  const auto counts = match_shot_counts({miss, contact, credit, friendly, defeated, after_defeat});
+  EXPECT_EQ(counts.at("shots"), 6);
+  EXPECT_EQ(counts.at("referee_credited_hits"), 1);
+  EXPECT_EQ(counts.at("valid_enemy_panel_contacts"), 2);
+  EXPECT_EQ(counts.at("friendly_contacts"), 1);
+  EXPECT_EQ(counts.at("defeated_robot_contacts"), 2);
+  EXPECT_EQ(counts.at("shots_after_all_opponents_defeated"), 1);
+  EXPECT_EQ(counts.at("accuracy_attempts"), 4);
+  EXPECT_EQ(counts.at("valid_enemy_panel_contact_rate"), .5);
+  EXPECT_TRUE(match_shot_counts({after_defeat}).at("valid_enemy_panel_contact_rate").is_null());
 }
 } // namespace sim::e2e

@@ -66,13 +66,6 @@ const std::map<std::string, std::string> &teams() {
       {"opponent_1", "red"}};
   return data;
 }
-const std::map<std::string, double> &route_delays() {
-  static const std::map<std::string, double> data = {{"sentry", 0.0},
-                                                     {"opponent_0", 0.0},
-                                                     {"ally_0", 4.0},
-                                                     {"opponent_1", 4.0}};
-  return data;
-}
 double leg_duration(double length, double speed, double accel) {
   const double peak = std::min(speed, std::sqrt(length * accel));
   return length != 0.0 ? length / peak + peak / accel : 0.0;
@@ -128,8 +121,7 @@ double ingress_duration(const std::string &stage) {
   }
   double result = 0.0;
   for (const auto &item : routes()) {
-    result = std::max(result, route_duration(item.second) +
-                                  route_delays().at(item.first));
+    result = std::max(result, route_duration(item.second));
   }
   return result;
 }
@@ -160,8 +152,7 @@ MatchSample sample_match(double seconds, const std::string &stage) {
 }
 RobotSample sample_robot(const std::string &name, double seconds,
                          const std::string &stage) {
-  const double delay = stage == "mcb_match" ? route_delays().at(name) : 0.0;
-  auto sample = sample_route(routes().at(name), std::max(0.0, seconds - delay));
+  auto sample = sample_route(routes().at(name), std::max(0.0, seconds));
   double yaw = kPi / 2, spin = 0.0;
   const double fight = std::max(0.0, seconds - ingress_duration(stage));
   if (sample.finished && fight > 0.0) {

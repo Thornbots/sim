@@ -201,6 +201,9 @@ def render(args):
     small = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 22)
     pose_times = [p['t'] for p in poses]
     shot_times = [s.get('scored_at', s.get('impact_t', s['t'])) for s in shots]
+    hit_label = 'Sentry referee credits / shots' if metadata['stage'] == 'mcb_match' else 'MCB hits / shots'
+    shot_legend = ('green credited / red uncredited' if metadata['stage'] == 'mcb_match'
+                   else 'green hit / red miss')
     current, raw, frame_size = -1, None, 1920 * 1080 * 3
     try:
         for sim_t, wanted in zip(output_times, indices):
@@ -217,10 +220,10 @@ def render(args):
                 cell = f' | target {pose.get("path", "")} {pose.get("speed", 0):g}m/s spin {pose.get("spin_hz", 0):g}Hz'
             banner = Image.new('RGB', (1920, 86), (16, 20, 30))
             draw = ImageDraw.Draw(banner)
-            draw.text((24, 8), f'{metadata["stage"]}{cell}  |  sim {sim_t:.1f}s  |  MCB hits/shots {hits}/{count}',
+            draw.text((24, 8), f'{metadata["stage"]}{cell}  |  sim {sim_t:.1f}s  |  {hit_label} {hits}/{count}',
                       font=font, fill=(245, 247, 250))
             backend = 'Renode board ELF' if metadata['backend'] == 'renode' else 'Hosted MCBV3'
-            draw.text((24, 48), f'{backend} | truth detections | 1x sim time | RViz left / gz right | cyan aim / green hit / red miss',
+            draw.text((24, 48), f'{backend} | truth detections | 1x sim time | RViz left / gz right | cyan aim / {shot_legend}',
                       font=small, fill=(180, 195, 215))
             desktop = Image.frombytes('RGB', (1920, 1080), raw)
             frame = Image.new('RGB', (1920, 1080))

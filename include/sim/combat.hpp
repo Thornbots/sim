@@ -18,6 +18,7 @@
 #include <array>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -103,12 +104,21 @@ public:
   std::vector<Eigen::Matrix4d> armors;
 };
 
+struct ShotRuling
+{
+  bool credited = false;
+  bool friendly_contact = false;
+  bool defeated_contact = false;
+  bool valid_enemy_panel_contact = false;
+  bool after_all_opponents_defeated = false;
+};
+
 class Referee
 {
 public:
   explicit Referee(std::vector<std::pair<std::string, std::string>> teams);
 
-  bool apply(const Impact & impact);
+  ShotRuling apply(const std::string & shooter, double launch, const Impact & impact);
   int hp(const std::string & robot) const;
   const std::vector<std::pair<std::string, int>> & hit_points() const {return hp_;}
   const std::vector<std::pair<std::string, std::string>> & teams() const {return teams_;}
@@ -116,6 +126,7 @@ public:
 private:
   std::vector<std::pair<std::string, std::string>> teams_;
   std::vector<std::pair<std::string, int>> hp_;
+  std::map<std::string, double> defeated_at_;
   std::vector<std::pair<std::pair<std::string, std::optional<int>>, double>> last_hit_;
 };
 
