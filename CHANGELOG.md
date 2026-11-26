@@ -7,6 +7,8 @@
 - Score cold aim bench cases against the firmware's chosen mode, the sentry
   heat budget and its 10 Hz launcher limit.
 - Wait for matched DDS links before starting the paced aim bench clock.
+- Scale the tracking bench truth watchdog with the configured simulation pace and
+  fail the current test cell when a required truth sample never arrives.
 
 - Share firmware's π/2 rad/s shot-gating cutout in the aim stand-in, with
   threshold/refresh parity coverage and an explicit chase comparison override.
