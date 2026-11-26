@@ -2,24 +2,6 @@ Panels: []
 Visualization Manager:
   Class: ''
   Displays:
-  - Alpha: 0.5
-    Cell Size: 1
-    Class: rviz_default_plugins/Grid
-    Color: 160; 160; 164
-    Enabled: true
-    Line Style:
-      Line Width: 0.029999999329447746
-      Value: Lines
-    Name: Grid
-    Normal Cell Count: 0
-    Offset:
-      X: 0
-      Y: 0
-      Z: 0
-    Plane: XY
-    Plane Cell Count: 10
-    Reference Frame: <Fixed Frame>
-    Value: true
   - Alpha: 1
     Autocompute Intensity Bounds: true
     Autocompute Value Bounds:
@@ -118,21 +100,10 @@ Visualization Manager:
     Update Interval: 0
     Value: true
     Visual Enabled: true
-  - Class: rviz_default_plugins/TF
-    Enabled: true
-    Value: true
-    Name: TF
-    Frames:
-      All Enabled: true
-    Marker Scale: 0.25
-    Show Names: false
-    Show Axes: true
-    Show Arrows: false
-    Update Interval: 0
   - Alpha: 0.45
     Class: rviz_default_plugins/Map
     Color Scheme: map
-    Draw Behind: false
+    Draw Behind: true
     Enabled: true
     Name: Map
     Topic:
@@ -168,6 +139,17 @@ Visualization Manager:
     Namespaces: {}
     Topic:
       Value: /sim/e2e/markers
+      Depth: 1
+      Durability Policy: Volatile
+      Reliability Policy: Reliable
+      History Policy: Keep Last
+  - Class: rviz_default_plugins/MarkerArray
+    Enabled: true
+    Value: true
+    Name: Scene ground truth
+    Namespaces: {}
+    Topic:
+      Value: /sim/e2e/scene
       Depth: 1
       Durability Policy: Volatile
       Reliability Policy: Reliable
@@ -213,19 +195,19 @@ Visualization Manager:
       Value: /clicked_point
   Transformation:
     Current:
-      Class: rviz_default_plugins/TF
+      Class: sim/TF
   Value: true
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 9.0
+      Distance: 16.8
       Focal Point:
-        X: -1.2
+        X: 0
         Y: 0
-        Z: 0.2
-      Pitch: 1.1
-      Yaw: 3.14159
-      Target Frame: root
+        Z: 0
+      Pitch: 1.42
+      Yaw: 4.712389
+      Target Frame: map
       Name: Current View
       Near Clip Distance: 0.01
     Saved: []
