@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Show the map, lidar and color-coded pose trails alongside the Gazebo
+  driving area in the localization drift and EKF suites and their videos.
+
 - Stage ghost ingress and give the Sentry a measured parked interval in
   `mcb_match`. Fail the scenario if drive, parked or spin has zero accuracy
   attempts, and log the detections published during the match.

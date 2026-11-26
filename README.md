@@ -95,6 +95,13 @@ ros2 launch sim localization_tests.launch.py
 `suite:=ekf` runs the EKF ground-truth test instead. It is on demand, not part
 of the standard run: run it after changing the EKF or rf2o config.
 
+With a display, both suites open a Gazebo view over the drive loop and an
+RViz view of the field map, lidar and recent pose trails. The trails compare
+Gazebo truth, raw odometry translated by its boot position, and EKF odometry
+before map correction. The drift suite also shows the corrected map pose.
+The EKF suite displays the saved field map for reference with its map
+backend disabled. Use `headless:=true` to skip the two viewers.
+
 The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
 neighbouring panels staggered 10.39 cm apart vertically (about 83% of a
@@ -828,9 +835,9 @@ python3 src/sim/tools/record_e2e.py render /tmp/ekf-take /tmp/ekf.mp4 --pr-clip
 Capture accepts every [suite runner](#run-the-tests) suite and forwards
 `name:=value` launch arguments, for example `scenario:=odom_stuck` for
 `localization_drift`. For the MCB stages, build the selected firmware backend
-as described in [MCB emulator](#mcb-emulator). Capture shows Gazebo for
-localization and EKF, RViz for aim and tracking, and both for the three MCB
-stages. The default capture pace is `real_time_factor:=1.0` for aim and
+as described in [MCB emulator](#mcb-emulator). Capture shows RViz for aim and
+tracking. Localization, EKF and the MCB stages tile RViz left and Gazebo right.
+The default capture pace is `real_time_factor:=1.0` for aim and
 tracking and `0.5` for the other suites. The take directory keeps the desktop
 video, clock samples, suite and checker output, and verdict. Rendering
 requires a successful suite, checker, and capture.

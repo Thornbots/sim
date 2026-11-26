@@ -19,9 +19,10 @@ from threading import Thread
 import time
 
 WIDTH, HEIGHT, BANNER = 1920, 1080, 86
+LOCALIZATION = ('localization_drift', 'ekf')
 VIEWS = {
-    'localization_drift': ('gz',),
-    'ekf': ('gz',),
+    'localization_drift': ('rviz', 'gz'),
+    'ekf': ('rviz', 'gz'),
     'aim': ('rviz',),
     'tracking': ('rviz',),
     'mcb_parked': ('rviz', 'gz'),
@@ -111,8 +112,6 @@ def arrange(env, views, original, placed):
             if views == ('rviz',):
                 commands = [['xdotool', 'windowactivate', '--sync', window,
                              'key', '--window', window, 'F11']]
-            elif len(views) == 1:
-                commands = [['wmctrl', '-ir', window, '-b', 'add,fullscreen']]
             else:
                 x = views.index(view) * (WIDTH // 2)
                 commands = [
@@ -124,6 +123,17 @@ def arrange(env, views, original, placed):
             placed.add(window)
         current.add(view)
     return current
+
+
+def camera_request(config):
+    """Format the launch camera preset for Gazebo's pose service."""
+    x, y, z, roll, pitch, yaw = map(
+        float, re.search(r'<camera_pose>(.*?)</camera_pose>', config)[1].split())
+    cr, cp, cy = (math.cos(value / 2) for value in (roll, pitch, yaw))
+    sr, sp, sy = (math.sin(value / 2) for value in (roll, pitch, yaw))
+    return (f'pose: {{position: {{x: {x}, y: {y}, z: {z}}} orientation: {{'
+            f'x: {sr*cp*cy-cr*sp*sy}, y: {cr*sp*cy+sr*cp*sy}, '
+            f'z: {cr*cp*sy-sr*sp*cy}, w: {cr*cp*cy+sr*sp*sy}}}}}')
 
 
 def copy_suite_log(source, log, events):
@@ -200,7 +210,7 @@ def capture(args, launch_args):
     command = [str(Path(__file__).with_name('run_suite.sh')), args.suite,
                *(f'{key}:={value}' for key, value in settings.items()),
                'headless:=false', 'remote_dds:=false']
-    if args.suite not in ('localization_drift', 'ekf'):
+    if args.suite not in LOCALIZATION:
         command.append(f'log_dir:={telemetry}')
     metadata = {'suite': args.suite, 'capture_fps': args.capture_fps, 'command': command,
                 'suite_exit': None, 'capture_ok': False, 'layout_wall': None}
@@ -213,6 +223,11 @@ def capture(args, launch_args):
                 raise RuntimeError('Set ROS_DOMAIN_ID and GZ_PARTITION for an idle sim session')
             from ament_index_python.packages import get_package_share_directory
 
+            camera_pose = None
+            if args.suite in LOCALIZATION:
+                preset = Path(get_package_share_directory('sim')) / 'rviz/localization-gz.config'
+                camera_pose = camera_request(preset.read_text())
+                env.setdefault('GZ_IP', '127.0.0.1')
             os.environ.pop('ROS_AUTOMATIC_DISCOVERY_RANGE', None)
             os.environ['FASTRTPS_DEFAULT_PROFILES_FILE'] = str(
                 Path(get_package_share_directory('thornbots_pkg')) / 'config/fastdds_local.xml')
@@ -253,9 +268,17 @@ def capture(args, launch_args):
                     raise RuntimeError('X11 capture failed; see capture.log')
                 if time.monotonic() >= next_layout:
                     current = arrange(env, views, original, placed)
-                    if current == set(views) and metadata['layout_wall'] is None:
-                        metadata['layout_wall'] = time.time()
                     next_layout = time.monotonic() + .25
+                    if current == set(views) and metadata['layout_wall'] is None:
+                        if camera_pose:
+                            result = subprocess.run(
+                                ['gz', 'service', '-s', '/gui/move_to/pose',
+                                 '--reqtype', 'gz.msgs.GUICamera', '--reptype', 'gz.msgs.Boolean',
+                                 '--timeout', '1000', '--req', camera_pose],
+                                env=env, capture_output=True, text=True, timeout=3)
+                            if result.returncode or 'data: true' not in result.stdout:
+                                continue
+                        metadata['layout_wall'] = time.time()
             metadata['suite_exit'] = launch.returncode
         if 'stack_checker_exit' in metadata:
             with (directory / 'stack-checker.log').open('w') as log:
