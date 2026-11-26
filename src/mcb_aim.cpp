@@ -14,7 +14,7 @@
 
 #include "sim/mcb_aim.hpp"
 
-#include <algorithm>
+#include "sim/referee_launcher.hpp"
 
 namespace sim::mcb_aim
 {
@@ -35,6 +35,14 @@ void Standin::on_idle(uint32_t now_ms, const aim::Vec3 & point)
   idle_ms_ = now_ms;
 }
 
+void Standin::set_firing_window(uint32_t start_ms, uint32_t stop_ms)
+{
+  fire_start_ms_ = start_ms;
+  fire_duration_ms_ = stop_ms - start_ms;
+  last_request_ms_.reset();
+  heat_.reset(start_ms - start_ms % RefereeLauncher::kTickMs);
+}
+
 Output Standin::tick(uint32_t now_ms, const Pose & pose,
   std::optional<aim::GimbalMotion> measured)
 {
@@ -49,11 +57,16 @@ Output Standin::tick(uint32_t now_ms, const Pose & pose,
       out.aim = plan.aim;
       const auto actual = measured.value_or(
         aim::GimbalMotion{plan.yaw, plan.pitch, plan.yaw_rate, plan.pitch_rate});
-      // The bench's ideal indexer is capped at its existing 40 Hz request rate.
-      if (config_.fire_enabled && (!ever_requested_ || now_ms-last_request_ms_ >= 25) &&
+      using namespace subsystems;
+      const bool enabled = config_.fire_enabled &&
+        (!fire_start_ms_ || now_ms - *fire_start_ms_ < fire_duration_ms_);
+      if (enabled) {heat_.cool(now_ms, RefereeLauncher::kCoolingPerSecond);}
+      if (enabled &&
+        heat_.canCharge(RefereeLauncher::kHeatLimit, kHeatPer17mm * kSentryEstimatedRounds) &&
+        (!last_request_ms_ || now_ms - *last_request_ms_ >= kSentryShotIntervalMs) &&
         control_.can_fire(now_ms, pivot, vel, actual))
       {
-        ever_requested_ = true;
+        heat_.charge(kHeatPer17mm);
         last_request_ms_ = now_ms;
         out.fire = Fire{now_ms*0.001, config_.tuning.firmware_latency_s,
           config_.tuning.firmware_latency_s};

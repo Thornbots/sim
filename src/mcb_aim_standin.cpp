@@ -25,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "dji_serial_bridge/msg/cv_target.hpp"
 #include "dji_serial_bridge/msg/robot_pose.hpp"
@@ -75,6 +76,24 @@ public:
     config.shooter_z = declare_parameter("shooter_z", 0.0);
     config.fire_enabled = declare_parameter("fire_enabled", true);
     core_ = std::make_unique<sim::mcb_aim::Standin>(config);
+    const auto window = declare_parameter("fire_window_ms", std::vector<int64_t>{});
+    if (!window.empty()) {set_firing_window(window);}
+    parameters_ = add_on_set_parameters_callback(
+      [this](const std::vector<rclcpp::Parameter> & params) {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+        for (const auto & p : params) {
+          if (p.get_name() == "fire_window_ms") {
+            try {
+              set_firing_window(p.as_integer_array());
+            } catch (const std::invalid_argument & e) {
+              result.reason = e.what();
+              result.successful = false;
+            }
+          }
+        }
+        return result;
+      });
 
     const auto state_topic = declare_parameter("target_state_topic", std::string("/cv/target_state"));
     const auto pose_topic = declare_parameter("pose_topic", std::string("/dji_serial_bridge/pose"));
@@ -102,6 +121,17 @@ public:
         advance(now());
         core_->on_idle(to_ms(now()), {m->x, m->y, m->z});
       });
+    if (declare_parameter("publish_pacing_ready", false)) {
+      if (!ack_pub_) {throw std::invalid_argument("pacing readiness requires state_ack_topic");}
+      ready_pub_ = create_publisher<std_msgs::msg::Header>(
+        "~/pacing_ready", rclcpp::QoS(1).reliable().transient_local());
+      ready_timer_ = create_wall_timer(std::chrono::milliseconds(10), [this]() {
+        if (state_sub_->get_publisher_count() && ack_pub_->get_subscription_count()) {
+          ready_pub_->publish(std_msgs::msg::Header{});
+          ready_timer_->cancel();
+        }
+      });
+    }
     timer_ = rclcpp::create_timer(
       this, get_clock(), rclcpp::Duration::from_seconds(0.001), [this]() {advance(now());});
     RCLCPP_INFO(get_logger(), "mcb_aim_standin ready: firmware planner, %g s replan, fire %s",
@@ -109,6 +139,16 @@ public:
   }
 
 private:
+  void set_firing_window(const std::vector<int64_t> & window)
+  {
+    if (window.size() != 2 || window[0] < 0 || window[1] < window[0] ||
+      window[1] > std::numeric_limits<uint32_t>::max())
+    {
+      throw std::invalid_argument("fire_window_ms needs ordered uint32 start and stop times");
+    }
+    core_->set_firing_window(static_cast<uint32_t>(window[0]), static_cast<uint32_t>(window[1]));
+  }
+
   // The wire's TargetState: ages in whole ms, confidence in 1/255, 16-bit track id.
   void on_state(const TargetState & s)
   {
@@ -186,15 +226,16 @@ private:
   }
 
   std::unique_ptr<sim::mcb_aim::Standin> core_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameters_;
   sim::mcb_aim::Pose pose_;
   std::optional<uint32_t> last_tick_ms_;
   rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr aim_pub_;
   rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr fire_pub_;
-  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr tick_pub_, ack_pub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr tick_pub_, ack_pub_, ready_pub_;
   rclcpp::Subscription<TargetState>::SharedPtr state_sub_;
   rclcpp::Subscription<dji_serial_bridge::msg::RobotPose>::SharedPtr pose_sub_;
   rclcpp::Subscription<dji_serial_bridge::msg::CVTarget>::SharedPtr idle_sub_;
-  rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr timer_, ready_timer_;
 };
 
 int main(int argc, char ** argv)

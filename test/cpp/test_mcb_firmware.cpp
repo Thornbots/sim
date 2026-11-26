@@ -22,6 +22,55 @@
 namespace {
 namespace hw = sim::mcb_firmware;
 namespace wire = sim::mcb_protocol;
+
+TEST(RefereeLauncher, ReportsRealSentryLimitsAndHeatOnTheRefereeWire) {
+  hw::Referee ref;
+  ref.barrel_heat = 237;
+  ref.shooter_power = false;
+  const auto bytes = hw::referee_frames(ref);
+  wire::DJISerial parser;
+  const auto frames = parser.feed(bytes.data(), bytes.size());
+  const auto status = std::find_if(frames.begin(), frames.end(),
+                                  [](const auto &f) { return f.msg_type == 0x0201; });
+  ASSERT_NE(status, frames.end());
+  ASSERT_EQ(status->payload.size(), 13u);
+  EXPECT_EQ(status->payload[6] | status->payload[7] << 8, 30);
+  EXPECT_EQ(status->payload[8] | status->payload[9] << 8, 260);
+  EXPECT_EQ(status->payload[12] & 4, 0);
+  const auto power = std::find_if(frames.begin(), frames.end(),
+                                 [](const auto &f) { return f.msg_type == 0x0202; });
+  ASSERT_NE(power, frames.end());
+  ASSERT_EQ(power->payload.size(), 16u);
+  EXPECT_EQ(power->payload[10] | power->payload[11] << 8, 237);
+}
+
+TEST(RefereeLauncher, TemporaryLockStartsAbove260AndClearsOnlyAtZero) {
+  sim::RefereeLauncher launcher;
+  for (int i = 0; i < 26; ++i) {ASSERT_TRUE(launcher.record_exit());}
+  EXPECT_EQ(launcher.heat(), 260u);
+  EXPECT_TRUE(launcher.powered());
+  ASSERT_TRUE(launcher.record_exit());
+  EXPECT_FALSE(launcher.powered());
+  launcher.cool(8999);
+  EXPECT_EQ(launcher.heat(), 3u);
+  EXPECT_FALSE(launcher.powered());
+  launcher.cool(9000);
+  EXPECT_TRUE(launcher.powered());
+}
+
+TEST(RefereeLauncher, GameLockStartsAbove360AndSurvivesDefeat) {
+  sim::RefereeLauncher launcher;
+  for (int i = 0; i < 36; ++i) {launcher.record_exit();}
+  EXPECT_EQ(launcher.heat(), 360u);
+  launcher.on_defeat();
+  EXPECT_TRUE(launcher.powered());
+  for (int i = 0; i < 36; ++i) {launcher.record_exit();}
+  EXPECT_FALSE(launcher.record_exit());
+  launcher.on_defeat();
+  launcher.cool(30'000);
+  EXPECT_EQ(launcher.heat(), 0u);
+  EXPECT_FALSE(launcher.powered());
+}
 // The firmware's yaw for a target dx ahead and dy left: it turns the barrel,
 // which MCBV3's OFFSET_X_PITCH_PIVOT_TO_BARREL puts 1.9 mm left of the yaw axis.
 double aim_yaw(double dy, double dx) {
@@ -235,6 +284,18 @@ TEST_F(McbFirmware, AimsAtTheFacingPanelAndFiresFromATargetState) {
   EXPECT_TRUE(std::isfinite(result.outputs.back().pitch));
   EXPECT_GE(result.shots.size(), 3U);
 }
+TEST_F(McbFirmware, RefereeHeatLimitsSustainedFireAfterTenHzBurst) {
+  const auto result = run_aligned(20'000, kSingleShotState);
+  ASSERT_GE(result.shots.size(), 60u);
+  const uint32_t start = result.shots.front();
+  for (size_t i = 1; i < result.shots.size(); ++i) {
+    EXPECT_GE(result.shots[i] - result.shots[i - 1], 100u);
+  }
+  const auto cold_end = std::lower_bound(result.shots.begin(), result.shots.end(), start + 1000);
+  EXPECT_EQ(cold_end - result.shots.begin(), 10);
+  const auto steady_start = std::lower_bound(result.shots.begin(), result.shots.end(), start + 10'000);
+  EXPECT_NEAR(result.shots.end() - steady_start, 30, 1);
+}
 TEST_F(McbFirmware, IdleLookPointHoldsAimAfterExpiryAndNeverFires) {
   const auto packet = wire::frame(wire::CvTarget{3.0F, 1, 0.2F, 0});
   ASSERT_EQ(write(link->slave(), packet.data(), packet.size()),
@@ -373,7 +434,8 @@ TEST_F(McbFirmware, ContinuousFeedExitsFollowPhysicalChambersWithoutSettling) {
       ASSERT_TRUE(requests.empty());
     }
   }
-  ASSERT_GE(requests.size(), 50U);  // firmware rate-limits the 40 Hz fire input
+  ASSERT_GE(requests.size(), 36U);
+  EXPECT_LE(requests.size(), 40U);  // four seconds at up to 10 Hz
   ASSERT_GE(exits.size(), 10U);  // the old rest-only detector reports just one
   EXPECT_NEAR(static_cast<double>(exits.front()) - requests.front(), 20.0, 3.0);
   for (size_t i = 0; i < exit_positions.size(); ++i) {

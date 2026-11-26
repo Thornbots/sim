@@ -229,6 +229,9 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
                                        pending_.push_back({"mcb", t});
                                      }
                                    });
+  subscribe<std_msgs::msg::Header>(
+      "/mcb_emulator/locked_shot", rclcpp::QoS(100),
+      [this](const auto &) { ++locked_shots; });
   // The 50 ms harness chain. In lockstep the coordinator holds physics at each tick
   // until step() releases it, so everything the harness decides happens on a tick.
   // Ticks fall kPhaseMs after each 50 ms boundary: the one-shot is the first, and the
