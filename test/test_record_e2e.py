@@ -61,20 +61,28 @@ def test_clock_collapses_pauses_and_refuses_rewinds():
         RECORD.clock_axes([*rows, {'sim': 0., 'wall': 121.}])
 
 
-@pytest.mark.parametrize('verdict', [
-    {'suite_exit': 1, 'capture_ok': True},
-    {'suite_exit': 0, 'capture_ok': False},
-    {'suite_exit': None, 'capture_ok': True},
-    {'suite_exit': False, 'capture_ok': True},
-    {'suite': 'mcb_drive', 'suite_exit': 0, 'capture_ok': True},
-    {'suite': 'mcb_drive', 'suite_exit': 0, 'capture_ok': True, 'stack_checker_exit': 1},
-    {'test_exit': 0, 'checker_exit': 1, 'viewers': ['gz', 'rviz'], 'camera_set': True},
-    {'test_exit': 1, 'checker_exit': 0, 'viewers': ['gz', 'rviz'], 'camera_set': True},
-])
+@pytest.mark.parametrize('verdict', ['FAIL', None])
 def test_render_refuses_unaccepted_captures(tmp_path, verdict):
     """A failed or incomplete capture cannot create a PASS video."""
     output = tmp_path / 'suite.mp4'
-    (tmp_path / 'recording.json').write_text(json.dumps(verdict))
-    with pytest.raises(RuntimeError, match='Refusing a failed suite/checker'):
+    (tmp_path / 'recording.json').write_text(json.dumps({'suite_exit': 0, 'capture_ok': True}))
+    if verdict is not None:
+        report = {'schema_version': 1, 'verdict': verdict}
+        (tmp_path / 'summary.json').write_text(json.dumps(report))
+    with pytest.raises(RuntimeError, match='Run failed|No readable run verdict'):
         RECORD.render(SimpleNamespace(directory=tmp_path, output=output))
     assert not output.exists()
+
+
+def test_match_banner_names_the_official_denominator(tmp_path):
+    """Render the referee credits and native scored-shot count from the run summary."""
+    report = Path(__file__).parent / 'fixtures/suite_summary/match.json'
+    phases = {row['segment']: {'referee_credits': row['referee_credited_hits'],
+                               'sentry_scored_shots': row['shots']}
+              for row in json.loads(report.read_text())['segments']}
+    summary = {'schema_version': 1, 'verdict': 'PASS', 'suite': 'mcb_match',
+               'metrics': {'phases': phases}}
+    (tmp_path / 'summary.json').write_text(json.dumps(summary))
+    (tmp_path / 'recording.json').write_text(json.dumps({'suite_exit': 1}))
+    assert RECORD.banner_details(RECORD.require_pass(tmp_path)) == (
+        '1x sim time   |   Run Sentry referee credits / scored shots 39/52')

@@ -310,7 +310,7 @@ bool check_no_orphans(const std::string &label) {
       continue;
     }
     for (const auto needle :
-         {"gz sim", "slam_toolbox", "amcl", "map_server", "ekf_filter_node",
+         {"gz sim", "gz_server", "slam_toolbox", "amcl", "map_server", "ekf_filter_node",
           "pose_translator", "pose_emulator"}) {
       if (line.find(needle) != std::string::npos) {
         matches += line + '\n';

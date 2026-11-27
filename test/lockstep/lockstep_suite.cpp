@@ -106,9 +106,8 @@ protected:
       "<plugin filename='gz-sim-user-commands-system' name='gz::sim::systems::UserCommands'/>"
       "<plugin filename='gz-sim-scene-broadcaster-system' name='gz::sim::systems::SceneBroadcaster'/>"
       : "") << "</world></sdf>";
-    std::vector<std::string> cmd = {"gz", "sim", "-s"};
+    std::vector<std::string> cmd = {SIM_GZ_SERVER, path_};
     if (!epoch_zero_startup || force_running) {cmd.push_back("-r");}
-    cmd.push_back(path_);
     server_ = std::make_unique<sim::LaunchTree>(cmd, path_ + ".gz.log");
   }
   void coordinator(bool strict = false, std::vector<std::string> extra = {},

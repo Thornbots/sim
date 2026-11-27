@@ -1,0 +1,9 @@
+[localization_tests-1] [==========] Running 1 test from 1 test suite.
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/drift_correction
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[localization_tests-1]   [FAIL] drift_correction: suite interrupted
+[localization_tests-1] [  FAILED  ] Localization/DriftSuite.Scenario/drift_correction, where GetParam() = "drift_correction" (40503 ms)
+[localization_tests-1] [==========] 1 test from 1 test suite ran. (40503 ms total)
+[localization_tests-1] [  FAILED  ] 1 test, listed below:
+[localization_tests-1] [  FAILED  ] Localization/DriftSuite.Scenario/drift_correction, where GetParam() = "drift_correction"
+[localization_tests-1] === 0 passed, 1 failed in 40.76s ===

@@ -1,0 +1,12 @@
+[localization_tests-1] [==========] Running 1 test from 1 test suite.
+[localization_tests-1] [ RUN      ] EkfGroundTruth.BeatsRawOdometry
+[localization_tests-1] === 24 samples, slip_ratio=0.05, drift_stddev=0.00 ===
+[localization_tests-1] raw /odom   vs truth: mean=0.1174 m  rms=0.1322  max=0.2597
+[localization_tests-1] ekf fused   vs truth: mean=0.0387 m  rms=0.0395  max=0.0530
+[localization_tests-1] EKF improvement over raw /odom: +67.0%
+[localization_tests-1] [       OK ] EkfGroundTruth.BeatsRawOdometry (147559 ms)
+[localization_tests-1] [==========] 1 test from 1 test suite ran. (147559 ms total)
+[localization_tests-1] === 1 passed in 147.57s ===
+[INFO] [rviz2-13]: sending signal 'SIGINT' to process[rviz2-13]
+[ERROR] [rviz2-13]: sending signal 'SIGTERM' to process[rviz2-13]
+[ERROR] [rviz2-13]: process has died [pid 13, exit code -15, cmd 'rviz2'].
