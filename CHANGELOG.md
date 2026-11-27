@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stop tracking colcon `build/`, `install/` and `log/` output from a 2026-10-02
+  test run, and ignore those directories at the package root.
 - Publish one run summary for every guarded integration suite. Use its verdict
   for the runner exit status and the recording banner.
 - Run the gz server as sim's `gz_server`, which takes SIGINT/SIGTERM off gz's
