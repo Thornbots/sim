@@ -14,9 +14,12 @@
 
 #include "sim/e2e_harness.hpp"
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <gtest/gtest.h>
+#include <cmath>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 namespace sim::e2e {
@@ -187,3 +190,38 @@ TEST(MatchScoring, CreditsAndEligibleContactsUseSeparateCounts) {
   EXPECT_TRUE(match_shot_counts({after_defeat}).at("valid_enemy_panel_contact_rate").is_null());
 }
 } // namespace sim::e2e
+
+namespace sim::e2e {
+// E27 R42: a robot may not obscure its own armor. Shots at every ghost panel
+// from across its +-45 degree exposure must strike that panel, not the hull.
+TEST(GhostHull, ExposesEveryArmorPanel) {
+  const auto offsets = urdf_offsets();
+  const auto share = ament_index_cpp::get_package_share_directory("sim");
+  const combat::ShotResolver resolver(
+      {}, combat::load_stl(share + "/urdf/sentry_v2/meshes/collision/root.stl"),
+      offsets.armors);
+  const combat::Histories ghost{{"opponent_0", [](double) {
+    return std::optional<Eigen::Matrix4d>(Eigen::Matrix4d::Identity());
+  }}};
+  for (size_t k = 0; k < offsets.armors.size(); ++k) {
+    const Eigen::Matrix4d &panel = offsets.armors[k];
+    const Vec normal = panel.block<3, 1>(0, 0), width = panel.block<3, 1>(0, 1),
+              up = panel.block<3, 1>(0, 2);
+    const double yaw = std::atan2(normal.y(), normal.x());
+    for (int azimuth = -45; azimuth <= 45; azimuth += 15) {
+      const double a = yaw + azimuth * cv_bench::kPi / 180;
+      const Vec toward{std::cos(a), std::sin(a), 0};
+      for (double u : {-.05, 0., .05}) {
+        for (double v : {-.04, 0., .04}) {
+          const Vec target = panel.block<3, 1>(0, 3) + u * width + v * up;
+          const auto impact = resolver.resolve(
+              "sentry", target + .3 * toward, -toward, 0, ghost);
+          EXPECT_EQ(impact.impact, "panel") << "armor " << k << " azimuth " << azimuth
+                                            << " at " << u << ", " << v;
+          EXPECT_EQ(impact.panel.value_or(-1), static_cast<int>(k));
+        }
+      }
+    }
+  }
+}
+}  // namespace sim::e2e

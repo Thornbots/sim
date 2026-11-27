@@ -2324,9 +2324,16 @@ ghosts spin and use a truth-fed aimer with seed 2026,
 red opponents and the blue ally. Only our robot runs the real CV stack.
 
 The scorer advances 22 m/s ballistic shots under gravity against the field
-mesh, chassis hulls and canted armor. It includes the physical muzzle velocity
+mesh, chassis hulls and canted armor. Ghosts use the sentry collision hull
+shrunk horizontally to `combat::kGhostHullScale` (0.65), the largest tested
+scale that hides no part of any armor panel within +-45 degrees (E27 R42; 0.75
+hid half of `armor_0`). It includes the physical muzzle velocity
 at launch, including chassis motion. 22 m/s matches the checked-out sentry
-firmware ballistic solver; the E2E Jetson planner uses the same value. The
+firmware ballistic solver; the E2E Jetson planner uses the same value. Sentry
+shots leave 0.042 rad below the bore, the robot-fitted `SHOT_PITCH_DOWN_BIAS`
+the firmware aims against (`combat::kShotPitchDownBias`); the ghosts' truth-fed
+aimers shoot along the bore. Air drag is not modelled: the firmware's 0.02/m
+adds about 2% to a 2 m flight. The
 first impact absorbs the shot. An enemy armor contact requires more than
 12 m/s relative normal speed and the exposure cone. The referee credits
 contacts on live enemies outside the panel's 50 ms dead time. Each robot

@@ -559,13 +559,20 @@ Json Scorer::pose_errors(double t, bool map_frame) {
   }
   return out;
 }
+namespace {
+// The sentry's measured launch direction: the bore turned down about its pitch axis.
+Vec sentry_launch_direction(const Matrix &muzzle) {
+  return std::cos(combat::kShotPitchDownBias) * muzzle.block<3, 1>(0, 0) -
+         std::sin(combat::kShotPitchDownBias) * muzzle.block<3, 1>(0, 2);
+}
+}  // namespace
 std::optional<Json> Scorer::judge(double t) {
   auto ours = histories.at("sentry")->at(t);
   if (!ours || !ours->head)
     return {};
   Matrix muzzle = *ours->head * offsets_.muzzle;
   const Vec inherited = muzzle_velocity("sentry", t);
-  Vec origin = muzzle.block<3, 1>(0, 3), barrel = muzzle.block<3, 1>(0, 0);
+  Vec origin = muzzle.block<3, 1>(0, 3), barrel = sentry_launch_direction(muzzle);
   struct Candidate {
     double off, miss, incidence, range;
     int k;
@@ -721,8 +728,9 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
   Matrix muzzle = *pose->head * offsets_.muzzle;
   const Vec inherited = muzzle_velocity(shooter, launch);
   auto key = std::make_pair(kind, launch);
+  const Vec barrel = shooter == "sentry" ? sentry_launch_direction(muzzle) : Vec(muzzle.block<3, 1>(0, 0));
   auto impact = resolver_->resolve(
-      shooter, muzzle.block<3, 1>(0, 3), muzzle.block<3, 1>(0, 0), launch,
+      shooter, muzzle.block<3, 1>(0, 3), barrel, launch,
       functions, std::min(tick_s() - .02, available), flight_steps_[key], inherited);
   if (impact.pending) {
     flight_steps_[key] = impact.next_step;

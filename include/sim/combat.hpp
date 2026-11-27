@@ -37,6 +37,13 @@ using Histories = std::vector<std::pair<std::string, PoseHistory>>;
 
 constexpr double kGravity = -9.80665;
 constexpr double kMuzzleSpeed = 22.0;  // sentry shot speed, as MCBV3 and v_muzzle
+// Sentry shots leave this far below the barrel line (rad), as MCBV3's
+// SHOT_PITCH_DOWN_BIAS fitted on the robot (2026-10-31).
+constexpr double kShotPitchDownBias = 0.042;
+// Ghost bodies reuse the sentry collision hull, shrunk horizontally so no hull
+// part covers the sentry armor layout: E27 R42 forbids self-obscured armor.
+// 0.75 still hid part of armor_0 behind the hull's +x+y corner.
+constexpr double kGhostHullScale = 0.65;
 constexpr double kStepS = 0.01;
 constexpr double kFlightS = 0.5;
 constexpr double kPanelWidth = 0.135;

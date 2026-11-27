@@ -11,6 +11,12 @@
   driving area in the localization drift and EKF suites and their videos.
 - Show fading hit and miss traces in the aim bench's RViz view.
 - Fail parked bench cells if a launcher exit in the scoring window goes unscored.
+- Launch scored Sentry shots 0.042 rad below the bore, the robot-fitted
+  `SHOT_PITCH_DOWN_BIAS` the firmware already aims against. Sim shots had flown
+  that far high (about 7 cm at 1.6 m), putting spin-phase shots over the top edge.
+- Shrink ghost hulls to 0.65 so no hull part hides a ghost's armor (E27 R42).
+  At 0.75 the hull covered half of `armor_0`, turning face-on hits into hull
+  contacts once per ghost revolution.
 
 - Stage ghost ingress and give the Sentry a measured parked interval in
   `mcb_match`. Fail the scenario if drive, parked or spin has zero accuracy
