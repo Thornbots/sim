@@ -5,7 +5,7 @@
 """Record a sim suite's X11 desktop and render it at one sim second per second."""
 import argparse
 from bisect import bisect_right
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager, ExitStack
 import json
 import math
 import os
@@ -35,7 +35,9 @@ X11_START = re.compile(r'start: ([0-9.]+)')
 
 
 def write_json(path, data):
-    path.write_text(json.dumps(data, indent=2) + '\n')
+    temporary = path.with_name('.' + path.name + '.tmp')
+    temporary.write_text(json.dumps(data, indent=2) + '\n')
+    temporary.replace(path)
 
 
 def read_rows(path):
@@ -201,21 +203,17 @@ def capture(args, launch_args):
     directory.mkdir(parents=True, exist_ok=True)
     if any(directory.iterdir()):
         raise RuntimeError('Use a fresh capture directory')
-    telemetry = directory / 'telemetry'
-    telemetry.mkdir()
     views = VIEWS[args.suite]
     rate = '1.0' if args.suite in ('aim', 'tracking') else '0.5'
     settings = {'real_time_factor': rate}
     settings.update(arg.split(':=', 1) for arg in launch_args)
     command = [str(Path(__file__).with_name('run_suite.sh')), args.suite,
                *(f'{key}:={value}' for key, value in settings.items()),
-               'headless:=false', 'remote_dds:=false']
-    if args.suite not in LOCALIZATION:
-        command.append(f'log_dir:={telemetry}')
+               'headless:=false', 'remote_dds:=false', f'log_dir:={directory}']
     metadata = {'suite': args.suite, 'capture_fps': args.capture_fps, 'command': command,
-                'suite_exit': None, 'capture_ok': False, 'layout_wall': None}
-    if args.suite.startswith('mcb_'):
-        metadata['stack_checker_exit'] = None
+                'layout_wall': None}
+    capture_result = directory / '.capture-result.json'
+    launch_complete = directory / '.launch-complete'
     try:
         with ExitStack() as stack:
             env = stack.enter_context(desktop(args.display, directory))
@@ -252,6 +250,7 @@ def capture(args, launch_args):
             log = stack.enter_context((directory / 'suite.log').open('w', buffering=1))
             events = stack.enter_context((directory / 'events.jsonl').open('w', buffering=1))
             original = {line.split()[0] for line in x11(['wmctrl', '-l'], env).stdout.splitlines()}
+            env['SIM_SUITE_CAPTURE'] = '1'
             launch = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                       text=True, errors='replace',
@@ -260,56 +259,56 @@ def capture(args, launch_args):
             reader.start()
             stack.callback(reader.join)
             stack.callback(stop, launch, signal.SIGINT)
-            placed = set()
-            next_layout = time.monotonic()
-            while launch.poll() is None:
-                rclpy.spin_once(node, timeout_sec=.05)
-                if encoder.poll() is not None:
-                    raise RuntimeError('X11 capture failed; see capture.log')
-                if time.monotonic() >= next_layout:
-                    current = arrange(env, views, original, placed)
-                    next_layout = time.monotonic() + .25
-                    if current == set(views) and metadata['layout_wall'] is None:
-                        if camera_pose:
-                            result = subprocess.run(
-                                ['gz', 'service', '-s', '/gui/move_to/pose',
-                                 '--reqtype', 'gz.msgs.GUICamera', '--reptype', 'gz.msgs.Boolean',
-                                 '--timeout', '1000', '--req', camera_pose],
-                                env=env, capture_output=True, text=True, timeout=3)
-                            if result.returncode or 'data: true' not in result.stdout:
-                                continue
-                        metadata['layout_wall'] = time.time()
-            metadata['suite_exit'] = launch.returncode
-        if 'stack_checker_exit' in metadata:
-            with (directory / 'stack-checker.log').open('w') as log:
-                checker = subprocess.run(
-                    ['ros2', 'run', 'sim', 'check_bench_log', str(telemetry / 'stack.log')],
-                    stdout=log, stderr=subprocess.STDOUT)
-            metadata['stack_checker_exit'] = checker.returncode
-        if encoder.returncode or metadata['layout_wall'] is None:
-            raise RuntimeError('Incomplete X11 or /clock capture; see capture.log and suite.log')
-        clock_axes(read_rows(directory / 'clock.jsonl'))
-        metadata['capture_ok'] = True
+            try:
+                placed = set()
+                next_layout = time.monotonic()
+                while launch.poll() is None and not launch_complete.exists():
+                    rclpy.spin_once(node, timeout_sec=.05)
+                    if encoder.poll() is not None:
+                        raise RuntimeError('X11 capture failed; see capture.log')
+                    if time.monotonic() >= next_layout:
+                        current = arrange(env, views, original, placed)
+                        next_layout = time.monotonic() + .25
+                        if current == set(views) and metadata['layout_wall'] is None:
+                            if camera_pose:
+                                result = subprocess.run(
+                                    ['gz', 'service', '-s', '/gui/move_to/pose',
+                                     '--reqtype', 'gz.msgs.GUICamera',
+                                     '--reptype', 'gz.msgs.Boolean',
+                                     '--timeout', '1000', '--req', camera_pose],
+                                    env=env, capture_output=True, text=True, timeout=3)
+                                if result.returncode or 'data: true' not in result.stdout:
+                                    continue
+                            metadata['layout_wall'] = time.time()
+                finish_encoder(encoder)
+                if encoder.returncode or metadata['layout_wall'] is None:
+                    raise RuntimeError('Incomplete X11 or /clock capture; see capture.log')
+                clock_axes(read_rows(directory / 'clock.jsonl'))
+            except (Exception, KeyboardInterrupt) as error:
+                reason = ('Capture interrupted' if isinstance(error, KeyboardInterrupt)
+                          else str(error))
+                write_json(capture_result, {'status': 'FAILED', 'reason': reason})
+                raise RuntimeError(reason) from error
+            write_json(capture_result, {'status': 'COMPLETE'})
+            launch.wait()
     finally:
         write_json(directory / 'recording.json', metadata)
-    if metadata['suite_exit'] != 0:
-        raise RuntimeError(f'Suite or checker failed (exit {metadata["suite_exit"]}); see suite.log')
-    if metadata.get('stack_checker_exit', 0) != 0:
-        raise RuntimeError('MCB stack checker rejected the capture; see stack-checker.log')
+        capture_result.unlink(missing_ok=True)
+        launch_complete.unlink(missing_ok=True)
+    require_pass(directory)
 
 
-def require_pass(metadata):
-    if 'suite_exit' in metadata:
-        checks = ['suite_exit']
-        if metadata.get('suite', '').startswith('mcb_'):
-            checks.append('stack_checker_exit')
-        valid = metadata.get('capture_ok') is True
-    else:
-        checks = ['test_exit', 'checker_exit']
-        valid = metadata.get('viewers') == ['gz', 'rviz'] and metadata.get('camera_set') is True
-    passed = all(type(metadata.get(key)) is int and metadata[key] == 0 for key in checks)
-    if not passed or not valid:
-        raise RuntimeError('Refusing a failed suite/checker or incomplete capture; see the capture logs')
+def require_pass(directory):
+    path = directory / 'summary.json'
+    try:
+        summary = json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f'No readable run verdict in {path}') from error
+    if not isinstance(summary, dict) or summary.get('schema_version') != 1:
+        raise RuntimeError(f'No readable run verdict in {path}')
+    if summary.get('verdict') != 'PASS':
+        raise RuntimeError(f'Run failed; see {path}')
+    return summary
 
 
 def clock_axes(rows):
@@ -369,14 +368,11 @@ def frame_plan(sim, wall, spans, epoch, capture_fps, fps, max_gap):
 
 
 def scored_content(directory, suite, wall, sim):
-    telemetry = directory / 'telemetry'
-    if not telemetry.is_dir():
-        telemetry = directory
     spans, labels, started = [], [], {}
     if suite.startswith('mcb_'):
         name = 'poses.jsonl' if suite == 'mcb_parked' else 'route.jsonl'
         groups = {}
-        for row in sorted(read_rows(telemetry / name), key=lambda row: row['t']):
+        for row in sorted(read_rows(directory / name), key=lambda row: row['t']):
             cell = row.get('cell') if suite == 'mcb_parked' else row.get('segment')
             key = cell if suite == 'mcb_parked' else suite
             groups.setdefault(key, []).append(row['t'])
@@ -394,31 +390,32 @@ def scored_content(directory, suite, wall, sim):
                 if start < stamp:
                     spans.append((start, stamp))
                     labels.append((start, cell.split('/', 2)[-1]))
-    shots = []
-    for row in read_rows(telemetry / 'shots.jsonl'):
-        if row.get('kind', 'mcb') != 'mcb':
-            continue
-        stamp = row.get('scored_at', row.get('impact_t', row.get('t_fire', row.get('t'))))
-        if stamp is not None:
-            shots.append((stamp, bool(row.get('enemy_hit', row.get('hit')))))
-    return spans, labels, sorted(shots)
+    return spans, labels
 
 
-def encode_video(source, output, plan, labels, shots, fps, capture_fps, suite, gz_zoom):
+def banner_details(summary):
+    details = '1x sim time'
+    if summary['suite'] == 'mcb_match':
+        phases = summary['metrics']['phases'].values()
+        credits = sum(phase['referee_credits'] for phase in phases)
+        shots = sum(phase['sentry_scored_shots'] for phase in phases)
+        details += f'   |   Run Sentry referee credits / scored shots {credits}/{shots}'
+    return details
+
+
+def encode_video(source, output, plan, labels, fps, capture_fps, summary, gz_zoom):
     from PIL import Image, ImageDraw, ImageFont
 
     font = ImageFont.load_default(size=28)
     small = ImageFont.load_default(size=22)
     label_times = [stamp for stamp, _ in labels]
-    shot_times = [stamp for stamp, _ in shots]
-    hit_counts = [0]
-    for _, hit in shots:
-        hit_counts.append(hit_counts[-1] + hit)
+    details = banner_details(summary)
     first = plan[0][1]
     seek = max(0., first / capture_fps - .000001)
     with ExitStack() as stack:
         decoder = stack.enter_context(subprocess.Popen([
-            'ffmpeg', '-v', 'error', '-threads', '2', '-ss', f'{seek:.6f}', '-i', str(source), '-an',
+            'ffmpeg', '-v', 'error', '-threads', '2', '-ss', f'{seek:.6f}',
+            '-i', str(source), '-an',
             '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-threads', '1', '-'], stdout=subprocess.PIPE))
         stack.callback(stop, decoder, signal.SIGKILL)
         encoder = stack.enter_context(subprocess.Popen([
@@ -437,15 +434,10 @@ def encode_video(source, output, plan, labels, shots, fps, capture_fps, suite, g
                 if len(raw) != size:
                     raise RuntimeError(f'Capture ended before sim {stamp:.2f}s')
                 current += 1
-            count = bisect_right(shot_times, stamp)
             label = bisect_right(label_times, stamp)
-            title = f'{suite}   |   sim {stamp:.1f}s'
+            title = f'{summary["suite"]}   |   sim {stamp:.1f}s'
             if label:
                 title += '   |   ' + labels[label - 1][1]
-            details = '1x sim time'
-            if shots:
-                hit_label = 'referee credits/shots' if suite == 'mcb_match' else 'hits/shots'
-                details += f'   |   {hit_label} {hit_counts[count]}/{count}'
             desktop_frame = Image.frombytes('RGB', (WIDTH, HEIGHT), raw)
             if gz_zoom > 1:
                 x, y = WIDTH * 3 // 4, HEIGHT // 2
@@ -458,7 +450,8 @@ def encode_video(source, output, plan, labels, shots, fps, capture_fps, suite, g
             draw.rectangle((0, 0, WIDTH, BANNER - 1), fill=(16, 20, 30))
             draw.text((24, 9), title, font=font, fill=(245, 247, 250))
             draw.text((24, 49), details, font=small, fill=(180, 195, 215))
-            draw.text((WIDTH - 24, 49), 'PASS', anchor='rt', font=small, fill=(120, 230, 140))
+            draw.text((WIDTH - 24, 49), summary['verdict'], anchor='rt', font=small,
+                      fill=(120, 230, 140))
             encoder.stdin.write(frame.tobytes())
         encoder.stdin.close()
         if encoder.wait() != 0:
@@ -467,9 +460,9 @@ def encode_video(source, output, plan, labels, shots, fps, capture_fps, suite, g
 
 def render(args):
     directory = Path(args.directory).resolve()
+    summary = require_pass(directory)
     metadata = json.loads((directory / 'recording.json').read_text())
-    require_pass(metadata)
-    suite = metadata.get('suite', metadata.get('stage'))
+    suite = summary['suite']
     sim, wall = clock_axes(read_rows(directory / 'clock.jsonl'))
     match = X11_START.search((directory / 'capture.log').read_text())
     if not match or float(match[1]) < 1e9 or float(match[1]) > wall[0] + 1:
@@ -477,7 +470,7 @@ def render(args):
     start, end = args.start, args.end
     if ((start is not None and start < sim[0]) or (end is not None and end > sim[-1])):
         raise RuntimeError('Requested simulation window is outside recorded /clock')
-    spans, labels, shots = scored_content(directory, suite, wall, sim)
+    spans, labels = scored_content(directory, suite, wall, sim)
     if metadata.get('layout_wall') is not None:
         first_view = interpolate(metadata['layout_wall'], wall, sim)
     else:
@@ -489,14 +482,15 @@ def render(args):
     ranges, plan = frame_plan(sim, wall, spans, float(match[1]), metadata['capture_fps'],
                               args.fps, args.max_gap)
     output = Path(args.output).resolve()
-    if output.suffix != '.mp4' or output in {directory / 'wall-time.mp4', directory / 'recording.mp4'}:
+    capture_paths = {directory / 'wall-time.mp4', directory / 'recording.mp4'}
+    if output.suffix != '.mp4' or output in capture_paths:
         raise RuntimeError('Choose a separate .mp4 output path')
     output.parent.mkdir(parents=True, exist_ok=True)
     gz_zoom = args.gz_zoom if suite.startswith('mcb_') else 1.
     with TemporaryDirectory(dir=output.parent) as temporary:
         video = Path(temporary) / 'render.mp4'
-        encode_video(directory / 'wall-time.mp4', video, plan, labels, shots, args.fps,
-                     metadata['capture_fps'], suite, gz_zoom)
+        encode_video(directory / 'wall-time.mp4', video, plan, labels, args.fps,
+                     metadata['capture_fps'], summary, gz_zoom)
         if args.pr_clip:
             clip = Path(temporary) / 'pr.mp4'
             subprocess.run([
@@ -509,7 +503,8 @@ def render(args):
             clip.replace(output.with_name(output.stem + '-pr.mp4'))
         video.replace(output)
     write_json(output.with_suffix('.json'), {
-        **metadata, 'verdict': 'PASS', 'fps': args.fps, 'frames': len(plan), 'sim_ranges': ranges,
+        **metadata, 'verdict': summary['verdict'], 'fps': args.fps, 'frames': len(plan),
+        'sim_ranges': ranges,
         'gz_zoom': gz_zoom,
     })
 

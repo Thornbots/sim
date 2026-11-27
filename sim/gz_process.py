@@ -13,18 +13,20 @@
 # limitations under the License.
 
 """
-Launch gz sim as the launch's direct child, with no shell in between.
+Launch the gz server and GUI as the launch's direct children, with no shell.
 
 ros_gz_sim's gz_sim.launch.py runs `sh -c "ruby gz sim ..."`. Launch signals
 only that shell, which dies and leaves the gz server (the ruby process)
 orphaned, so a graceful shutdown needed a group-wide signal or SIGKILL.
-The environment still comes from ros_gz_sim's own helper.
+The server runs as sim's gz_server, which takes SIGINT/SIGTERM off gz's
+async signal handler (src/gz_server.cpp). The environment still comes from
+ros_gz_sim's own helper.
 """
 import importlib.util
 import os
 import shutil
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 
 from launch.actions import ExecuteProcess
 
@@ -40,13 +42,9 @@ def _ros_gz_paths():
     return module.GazeboRosPaths.get_paths()
 
 
-def gz_sim_process(arguments, name='gazebo'):
-    """Return an ExecuteProcess running `gz sim <arguments>` without a shell."""
-    gz = shutil.which('gz')
-    if gz is None:
-        raise RuntimeError('gz is not on PATH; run install-sim.sh first')
+def _gz_env():
     model_paths, plugin_paths = _ros_gz_paths()
-    env = {
+    return {
         'GZ_SIM_SYSTEM_PLUGIN_PATH': os.pathsep.join([
             os.environ.get('GZ_SIM_SYSTEM_PLUGIN_PATH', ''),
             os.environ.get('LD_LIBRARY_PATH', ''),
@@ -54,6 +52,21 @@ def gz_sim_process(arguments, name='gazebo'):
         'GZ_SIM_RESOURCE_PATH': os.pathsep.join([
             os.environ.get('GZ_SIM_RESOURCE_PATH', ''), model_paths]),
     }
+
+
+def gz_sim_process(arguments, name='gazebo_gui'):
+    """Return an ExecuteProcess running `gz sim <arguments>` (the GUI) without a shell."""
+    gz = shutil.which('gz')
+    if gz is None:
+        raise RuntimeError('gz is not on PATH; run install-sim.sh first')
     return ExecuteProcess(
         cmd=['ruby', gz, 'sim', *arguments, '--force-version', GZ_VERSION],
-        name=name, output='screen', additional_env=env, shell=False)
+        name=name, output='screen', additional_env=_gz_env(), shell=False)
+
+
+def gz_server_process(world, run=True, name='gazebo'):
+    """Return an ExecuteProcess running the gz server on `world`, paused unless `run`."""
+    server = os.path.join(get_package_prefix('sim'), 'lib', 'sim', 'gz_server')
+    return ExecuteProcess(
+        cmd=[server, world, *(['-r'] if run else [])],
+        name=name, output='screen', additional_env=_gz_env(), shell=False)

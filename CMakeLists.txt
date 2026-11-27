@@ -376,6 +376,12 @@ rclcpp_components_register_node(detector_standin
 install(TARGETS detector_standin
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 
+# The gz sim server (`gz sim -s`) with signals taken off gz's async handler.
+add_executable(gz_server src/gz_server.cpp)
+target_compile_features(gz_server PUBLIC cxx_std_17)
+target_link_libraries(gz_server gz-sim::core)
+install(TARGETS gz_server DESTINATION lib/${PROJECT_NAME})
+
 # A gz system on each opponent: moves it along its path every physics step.
 add_library(opponent_mover SHARED src/opponent_mover.cpp)
 target_compile_features(opponent_mover PUBLIC cxx_std_17)
@@ -398,7 +404,8 @@ add_executable(mcb_physics_suite test/mcb/mcb_physics_suite.cpp)
 target_compile_features(mcb_physics_suite PUBLIC cxx_std_17)
 target_link_libraries(mcb_physics_suite suite_support mcb_protocol util GTest::gtest)
 target_include_directories(mcb_physics_suite PRIVATE include)
-target_compile_definitions(mcb_physics_suite PRIVATE SIM_MCB_SYSTEM="$<TARGET_FILE:mcb_firmware_system>")
+target_compile_definitions(mcb_physics_suite PRIVATE SIM_MCB_SYSTEM="$<TARGET_FILE:mcb_firmware_system>"
+  SIM_GZ_SERVER="$<TARGET_FILE:gz_server>")
 ament_target_dependencies(mcb_physics_suite rclcpp sensor_msgs)
 install(TARGETS mcb_physics_suite DESTINATION lib/${PROJECT_NAME})
 install(TARGETS mcb_firmware_system LIBRARY DESTINATION lib)
@@ -418,7 +425,8 @@ install(TARGETS lockstep_coordinator DESTINATION lib/${PROJECT_NAME})
 add_executable(lockstep_suite test/lockstep/lockstep_suite.cpp)
 target_compile_features(lockstep_suite PUBLIC cxx_std_17)
 target_include_directories(lockstep_suite PRIVATE include)
-target_compile_definitions(lockstep_suite PRIVATE SIM_LOCKSTEP_GATE="$<TARGET_FILE:lockstep_gate>")
+target_compile_definitions(lockstep_suite PRIVATE SIM_LOCKSTEP_GATE="$<TARGET_FILE:lockstep_gate>"
+  SIM_GZ_SERVER="$<TARGET_FILE:gz_server>")
 target_link_libraries(lockstep_suite suite_support GTest::gtest gz-transport::core gz-msgs::core)
 ament_target_dependencies(lockstep_suite rclcpp diagnostic_msgs std_msgs)
 install(TARGETS lockstep_suite DESTINATION lib/${PROJECT_NAME})
@@ -537,10 +545,11 @@ if(BUILD_TESTING)
   target_include_directories(test_keyed_noise PRIVATE include)
 
   ament_add_gtest(test_opponent_startup test/cpp/test_opponent_startup.cpp TIMEOUT 1500)
-  add_dependencies(test_opponent_startup opponent_driver)
+  add_dependencies(test_opponent_startup opponent_driver gz_server)
   target_compile_definitions(test_opponent_startup PRIVATE
     SIM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-    OPPONENT_DRIVER_EXE="$<TARGET_FILE:opponent_driver>")
+    OPPONENT_DRIVER_EXE="$<TARGET_FILE:opponent_driver>"
+    SIM_GZ_SERVER="$<TARGET_FILE:gz_server>")
   target_link_libraries(test_opponent_startup suite_support gz-transport::core gz-msgs::core)
   ament_target_dependencies(test_opponent_startup rclcpp std_msgs)
   ament_add_pytest_test(sim_dds_switch test/test_dds_switch.py TIMEOUT 60
@@ -549,6 +558,9 @@ if(BUILD_TESTING)
   ament_add_pytest_test(sim_record_e2e test/test_record_e2e.py TIMEOUT 60
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENV "PYTEST_ADDOPTS=-p no:anyio")
+  ament_add_pytest_test(sim_suite_summary test/test_suite_summary.py TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENV "PYTEST_ADDOPTS=-p no:anyio" "SIM_CHECK_BENCH_LOG=$<TARGET_FILE:check_bench_log>")
   foreach(lint copyright flake8 pep257)
     ament_add_pytest_test(sim_${lint} test/test_${lint}.py TIMEOUT 120
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

@@ -39,8 +39,8 @@
 #include <gz/common/Console.hh>
 #include <gz/plugin/Register.hh>
 #include <gz/sim/System.hh>
+#include <gz/sim/EventManager.hh>
 #include <gz/sim/Events.hh>
-#include <gz/common/SignalHandler.hh>
 #include <gz/transport/Node.hh>
 
 namespace sim
@@ -72,8 +72,9 @@ public:
     events_ = &events;
     // The coordinator exits with the rest of the stack, so a gate holding for
     // its release would sit out max_wait_s (30 s in epoch-zero mode) and gz
-    // would outlive launch's SIGINT and SIGTERM windows.
-    signals_.AddCallback([stopping = stopping_](int) {*stopping = true;});
+    // would outlive launch's SIGINT and SIGTERM windows. Server::Stop() emits
+    // events::Stop from whichever thread asks (gz_server's main thread on SIGINT).
+    stop_conn_ = events.Connect<gz::sim::events::Stop>([stopping = stopping_] {*stopping = true;});
     const auto release = sdf->Get<std::string>("release_topic", "/sim/lockstep/release").first;
     held_pub_ = node_.Advertise<gz::msgs::Time>(
       sdf->Get<std::string>("held_topic", "/sim/lockstep/held").first);
@@ -184,8 +185,8 @@ private:
   bool epoch_zero_pending_ = false;
   std::optional<std::chrono::steady_clock::time_point> startup_deadline_;
   gz::sim::EventManager * events_ = nullptr;
-  gz::common::SignalHandler signals_;
   std::shared_ptr<std::atomic<bool>> stopping_ = std::make_shared<std::atomic<bool>>(false);
+  gz::common::ConnectionPtr stop_conn_;
   // Destroy transport callbacks before the mutex and release state.
   gz::transport::Node node_;
 };

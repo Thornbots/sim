@@ -126,9 +126,8 @@ protected:
     const std::string resources = std::filesystem::path(SIM_SOURCE_DIR).parent_path().string() +
       ":" + SIM_SOURCE_DIR;
     std::vector<std::string> cmd = {"env", "GZ_PARTITION=" + partition_,
-      "GZ_SIM_RESOURCE_PATH=" + resources, "gz", "sim", "-s", "-v", "0"};
+      "GZ_SIM_RESOURCE_PATH=" + resources, SIM_GZ_SERVER, kWorldFile, "-v", "0"};
     if (running) {cmd.push_back("-r");}
-    cmd.push_back(kWorldFile);
     gz_ = std::make_unique<sim::LaunchTree>("gz_server", cmd, logfile("gz"));
   }
 
