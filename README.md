@@ -95,6 +95,13 @@ ros2 launch sim localization_tests.launch.py
 `suite:=ekf` runs the EKF ground-truth test instead. It is on demand, not part
 of the standard run: run it after changing the EKF or rf2o config.
 
+With a display, both suites open a Gazebo view over the drive loop and an
+RViz view of the field map, lidar and recent pose trails. The trails compare
+Gazebo truth, raw odometry translated by its boot position, and EKF odometry
+before map correction. The drift suite also shows the corrected map pose.
+The EKF suite displays the saved field map for reference with its map
+backend disabled. Use `headless:=true` to skip the two viewers.
+
 The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
 neighbouring panels staggered 10.39 cm apart vertically (about 83% of a
@@ -815,11 +822,12 @@ a 21-node stack timed out its first lockstep hold); on restores the container pr
 peers, for cross-machine tests. See `sim/dds_switch.py` and
 [thornbots_pkg](../thornbots_pkg/README.md#remote-dds-and-foxglove).
 
-A fresh Foxglove 3D panel shows none of our displays. `foxglove/` has one
-layout per rviz config, the same displays, fixed frame and view: `config.json`
-for `sim.launch.py` and the localization suite, `estimation.json` and
-`cv_target.json` for the two CV benches. Import one (the layout menu, then
-"Import from file"). After editing an rviz config, regenerate them:
+A fresh Foxglove 3D panel shows none of our displays. `foxglove/` mirrors the
+displays, fixed frames and Orbit views of the top-level `rviz/` presets.
+Import `config.json` for the regular sim view, or `estimation.json` and
+`cv_target.json` for the CV benches, from the layout menu's "Import from file".
+The localization recording uses its own top-down preset in `rviz/recording/`.
+After editing a top-level RViz preset, regenerate the layouts:
 
 ```bash
 ros2 run sim rviz_to_foxglove --package-dir src/sim  # --check: exit 1 if stale
@@ -873,9 +881,9 @@ python3 src/sim/tools/record_e2e.py render /tmp/ekf-take /tmp/ekf.mp4 --pr-clip
 Capture accepts every [suite runner](#run-the-tests) suite and forwards
 `name:=value` launch arguments, for example `scenario:=odom_stuck` for
 `localization_drift`. For the MCB stages, build the selected firmware backend
-as described in [MCB emulator](#mcb-emulator). Capture shows Gazebo for
-localization and EKF, RViz for aim and tracking, and both for the three MCB
-stages. The default capture pace is `real_time_factor:=1.0` for aim and
+as described in [MCB emulator](#mcb-emulator). Capture shows RViz for aim and
+tracking. Localization, EKF and the MCB stages tile RViz left and Gazebo right.
+The default capture pace is `real_time_factor:=1.0` for aim and
 tracking and `0.5` for the other suites. The take directory keeps the desktop
 video, clock samples, launch logs and [run summary](#run-summary). Capture
 and render both use the summary verdict. Render requires PASS.

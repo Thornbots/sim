@@ -7,6 +7,8 @@
 - Run the gz server as sim's `gz_server`, which takes SIGINT/SIGTERM off gz's
   asynchronous signal handler. Under `gz sim -s` the server could deadlock at
   shutdown and need SIGKILL, failing an otherwise passing run.
+- Show the map, lidar and color-coded pose trails alongside the Gazebo
+  driving area in the localization drift and EKF suites and their videos.
 
 - Stage ghost ingress and give the Sentry a measured parked interval in
   `mcb_match`. Fail the scenario if drive, parked or spin has zero accuracy

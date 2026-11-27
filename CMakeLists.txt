@@ -26,6 +26,7 @@ find_package(ros_gz_bridge REQUIRED)
 find_package(dji_serial_bridge REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(nav2_map_server REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rosgraph_msgs REQUIRED)
 find_package(rviz_common REQUIRED)
@@ -236,6 +237,13 @@ foreach(node target_driver point_shooter target_state_truth target_state_markers
   endif()
   install(TARGETS ${node} DESTINATION lib/${PROJECT_NAME})
 endforeach()
+
+add_executable(localization_view src/localization_view.cpp)
+target_compile_features(localization_view PRIVATE cxx_std_17)
+target_include_directories(localization_view PRIVATE include)
+ament_target_dependencies(localization_view
+  geometry_msgs nav_msgs nav2_map_server rclcpp tf2_ros visualization_msgs)
+install(TARGETS localization_view DESTINATION lib/${PROJECT_NAME})
 
 add_executable(lidar_scan src/lidar_scan.cpp)
 target_compile_features(lidar_scan PUBLIC cxx_std_17)

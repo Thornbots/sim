@@ -1,0 +1,111 @@
+Panels:
+- Class: rviz_common/Displays
+  Name: Displays
+  Property Tree Widget:
+    Expanded: []
+    Splitter Ratio: 0.78
+Visualization Manager:
+  Class: ''
+  Displays:
+  - Alpha: 0.45
+    Class: rviz_default_plugins/Map
+    Color Scheme: map
+    Draw Behind: true
+    Enabled: true
+    Name: Field map
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /sim/localization/map
+    Use Timestamp: false
+    Value: true
+  - Alpha: 1
+    Class: rviz_default_plugins/LaserScan
+    Color: 255; 255; 255
+    Color Transformer: FlatColor
+    Decay Time: 0
+    Enabled: true
+    Name: Laser scan
+    Selectable: false
+    Size (Pixels): 2
+    Style: Points
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      Filter size: 10
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Value: /scan
+    Use Fixed Frame: true
+    Value: true
+  - Class: rviz_default_plugins/MarkerArray
+    Enabled: true
+    Name: Truth (green)
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /sim/localization/truth
+    Value: true
+  - Class: rviz_default_plugins/MarkerArray
+    Enabled: true
+    Name: Raw odom (amber)
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /sim/localization/raw_odom
+    Value: true
+  - Class: rviz_default_plugins/MarkerArray
+    Enabled: true
+    Name: EKF (blue)
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /sim/localization/ekf
+    Value: true
+  - Class: rviz_default_plugins/MarkerArray
+    Enabled: true
+    Name: Map pose (pink)
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /sim/localization/map_pose
+    Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 24; 28; 38
+    Fixed Frame: localization_view
+    Frame Rate: 15
+  Name: root
+  Tools:
+  - Class: rviz_default_plugins/MoveCamera
+  Transformation:
+    Current:
+      Class: sim/TF
+  Value: true
+  Views:
+    Current:
+      Angle: 0
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 96
+      Target Frame: <Fixed Frame>
+      X: 2.75
+      Y: -1.4
+    Saved: []
+Window Geometry:
+  Width: 950
+  Height: 960
+  X: 0
+  Y: 35
+  Hide Left Dock: false
+  Hide Right Dock: true
