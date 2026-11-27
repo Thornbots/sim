@@ -36,6 +36,7 @@ from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 from sim.dds_switch import FOXGLOVE_DEFAULT, udp_env
 from sim.display import display_error
 from sim.field import BLUE_START, LOOP_CENTRE, team_start_args
@@ -65,17 +66,20 @@ def _stack(context):
     part = config['part']
     windows = not _is_true(context, 'headless') and display_error() is None
     gui = 'true' if windows else 'false'
+    pkg_share = get_package_share_directory('sim')
+    rviz_dir = os.path.join(pkg_share, 'rviz')
+    backend = config['backend']
     # foxglove: this launch's own bridge (_foxglove) covers the whole run.
     sim_args = {'gui': gui, 'rviz': gui, 'foxglove': 'false',
-                'real_time_factor': config['real_time_factor']}
-    sim_args['x'], sim_args['y'] = (str(v) for v in _spawn(config['backend']))
+                'real_time_factor': config['real_time_factor'],
+                'rviz_config': os.path.join(rviz_dir, 'recording', 'localization.rviz'),
+                'gz_gui_config': os.path.join(rviz_dir, 'localization-gz.config')}
+    sim_args['x'], sim_args['y'] = (str(v) for v in _spawn(backend))
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
     sim = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(
-            get_package_share_directory('sim'), 'launch', 'sim.launch.py')),
+        PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', 'sim.launch.py')),
         launch_arguments=sim_args.items())
 
-    backend = config['backend']
     # No CV: nothing here scores it, and it costs CPU the stack under test needs.
     robot_args = {**team_start_args(),
                   'real_hardware': 'false', 'localization_mode': backend,
@@ -96,11 +100,20 @@ def _stack(context):
         PythonLaunchDescriptionSource(os.path.join(
             get_package_share_directory('thornbots_pkg'), 'launch', 'auto.launch.py')),
         launch_arguments=robot_args.items())
-    if part == 'sim':
-        return [sim]
     if part == 'robot':
         return [robot]
-    return [sim, TimerAction(period=LOCALIZATION_DELAY_S, actions=[robot])]
+    actions = [sim]
+    if windows:
+        map_file = (os.path.join(get_package_share_directory('sentry_localization'),
+                                 'map', 'clean_map.yaml') if backend == 'none' else '')
+        actions.append(Node(
+            package='sim', executable='localization_view', output='screen',
+            additional_env=udp_env(),
+            parameters=[{'use_sim_time': True, 'backend': backend,
+                         'reference_map': map_file}]))
+    if part == 'all':
+        actions.append(TimerAction(period=LOCALIZATION_DELAY_S, actions=[robot]))
+    return actions
 
 
 def _tests(context):

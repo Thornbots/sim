@@ -1,0 +1,33 @@
+[localization_tests-1] [==========] Running 10 tests from 1 test suite.
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/baseline
+[localization_tests-1]   [PASS] baseline: map->nav_odom drift over 10s = 0.0170 m (threshold 0.05 m; absolute offset 0.0198 m is expected/normal, see note above), log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/baseline (67406 ms)
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/noise_correction
+[localization_tests-1]   [PASS] noise_correction: max |map->nav_odom xy|=0.1031 m, first_half_max=0.0780, second_half_max=0.1031, growth_ratio=1.32 (threshold 2.0), log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/noise_correction (125654 ms)
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/drift_correction
+[localization_tests-1]   [PASS] drift_correction: max |map->nav_odom - pre-loop map->nav_odom| = 0.0670 m over 30s driving the cornering loop (threshold 0.4 m), log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/drift_correction (124472 ms)
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/drift_correction_obstacle
+[localization_tests-1]   [PASS] drift_correction_obstacle: max |map->nav_odom - pre-loop map->nav_odom| = 0.0564 m over 30s driving the cornering loop past the obstacle (threshold 0.4 m), log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/drift_correction_obstacle (123715 ms)
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/moving_obstacles
+[localization_tests-1]   [PASS] moving_obstacles: max |map->nav_odom - pre-loop map->nav_odom| = 0.0923 m over 30s driving the cornering loop among moving actors (threshold 0.4 m), log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/moving_obstacles (125005 ms)
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/real_accel
+[localization_tests-1]   [PASS] real_accel: max |map->nav_odom - pre-loop map->nav_odom| = 0.0323 m over 30s driving the cornering loop (threshold 0.4 m), log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/real_accel (130523 ms)
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/jerk_with_motion
+[localization_tests-1]   [PASS] jerk_with_motion: 8/8 trials passed -- trial 1: delta 0.0284 m after one leg (threshold 0.1060 m = 0.3x applied jerk 0.3535 m, OR within MAX_DELTA_THRESHOLD 0.4 m); trial 2: delta 0.2035 m after one leg (threshold 0.0409 m = 0.3x applied jerk 0.1364 m, OR within MAX_DELTA_THRESHOLD 0.4 m); trial 3: delta 0.0503 m after one leg (threshold 0.0495 m = 0.3x applied jerk 0.1650 m, OR within MAX_DELTA_THRESHOLD 0.4 m); trial 4: delta 0.3916 m after one leg (threshold 0.1811 m = 0.3x applied jerk 0.6036 m, OR within MAX_DELTA_THRESHOLD 0.4 m); trial 5: delta 0.1455 m after one leg (threshold 0.1189 m = 0.3x applied jerk 0.3962 m, OR within MAX_DELTA_THRESHOLD 0.4 m); trial 6: delta 0.1603 m after one leg (threshold 0.0580 m = 0.3x applied jerk 0.1934 m, OR within MAX_DELTA_THRESHOLD 0.4 m); trial 7: delta 0.0344 m after one leg (threshold 0.1123 m = 0.3x applied jerk 0.3743 m, OR within MAX_DELTA_THRESHOLD 0.4 m); trial 8: delta 0.0263 m after one leg (threshold 0.0333 m = 0.3x applied jerk 0.1109 m, OR within MAX_DELTA_THRESHOLD 0.4 m) -- plus one extra closing lap around the square -- log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/jerk_with_motion (96181 ms)
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/odom_stuck
+[localization_tests-1]   [PASS] odom_stuck: max pairwise map->nav_odom spread over 30s after odom_stuck = 2.8575 m (threshold 0.01 m -- proves the backend is still attempting corrections, not latched), log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/odom_stuck (124946 ms)
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/scan_degraded
+[localization_tests-1]   [PASS] scan_degraded: max truth error before 0.0671 m (< 0.4), during 0.3125 m (< 0.5), after 0.0917 m (< 0.4), log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/scan_degraded (114132 ms)
+[localization_tests-1] [ RUN      ] Localization/DriftSuite.Scenario/parked_push
+[localization_tests-1]   [PASS] parked_push: truth moved 0.0404 m (want 0.025-0.05), estimate missed by 0.0024 m (threshold 0.015), scan_ok=true, log_errors=0
+[localization_tests-1] [       OK ] Localization/DriftSuite.Scenario/parked_push (118769 ms)
+[localization_tests-1] [==========] 10 tests from 1 test suite ran. (1150809 ms total)
+[localization_tests-1] === 10 passed in 1151.09s ===

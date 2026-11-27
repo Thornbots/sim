@@ -2,12 +2,22 @@
 
 ## Unreleased
 
+- Publish one run summary for every guarded integration suite. Use its verdict
+  for the runner exit status and the recording banner.
+- Run the gz server as sim's `gz_server`, which takes SIGINT/SIGTERM off gz's
+  asynchronous signal handler. Under `gz sim -s` the server could deadlock at
+  shutdown and need SIGKILL, failing an otherwise passing run.
+- Show the map, lidar and color-coded pose trails alongside the Gazebo
+  driving area in the localization drift and EKF suites and their videos.
+- Show fading hit and miss traces in the aim bench's RViz view.
+- Fail parked bench cells if a launcher exit in the scoring window goes unscored.
 - Launch scored Sentry shots 0.042 rad below the bore, the robot-fitted
   `SHOT_PITCH_DOWN_BIAS` the firmware already aims against. Sim shots had flown
   that far high (about 7 cm at 1.6 m), putting spin-phase shots over the top edge.
 - Shrink ghost hulls to 0.65 so no hull part hides a ghost's armor (E27 R42).
   At 0.75 the hull covered half of `armor_0`, turning face-on hits into hull
   contacts once per ghost revolution.
+
 - Stage ghost ingress and give the Sentry a measured parked interval in
   `mcb_match`. Fail the scenario if drive, parked or spin has zero accuracy
   attempts, and log the detections published during the match.

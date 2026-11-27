@@ -361,6 +361,8 @@ TEST_P(E2ESuite, MCB) {
     EXPECT_LE(chassis_displacement, .03)
         << c.name << ": chassis moved during a parked-shooter cell";
     const auto &mcb = s->shots.at("mcb");
+    EXPECT_EQ(mcb.size(), s->physical_shot_times.size())
+        << c.name << ": launcher exits must each produce a scored shot";
     int hit = 0;
     for (const auto &r : mcb)
       hit += r["hit"].get<bool>();

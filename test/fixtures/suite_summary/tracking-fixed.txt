@@ -1,0 +1,28 @@
+[estimation_tests-14] [==========] Running 12 tests from 1 test suite.
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/flat_stationary_lateral_shooter0
+[estimation_tests-14] [wait_until] timed out after 60.00s waiting for: truth at 34.5 s
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/flat_stationary_lateral_shooter0 (68404 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/flat_stationary45_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/flat_stationary45_lateral_shooter0 (68170 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/flat_speed0_5_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/flat_speed0_5_lateral_shooter0 (68222 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/flat_speed1_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/flat_speed1_lateral_shooter0 (68280 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/flat_speed2_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/flat_speed2_lateral_shooter0 (68320 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/flat_speed4_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/flat_speed4_lateral_shooter0 (68174 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/staggered_stationary_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/staggered_stationary_lateral_shooter0 (68224 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/staggered_stationary45_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/staggered_stationary45_lateral_shooter0 (68193 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/staggered_speed0_5_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/staggered_speed0_5_lateral_shooter0 (68206 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/staggered_speed1_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/staggered_speed1_lateral_shooter0 (68174 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/staggered_speed2_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/staggered_speed2_lateral_shooter0 (68224 ms)
+[estimation_tests-14] [ RUN      ] Cells/EstimationSuite.Estimation/staggered_speed4_lateral_shooter0
+[estimation_tests-14] [       OK ] Cells/EstimationSuite.Estimation/staggered_speed4_lateral_shooter0 (68178 ms)
+[estimation_tests-14] [==========] 12 tests from 1 test suite ran. (819037 ms total)
+[estimation_tests-14] === 12 passed in 819.04s ===

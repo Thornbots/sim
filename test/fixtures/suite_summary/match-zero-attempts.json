@@ -1,0 +1,42 @@
+{
+  "friendly_contacts": 8,
+  "sentry_friendly_contacts": 0,
+  "shots_by_robot": {
+    "ally_0": 20,
+    "opponent_0": 12,
+    "opponent_1": 20,
+    "sentry": 52
+  },
+  "segments": [
+    {
+      "segment": "approach",
+      "shots": 0,
+      "accuracy_attempts": 0,
+      "referee_credited_hits": 0,
+      "valid_enemy_panel_contacts": 0,
+      "valid_enemy_panel_contact_rate": null,
+      "localization_p95_m": 0.042223861300808754,
+      "diagnosis": null
+    },
+    {
+      "segment": "spin",
+      "shots": 52,
+      "accuracy_attempts": 50,
+      "referee_credited_hits": 40,
+      "valid_enemy_panel_contacts": 40,
+      "valid_enemy_panel_contact_rate": 0.8,
+      "localization_p95_m": 0.017380101617763117,
+      "diagnosis": null
+    },
+    {
+      "segment": "parked",
+      "shots": 0,
+      "accuracy_attempts": 0,
+      "referee_credited_hits": 0,
+      "valid_enemy_panel_contacts": 0,
+      "valid_enemy_panel_contact_rate": null,
+      "localization_p95_m": 0.00792659584930626,
+      "diagnosis": "target_tracker/MCB aim planner: no firmware shots during this segment"
+    }
+  ]
+}

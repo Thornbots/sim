@@ -53,7 +53,7 @@ protected:
     feedback_ = node_->create_subscription<sensor_msgs::msg::JointState>("/mcb_emulator/motors", 10,
       [this](sensor_msgs::msg::JointState::ConstSharedPtr msg) { motors_ = *msg; });
     server_ = std::make_unique<sim::LaunchTree>(
-      std::vector<std::string>{"gz", "sim", "-s", "-r", path_ + ".sdf"}, path_ + ".log");
+      std::vector<std::string>{SIM_GZ_SERVER, path_ + ".sdf", "-r"}, path_ + ".log");
     ASSERT_TRUE(wait([this] { fd_ = open(path_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK); return fd_ >= 0; }));
     ASSERT_TRUE(wait([this] { return !motors_.position.empty(); }));
   }
