@@ -42,7 +42,7 @@ fi
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_SUITE="$SELF/run_suite.sh"
-PATTERN='/install/|gz sim|ruby |MCB-project|renode|mcb_type_c|ros2 (launch|run)|guarded_exec|tee -i|e2e_suite|estimation_suite|run_suite'
+PATTERN='/install/|gz sim|gz_server|ruby |MCB-project|renode|mcb_type_c|ros2 (launch|run)|guarded_exec|tee -i|e2e_suite|estimation_suite|run_suite'
 BAD_LOG='SIGKILLing|did not exit within|outlived the launch|sending signal .SIG(TERM|KILL).|process has died|unclean shutdown'
 mkdir -p "$OUT"
 

@@ -70,7 +70,7 @@ preflight() {
             localization_drift:suite) [ "$arg" = suite:=drift ] || { echo "suite must match localization_drift"; return 1; } ;;
         esac
     done
-    live=$(ps aux | grep -E 'gz sim|slam_toolbox|amcl|map_server|ekf_filter_node|pose_translator|pose_emulator|ros2 launch' \
+    live=$(ps aux | grep -E 'gz sim|gz_server|slam_toolbox|amcl|map_server|ekf_filter_node|pose_translator|pose_emulator|ros2 launch' \
         | grep -v -e grep -e run_suite.sh -e defunct)
     if [ -n "$live" ]; then
         echo "a stack is already running; stop it first (kill_launch.sh -l)"

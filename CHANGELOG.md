@@ -4,6 +4,9 @@
 
 - Publish one run summary for every guarded integration suite. Use its verdict
   for the runner exit status and the recording banner.
+- Run the gz server as sim's `gz_server`, which takes SIGINT/SIGTERM off gz's
+  asynchronous signal handler. Under `gz sim -s` the server could deadlock at
+  shutdown and need SIGKILL, failing an otherwise passing run.
 
 - Stage ghost ingress and give the Sentry a measured parked interval in
   `mcb_match`. Fail the scenario if drive, parked or spin has zero accuracy

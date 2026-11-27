@@ -385,6 +385,14 @@ outside the launch tree to clean up:
 - gz sim starts as the launch's direct child
   ([`sim/gz_process.py`](sim/gz_process.py)). `ros_gz_sim`'s own launch file
   runs it under `sh -c`, which dies on SIGINT/SIGTERM and orphans the server.
+- The server is `gz_server` ([`src/gz_server.cpp`](src/gz_server.cpp)), the
+  `gz sim -s WORLD [-r]` server without the ruby front end; the GUI stays
+  `gz sim -g`. gz-common 5 runs `Server::Stop()` inside the asynchronous
+  signal handler, on top of the interrupted sim thread, and the Sensors system
+  waits there for its render thread. A SIGINT that landed while the sim thread
+  held a gz-transport lock that the render thread also needed deadlocked the
+  server, which then ignored SIGTERM until SIGKILL. `gz_server` blocks both
+  signals in every thread and calls `Server::Stop()` from its main thread.
 - `sim::LaunchTree::stop()` sends SIGINT to the leader only (a group for
   Renode and `ros2 run`), then expects the whole group to be gone. A member
   that survives is SIGKILLed and reported (`clean()` is false, the E2E suite
