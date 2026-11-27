@@ -9,6 +9,8 @@
   shutdown and need SIGKILL, failing an otherwise passing run.
 - Show the map, lidar and color-coded pose trails alongside the Gazebo
   driving area in the localization drift and EKF suites and their videos.
+- Show fading hit and miss traces in the aim bench's RViz view.
+- Fail parked bench cells if a launcher exit in the scoring window goes unscored.
 
 - Stage ghost ingress and give the Sentry a measured parked interval in
   `mcb_match`. Fail the scenario if drive, parked or spin has zero accuracy

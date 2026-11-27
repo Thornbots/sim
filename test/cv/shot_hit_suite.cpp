@@ -21,6 +21,7 @@
 #include "sim/referee_launcher.hpp"
 #include "AimPlannerConstants.hpp"
 #include "LauncherHeat.hpp"
+#include <algorithm>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/vector3_stamped.hpp>
 #include <gtest/gtest.h>
@@ -71,7 +72,7 @@ class ShotSampler : public sim::SimTimeNode {
   struct Mark {
     double t;
     bool hit;
-    cb::Vec ray, panel;
+    cb::Vec origin, endpoint;
   };
 
 public:
@@ -82,11 +83,10 @@ public:
   int fired = 0, hits = 0, launcher_violations = 0;
   double aim_yaw_tv = 0, aim_pitch_tv = 0;
   int panel_flips = 0, scored_aims = 0;
-  double stagger, lifetime;
+  double stagger;
   std::vector<uint32_t> crossings;
-  explicit ShotSampler(double stagger_ = 0, double lifetime_ = 5)
-      : SimTimeNode("shot_hit_test_sampler"), stagger(stagger_),
-        lifetime(lifetime_) {
+  explicit ShotSampler(double stagger_ = 0)
+      : SimTimeNode("shot_hit_test_sampler"), stagger(stagger_) {
     truth_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "/target/ground_truth_odom", 10,
         [this](const nav_msgs::msg::Odometry &m) {
@@ -343,7 +343,7 @@ public:
            {"target_vel",
             {cb::rounded(velocity.x(), 3), cb::rounded(velocity.y(), 3)}},
            {"delay_ms", shot.fire.delay}});
-      marks_.push_back({now, hit, best.ray, best.pos});
+      marks_.push_back({now, hit, shot.origin, best.ray});
     }
     pending_ = std::move(keep);
   }
@@ -406,8 +406,15 @@ private:
   }
   void publish_markers() {
     using M = visualization_msgs::msg::Marker;
+    constexpr double kTraceLifetime = 1.;
+    const double now = now_s();
+    marks_.erase(std::remove_if(marks_.begin(), marks_.end(), [now](const auto &mark) {
+      return now - mark.t >= kTraceLifetime;
+    }), marks_.end());
+    if (!markers_->get_subscription_count())
+      return;
+
     visualization_msgs::msg::MarkerArray out;
-    double now = now_s();
     if (!truth.empty())
       for (int k = 0; k < 4; ++k) {
         auto p = cb::panel_poses(truth.back().center,
@@ -435,8 +442,7 @@ private:
     aim.scale.x = .005;
     aim.color.r = aim.color.g = aim.color.b = 1;
     if (!aims.empty() && !shooter.empty()) {
-      aim.points = {point(shooter.back().center),
-                    point(shooter.back().center + aims.back().second)};
+      aim.points = {point(shooter.back().center), point(aims.back().second)};
     } else
       aim.action = M::DELETE;
     out.markers.push_back(aim);
@@ -451,32 +457,26 @@ private:
     if (flight.points.empty())
       flight.action = M::DELETE;
     out.markers.push_back(flight);
-    marks_.erase(
-        std::remove_if(marks_.begin(), marks_.end(),
-                       [&](const auto &m) { return now - m.t > lifetime; }),
-        marks_.end());
-    auto dots = marker("shots", M::SPHERE_LIST),
-         lines = marker("shot_to_panel", M::LINE_LIST);
-    dots.scale.x = dots.scale.y = dots.scale.z = .03;
-    lines.scale.x = .006;
-    for (const auto &m : marks_) {
-      dots.points.push_back(point(m.ray));
-      lines.points.push_back(point(m.ray));
-      lines.points.push_back(point(m.panel));
-      std_msgs::msg::ColorRGBA c;
-      c.a = 1;
-      c.r = m.hit ? 0 : 1;
-      c.g = m.hit ? 1 : 0;
-      dots.colors.push_back(c);
-      c.g = m.hit ? .6 : .5;
-      lines.colors.push_back(c);
-      lines.colors.push_back(c);
+    auto trace = marker("shot_traces", M::LINE_LIST);
+    auto impact = marker("shot_endpoints", M::SPHERE_LIST);
+    trace.scale.x = .035;
+    impact.scale.x = impact.scale.y = impact.scale.z = .10;
+    for (const auto &mark : marks_) {
+      std_msgs::msg::ColorRGBA color;
+      // RViz's shared line material takes its blend mode from the last vertex.
+      color.a = .95F * std::min(1., (kTraceLifetime - (now - mark.t)) / .75);
+      color.r = mark.hit ? .15F : 1.F;
+      color.g = mark.hit ? 1.F : .2F;
+      trace.points.push_back(point(mark.origin));
+      trace.points.push_back(point(mark.endpoint));
+      trace.colors.insert(trace.colors.end(), 2, color);
+      impact.points.push_back(point(mark.endpoint));
+      impact.colors.push_back(color);
     }
-    if (marks_.empty()) {
-      dots.action = lines.action = M::DELETE;
-    }
-    out.markers.push_back(dots);
-    out.markers.push_back(lines);
+    if (trace.points.empty())
+      trace.action = impact.action = M::DELETE;
+    out.markers.push_back(std::move(trace));
+    out.markers.push_back(std::move(impact));
     markers_->publish(out);
   }
 };
@@ -565,7 +565,7 @@ TEST_P(ShotSuite, ShotHit) {
               << " m/s, spin=" << std::fixed << std::setprecision(2) << c.spin
               << " Hz, panel stagger=" << std::setprecision(3) << c.stagger
               << " m, " << cb::options.path << " path\n";
-    s = std::make_shared<ShotSampler>(c.stagger, 1 / std::max(1., c.speed));
+    s = std::make_shared<ShotSampler>(c.stagger);
     s->wait_until([&]() { return s->now_s() > 0; }, 5, "the first /clock");
   }
   timing::set_sim_clock([s]() { return s->now_s(); });
