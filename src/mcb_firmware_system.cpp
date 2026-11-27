@@ -16,7 +16,6 @@
 #include <gz/sim/components/Inertial.hh>
 #include <gz/sim/components/JointPosition.hh>
 #include <gz/sim/components/JointVelocity.hh>
-#include <gz/common/SignalHandler.hh>
 #include <gz/sim/Events.hh>
 #include <gz/sim/EventManager.hh>
 #include <gz/transport/Node.hh>
@@ -45,7 +44,8 @@ public:
     events_ = &events;
     // Launch stops the UART bridge and coordinator at the same moment as gz;
     // a missing acknowledgment then is shutdown, not a lockstep failure.
-    signals_.AddCallback([stopping = stopping_](int) {
+    // Server::Stop() emits events::Stop, also during the board boot wait below.
+    stop_conn_ = events.Connect<gz::sim::events::Stop>([stopping = stopping_] {
       *stopping = true;
       mcb_firmware::cancelled() = true;
     });
@@ -472,8 +472,8 @@ public:
   }
 
 private:
-  gz::common::SignalHandler signals_;
   std::shared_ptr<std::atomic<bool>> stopping_ = std::make_shared<std::atomic<bool>>(false);
+  gz::common::ConnectionPtr stop_conn_;
   gz::sim::EventManager *events_ = nullptr;
   gz::transport::Node gz_node_;
   gz::transport::Node::Publisher clock_pub_;

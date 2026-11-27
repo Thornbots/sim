@@ -1,0 +1,52 @@
+{
+  "friendly_contacts": 3,
+  "sentry_friendly_contacts": 0,
+  "shots_by_robot": {
+    "ally_0": 21,
+    "opponent_0": 10,
+    "opponent_1": 21,
+    "sentry": 52
+  },
+  "segments": [
+    {
+      "segment": "approach",
+      "shots": 0,
+      "accuracy_attempts": 0,
+      "referee_credited_hits": 0,
+      "valid_enemy_panel_contacts": 0,
+      "valid_enemy_panel_contact_rate": null,
+      "localization_p95_m": 0.045620925972992644,
+      "diagnosis": null
+    },
+    {
+      "segment": "drive",
+      "shots": 7,
+      "accuracy_attempts": 7,
+      "referee_credited_hits": 4,
+      "valid_enemy_panel_contacts": 4,
+      "valid_enemy_panel_contact_rate": 0.5714285714285714,
+      "localization_p95_m": 0.04455697318008027,
+      "diagnosis": "pose/TF stamps: head_pitch p95 attitude error exceeds 1 degree"
+    },
+    {
+      "segment": "spin",
+      "shots": 40,
+      "accuracy_attempts": 36,
+      "referee_credited_hits": 31,
+      "valid_enemy_panel_contacts": 31,
+      "valid_enemy_panel_contact_rate": 0.8611111111111112,
+      "localization_p95_m": 0.04188959209409789,
+      "diagnosis": null
+    },
+    {
+      "segment": "parked",
+      "shots": 5,
+      "accuracy_attempts": 5,
+      "referee_credited_hits": 4,
+      "valid_enemy_panel_contacts": 4,
+      "valid_enemy_panel_contact_rate": 0.8,
+      "localization_p95_m": 0.05424774828393712,
+      "diagnosis": null
+    }
+  ]
+}

@@ -95,6 +95,13 @@ ros2 launch sim localization_tests.launch.py
 `suite:=ekf` runs the EKF ground-truth test instead. It is on demand, not part
 of the standard run: run it after changing the EKF or rf2o config.
 
+With a display, both suites open a Gazebo view over the drive loop and an
+RViz view of the field map, lidar and recent pose trails. The trails compare
+Gazebo truth, raw odometry translated by its boot position, and EKF odometry
+before map correction. The drift suite also shows the corrected map pose.
+The EKF suite displays the saved field map for reference with its map
+backend disabled. Use `headless:=true` to skip the two viewers.
+
 The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
 neighbouring panels staggered 10.39 cm apart vertically (about 83% of a
@@ -320,17 +327,54 @@ the bench, `only_stationary:=true` runs the stationary case, `speeds:='0.5 1'`
 picks the moving cases. `headless:=true` drops the gz GUI and rviz from
 either. `--show-args` on either launch lists the rest.
 
-`tools/run_suite.sh localization_drift|ekf|aim|tracking|mcb_parked|mcb_drive|mcb_match [args]` wraps any of these
-launches: it refuses to start over a running stack, tees the output to
-`/tmp/sim_suite_*.log`, then runs `tools/check_bench_log.cpp` on it. It exits 0
-only when GTest passed and the checker trusts the run. The localization and
-MCB E2E suites also check that `gz` is available before launch, and every
-suite that something else could leave running needs `sim` built and sourced
-(`guarded_exec`, below):
+`tools/run_suite.sh localization_drift|ekf|aim|tracking|mcb_parked|mcb_drive|mcb_match [args]` wraps
+these launches. It refuses to start over a running stack and needs `sim`
+built and sourced. The localization and MCB E2E suites also need `gz`.
+Each run writes `launch.log`, suite telemetry and `summary.json` to a new
+`/tmp/sim_suite_<suite>.*` directory by default. Use `log_dir:=<path>` to choose
+a fresh run directory for any suite.
 
 ```bash
-src/sim/tools/run_suite.sh localization_drift scenario:=odom_stuck
+src/sim/tools/run_suite.sh localization_drift scenario:=odom_stuck log_dir:=/tmp/drift-check
 ```
+
+#### Run summary
+
+`summary.json` is the run verdict. The last line is `PASS <suite> <summary path>`
+or `FAIL <suite> <summary path>`, with exit status 0 or 1 respectively.
+PASS requires a successful, uninterrupted launch, every selected GTest case
+completed and passed, an accepting checker, clean teardown and complete
+scoring evidence. A recorded run also requires a complete desktop and clock
+capture. Handled interrupts publish FAIL. A killed process can leave a run
+directory without a verdict.
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | Schema revision, currently 1 |
+| `suite`, `launch_file`, `launch_args` | Suite name and ordered ROS launch arguments, including wrapper defaults |
+| `git_shas` | Built package and firmware revisions when supplied by the build. Set `SIM_BUILD_REVISIONS` to a JSON file mapping checkout names to their full build SHAs. An empty object means no build manifest was available. |
+| `test_cases` | `expected` selected cases from the GTest plan, or null without a plan. `executed` counts cases that finished with a pass or failure. `passed`, `failed`, `skipped` and `cases` give native outcomes. A skipped or unfinished case prevents PASS. |
+| `launch_exit_code`, `interrupted` | Raw launch exit status (null before launch) and whether the runner handled an interrupt |
+| `checker` | Native checker verdict, exit code, reasons and per-log findings. Includes launch and nested stack logs from the run. Verdict is `PASS`, `FAIL` or `NOT_RUN`. |
+| `teardown` | `clean` and shutdown reasons detected in the checked logs. Null means cleanliness could not be assessed. |
+| `metrics` | Native `cells` or `phases` as described below. Partial results can be present on FAIL. |
+| `capture` | Desktop/clock capture status and any failure reason. Null for a run without recording. |
+| `verdict`, `reasons` | Final `PASS` or `FAIL` and the conditions that failed |
+
+Aim cells include hits, scored shots and expected shots. Tracking cells include
+state sample counts, valid fraction and steady-state error statistics.
+Localization drift preserves the measurements and thresholds printed per
+scenario. EKF reports its sample count and raw and fused error measurements.
+Parked cells include the MCB hit rate and scored-shot denominator. Drive
+phases include the native hit rate and scored shots.
+
+Match phases report `sentry_scored_shots`, `accuracy_attempts`,
+`referee_credits` and `valid_enemy_panel_contacts`. The valid contact rate
+uses accuracy attempts against living opponents as its denominator. Each
+fighting phase requires at least one such attempt. Approach can have zero.
+The match also reports `scored_shots_by_robot`, `all_robots_friendly_contacts`
+and its Sentry subset, `sentry_friendly_contacts`. These fields use the native
+score aggregates. Per-impact telemetry can include extra events.
 
 #### Startup and shutdown contract
 
@@ -348,6 +392,14 @@ outside the launch tree to clean up:
 - gz sim starts as the launch's direct child
   ([`sim/gz_process.py`](sim/gz_process.py)). `ros_gz_sim`'s own launch file
   runs it under `sh -c`, which dies on SIGINT/SIGTERM and orphans the server.
+- The server is `gz_server` ([`src/gz_server.cpp`](src/gz_server.cpp)), the
+  `gz sim -s WORLD [-r]` server without the ruby front end; the GUI stays
+  `gz sim -g`. gz-common 5 runs `Server::Stop()` inside the asynchronous
+  signal handler, on top of the interrupted sim thread, and the Sensors system
+  waits there for its render thread. A SIGINT that landed while the sim thread
+  held a gz-transport lock that the render thread also needed deadlocked the
+  server, which then ignored SIGTERM until SIGKILL. `gz_server` blocks both
+  signals in every thread and calls `Server::Stop()` from its main thread.
 - `sim::LaunchTree::stop()` sends SIGINT to the leader only (a group for
   Renode and `ros2 run`), then expects the whole group to be gone. A member
   that survives is SIGKILLed and reported (`clean()` is false, the E2E suite
@@ -360,7 +412,7 @@ outside the launch tree to clean up:
 - The firmware process has its own process group on purpose, so a group SIGINT
   cannot kill it mid-tick; it exits when gz closes its stdin.
 - The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero node
-  exit, including -2.
+  exit, including -2. The run summary requires clean teardown.
 - `gz_bridge` frees its ROS context before `main` returns
   ([`src/gz_bridge.cpp`](src/gz_bridge.cpp)). `ros_gz_bridge`'s node is
   referenced from its own handles, services and timer, so with the global context the participant
@@ -770,11 +822,12 @@ a 21-node stack timed out its first lockstep hold); on restores the container pr
 peers, for cross-machine tests. See `sim/dds_switch.py` and
 [thornbots_pkg](../thornbots_pkg/README.md#remote-dds-and-foxglove).
 
-A fresh Foxglove 3D panel shows none of our displays. `foxglove/` has one
-layout per rviz config, the same displays, fixed frame and view: `config.json`
-for `sim.launch.py` and the localization suite, `estimation.json` and
-`cv_target.json` for the two CV benches. Import one (the layout menu, then
-"Import from file"). After editing an rviz config, regenerate them:
+A fresh Foxglove 3D panel shows none of our displays. `foxglove/` mirrors the
+displays, fixed frames and Orbit views of the top-level `rviz/` presets.
+Import `config.json` for the regular sim view, or `estimation.json` and
+`cv_target.json` for the CV benches, from the layout menu's "Import from file".
+The localization recording uses its own top-down preset in `rviz/recording/`.
+After editing a top-level RViz preset, regenerate the layouts:
 
 ```bash
 ros2 run sim rviz_to_foxglove --package-dir src/sim  # --check: exit 1 if stale
@@ -828,18 +881,19 @@ python3 src/sim/tools/record_e2e.py render /tmp/ekf-take /tmp/ekf.mp4 --pr-clip
 Capture accepts every [suite runner](#run-the-tests) suite and forwards
 `name:=value` launch arguments, for example `scenario:=odom_stuck` for
 `localization_drift`. For the MCB stages, build the selected firmware backend
-as described in [MCB emulator](#mcb-emulator). Capture shows Gazebo for
-localization and EKF, RViz for aim and tracking, and both for the three MCB
-stages. The default capture pace is `real_time_factor:=1.0` for aim and
+as described in [MCB emulator](#mcb-emulator). Capture shows RViz for aim and
+tracking. Localization, EKF and the MCB stages tile RViz left and Gazebo right.
+The default capture pace is `real_time_factor:=1.0` for aim and
 tracking and `0.5` for the other suites. The take directory keeps the desktop
-video, clock samples, suite and checker output, and verdict. Rendering
-requires a successful suite, checker, and capture.
+video, clock samples, launch logs and [run summary](#run-summary). Capture
+and render both use the summary verdict. Render requires PASS.
 
 Rendering writes a 1080p H.264 MP4 and a JSON sidecar. It uses recorded
 `/clock` samples to play at 1× sim time, trimming to the suite's scored
 intervals where available and cutting jumps in the simulation clock. The
-banner shows the suite verdict, absolute sim time, and available cell or
-segment labels and hits/shots. Use `--start` and `--end` with absolute sim
+banner shows the suite verdict, absolute sim time and available cell or
+segment labels. Match videos also show run-wide Sentry referee credits per
+scored shot from the summary. Use `--start` and `--end` with absolute sim
 seconds to choose a window or `--gz-zoom` to crop the MCB Gazebo pane.
 `--pr-clip` also writes a 960×540
 `<output-stem>-pr.mp4` with up to 30 seconds of the render, under 10 MB.

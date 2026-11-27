@@ -53,7 +53,7 @@ from sim.dds_switch import (
     dds_environment, FOXGLOVE_DEFAULT, remote_dds_argument, udp_env)
 from sim.display import display_error
 from sim.field import BLUE_START, default_world, world_path
-from sim.gz_process import gz_sim_process
+from sim.gz_process import gz_server_process, gz_sim_process
 from sim.mcb_link import default_mcb_link
 from sim.suite_exit import finish_suite
 
@@ -312,9 +312,9 @@ def generate_launch_description():
     # separately once the robot is in (gz_gui below): a GUI started with the
     # server takes its first state before the spawn and never shows the robot.
     # No shell between launch and gz: see sim/gz_process.py.
-    gz_sim = OpaqueFunction(function=lambda context: [gz_sim_process([
+    gz_sim = OpaqueFunction(function=lambda context: [gz_server_process(
         LaunchConfiguration('world').perform(context),
-        *(['-s'] if _is_true(context, 'uart_epoch_zero') else ['-r', '-s'])])])
+        run=not _is_true(context, 'uart_epoch_zero'))])
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
     clock_bridge = clock_bridge_node(
