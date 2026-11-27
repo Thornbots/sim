@@ -777,11 +777,12 @@ a 21-node stack timed out its first lockstep hold); on restores the container pr
 peers, for cross-machine tests. See `sim/dds_switch.py` and
 [thornbots_pkg](../thornbots_pkg/README.md#remote-dds-and-foxglove).
 
-A fresh Foxglove 3D panel shows none of our displays. `foxglove/` has one
-layout per rviz config, the same displays, fixed frame and view: `config.json`
-for `sim.launch.py` and the localization suite, `estimation.json` and
-`cv_target.json` for the two CV benches. Import one (the layout menu, then
-"Import from file"). After editing an rviz config, regenerate them:
+A fresh Foxglove 3D panel shows none of our displays. `foxglove/` mirrors the
+displays, fixed frames and Orbit views of the top-level `rviz/` presets.
+Import `config.json` for the regular sim view, or `estimation.json` and
+`cv_target.json` for the CV benches, from the layout menu's "Import from file".
+The localization recording uses its own top-down preset in `rviz/recording/`.
+After editing a top-level RViz preset, regenerate the layouts:
 
 ```bash
 ros2 run sim rviz_to_foxglove --package-dir src/sim  # --check: exit 1 if stale

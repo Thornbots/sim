@@ -72,7 +72,7 @@ def _stack(context):
     # foxglove: this launch's own bridge (_foxglove) covers the whole run.
     sim_args = {'gui': gui, 'rviz': gui, 'foxglove': 'false',
                 'real_time_factor': config['real_time_factor'],
-                'rviz_config': os.path.join(rviz_dir, 'localization.rviz'),
+                'rviz_config': os.path.join(rviz_dir, 'recording', 'localization.rviz'),
                 'gz_gui_config': os.path.join(rviz_dir, 'localization-gz.config')}
     sim_args['x'], sim_args['y'] = (str(v) for v in _spawn(backend))
     sim_args.update({k: config[k] for k in SIM_PASSTHROUGH if k in config})
