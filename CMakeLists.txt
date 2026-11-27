@@ -94,6 +94,8 @@ if(EXISTS "${MCB_AIM_PLANNER_DIR}/AimPlanner.cpp" AND EXISTS "${MCB_INDEXER_DIR}
   install(TARGETS mcb_aim_standin DESTINATION lib/${PROJECT_NAME})
 endif()
 
+install(PROGRAMS scripts/onnx_armor_inference.py DESTINATION lib/${PROJECT_NAME})
+
 add_executable(bench_world src/bench_world.cpp)
 target_compile_features(bench_world PUBLIC cxx_std_17)
 target_link_libraries(bench_world Eigen3::Eigen)
@@ -544,6 +546,9 @@ if(BUILD_TESTING)
     OPPONENT_DRIVER_EXE="$<TARGET_FILE:opponent_driver>")
   target_link_libraries(test_opponent_startup suite_support gz-transport::core gz-msgs::core)
   ament_target_dependencies(test_opponent_startup rclcpp std_msgs)
+  ament_add_pytest_test(sim_onnx_armor test/test_onnx_armor_inference.py TIMEOUT 120
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENV "PYTEST_ADDOPTS=-p no:anyio")
   ament_add_pytest_test(sim_dds_switch test/test_dds_switch.py TIMEOUT 60
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENV "PYTEST_ADDOPTS=-p no:anyio")

@@ -22,6 +22,10 @@
   <depend>rviz_common</depend>
   <depend>rviz_default_plugins</depend>
   <depend>pluginlib</depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>realsense_yolov8_nitros_bridge</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>foxglove_bridge</exec_depend>
   <depend>tf2_msgs</depend>

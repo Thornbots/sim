@@ -153,7 +153,7 @@ PanelImage render_panels(const PanelCamera & camera, const std::vector<RenderPan
           const std::array<double, 3> color = panel.class_id < 4 ?
             std::array<double, 3>{40, 120, 255} : std::array<double, 3>{255, 40, 40};
           for (int c = 0; c < 3; ++c) {
-            image.rgb8[rgb + c] = channel(image.rgb8[rgb + c] + strength * color[c]);
+            image.rgb8[rgb + c] = channel((bar ? 0 : image.rgb8[rgb + c]) + strength * color[c]);
           }
           if (bar && dx == 0 && std::abs(std::abs(b.x()) - kHalfSpacing) < 0.002) {
             for (int c = 0; c < 3; ++c) {

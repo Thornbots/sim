@@ -95,6 +95,11 @@ ros2 launch sim localization_tests.launch.py
 `suite:=ekf` runs the EKF ground-truth test instead. It is on demand, not part
 of the standard run: run it after changing the EKF or rf2o config.
 
+For the image bench CPU inference node, run `bash src/sim/scripts/image_bench_deps.sh`
+from the container workspace root and source `install/setup.bash`. This installs
+ONNX Runtime for the current user and builds the shared YOLO26 decoder without
+Isaac components. Set the node’s `model_onnx` parameter to the model path.
+
 The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
 neighbouring panels staggered 10.39 cm apart vertically (about 83% of a
