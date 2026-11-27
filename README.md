@@ -265,6 +265,9 @@ as on the aiming bench, and `process_noise_accel:=` sets the tracker's.
 the tracker's radius noise, initial radius and radius prior standard deviation;
 empty values use the node defaults declared in `target_tracker.cpp`.
 `log_innovations:=true` opts into the tracker's innovation diagnostics.
+`emit_normal:=true normal_yaw_noise_rad:=0.1` sends plate normals
+([emulator model](#target-driver--cv-target-emulator)), `normal_flip_probability:=` mirrors some,
+and `use_measured_normal:=false` makes the tracker ignore them.
 The [G.1 investigation](docs/cv-estimation-g1-2026-10-15.md#matched-radius-and-prior-trials)
 records the radius/prior screens and their full-matrix failures; no tuning
 default or estimation limit is changed by that checkpoint.
@@ -1455,6 +1458,13 @@ range^2` (0.0036, 3 cm at 3 m, from the stereo baseline and a 0.08 px subpixel)
 and bearing std `noise_lateral_rad * range` (0.003, about a pixel). Both are
 datasheet estimates; measure them on the robot. Set both to 0 for the old
 5 mm-only noise.
+
+`emit_normal` (off) adds each plate's outward normal in the camera body
+frame with `has_normal`, as keypoint PnP would: rotated about world up by
+`normal_yaw_noise_rad` (0) noise, reported as `normal_yaw_std`, and with
+`normal_flip_probability` (0) replaced by IPPE's mirrored solution, the
+normal reflected about the line of sight. `bench_world` takes the same three
+parameters, drawn after its position noise so those draws are unchanged.
 
 ### target_state_truth: the aiming bench's perfect knowledge
 
