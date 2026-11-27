@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Hold AMCL to lockstep in every producer-chain E2E stage. AMCL answers every
+  scan, `map_pose_publisher` uses an answer only 50 ms after its scan and waits
+  for it, and AMCL starts from the spawn prior at 5 s with `amcl_seed`. AMCL's
+  compute time, wall-timed `/initialpose` retries and time-seeded draws had
+  chosen RELOCALIZE, and with it the `mcb_match` route and drive-phase hit rate,
+  by host CPU.
 - Stop tracking colcon `build/`, `install/` and `log/` output from a 2026-10-02
   test run, and ignore those directories at the package root.
 - Publish one run summary for every guarded integration suite. Use its verdict

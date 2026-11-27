@@ -121,14 +121,20 @@ def _is_true(context, name):
 ODOM = 'nav_msgs/msg/Odometry'
 EKF_PERIOD_S = 0.034  # simulation only: 29.4 Hz for the stock 30 Hz, a whole number of ms
 MANAGER_FRAME_ACK = '/target_manager/frame_ack'
+# Simulation only: AMCL's modelled latency. It needs nav_odom TF past the scan, which comes
+# with the next EKF output (34 ms apart), so every tick this late can wait for it.
+AMCL_DELAY_S = 0.05
 MANAGER_FRAME_ACK_PARAMETER = 'state_ack_topic'
 PRODUCER_CHAINS = {
     # rf2o's verdict on a lidar scan: its quality diagnostic, one per scan even when the
     # match fails (no odometry then). gz runs the 11.2 Hz lidar on whole milliseconds, 89 ms
     # apart from 1 ms past a whole step, and rf2o grades from the second scan. It needs /odom
     # and TF past the scan stamp, and POSE skips every 100th slot, so wait 30 ms.
+    # map_pose_publisher has seen the scan too, so EKF ticks from AMCL_DELAY_S after it wait
+    # for AMCL's answer; otherwise AMCL's compute time picked the tick that used it.
     'scan': {'period_s': 0.089, 'phase_s': 0.001, 'start_s': 0.17, 'lag_s': 0.03, 'acks': [
-        '/scan_odom/quality#diagnostic_msgs/msg/DiagnosticArray']},
+        '/scan_odom/quality#diagnostic_msgs/msg/DiagnosticArray',
+        '/map_pose_publisher/scan_seen']},
     # Releases rf2o's results to the EKF one step before the tick that may use them
     # (scan_odom_gate): the first such hold at least 30 ms after the scan, which is when
     # the scan chain has held for the match. Without it a result reached either tick.
@@ -165,6 +171,16 @@ PRODUCER_MARKS = {
     'tf_lookahead_s': 0.001,
     'cv_target_none_topic': '/sim/e2e/cv_target_none',
     'target_state_none_topic': '/sim/e2e/target_state_none',
+    # AMCL answers every scan; map_pose_publisher uses an answer AMCL_DELAY_S after its scan.
+    # AMCL starts from the spawn prior at the first scan from 5 s (bring-up ends at 10 s),
+    # whenever its wall-timed activation and /initialpose came; amcl_seed seeds it.
+    'scan_result_topic': '/amcl/scan_result',
+    'refresh_after_s': 0.5,
+    'start_at_s': 5.0,
+    # A YAML list: seeded_ekf hands its parameters to AMCL as -p arguments.
+    'start_pose': f'[{BLUE_START[0]}, {BLUE_START[1]}, 0.0]',
+    'backend_result_topic': '/amcl/scan_result',
+    'backend_delay_s': AMCL_DELAY_S,
 }
 
 
@@ -567,6 +583,9 @@ def generate_launch_description():
                 + ([GroupAction([SetParameter(name='tick_topic', value='/sim/e2e/aim_tick'),
                                  *[SetParameter(name=k, value=v) for k, v in
                                    (PRODUCER_MARKS.items() if producers else [])],
+                                 *([SetParameter(name='pf_seed', value=ParameterValue(
+                                     LaunchConfiguration('amcl_seed'), value_type=int))]
+                                   if producers else []),
                                  robot_bringup])] if deterministic else
                    [TimerAction(period=ROBOT_DELAY_S, actions=[robot_bringup])]))
 
@@ -584,6 +603,8 @@ def generate_launch_description():
                               description='Lockstep chains for the Jetson-side producers, so '
                                           'every Jetson-to-MCB frame lands on a fixed step; '
                                           'auto follows epoch-zero startup'),
+        DeclareLaunchArgument('amcl_seed', default_value='1',
+                              description="AMCL's particle-filter seed with producer chains"),
         DeclareLaunchArgument('harness_chain', default_value='false',
                               description='The E2E harness acks a 50 ms tick that holds physics'),
         DeclareLaunchArgument('epoch_coordinator_delay_s', default_value='0',
