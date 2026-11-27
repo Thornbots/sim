@@ -102,6 +102,12 @@ ament_target_dependencies(bench_world
   visualization_msgs)
 install(TARGETS bench_world DESTINATION lib/${PROJECT_NAME})
 
+add_library(panel_renderer STATIC src/panel_renderer.cpp)
+target_compile_features(panel_renderer PUBLIC cxx_std_17)
+target_include_directories(panel_renderer PUBLIC include)
+target_link_libraries(panel_renderer PUBLIC Eigen3::Eigen)
+install(TARGETS panel_renderer ARCHIVE DESTINATION lib)
+
 add_library(cv_head_aim_core src/cv_head_aim_core.cpp)
 target_compile_features(cv_head_aim_core PUBLIC cxx_std_17)
 target_include_directories(cv_head_aim_core PUBLIC include)
