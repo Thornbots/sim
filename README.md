@@ -1809,7 +1809,15 @@ The other inputs that used to depend on message timing are keyed by stamp too:
   not run-to-run identical. Its absolute corrections now affect firmware
   navigation; parked aim continues in raw odometry. A per-EKF map result
   (including invalid results) keeps lockstep live without making AMCL particles
-  deterministic.
+  deterministic. AMCL answers every scan, the `scan` chain waits until
+  `map_pose_publisher` has seen it, and that publisher answers an EKF tick only once
+  AMCL has answered every scan `AMCL_DELAY_S` (50 ms) or more before it, using only
+  those. AMCL starts from the spawn prior at the first scan from 5 s with
+  `amcl_seed` (default 1), whatever its wall-timed activation and `/initialpose`
+  did ([lockstep AMCL](../sentry_localization/README.md#configamclyaml)). Before this,
+  AMCL's compute time and start chose RELOCALIZE, so the route and the drive-phase
+  engagement followed host load
+  ([measurements](../docs/investigations/drive-wallclock-2026-11-27.md)).
 
 Run-to-run differences are located with `MCB_UART_TRACE=<file>`, which makes the MCB
 plugin log `<sim ns> <bytes> <hex>` for every Jetson-to-MCB read; diff two runs' traces to see
@@ -1881,7 +1889,8 @@ t=0, verified in the paused scene. The EKF starts at epoch zero from the
 spawn team's start (`seed_known_team:=blue`, which skips only its wait for
 referee and `/odom` data); the map backend keeps its referee gate, and
 `initial_pose_setter` gives AMCL its start pose by wall-timed retries once TF
-exists, since AMCL is off the hit path. `epoch_startup_timeout_s` defaults to
+exists; with producer chains AMCL restarts from the same prior at 5 s, so those
+retries cannot reach the hit path. `epoch_startup_timeout_s` defaults to
 90 s hosted and 1200 s for the board, which boots inside robot creation; the gate
 and spawn check wait 60 s longer. Optional `epoch_coordinator_delay_s` and
 `epoch_readiness_extra` exercise startup order and missing-readiness failure.
