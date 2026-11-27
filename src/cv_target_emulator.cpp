@@ -199,6 +199,11 @@ public:
     declare_parameter("panel_stagger_m", 0.0);
     declare_parameter("panel_view_half_angle", 75.0 * kPi / 180.0);
     declare_parameter("class_id", 2);
+    // Plate normal (camera body frame, has_normal) as a keypoint PnP would give it:
+    // yaw noise about world up, and IPPE's mirror about the line of sight.
+    declare_parameter("emit_normal", false);
+    declare_parameter("normal_yaw_noise_rad", 0.0);
+    declare_parameter("normal_flip_probability", 0.0);
 
     vfov_ = 2.0 * std::atan(std::tan(hfov_ / 2.0) *
       (static_cast<double>(height) / static_cast<double>(width)));
@@ -378,7 +383,28 @@ private:
     detection.depth_m = static_cast<float>(noisy.x());
     detection.confidence = 1.0F;
     detection.class_id = get_parameter("class_id").as_int();
+    if (get_parameter("emit_normal").as_bool()) {
+      const double yaw_std = get_parameter("normal_yaw_noise_rad").as_double();
+      Eigen::Vector3d n = panel.normal;
+      if (uniform_(random_) < get_parameter("normal_flip_probability").as_double()) {
+        const Eigen::Vector3d u = -rel_world_unit(candidate, cam_rot);
+        n = 2.0 * n.dot(u) * u - n;
+      }
+      n = Eigen::AngleAxisd(gaussian(yaw_std), Eigen::Vector3d::UnitZ()) * n;
+      const Eigen::Vector3d n_cam = cam_rot.transpose() * n;
+      detection.normal.x = n_cam.x();
+      detection.normal.y = n_cam.y();
+      detection.normal.z = n_cam.z();
+      detection.has_normal = true;
+      detection.normal_yaw_std = static_cast<float>(yaw_std);
+    }
     return detection;
+  }
+
+  // Unit camera->panel direction in the world frame.
+  static Eigen::Vector3d rel_world_unit(const Candidate & c, const Eigen::Matrix3d & cam_rot)
+  {
+    return (cam_rot * c.rel_cam).normalized();
   }
 
   bool masked() const

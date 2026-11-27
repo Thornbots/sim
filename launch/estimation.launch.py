@@ -74,7 +74,10 @@ def _stack(context):
              'pace_slack_s': float(cfg['pace_slack_s']),
              'camera_latency_s': camera_latency,
              'yaw_bearing_damping': float(cfg['yaw_bearing_damping']),
-             'seed': int(cfg['seed'])}
+             'seed': int(cfg['seed']),
+             'emit_normal': _is_true(context, 'emit_normal'),
+             'normal_yaw_noise_rad': float(cfg['normal_yaw_noise_rad']),
+             'normal_flip_probability': float(cfg['normal_flip_probability'])}
 
     # TF chain only. The enable_*:=false args skip auto.launch.py's copies
     # of the CV nodes below, and localization_mode:=none skips map_server/amcl.
@@ -100,6 +103,8 @@ def _stack(context):
         if cfg[name]:
             tracker[name] = float(cfg[name])
     tracker['log_innovations'] = _is_true(context, 'log_innovations')
+    if cfg['use_measured_normal']:
+        tracker['use_measured_normal'] = _is_true(context, 'use_measured_normal')
     actions = [
         # The world is its own clock, so no use_sim_time.
         Node(package='sim', executable='bench_world', name='bench_world', output='screen',
@@ -217,6 +222,14 @@ def generate_launch_description():
                                           'empty = its default'),
         DeclareLaunchArgument('log_innovations', default_value='false',
                               description='log target_tracker innovation diagnostics'),
+        DeclareLaunchArgument('emit_normal', default_value='false',
+                              description='bench_world sends each plate normal (has_normal)'),
+        DeclareLaunchArgument('normal_yaw_noise_rad', default_value='0.0',
+                              description="normals' yaw noise std (rad), with emit_normal"),
+        DeclareLaunchArgument('normal_flip_probability', default_value='0.0',
+                              description="chance a normal is IPPE's mirrored solution"),
+        DeclareLaunchArgument('use_measured_normal', default_value='',
+                              description="target_tracker's use_measured_normal; empty: default"),
         DeclareLaunchArgument('panel_layout', default_value='both',
                               choices=['flat', 'staggered', 'both']),
         DeclareLaunchArgument('skip_stationary', default_value='false'),

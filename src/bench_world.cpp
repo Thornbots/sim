@@ -187,6 +187,8 @@ public:
         {"publish_latency_s", 0.06}, {"camera_latency_s", 0.0},
         {"blackout_period_s", 0.0}, {"blackout_s", 0.0},
         {"panel_radius_x", 0.253729}, {"panel_radius_y", 0.249716}, {"panel_stagger_m", 0.0},
+        // Plate normals, when emit_normal: as cv_target_emulator's.
+        {"normal_yaw_noise_rad", 0.0}, {"normal_flip_probability", 0.0},
         // Each case: detections off this long while the head aims at the
         // truth, and our chassis bouncing along y within shooter_half_width.
         {"case_hold_s", 0.0}, {"shooter_speed", 0.0}, {"shooter_half_width", 1.0},
@@ -197,6 +199,7 @@ public:
       live_[name] = declare_parameter(name, value);
     }
     detections_enabled_ = declare_parameter("detections_enabled", true);
+    emit_normal_ = declare_parameter("emit_normal", false);
     // Setting it jumps the target to this yaw at the commanded spin rate,
     // and each case starts there.
     declare_parameter("target_yaw", 0.0);
@@ -802,6 +805,20 @@ private:
       d.depth_m = c.x();
       d.confidence = 1.0;
       d.class_id = class_id_;
+      if (emit_normal_) {
+        // Drawn after the position noise, so those draws match runs without normals.
+        Vector3d n = p.normal;
+        if (uniform(rng) < live_["normal_flip_probability"]) {
+          n = 2.0 * n.dot(to_cam) * to_cam - n;  // IPPE's mirror about the line of sight
+        }
+        n = Eigen::AngleAxisd(unit(rng) * live_["normal_yaw_noise_rad"], Vector3d::UnitZ()) * n;
+        const Vector3d n_cam = rot.transpose() * n;
+        d.normal.x = n_cam.x();
+        d.normal.y = n_cam.y();
+        d.normal.z = n_cam.z();
+        d.has_normal = true;
+        d.normal_yaw_std = live_["normal_yaw_noise_rad"];
+      }
       arr.detections.push_back(d);
       if (view < best_view) {
         best_view = view;
@@ -933,6 +950,7 @@ private:
   int substeps_;
   std::map<std::string, double> live_;  // changed at runtime by the bench
   bool detections_enabled_;
+  bool emit_normal_ = false;
   double frame_rate_hz_, hfov_, vfov_, range_near_, range_far_, view_half_angle_;
   int64_t class_id_;
   double head_rate_hz_, head_gain_, max_yaw_rate_, max_pitch_rate_;
