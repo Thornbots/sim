@@ -2369,6 +2369,23 @@ as a scenario error. The existing 10% diagnostic threshold uses the
 geometric contact rate. Accuracy floors, repeated-run
 spread and standalone-versus-sequence equivalence are tracked in
 [ROADMAP A](../docs/ROADMAP.md#a-acceptance-details).
+#### Encounters and shot miss breakdown
+
+`run_suite.sh mcb_match` forwards `amcl_seed`, `red_delay_s` (the red robots' scripted
+routes and spin-up start this much later), `detector_seed` and `detector_noise`
+(`true`: the estimation bench's D435 ray noise, [ray model](#target-driver--cv-target-emulator)) to the stack
+it starts, so repeated runs can be distinct encounters. Same arguments give the same
+shots.
+
+<a id="shot-miss-breakdown"></a>
+Each Sentry shot's `miss_breakdown` in `shots.jsonl` splits its miss at the front panel
+it passed nearest into right/up/normal metres of that panel, for the target the held
+TARGET_STATE was nearest at its stamp: `tracker` (the held state carried to the crossing
+by the MCB's model, against truth at the stamp carried the same way), `prediction`
+(that model's truth against the real crossing) and `aim` (the shot against the held
+model), which sum to `miss`. It also records the state's age, flight time, centre,
+velocity, spin and phase error against truth at the stamp.
+
 Detector occlusion, non-chassis appendage blockers, heat, ammo and respawn
 are not modeled; live commitments are in [A-model](../docs/ROADMAP.md#a-acceptance-details). Hurt-panel feedback is supplied, but the firmware's
 `delta_angle_got_hit_in` response has separate

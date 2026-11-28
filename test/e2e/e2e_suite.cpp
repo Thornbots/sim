@@ -55,9 +55,8 @@ public:
       }
       if (cb::options.lockstep)
         nodes.push_back("lockstep_coordinator");
-      if (!cb::options.external)
-        launch = std::make_unique<sim::LaunchTree>(
-            std::vector<std::string>{
+      if (!cb::options.external) {
+        std::vector<std::string> command{
                 "ros2", "launch", "sim", "e2e.launch.py", "run_tests:=false",
                 "headless:=" +
                     std::string(cb::options.headless ? "true" : "false"),
@@ -70,8 +69,11 @@ public:
                                                      ? "false"
                                                      : "true"),
                 "epoch_readiness_extra:=" +
-                    std::string(cb::options.lockstep ? "/sim/e2e/harness_ready" : "")},
-            cb::options.log_dir + "/stack.log");
+                    std::string(cb::options.lockstep ? "/sim/e2e/harness_ready" : "")};
+        command.insert(command.end(), cb::options.stack_args.begin(),
+                       cb::options.stack_args.end());
+        launch = std::make_unique<sim::LaunchTree>(command, cb::options.log_dir + "/stack.log");
+      }
       scorer->stack_alive = [this]() { return !launch || launch->alive(); };
       auto wait = [&](std::function<bool()> predicate, double timeout,
                       const std::string &description) {

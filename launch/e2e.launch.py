@@ -257,6 +257,9 @@ def _tests(context):
         cmd.append('--no-firmware-fixes')
     if not _is_true(context, 'lockstep'):
         cmd.append('--no-lockstep')
+    # The suite starts its own stack; these vary the encounter between runs.
+    for arg in ('amcl_seed', 'red_delay_s', 'detector_seed', 'detector_noise'):
+        cmd += ['--stack-arg', f'{arg}:={config[arg]}']
     cmd += config['pytest_args'].split()
     tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen')
     done = RegisterEventHandler(OnProcessExit(
@@ -285,6 +288,14 @@ def generate_launch_description():
                 'robot_description': ParameterValue(
                     Command(['xacro ', xacro_file]), value_type=str),
                 'opponents': opponents,
+                'seed': ParameterValue(LaunchConfiguration('detector_seed'), value_type=int),
+                # The estimation bench's D435-shaped ray noise; see README.md's target driver.
+                'noise_depth_range_coeff': ParameterValue(PythonExpression(
+                    ["0.0036 if '", LaunchConfiguration('detector_noise'), "' == 'true' else 0.0"]),
+                    value_type=float),
+                'noise_lateral_rad': ParameterValue(PythonExpression(
+                    ["0.003 if '", LaunchConfiguration('detector_noise'), "' == 'true' else 0.0"]),
+                    value_type=float),
                 'match_referee': match_referee,
                 'class_ids': [2 if name.startswith('ally') else OPPONENT_CLASS
                               for name in opponents],
@@ -388,6 +399,8 @@ def generate_launch_description():
     match_environment = Node(
         package='sim', executable='match_environment', name='match_environment', output='screen',
         parameters=[{'use_sim_time': True, 'stage': LaunchConfiguration('stage'),
+                     'red_delay_s': ParameterValue(
+                         LaunchConfiguration('red_delay_s'), value_type=float),
                      'deterministic_epoch_zero': ParameterValue(
                          LaunchConfiguration('deterministic_epoch_zero'), value_type=bool)}])
     # The bridge opens the pty once, so it starts after the emulator makes it.
@@ -611,6 +624,13 @@ def generate_launch_description():
                                           'auto follows epoch-zero startup'),
         DeclareLaunchArgument('amcl_seed', default_value='1',
                               description="AMCL's particle-filter seed with producer chains"),
+        DeclareLaunchArgument('detector_seed', default_value='0',
+                              description="detector_standin's detection-noise seed"),
+        DeclareLaunchArgument('detector_noise', default_value='false',
+                              description='Add the D435-shaped ray noise to detections'),
+        DeclareLaunchArgument('red_delay_s', default_value='0.0',
+                              description='mcb_drive/mcb_match: start the red robots '
+                              'this much later, to vary the encounter'),
         DeclareLaunchArgument('harness_chain', default_value='false',
                               description='The E2E harness acks a 50 ms tick that holds physics'),
         DeclareLaunchArgument('epoch_coordinator_delay_s', default_value='0',
