@@ -612,7 +612,8 @@ def generate_launch_description():
                 + ([barrier, pose_setter] if barrier else []) + common
                 + ([match_environment] if stage in DRIVING else [target_driver])
                 + ([GroupAction([SetParameter(name='tick_topic', value='/sim/e2e/aim_tick'),
-                                 *[SetParameter(name=k, value=v) for k, v in RELIABLE_CLOCK.items()],
+                                 *[SetParameter(name=k, value=v)
+                                   for k, v in RELIABLE_CLOCK.items()],
                                  *[SetParameter(name=k, value=v) for k, v in
                                    (PRODUCER_MARKS.items() if producers else [])],
                                  *([SetParameter(name='pf_seed', value=ParameterValue(

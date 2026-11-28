@@ -69,4 +69,5 @@ def gz_server_process(world, run=True, name='gazebo', additional_env=None):
     server = os.path.join(get_package_prefix('sim'), 'lib', 'sim', 'gz_server')
     return ExecuteProcess(
         cmd=[server, world, *(['-r'] if run else [])],
-        name=name, output='screen', additional_env={**_gz_env(), **(additional_env or {})}, shell=False)
+        name=name, output='screen', shell=False,
+        additional_env={**_gz_env(), **(additional_env or {})})
