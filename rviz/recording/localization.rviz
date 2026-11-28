@@ -21,9 +21,9 @@ Visualization Manager:
       Value: /sim/localization/map
     Use Timestamp: false
     Value: true
-  - Alpha: 1
+  - Alpha: 0.7
     Class: rviz_default_plugins/LaserScan
-    Color: 255; 255; 255
+    Color: 215; 220; 228
     Color Transformer: FlatColor
     Decay Time: 0
     Enabled: true
@@ -42,7 +42,7 @@ Visualization Manager:
     Value: true
   - Class: rviz_default_plugins/MarkerArray
     Enabled: true
-    Name: Truth (green)
+    Name: Truth (white, robot disc)
     Topic:
       Depth: 1
       Durability Policy: Volatile
@@ -52,7 +52,7 @@ Visualization Manager:
     Value: true
   - Class: rviz_default_plugins/MarkerArray
     Enabled: true
-    Name: Raw odom (amber)
+    Name: Raw odom (orange)
     Topic:
       Depth: 1
       Durability Policy: Volatile
@@ -62,7 +62,7 @@ Visualization Manager:
     Value: true
   - Class: rviz_default_plugins/MarkerArray
     Enabled: true
-    Name: EKF (blue)
+    Name: EKF (sky blue)
     Topic:
       Depth: 1
       Durability Policy: Volatile
@@ -72,7 +72,7 @@ Visualization Manager:
     Value: true
   - Class: rviz_default_plugins/MarkerArray
     Enabled: true
-    Name: Map pose (pink)
+    Name: Map pose (magenta)
     Topic:
       Depth: 1
       Durability Policy: Volatile

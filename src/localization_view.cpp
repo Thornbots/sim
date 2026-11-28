@@ -44,6 +44,7 @@ struct Track {
   std::array<float, 3> color;
   double width;
   double height;
+  bool robot;
   Offset offset;
   Odometry::ConstSharedPtr latest;
   std::optional<rclcpp::Time> last_stamp;
@@ -52,9 +53,9 @@ struct Track {
   rclcpp::Subscription<Odometry>::SharedPtr sub;
 
   Track(const char *input_topic, const char *label, std::array<float, 3> rgb,
-        double line_width, double z, Offset translation = {})
+        double line_width, double z, bool robot_marker = false, Offset translation = {})
       : input(input_topic), name(label), color(rgb), width(line_width), height(z),
-        offset(translation) {}
+        robot(robot_marker), offset(translation) {}
 
   void draw(rclcpp::Time now) {
     if (!latest) return;
@@ -90,14 +91,35 @@ struct Track {
     pose.id = 1;
     pose.type = Marker::SPHERE;
     pose.pose.position = point;
-    pose.scale.x = pose.scale.y = 2.4 * width;
+    pose.scale.x = pose.scale.y = 2.6 * width;
     pose.scale.z = 0.01;
     line.points.assign(trail.begin(), trail.end());
     if (line.points.size() < 2) line.action = Marker::DELETE;
 
     MarkerArray markers;
-    markers.markers.reserve(2);
+    markers.markers.reserve(4);
     markers.markers.push_back(std::move(line));
+    if (robot) {
+      // The robot: a dark-rimmed, body-sized disc with a heading arrow, under the trails.
+      pose.type = Marker::CYLINDER;
+      pose.pose.position.z = height - 0.1;
+      pose.scale.x = pose.scale.y = 0.55;
+      Marker heading = pose;
+      heading.id = 2;
+      heading.type = Marker::ARROW;
+      heading.pose.position.z = height + 0.2;
+      heading.pose.orientation = latest->pose.pose.orientation;
+      heading.scale.x = 0.34;
+      heading.scale.y = heading.scale.z = 0.09;
+      heading.color.r = heading.color.g = heading.color.b = 0.08f;
+      markers.markers.push_back(std::move(heading));
+      Marker outline = pose;
+      outline.id = 3;
+      outline.pose.position.z = height - 0.15;
+      outline.scale.x = outline.scale.y = 0.67;
+      outline.color.r = outline.color.g = outline.color.b = 0.08f;
+      markers.markers.push_back(std::move(outline));
+    }
     markers.markers.push_back(std::move(pose));
     pub->publish(markers);
   }
@@ -165,10 +187,11 @@ public:
 
 private:
   std::array<Track, 4> tracks_{{
-      {"/sim/raw_odom", "truth", {0.18f, 1.0f, 0.57f}, 0.15, 0.30},
-      {"/odom", "raw_odom", {1.0f, 0.64f, 0.10f}, 0.11, 0.35},
-      {"/localization/odom", "ekf", {0.16f, 0.74f, 1.0f}, 0.075, 0.40},
-      {"/localization/map_odom", "map_pose", {0.97f, 0.38f, 0.90f}, 0.040, 0.45},
+      // Okabe-Ito colours (plus white), widest first so overlaps show as stripes.
+      {"/sim/raw_odom", "truth", {1.0f, 1.0f, 1.0f}, 0.20, 0.30, true},
+      {"/odom", "raw_odom", {0.90f, 0.62f, 0.0f}, 0.13, 0.35},
+      {"/localization/odom", "ekf", {0.34f, 0.71f, 0.91f}, 0.085, 0.40},
+      {"/localization/map_odom", "map_pose", {0.80f, 0.47f, 0.65f}, 0.045, 0.45},
   }};
   tf2_ros::StaticTransformBroadcaster frame_;
   std::optional<Point> previous_truth_;

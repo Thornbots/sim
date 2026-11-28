@@ -99,6 +99,10 @@ With a display, both suites open a Gazebo view over the drive loop and an
 RViz view of the field map, lidar and recent pose trails. The trails compare
 Gazebo truth, raw odometry translated by its boot position, and EKF odometry
 before map correction. The drift suite also shows the corrected map pose.
+Trails use the colour-blind-safe Okabe-Ito colours, widest first so overlaps
+stay visible: truth white (the robot is a dark-rimmed white disc with a heading arrow),
+raw odometry orange `#E69F00`, EKF sky blue `#56B4E9` and map pose magenta
+`#CC79A7`. Lidar points are small, translucent light grey.
 The EKF suite displays the saved field map for reference with its map
 backend disabled. Use `headless:=true` to skip the two viewers.
 
@@ -882,8 +886,9 @@ Capture accepts every [suite runner](#run-the-tests) suite and forwards
 `name:=value` launch arguments, for example `scenario:=odom_stuck` for
 `localization_drift`. For the MCB stages, build the selected firmware backend
 as described in [MCB emulator](#mcb-emulator). Capture shows RViz for aim and
-tracking. Localization, EKF and the MCB stages tile RViz left and Gazebo right.
-The default capture pace is `real_time_factor:=1.0` for aim and
+tracking. Localization, EKF and the MCB stages tile RViz left and Gazebo right,
+with the Gazebo view under the [follow camera](#follow-camera) (`--camera preset`
+keeps the fixed preset view instead). The default capture pace is `real_time_factor:=1.0` for aim and
 tracking and `0.5` for the other suites. The take directory keeps the desktop
 video, clock samples, launch logs and [run summary](#run-summary). Capture
 and render both use the summary verdict. Render requires PASS.
@@ -894,9 +899,27 @@ intervals where available and cutting jumps in the simulation clock. The
 banner shows the suite verdict, absolute sim time and available cell or
 segment labels. Match videos also show run-wide Sentry referee credits per
 scored shot from the summary. Use `--start` and `--end` with absolute sim
-seconds to choose a window or `--gz-zoom` to crop the MCB Gazebo pane.
+seconds to choose a window. `--gz-zoom` crops the MCB Gazebo pane of
+`--camera preset` takes; follow-camera takes are already framed at native
+resolution and need no zoom.
 `--pr-clip` also writes a 960×540
 `<output-stem>-pr.mp4` with up to 30 seconds of the render, under 10 MB.
+
+### Follow camera
+
+`src/gui/FollowCamera.cpp` is a gz GUI plugin in each recording preset
+(`rviz/*-gz.config`). It stays idle until `/gui/follow_camera`
+(`gz.msgs.Boolean`) enables it; the recorder does so once the windows are
+placed. It then moves the 3D view's own camera, so the pane is rendered at its
+on-screen size rather than cropped from a wide shot, and it costs no extra
+render pass. The camera keeps the preset's world yaw and pitch, aims midway
+between our robot (`<robot>`, default `sentry`) and the nearest listed
+`<target>` within `max_span`, and backs off until both fit, never closer than
+`min_width` metres across. A new target must be a quarter nearer to take over.
+Motion is a critically damped spring stepped in sim time from `/world/field/clock`
+with robot-velocity feed-forward (`include/sim/follow_camera.hpp`), so it does
+not lag a steadily driving robot and repeats with the sim, not the wall clock.
+Every `Settings` field can be set as a child element of the plugin.
 
 ## Notes
 
