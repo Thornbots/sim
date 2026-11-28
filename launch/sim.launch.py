@@ -314,7 +314,8 @@ def generate_launch_description():
     # No shell between launch and gz: see sim/gz_process.py.
     gz_sim = OpaqueFunction(function=lambda context: [gz_server_process(
         LaunchConfiguration('world').perform(context),
-        run=not _is_true(context, 'uart_epoch_zero'))])
+        run=not _is_true(context, 'uart_epoch_zero'),
+        additional_env=udp_env() if _is_true(context, 'uart_deterministic') else None)])
 
     # --- Bridge sim clock to ROS so use_sim_time works everywhere.
     clock_bridge = clock_bridge_node(

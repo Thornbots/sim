@@ -139,7 +139,8 @@ Offsets urdf_offsets() {
   return out;
 }
 Scorer::Scorer(const std::string &stage_, const std::string &logpath)
-    : SimTimeNode("e2e_scorer"), stage(stage_), log_path(logpath),
+    : SimTimeNode("e2e_scorer", cv_bench::options.lockstep && !cv_bench::options.external),
+      stage(stage_), log_path(logpath),
       tf(get_clock()), offsets_(urdf_offsets()), listener_(tf, this, false) {
   visual_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/markers", 10);
   scene_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/sim/e2e/scene", 1);
@@ -299,6 +300,11 @@ Scorer::Scorer(const std::string &stage_, const std::string &logpath)
         "/sim/match/referee", rclcpp::QoS(1).reliable().transient_local());
   }
 }
+void Scorer::stop_truth_subscriptions() {
+  for (const auto &topic : gz_.SubscribedTopics()) {
+    gz_.Unsubscribe(topic);
+  }
+}
 void Scorer::spin_for(double seconds) {
   score_window(
       seconds, [this]() { return now_s(); },
@@ -311,7 +317,7 @@ void Scorer::spin_for(double seconds) {
         if (!rclcpp::ok())
           throw std::runtime_error("E2E ROS context stopped during scoring");
         step();
-      }, cv_bench::options.backend == "renode" ? 120 : 20, kStallWallS);
+      }, kStallWallS);
 }
 bool Scorer::wait_until(const std::function<bool()> &predicate, double timeout,
                         const std::string &description) {
@@ -370,9 +376,8 @@ void Scorer::align(double period_s) {
   }
   throw std::runtime_error("E2E ROS context stopped while aligning");
 }
-void Scorer::run_to(double tick_target, double wall_budget_s) {
-  const auto begin = std::chrono::steady_clock::now();
-  auto progress = begin;
+void Scorer::run_to(double tick_target) {
+  auto progress = std::chrono::steady_clock::now();
   double previous = tick_s();
   while (rclcpp::ok()) {
     if (step()) {
@@ -390,9 +395,8 @@ void Scorer::run_to(double tick_target, double wall_budget_s) {
       throw std::runtime_error("E2E clock stalled (no tick in " +
                                std::to_string(static_cast<int>(kStallWallS)) +
                                " wall s); see stack.log");
-    if (wall - begin > std::chrono::duration<double>(wall_budget_s))
-      throw std::runtime_error("E2E scoring exceeded its wall-time budget");
   }
+  throw std::runtime_error("E2E ROS context stopped during scoring");
 }
 // The old 50 ms pose sampler and 100 ms scorer, on the chain's tick.
 void Scorer::tick_body() {

@@ -40,6 +40,8 @@ from launch.actions import (
     IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
+    SetEnvironmentVariable,
+    SetLaunchConfiguration,
     TimerAction,
 )
 from launch.conditions import IfCondition
@@ -61,6 +63,8 @@ DRIVING = ('mcb_drive', 'mcb_match')
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
 OPPONENT_CLASS = 6  # red; we are blue
+RELIABLE_CLOCK = {'qos_overrides./clock.subscription.reliability': 'reliable'}
+POSE_BOOT_READY = '/sim/e2e/pose_boot_ready'
 
 
 def startup_wait_s(config):
@@ -261,7 +265,8 @@ def _tests(context):
     for arg in ('amcl_seed', 'red_delay_s', 'detector_seed', 'detector_noise'):
         cmd += ['--stack-arg', f'{arg}:={config[arg]}']
     cmd += config['pytest_args'].split()
-    tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen')
+    tests = ExecuteProcess(cmd=cmd, name='e2e_tests', output='screen',
+                           sigterm_timeout='90', additional_env=udp_env())
     done = RegisterEventHandler(OnProcessExit(
         target_action=tests,
         on_exit=lambda event, context: finish_suite(event, context, 'e2e')))
@@ -347,13 +352,15 @@ def generate_launch_description():
     # auto.launch.py starts waypoint_nav only with real_hardware:=true, like the relay.
     waypoint_nav = Node(
         package='thornbots_nav', executable='waypoint_nav', name='waypoint_nav', output='screen',
+        additional_env=udp_env(),
         parameters=[os.path.join(get_package_share_directory('thornbots_nav'), 'config',
-                                 'route.yaml'), {'use_sim_time': True,
-                                                 'epoch_zero_ready': ParameterValue(
-                                                     marks, value_type=bool),
-                                                 'nav_goal_none_topic': PythonExpression([
-                                                     "'/sim/e2e/nav_goal_none' if '", marks,
-                                                     "' == 'true' else ''"])}])
+                                 'route.yaml'), {
+                                     'use_sim_time': True,
+                                     **RELIABLE_CLOCK,
+                                     'epoch_zero_ready': ParameterValue(marks, value_type=bool),
+                                     'nav_goal_none_topic': PythonExpression([
+                                         "'/sim/e2e/nav_goal_none' if '", marks,
+                                         "' == 'true' else ''"])}])
 
     robot = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -394,6 +401,8 @@ def generate_launch_description():
                           'deterministic_epoch_zero': LaunchConfiguration(
                               'deterministic_epoch_zero'),
                           'pose_latency_s': LaunchConfiguration('pose_latency_s'),
+                          'dds_transport': PythonExpression([
+                              "'udp_only' if '", coordinated, "' == 'true' else 'default'"]),
                           'use_rf2o': 'true', 'load_map': 'true'}.items())
 
     match_environment = Node(
@@ -437,6 +446,7 @@ def generate_launch_description():
                            'harness.acks': ['/sim/e2e/harness_ack']})
         if producers:
             params['boot_hold_s'] = 0.001
+            params['boot_ready_topic'] = POSE_BOOT_READY
             params['flush_topic'] = '/dji_serial_bridge/sim_tx_flush'
             params['flushed_topic'] = '/dji_serial_bridge/sim_tx_flushed'
         if producers:
@@ -590,7 +600,9 @@ def generate_launch_description():
         if producers:
             extras.append(Node(package='sim', executable='pose_consumed', output='screen',
                                parameters=[{'relay_topic': '/sim/e2e/relay_odom',
-                                            'queued_topic': '/ekf_filter_node/queued_stamps'}]))
+                                            'queued_topic': '/ekf_filter_node/queued_stamps',
+                                            'boot_ready_topic': POSE_BOOT_READY,
+                                            **RELIABLE_CLOCK}]))
             extras.append(Node(package='sim', executable='scan_odom_gate', output='screen',
                                parameters=[{'period_s': EKF_PERIOD_S,
                                             'queued_topic': '/ekf_filter_node/queued_stamps'}]))
@@ -600,6 +612,7 @@ def generate_launch_description():
                 + ([barrier, pose_setter] if barrier else []) + common
                 + ([match_environment] if stage in DRIVING else [target_driver])
                 + ([GroupAction([SetParameter(name='tick_topic', value='/sim/e2e/aim_tick'),
+                                 *[SetParameter(name=k, value=v) for k, v in RELIABLE_CLOCK.items()],
                                  *[SetParameter(name=k, value=v) for k, v in
                                    (PRODUCER_MARKS.items() if producers else [])],
                                  *([SetParameter(name='pf_seed', value=ParameterValue(
@@ -612,7 +625,12 @@ def generate_launch_description():
         if _is_true(context, 'run_tests'):
             return _tests(context)
         _resolve_modes(context)
-        return _sim(context) + stack(context)
+        # Leave shutdown escalation to the process supervisors. DDS reader/writer cleanup
+        # may take longer than launch's interactive defaults on a loaded host.
+        guards = [SetLaunchConfiguration('sigterm_timeout', '60')]
+        transport = ([SetEnvironmentVariable(name, value) for name, value in udp_env().items()]
+                     if _uart_coordinated(context) else [])
+        return guards + _sim(context) + transport + stack(context)
 
     return LaunchDescription([
         DeclareLaunchArgument('deterministic_epoch_zero', default_value='auto',

@@ -27,9 +27,11 @@
 namespace sim {
 class SimTimeNode : public rclcpp::Node {
 public:
-  explicit SimTimeNode(const std::string &name)
-      : Node(name, rclcpp::NodeOptions().parameter_overrides(
-                       {rclcpp::Parameter("use_sim_time", true)})) {
+  explicit SimTimeNode(const std::string &name, bool reliable_clock = false)
+      : Node(name, rclcpp::NodeOptions().parameter_overrides({
+                       rclcpp::Parameter("use_sim_time", true),
+                       rclcpp::Parameter("qos_overrides./clock.subscription.reliability",
+                                         reliable_clock ? "reliable" : "best_effort")})) {
     executor_.add_node(get_node_base_interface());
   }
   template <class Stamp> static double stamp_s(const Stamp &stamp) {

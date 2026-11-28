@@ -70,12 +70,32 @@ public:
       "/odom", 100, [this](nav_msgs::msg::Odometry::ConstSharedPtr m) {
         odom_ns_ = std::max(odom_ns_, rclcpp::Time(m->header.stamp).nanoseconds());
       });
+    const auto ready_topic = declare_parameter("boot_ready_topic", std::string(""));
+    if (!ready_topic.empty()) {
+      boot_ready_pub_ = create_publisher<std_msgs::msg::Header>(
+        ready_topic, rclcpp::QoS(1).reliable().transient_local());
+      ekf_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+        "/localization/odom", 1, [](nav_msgs::msg::Odometry::ConstSharedPtr) {});
+    }
     timer_ = create_wall_timer(std::chrono::milliseconds(1), [this] {poll();});
   }
 
 private:
   void poll()
   {
+    // The EKF advertises its output after wiring its inputs and after a nonzero clock.
+    // Node discovery alone can see it while it's still blocked on that first clock.
+    if (ekf_sub_ && now().nanoseconds() > 0 && ekf_sub_->get_publisher_count() > 0 &&
+      pose_sub_->get_publisher_count() > 0 && odom_sub_->get_publisher_count() > 0 &&
+      input_sub_->get_publisher_count() > 0 &&
+      (!queued_sub_ || queued_sub_->get_publisher_count() > 0) &&
+      (!relay_sub_ || relay_sub_->get_publisher_count() > 0))
+    {
+      std_msgs::msg::Header ready;
+      ready.stamp = now();
+      boot_ready_pub_->publish(ready);
+      ekf_sub_.reset();
+    }
     while (!pending_.empty() && odom_ns_ >= pending_.front() && input_ns_ >= pending_.front() &&
       relay_ns_ >= pending_.front() && queued_ns_ >= pending_.front()) {
       const rclcpp::Time at(pending_.front(), RCL_ROS_TIME);
@@ -97,9 +117,9 @@ private:
   int64_t odom_ns_ = 0, input_ns_ = 0, relay_ns_ = 0, queued_ns_ = 0;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr pub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr pub_, boot_ready_pub_;
   rclcpp::Subscription<dji_serial_bridge::msg::RobotPose>::SharedPtr pose_sub_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_, input_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_, input_sub_, ekf_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr relay_sub_, queued_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
