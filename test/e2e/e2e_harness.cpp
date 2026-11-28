@@ -784,8 +784,13 @@ Json Scorer::miss_breakdown(double launch, const Vec &origin, const Vec &velocit
                                  held->radius[j % 2] * std::sin(yaw), held->z_offset[j % 2]};
     if ((p - truth).norm() < (model - truth).norm()) { model = p; j_best = j; }
   }
+  // Each part is carried along the shot's path relative to the panel into the panel's
+  // plane, so a point off the plane counts where the shot line meets it; the parts still
+  // sum to the miss. The third value is the unprojected normal offset.
+  const Vec along = velocity + gravity * (best->t - launch) - v_s;
   const auto axes = [&](const Vec &d) {
-    return Json{cb::rounded(d.dot(right), 4), cb::rounded(d.dot(up), 4),
+    const Vec in_plane = d - along * (d.dot(normal) / along.dot(normal));
+    return Json{cb::rounded(in_plane.dot(right), 4), cb::rounded(in_plane.dot(up), 4),
                 cb::rounded(d.dot(normal), 4)};
   };
   // Horizontal only: the state's centre sits at armor height, the truth root on the floor.

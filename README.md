@@ -2379,7 +2379,8 @@ shots.
 
 <a id="shot-miss-breakdown"></a>
 Each Sentry shot's `miss_breakdown` in `shots.jsonl` splits its miss at the front panel
-it passed nearest into right/up/normal metres of that panel, for the target the held
+it passed nearest into right/up metres of that panel, each part carried along the shot's
+path into the panel's plane (plus its normal offset), for the target the held
 TARGET_STATE was nearest at its stamp: `tracker` (the held state carried to the crossing
 by the MCB's model, against truth at the stamp carried the same way), `prediction`
 (that model's truth against the real crossing) and `aim` (the shot against the held
