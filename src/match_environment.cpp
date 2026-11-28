@@ -241,6 +241,9 @@ public:
     declare_parameter("active", false);
     declare_parameter("start_time_s", -1.0);
     stage_ = declare_parameter("stage", std::string("mcb_drive"));
+    // Shifts the red robots' scripted routes and spin-up later, so test runs can vary
+    // the encounter with the sentry's own (navigated) drive.
+    red_delay_s_ = declare_parameter("red_delay_s", 0.0);
     for (const auto &name : kRouteNames) {
       hp_[name] = 400;
     }
@@ -465,7 +468,8 @@ private:
                                  : std::make_pair(position_, world_velocity_);
     std::map<std::string, nav_msgs::msg::Odometry> messages;
     for (const auto &name : path_names_) {
-      auto robot = sample_robot(name, elapsed, stage_);
+      auto robot = sample_robot(
+          name, kTeams.at(name) == "red" ? elapsed - red_delay_s_ : elapsed, stage_);
       if (hp_.at(name) == 0) {
         const auto found = truth.find(name);
         if (found != truth.end()) {
@@ -690,6 +694,7 @@ private:
   }
 
   std::string stage_;
+  double red_delay_s_ = 0.0;
   uint64_t seed_;
   std::map<std::string, int> hp_;
   std::map<std::string, Matrix4> stopped_roots_;

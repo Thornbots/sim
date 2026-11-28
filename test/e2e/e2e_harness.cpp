@@ -707,6 +707,110 @@ void Scorer::judge_state(const dji_serial_bridge::msg::TargetState &m) {
               {"yaw_rate_err", std::abs(m.yaw_rate) - std::abs(rate)}});
   states.push_back(out);
 }
+// Splits a sentry shot's miss at the panel it passed nearest (the held state's robot)
+// into tracker, prediction and aim parts, in that panel's right/up/normal axes at the
+// crossing; they sum to the miss. See README.md#shot-miss-breakdown.
+Json Scorer::miss_breakdown(double launch, const Vec &origin, const Vec &velocity,
+                            double until) {
+  const dji_serial_bridge::msg::TargetState *held = nullptr;
+  for (auto i = state_history_.rbegin(); i != state_history_.rend(); ++i)
+    if (stamp_s(i->header.stamp) <= launch) {
+      held = &*i;
+      break;
+    }
+  if (!held) return {{"none", "no held state"}};
+  const double s = stamp_s(held->header.stamp);
+  const auto world = world_T_odom(s);
+  if (!world) return {{"none", "no odom TF"}};
+  const Eigen::Matrix3d rot = world->block<3, 3>(0, 0);
+  const Vec centre = transform(*world, {held->center.x, held->center.y, held->center.z});
+  std::string target;
+  double nearest = INFINITY;
+  for (const auto &entry : histories) {
+    if (entry.first.rfind("opponent_", 0) != 0) continue;
+    const auto pose = entry.second->at(s);
+    if (!pose) continue;
+    const double d = (centre - pose->root.block<3, 1>(0, 3)).head<2>().norm();
+    if (d < nearest) { nearest = d; target = entry.first; }
+  }
+  if (target.empty()) return {{"none", "no target"}};
+  const auto history = histories.at(target);
+  const Vec gravity{0, 0, combat::kGravity};
+  struct Crossing { int k; double t; Eigen::Vector2d point; };
+  std::optional<Crossing> best;
+  // Past the impact by the resolver's 10 ms step: it hits panels posed at mid-step.
+  constexpr double kStep = 0.002;
+  until += combat::kStepS;
+  for (double t0 = 0; launch + t0 < until; t0 += kStep) {
+    const double t1 = t0 + kStep;
+    const Vec a = origin + velocity * t0 + gravity * (t0 * t0 / 2);
+    const Vec b = origin + velocity * t1 + gravity * (t1 * t1 / 2);
+    const auto root = history->at(launch + (t0 + t1) / 2);
+    if (!root) return {{"none", "no truth in flight"}};
+    for (int k = 0; k < static_cast<int>(offsets_.armors.size()); ++k) {
+      const auto c = combat::segment_panel_crossing(a, b, root->root * offsets_.armors[k]);
+      if (c && c->from_front && (!best || c->point.norm() < best->point.norm()))
+        best = Crossing{k, launch + t0 + c->fraction * (t1 - t0), c->point};
+    }
+  }
+  if (!best) return {{"none", "no front crossing"}, {"target", target}};
+  const auto at_t = history->at(best->t), at_s = history->at(s),
+             before = history->at(s - .02), after = history->at(s + .02);
+  if (!at_t || !at_s || !before || !after) return {{"none", "no truth at stamp"}};
+  const Matrix panel = at_t->root * offsets_.armors[best->k];
+  const Vec normal = panel.block<3, 1>(0, 0), right = panel.block<3, 1>(0, 1),
+            up = panel.block<3, 1>(0, 2), truth = panel.block<3, 1>(0, 3);
+  const Vec crossing = truth + right * best->point.x() + up * best->point.y();
+  const double tau = best->t - s;
+  // Truth at the state's stamp, carried by the MCB's model (constant velocity, rigid spin).
+  const Vec c_s = at_s->root.block<3, 1>(0, 3);
+  const Vec v_s = (after->root.block<3, 1>(0, 3) - before->root.block<3, 1>(0, 3)) / .04;
+  const double dyaw = std::atan2(after->root(1, 0), after->root(0, 0)) -
+                      std::atan2(before->root(1, 0), before->root(0, 0));
+  const double w_s = std::atan2(std::sin(dyaw), std::cos(dyaw)) / .04;
+  const Matrix panel_s = at_s->root * offsets_.armors[best->k];
+  const Vec truth_model = c_s + v_s * tau +
+      Eigen::AngleAxisd(w_s * tau, Vec::UnitZ()) * (panel_s.block<3, 1>(0, 3) - c_s);
+  // The held state carried by the same model, on its panel nearest the crossed one.
+  const Vec vel = rot * Vec{held->velocity.x, held->velocity.y, held->velocity.z};
+  const Vec acc = rot * Vec{held->acceleration.x, held->acceleration.y, held->acceleration.z};
+  const Vec centre_t = centre + vel * tau + acc * (tau * tau / 2);
+  const double yaw0 = held->yaw + std::atan2(rot(1, 0), rot(0, 0));
+  Vec model = Vec::Constant(INFINITY);
+  int j_best = 0;
+  for (int j = 0; j < 4; ++j) {
+    const double yaw = yaw0 + held->yaw_rate * tau + j * cb::kPi / 2;
+    const Vec p = centre_t + Vec{held->radius[j % 2] * std::cos(yaw),
+                                 held->radius[j % 2] * std::sin(yaw), held->z_offset[j % 2]};
+    if ((p - truth).norm() < (model - truth).norm()) { model = p; j_best = j; }
+  }
+  // Each part is carried along the shot's path relative to the panel into the panel's
+  // plane, so a point off the plane counts where the shot line meets it; the parts still
+  // sum to the miss. The third value is the unprojected normal offset.
+  const Vec along = velocity + gravity * (best->t - launch) - v_s;
+  const auto axes = [&](const Vec &d) {
+    const Vec in_plane = d - along * (d.dot(normal) / along.dot(normal));
+    return Json{cb::rounded(in_plane.dot(right), 4), cb::rounded(in_plane.dot(up), 4),
+                cb::rounded(d.dot(normal), 4)};
+  };
+  // Horizontal only: the state's centre sits at armor height, the truth root on the floor.
+  const Vec translation = Vec(centre_t - (c_s + v_s * tau)).cwiseProduct(Vec{1, 1, 0});
+  const Vec n_s = panel_s.block<3, 1>(0, 0);
+  return {{"target", target}, {"panel", best->k},
+          {"state_age_s", cb::rounded(launch - s, 4)},
+          {"flight_s", cb::rounded(best->t - launch, 4)},
+          {"miss", axes(crossing - truth)},
+          {"tracker", axes(model - truth_model)},
+          {"tracker_translation", axes(translation)},
+          {"prediction", axes(truth_model - truth)},
+          {"aim", axes(crossing - model)},
+          {"centre_error_xy_m", axes(Vec(centre - c_s).cwiseProduct(Vec{1, 1, 0}))},
+          {"velocity_error_m_s", axes(vel - v_s)},
+          {"phase_error_rad", cb::rounded(std::remainder(
+              yaw0 + j_best * cb::kPi / 2 - std::atan2(n_s.y(), n_s.x()), 2 * cb::kPi), 4)},
+          {"spin_rad_s", cb::rounded(w_s, 3)},
+          {"spin_error_rad_s", cb::rounded(held->yaw_rate - w_s, 3)}};
+}
 std::optional<Json> Scorer::judge_match(const std::string &kind,
                                         double launch) {
   std::string shooter = kind == "mcb" ? "sentry" : kind;
@@ -737,7 +841,12 @@ std::optional<Json> Scorer::judge_match(const std::string &kind,
     return {};
   }
   flight_steps_.erase(key);
+  Json breakdown = nullptr;
+  if (shooter == "sentry")
+    breakdown = miss_breakdown(launch, muzzle.block<3, 1>(0, 3),
+                               combat::kMuzzleSpeed * barrel + inherited, impact.impact_t);
   Json out = {{"t", launch},
+              {"miss_breakdown", breakdown},
               {"muzzle_velocity_m_s", {inherited.x(), inherited.y(), inherited.z()}},
               {"muzzle_speed_m_s", combat::kMuzzleSpeed},
               {"gravity_m_s2", 9.80665},

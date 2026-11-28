@@ -29,6 +29,7 @@ struct Options {
   std::string layout = "both", path = "lateral", log_dir, stage = "mcb_parked",
               spin_mode = "firmware",
               rtf = "0", filter, backend = "renode";
+  std::vector<std::string> stack_args;  // name:=value, appended to the E2E stack launch
   double duration = 0, shooter = 0, chassis = 0, latency = 0;
   std::optional<double> spin, shot_yaw, shot_spin, panel_switch_margin_rad;
   double model_yaw_jitter_rad = 0;
@@ -110,6 +111,8 @@ inline void parse_options(int &argc, char **argv) {
       options.stage = value();
     else if (arg == "--real-time-factor")
       options.rtf = value();
+    else if (arg == "--stack-arg")
+      options.stack_args.push_back(value());
     else if (arg == "--log-dir")
       options.log_dir = value();
     else if (arg == "-x")

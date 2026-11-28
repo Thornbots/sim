@@ -134,6 +134,7 @@ private:
   std::optional<Json> judge(double t);
   std::optional<Json> judge_match(const std::string &kind, double t);
   void judge_state(const dji_serial_bridge::msg::TargetState &m);
+  Json miss_breakdown(double launch, const Vec &origin, const Vec &velocity, double until);
   void fire_tick();
   void visualize_scene();
   void visualize_shot(const std::string &kind, const Json &shot);
