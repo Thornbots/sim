@@ -187,6 +187,35 @@ def test_match_reports_native_scoring(runner, scored):
         assert report['verdict'] == 'FAIL'
 
 
+@pytest.mark.parametrize(('group_reaped', 'node_reaped', 'lockstep_error', 'verdict'), [
+    (True, True, False, 'PASS'),
+    (False, True, False, 'FAIL'),
+    (True, False, False, 'FAIL'),
+    (True, True, True, 'FAIL'),
+])
+def test_match_teardown_guard_preserves_completed_result(
+        tmp_path, group_reaped, node_reaped, lockstep_error, verdict):
+    """Only a reaped process group can preserve a complete native match verdict."""
+    launch = tmp_path / 'launch.log'
+    launch.write_text((FIXTURES / 'match.txt').read_text() +
+                      ('E2E stack process group reaped\n' if group_reaped else ''))
+    shutil.copyfile(FIXTURES / 'match.json', tmp_path / 'match.json')
+    stack = tmp_path / 'stack.log'
+    stack.write_text(
+        ('lockstep timeout: missing ack\n' if lockstep_error else '')
+        + '[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)\n'
+        + "[INFO] [bridge-1]: sending signal 'SIGINT' to process[bridge-1]\n"
+        + "[INFO] [bridge-1]: sending signal 'SIGKILL' to process[bridge-1]\n"
+        + ('[ERROR] [bridge-1]: process has died [pid 12, exit code -9]\n'
+           if node_reaped else ''))
+    report = SUMMARY.summarize(
+        tmp_path, 'mcb_match', ['e2e.launch.py'], 0, False, '',
+        os.environ['SIM_CHECK_BENCH_LOG'], [launch, stack])
+    assert report['verdict'] == verdict
+    assert report['teardown']['clean'] is False
+    assert report['checker']['verdict'] == 'FAIL'
+
+
 def test_aborted_and_skipped_cells(runner):
     """An aborted or skipped selection falls short of the planned count."""
     _, run = runner

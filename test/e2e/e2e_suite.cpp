@@ -148,6 +148,8 @@ public:
       launch->stop(75.0);
       EXPECT_TRUE(launch->clean())
           << "stack shutdown needed SIGKILL; see the SIGKILLing line above";
+      if (launch->clean())
+        std::cout << "E2E stack process group reaped" << std::endl;
     }
     timing::set_sim_clock({});
     scorer.reset();

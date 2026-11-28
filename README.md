@@ -411,8 +411,11 @@ outside the launch tree to clean up:
   SIGINT to the launch leader on interruption.
 - The firmware process has its own process group on purpose, so a group SIGINT
   cannot kill it mid-tick; it exits when gz closes its stdin.
-- The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero node
-  exit, including -2. The run summary requires clean teardown.
+- The checker reports SIGTERM/SIGKILL escalation and nonzero node exits.
+  When the E2E supervisor verifies that it reaped the owned stack and the
+  native result is complete, a termination after shutdown is recorded in
+  `teardown` without changing the scored verdict. An incomplete result or
+  an unverified process group still fails.
 - The coordinated E2E launch uses UDP for ROS transport in the sim launch
   and for the UART and robot nodes. The spawn verifier releases its Gazebo
   client once it has confirmed the spawn. The scorer disconnects its
