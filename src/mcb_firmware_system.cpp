@@ -33,6 +33,9 @@
 #include "sim/uart_relay.hpp"
 
 namespace sim {
+// Wall-clock guards only catch a dead or stuck peer, as the lockstep coordinator's max_wait_s
+// (60 s) does; a loaded host must not trip them. 1.5 s once failed bring-up at 2 CPUs.
+constexpr auto kDeadlockGuard = std::chrono::seconds(60);
 class McbFirmwareSystem : public gz::sim::System,
                           public gz::sim::ISystemConfigure,
                           public gz::sim::ISystemPreUpdate,
@@ -232,7 +235,7 @@ public:
     }
     if (relay_) relay_->close_child();
     if (coordinated_) {
-      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      const auto deadline = std::chrono::steady_clock::now() + kDeadlockGuard;
       while (metadata_->get_subscription_count() == 0 || ack_->get_publisher_count() == 0 ||
              ready_sub_->get_publisher_count() == 0 || clock_sub_->get_publisher_count() == 0 ||
              !clock_pub_.HasConnections() || ready_ns_ < 0) {
@@ -287,7 +290,7 @@ public:
       const auto now = std::chrono::steady_clock::now();
       if (!bootstrap_started_) {
         bootstrap_started_ = true;
-        bootstrap_deadline_ = now + std::chrono::seconds(30);
+        bootstrap_deadline_ = now + kDeadlockGuard;
       }
       if (now >= bootstrap_deadline_) throw std::runtime_error("UART epoch zero acknowledgment timeout");
       if (clock_seen_ && bridge_zero_seen_ && detector_zero_seen_) {
@@ -322,7 +325,7 @@ public:
       clock.mutable_sim()->set_sec(held / 1'000'000'000);
       clock.mutable_sim()->set_nsec(held % 1'000'000'000);
       if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART delivery clock publication failed");
-      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      const auto deadline = std::chrono::steady_clock::now() + kDeadlockGuard;
       while (!clock_ready_ && (ready_ns_ != held || clock_ns_ != held)) {
         if (std::chrono::steady_clock::now() >= deadline)
           throw std::runtime_error("UART bridge clock discovery timeout");
@@ -454,7 +457,7 @@ public:
     if (!firmware_ || !coordinated_ || info.paused) return;
     if (pending_.empty() && consume_pending_.empty() && failure_.empty()) return;
     const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    const auto deadline = std::chrono::steady_clock::now() + kDeadlockGuard;
     while (failure_.empty() && (!pending_.empty() || !consume_pending_.empty() || clock_ns_ < held)) {
       if (*stopping_) {
         events_->Emit<gz::sim::events::Stop>();

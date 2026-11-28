@@ -1755,7 +1755,9 @@ Each holds physics at its node's own tick and waits for an ack group `a|b`: the 
 `~/tx_ack/<type>` (the frame reached its queue) or the producer's none-mark (nothing to
 send this tick). Chains: `cv_target` (40 Hz), `detector` (60 Hz, through selector and
 tracker; the tracker is told to run `process_delay_s` 25 ms after the capture so it, and
-its stamp, sit on a hold), `nav` (10 Hz), `ekf` (counted acks: one relay frame or mark
+its stamp, sit on a hold), `manager` (`target_manager`'s 5 ms decision grid, acked per
+tick on `/target_manager/tick_ack`, so a confidence-decay clear decided between frames
+reaches the firmware at its tick), `nav` (10 Hz), `ekf` (counted acks: one relay frame or mark
 per tick, including a none-mark for invalid map results when stamped TF or
 fresh backend covariance is unavailable; the stock EKF's period is set to 34 ms, a whole number of ms, and it takes its
 phase from the first non-zero clock, which `boot_hold_s` fixes) and `scan` (rf2o's quality
