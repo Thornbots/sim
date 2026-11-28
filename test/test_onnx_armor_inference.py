@@ -15,8 +15,8 @@
 import ctypes
 import importlib.util
 import os
-import shutil
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -28,7 +28,8 @@ BRIDGE = ROOT.parent / 'realsense-yolov8-nitros-bridge'
 MODEL = Path(os.environ.get('ONNX_ARMOR_TEST_MODEL',
                             '/Users/blaise/ros2_ws/scratch/cv-aiming-synthetic/model-training/'
                             'runs/pose/yolo26n_pose_realsense/v1/weights/best.onnx'))
-spec = importlib.util.spec_from_file_location('inference', ROOT / 'scripts/onnx_armor_inference.py')
+spec = importlib.util.spec_from_file_location(
+    'inference', ROOT / 'scripts/onnx_armor_inference.py')
 inference = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(inference)
 
