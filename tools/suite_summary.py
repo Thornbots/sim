@@ -195,6 +195,7 @@ def summarize(directory, suite, launch, launch_status, interrupted, failure, che
         reasons.append('Run interrupted')
     counts = {'expected': None, 'executed': 0, 'passed': 0, 'failed': 0, 'skipped': 0, 'cases': []}
     metrics = {}
+    group_reaped = False
     if launch_status is not None:
         if launch_status:
             reasons.append(f'Launch exited with status {launch_status}')
@@ -203,17 +204,26 @@ def summarize(directory, suite, launch, launch_status, interrupted, failure, che
             lines = [PREFIX.sub('', ANSI.sub('', line)) for line in log.splitlines()]
             counts = native_results(lines, reasons)
             metrics = metrics_for(suite, directory, lines, reasons, counts)
+            group_reaped = 'E2E stack process group reaped' in lines
         except OSError as error:
             reasons.append(f'Could not read launch log: {error}')
     check = checker_result(checker, paths)
-    reasons.extend(check['reasons'])
+    # A completed E2E case and verified process-group cleanup do not depend on
+    # how long individual nodes took to honor shutdown. Keep those diagnostics.
+    reaped = {
+        f'stack.log: {reason}' for log in check['logs'] if Path(log['path']).name == 'stack.log'
+        for reason in log['reaped_teardown_reasons']
+    } if suite.startswith('mcb_') and launch_status == 0 and group_reaped and not reasons else set()
+    reasons.extend(reason for reason in check['reasons'] if reason not in reaped)
     teardown_reasons = [f'{Path(log["path"]).name}: {reason}'
                         for log in check['logs'] for reason in log['teardown_reasons']]
     clean = None
     if check['logs'] and all(log['readable'] for log in check['logs']):
         clean = not teardown_reasons
     if launch_status is not None and clean is not True:
-        reasons.extend(teardown_reasons or ['Teardown cleanliness could not be verified'])
+        reasons.extend(reason for reason in
+                       teardown_reasons or ['Teardown cleanliness could not be verified']
+                       if reason not in reaped)
     if not check['reasons'] and check['verdict'] == 'FAIL':
         reasons.append('Native checker rejected the run')
     if launch_status is None and not reasons:

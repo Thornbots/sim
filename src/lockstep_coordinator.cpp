@@ -87,11 +87,21 @@ public:
     max_wait_ = std::chrono::duration<double>(declare_parameter("max_wait_s", 60.0));
     startup_timeout_ = std::chrono::duration<double>(declare_parameter("startup_timeout_s", 30.0));
     margin_ns_ = static_cast<int64_t>(declare_parameter("learn_margin_s", 0.05) * 1e9);
-    // Strict startup only: the first release stops at boot_hold_s and waits boot_settle_s
-    // of wall time, so a node that starts on its first non-zero clock (stock
-    // robot_localization's loop) sees the same value in every run.
+    // Hold at the first positive clock until processes that need it finish initialization.
     boot_hold_ns_ = static_cast<int64_t>(declare_parameter("boot_hold_s", 0.0) * 1e9);
-    boot_settle_ = std::chrono::duration<double>(declare_parameter("boot_settle_s", 0.5));
+    const auto boot_topic = declare_parameter("boot_ready_topic", std::string(""));
+    if (!boot_topic.empty()) {
+      if (!strict_startup_ || boot_hold_ns_ <= 0) {
+        throw std::invalid_argument("boot_ready_topic needs a strict, positive boot hold");
+      }
+      boot_ready_sub_ = create_subscription<std_msgs::msg::Header>(
+        boot_topic, rclcpp::QoS(1).reliable().transient_local(),
+        [this](std_msgs::msg::Header::ConstSharedPtr msg) {
+          std::lock_guard<std::mutex> lock(mutex_);
+          boot_ready_ = rclcpp::Time(msg->stamp).nanoseconds() == boot_hold_ns_;
+          cv_.notify_all();
+        });
+    }
     log_period_ = std::chrono::duration<double>(declare_parameter("log_period_s", 10.0));
     if (step_ns_ <= 0 || max_wait_.count() <= 0 || margin_ns_ < 0) {
       throw std::invalid_argument("lockstep needs positive step_s/max_wait_s and nonnegative margin");
@@ -555,17 +565,25 @@ private:
       }
     }
     if (strict_startup_ && boot_hold_ns_ > 0) {
-      const auto deadline = std::chrono::steady_clock::now() + max_wait_;
-      while (!stop_ && held_ns_ < boot_hold_ns_ && std::chrono::steady_clock::now() < deadline) {
-        release(boot_hold_ns_);
-        cv_.wait_for(lock, std::chrono::milliseconds(10));
-      }
-      if (held_ns_ != boot_hold_ns_) {
+      release(boot_hold_ns_);
+      const auto held = wait(lock, [&] {return held_ns_ >= boot_hold_ns_;});
+      if (held == Waited::Stopped) {return;}
+      if (held != Waited::Done || held_ns_ != boot_hold_ns_) {
         startup_fail("gz did not hold at the boot hold " + std::to_string(boot_hold_ns_) +
           " ns", lock);
         return;
       }
-      cv_.wait_for(lock, boot_settle_, [&] {return stop_.load();});
+      if (boot_ready_sub_) {
+        const auto ready = wait(lock, [&] {return boot_ready_;});
+        if (ready == Waited::Stopped) {return;}
+        if (ready != Waited::Done) {
+          startup_fail(std::string("missing boot readiness on ") +
+            boot_ready_sub_->get_topic_name(), lock);
+          return;
+        }
+        RCLCPP_INFO(get_logger(), "lockstep: boot ready at %.3f s on %s",
+          boot_hold_ns_ * 1e-9, boot_ready_sub_->get_topic_name());
+      }
     }
     while (!stop_ && rclcpp::ok()) {
       if (!readiness_error_.empty()) {startup_fail(readiness_error_, lock); return;}
@@ -785,7 +803,8 @@ private:
   bool barrier_passed_ = false;  // guarded by mutex_
   int startup_failures_ = 0;     // guarded by mutex_
   int64_t step_ns_ = 1000000, margin_ns_ = 50000000, boot_hold_ns_ = 0;
-  std::chrono::duration<double> boot_settle_{0.5};
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr boot_ready_sub_;
+  bool boot_ready_ = false;
   std::chrono::duration<double> max_wait_{2.0};
   std::chrono::duration<double> log_period_{10.0};
   std::chrono::steady_clock::time_point wall_start_, last_log_;

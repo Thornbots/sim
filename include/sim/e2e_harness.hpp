@@ -61,11 +61,11 @@ public:
   void align(double period_s);
   // Steps chain ticks until the held tick reaches `tick_target`. Unlike spin_for, which counts
   // the clock this node has seen, the end is a tick, the same in every run.
-  void run_to(double tick_target, double wall_budget_s);
+  void run_to(double tick_target);
   // The chain tick the clock is held at between steps: the same value in every run, unlike
   // now_s(), which is whatever /clock message this node has handled.
   double tick_s() { return unacked_ns_ ? *unacked_ns_ * 1e-9 : now_s(); }
-  // Stop holding physics on this harness (teardown): later ticks need no release.
+  void stop_truth_subscriptions();
   void check_lockstep();
   // Set by the suite: whether the launched stack still runs. step() throws once it does not,
   // so no wait outlives the stack (a wait on ticks would otherwise spin forever).

@@ -230,15 +230,12 @@ public:
     } catch (const std::runtime_error &) {
       // Ctrl-C during the board's boot calibration: stop instead of failing.
       if (!mcb_firmware::cancelled()) throw;
-      events.Emit<gz::sim::events::Stop>();
       return;
     }
     if (relay_) relay_->close_child();
-    if (coordinated_) {
+    if (coordinated_ && !epoch_zero_) {
       const auto deadline = std::chrono::steady_clock::now() + kDeadlockGuard;
-      while (metadata_->get_subscription_count() == 0 || ack_->get_publisher_count() == 0 ||
-             ready_sub_->get_publisher_count() == 0 || clock_sub_->get_publisher_count() == 0 ||
-             !clock_pub_.HasConnections() || ready_ns_ < 0) {
+      while (!*stopping_ && (!coordination_discovered() || ready_ns_ < 0)) {
         if (std::chrono::steady_clock::now() >= deadline)
           throw std::runtime_error("UART bridge coordination discovery timeout");
         executor_->spin_once(std::chrono::milliseconds(10));
@@ -279,32 +276,46 @@ public:
     if (firmware_) firmware_->set_mode(mcb_firmware::control_mode(drive_, auto_fire_));
   }
 
+  bool coordination_discovered() {
+    return metadata_->get_subscription_count() > 0 && ack_->get_publisher_count() > 0 &&
+           clock_sub_->get_publisher_count() > 0 && clock_pub_.HasConnections();
+  }
+
+  void publish_clock(int64_t ns) {
+    gz::msgs::Clock clock;
+    clock.mutable_sim()->set_sec(ns / 1'000'000'000);
+    clock.mutable_sim()->set_nsec(ns % 1'000'000'000);
+    if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART clock publication failed");
+  }
+
+  void poll_epoch_zero() {
+    executor_->spin_some();
+    if (!failure_.empty()) throw std::runtime_error(failure_);
+    const auto now = std::chrono::steady_clock::now();
+    // Keep zero available to late peers until the coordinator actually releases physics.
+    if (now >= bootstrap_next_) {
+      publish_clock(0);
+      bootstrap_next_ = now + std::chrono::milliseconds(50);
+    }
+    if (!bootstrap_done_ && coordination_discovered() && clock_seen_ &&
+        bridge_zero_seen_ && detector_zero_seen_) {
+      bootstrap_done_ = true;
+      clock_ready_ = true;
+      bootstrap_pub_->publish(std_msgs::msg::Header{});
+    }
+  }
+
   void PreUpdate(const gz::sim::UpdateInfo &info, gz::sim::EntityComponentManager &ecm) override {
+    if (!firmware_ || *stopping_) return;
     commit_control();
-    if (!firmware_) return;  // Configure was cancelled by a stop request
-    if (epoch_zero_ && !bootstrap_done_) {
-      executor_->spin_some();
-      if (!failure_.empty()) throw std::runtime_error(failure_);
-      const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
-      if (!info.paused || held != 0) throw std::runtime_error("UART epoch zero missed");
-      const auto now = std::chrono::steady_clock::now();
-      if (!bootstrap_started_) {
-        bootstrap_started_ = true;
-        bootstrap_deadline_ = now + kDeadlockGuard;
-      }
-      if (now >= bootstrap_deadline_) throw std::runtime_error("UART epoch zero acknowledgment timeout");
-      if (clock_seen_ && bridge_zero_seen_ && detector_zero_seen_) {
-        bootstrap_done_ = true;
-        clock_ready_ = true;
-        bootstrap_pub_->publish(std_msgs::msg::Header{});
-      } else if (now >= bootstrap_next_) {
-        gz::msgs::Clock clock;
-        clock.mutable_sim();
-        if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART epoch zero publication failed");
-        bootstrap_next_ = now + std::chrono::milliseconds(50);
-      }
+    if (epoch_zero_ && info.paused && !physics_started_) {
+      if (info.simTime.count() != 0) throw std::runtime_error("UART epoch zero missed");
+      // Leave Configure so Gazebo can finish spawning while the ROS peers discover each other.
+      // The coordinator owns the startup hang guard and won't release until we acknowledge.
+      poll_epoch_zero();
       return;
     }
+    if (epoch_zero_ && !bootstrap_done_) throw std::runtime_error("UART epoch zero missed");
     if (info.paused) {
       if (epoch_zero_) {
         executor_->spin_some();
@@ -321,12 +332,10 @@ public:
     if (coordinated_) {
       const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
       if (held == 0) return;
-      gz::msgs::Clock clock;
-      clock.mutable_sim()->set_sec(held / 1'000'000'000);
-      clock.mutable_sim()->set_nsec(held % 1'000'000'000);
-      if (!clock_pub_.Publish(clock)) throw std::runtime_error("UART delivery clock publication failed");
+      publish_clock(held);
       const auto deadline = std::chrono::steady_clock::now() + kDeadlockGuard;
       while (!clock_ready_ && (ready_ns_ != held || clock_ns_ != held)) {
+        if (*stopping_) return;
         if (std::chrono::steady_clock::now() >= deadline)
           throw std::runtime_error("UART bridge clock discovery timeout");
         executor_->spin_once(std::chrono::milliseconds(10));
@@ -390,7 +399,8 @@ public:
       // kill_launch.sh and Ctrl-C signal every process, so the firmware can die
       // of SIGINT/SIGTERM just before this process learns it is stopping.
       const int by = firmware_->exit_signal();
-      if (*stopping_ || by == SIGINT || by == SIGTERM || firmware_->exited_cleanly()) {
+      if (*stopping_) return;
+      if (by == SIGINT || by == SIGTERM || firmware_->exited_cleanly()) {
         events_->Emit<gz::sim::events::Stop>();
         return;
       }
@@ -459,10 +469,7 @@ public:
     const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     const auto deadline = std::chrono::steady_clock::now() + kDeadlockGuard;
     while (failure_.empty() && (!pending_.empty() || !consume_pending_.empty() || clock_ns_ < held)) {
-      if (*stopping_) {
-        events_->Emit<gz::sim::events::Stop>();
-        return;
-      }
+      if (*stopping_) return;
       if (std::chrono::steady_clock::now() >= deadline)
         throw std::runtime_error("UART acknowledgment or ROS clock timeout: pending=" +
             std::to_string(pending_.size()) + " clock=" + std::to_string(clock_ns_) +
@@ -490,9 +497,9 @@ private:
   int64_t clock_ns_ = 0;
   int64_t ready_ns_ = -1;
   bool clock_ready_ = false;
-  bool epoch_zero_ = false, bootstrap_started_ = false, bootstrap_done_ = false, physics_started_ = false;
+  bool epoch_zero_ = false, bootstrap_done_ = false, physics_started_ = false;
   bool clock_seen_ = false, bridge_zero_seen_ = false, detector_zero_seen_ = false;
-  std::chrono::steady_clock::time_point bootstrap_deadline_, bootstrap_next_{};
+  std::chrono::steady_clock::time_point bootstrap_next_{};
   gz::sim::Link body_{gz::sim::kNullEntity};
   gz::sim::Link head_{gz::sim::kNullEntity};
   gz::sim::Entity yaw_ = gz::sim::kNullEntity, pitch_ = gz::sim::kNullEntity;

@@ -191,6 +191,12 @@ public:
         });
     }
 
+    // Gazebo callbacks only store truth. Publish on the ROS executor so a
+    // transport callback cannot be publishing while the ROS node is destroyed.
+    drain_timer_ = create_wall_timer(std::chrono::milliseconds(1), [this]() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        drain();
+      });
     std::vector<std::string> models = opponents_;
     models.push_back(our_model_);
     for (const auto & name : models) {
@@ -295,7 +301,6 @@ private:
     if (h.size() > kMaxHistory) {
       h.pop_front();
     }
-    drain();
   }
 
   enum class At { kWait, kGone, kOk };
@@ -451,7 +456,6 @@ private:
   std::map<std::string, std::deque<Sample>> history_;
   std::map<std::string, rclcpp::Time> defeated_from_;
 
-  gz::transport::Node gz_;
   rclcpp::Publisher<dji_serial_bridge::msg::PanelDetectionArray>::SharedPtr pub_;
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr referee_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
@@ -460,6 +464,8 @@ private:
   int64_t next_tick_ = 1, last_clock_ns_ = 0;
   rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub_;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr ready_pub_, consumed_pub_;
+  rclcpp::TimerBase::SharedPtr drain_timer_;
+  gz::transport::Node gz_;  // Destroy subscriptions before the state their callbacks use.
 };
 
 }  // namespace sim

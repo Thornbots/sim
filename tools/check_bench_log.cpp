@@ -20,10 +20,12 @@
 #include "sim/tool_io.hpp"
 
 namespace {
-struct Report { std::vector<std::string> fatal, notes, teardown, lines; };
+struct Report { std::vector<std::string> fatal, notes, teardown, reaped, lines; };
 Report check(const std::string &path) {
   const std::regex died(R"(\[(ERROR|INFO)\] \[([\w.-]+)\]: process has died .*exit code (-?\d+))");
   const std::regex signal(R"(sending signal 'SIGINT' to process\[([\w.-]+)\])");
+  const std::regex escalate(R"(sending signal 'SIG(TERM|KILL)' to process\[([\w.-]+)\])");
+  const std::regex finished(R"(\[INFO\] \[([\w.-]+)\]: process has finished cleanly)");
   const std::regex shutdown("user interrupted with ctrl-c|tests exited with code");
   const std::regex result(R"(=+ .*\b(passed|failed|errors?)\b.* in [\d.]+s)");
   const std::regex failed(R"(\b[1-9]\d* (failed|errors?)\b)");
@@ -42,6 +44,9 @@ Report check(const std::string &path) {
     {"ODE contact overflow", std::regex("hash table bucket overflow"), false}};
   Report out;
   std::set<std::string> interrupted, reported;
+  struct Escalation { int exit_code; std::vector<std::string> reasons; };
+  std::map<std::string, Escalation> escalations;
+  std::set<std::string> reaped;
   bool shutting_down = false, timing = false;
   std::istringstream input(sim::tools::read(path));
   std::string line;
@@ -69,14 +74,29 @@ Report check(const std::string &path) {
         const auto reason = "unclean shutdown: " + process + " (exit " + std::to_string(code) + ")";
         out.notes.push_back(reason);
         out.teardown.push_back(reason);
+        const auto escalation = escalations.find(process);
+        if (escalation != escalations.end() && code == escalation->second.exit_code) {
+          reaped.insert(process);
+          out.reaped.push_back(reason);
+        }
       }
+    } else if (std::regex_search(line, match, finished) && escalations.count(match[1])) {
+      reaped.insert(match[1]);
     }
     for (const auto &p : patterns) if (std::regex_search(line, p.pattern)) {
       auto start = body.find_first_not_of(" \t\r\n"), end = body.find_last_not_of(" \t\r\n");
       const auto trimmed = start == std::string::npos ? "" : body.substr(start, end - start + 1);
       const auto reason = p.fatal ? p.label + ": " + trimmed.substr(0, 160) : p.label;
       (p.fatal ? out.fatal : out.notes).push_back(reason);
-      if (p.label == "shutdown needed SIGTERM/SIGKILL") out.teardown.push_back(reason);
+      if (p.label == "shutdown needed SIGTERM/SIGKILL") {
+        out.teardown.push_back(reason);
+        if (shutting_down && std::regex_search(line, match, escalate) &&
+            interrupted.count(match[2])) {
+          auto &entry = escalations[match[2]];
+          entry.exit_code = match[1] == "TERM" ? -15 : -9;
+          entry.reasons.push_back(reason);
+        }
+      }
     }
     if (line.find("post-flight") != std::string::npos &&
         line.find("processes already running") != std::string::npos) {
@@ -87,6 +107,9 @@ Report check(const std::string &path) {
       out.fatal.push_back("teardown watchdog: " + body);
       out.teardown.push_back(out.fatal.back());
     }
+  }
+  for (const auto &process : reaped) {
+    for (const auto &reason : escalations.at(process).reasons) out.reaped.push_back(reason);
   }
   return out;
 }
@@ -116,6 +139,7 @@ int main(int argc, char **argv) {
         logs.push_back({{"path", argv[i]}, {"readable", readable},
                         {"reasons", unique(report.fatal)},
                         {"notes", unique(report.notes)},
+                        {"reaped_teardown_reasons", unique(report.reaped)},
                         {"teardown_reasons", unique(report.teardown)}});
         continue;
       }

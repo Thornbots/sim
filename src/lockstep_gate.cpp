@@ -96,6 +96,7 @@ public:
 
   void PostUpdate(const gz::sim::UpdateInfo & info, const gz::sim::EntityComponentManager &) override
   {
+    if (*stopping_) {return;}
     const int64_t t = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     std::unique_lock<std::mutex> lock(mutex_);
     // Paused updates must return so scene/create services can finish startup.
@@ -139,12 +140,10 @@ public:
     while (released_ns_ <= t && !*stopping_ && std::chrono::steady_clock::now() < heard_ + wait) {
       cv_.wait_until(lock, std::min(heard_ + wait, std::chrono::steady_clock::now() +
         std::chrono::milliseconds(10)));
-      if (strict_startup_ && released_ns_ <= t) {held_pub_.Publish(to_msg(t));}
+      if (strict_startup_ && released_ns_ <= t && !*stopping_) {held_pub_.Publish(to_msg(t));}
     }
-    if (*stopping_) {
-      events_->Emit<gz::sim::events::Stop>();
-      return;
-    }
+    // Stop was delivered by the server. Re-emitting it races the render thread's join.
+    if (*stopping_) {return;}
     const bool released = released_ns_ > t;
     if (!released) {
       ++timeouts_;

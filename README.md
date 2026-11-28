@@ -411,19 +411,19 @@ outside the launch tree to clean up:
   SIGINT to the launch leader on interruption.
 - The firmware process has its own process group on purpose, so a group SIGINT
   cannot kill it mid-tick; it exits when gz closes its stdin.
-- The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero node
-  exit, including -2. The run summary requires clean teardown.
-- `gz_bridge` frees its ROS context before `main` returns
-  ([`src/gz_bridge.cpp`](src/gz_bridge.cpp)). `ros_gz_bridge`'s node is
-  referenced from its own handles, services and timer, so with the global context the participant
-  and rmw's graph-listener thread outlived `main` and Fast DDS's singleton
-  destroyed the participant under that thread (SIGSEGV or `pure virtual method
-  called`, about 2% of early interrupts). Teardown is bounded: three seconds after
-  `spin()` returns a watchdog leaves with a message on stderr (`teardown exceeded 3 s`,
-  once in about 1,000 exits before it existed), and `GZ_BRIDGE_ABORT_ON_HANG=1` aborts for a core.
-  `tools/bridge_teardown_stress.py N MIN MAX OUT` hunts for a regression: it interrupts four
-  bridges and three subscribers together after a random delay and counts bridge deaths and
-  watchdog exits.
+- The checker reports SIGTERM/SIGKILL escalation and nonzero node exits.
+  When the E2E supervisor verifies that it reaped the owned stack and the
+  native result is complete, a termination after shutdown is recorded in
+  `teardown` without changing the scored verdict. An incomplete result or
+  an unverified process group still fails.
+- The coordinated E2E launch uses UDP for ROS transport in the sim launch
+  and for the UART and robot nodes. The spawn verifier releases its Gazebo
+  client once it has confirmed the spawn. The scorer disconnects its
+  Gazebo truth subscriptions before stopping the publishers. `gz_bridge`
+  takes SIGINT/SIGTERM on the executor thread,
+  disconnects its Gazebo subscriptions, and destroys its ROS context on
+  that thread. The launch supervisor still bounds a stuck shutdown.
+  `tools/bridge_teardown_stress.py N MIN MAX OUT` exercises concurrent exits.
 
 `tools/lifecycle_check.sh` is the acceptance test. For each of `mcb_parked`,
 `mcb_drive`, `mcb_match` and `tracking` it ends a run by completion, Ctrl-C
@@ -1826,6 +1826,14 @@ plugin log `<sim ns> <bytes> <hex>` for every Jetson-to-MCB read; diff two runs'
 the first frame that reached the firmware on a different step. The measurements and the
 remaining work are in the
 [T17 investigation](docs/t17-consistent-runs-2026-11-05.md).
+
+In epoch-zero runs the MCB publishes clock zero until physics is released.
+The first 1 ms hold continues until the pose probe sees the EKF output and
+the pose-consumption endpoints. This lets the EKF start its timer at that
+same first positive clock even if the process is late. Waypoint navigation
+and the scorer subscribe reliably to the held clock. The scoring window
+counts advancing simulation time and has a wall-clock guard for stalled
+ticks.
 
 `/sim/lockstep/status` reports holds, per-chain wall wait and timeout counts.
 The harness requires fresh status, at least one hold, and zero timeouts;

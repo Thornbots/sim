@@ -10,9 +10,10 @@
 // stamps, never wall time; a wall timer polls so a held sim clock cannot stall it.
 
 #include <chrono>
-#include <limits>
 #include <deque>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -70,24 +71,74 @@ public:
       "/odom", 100, [this](nav_msgs::msg::Odometry::ConstSharedPtr m) {
         odom_ns_ = std::max(odom_ns_, rclcpp::Time(m->header.stamp).nanoseconds());
       });
+    const auto ready_topic = declare_parameter("boot_ready_topic", std::string(""));
+    if (!ready_topic.empty()) {
+      boot_ready_pub_ = create_publisher<std_msgs::msg::Header>(
+        ready_topic, rclcpp::QoS(1).reliable().transient_local());
+      ekf_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+        "/localization/odom", 1, [](nav_msgs::msg::Odometry::ConstSharedPtr) {});
+    }
     timer_ = create_wall_timer(std::chrono::milliseconds(1), [this] {poll();});
   }
 
 private:
   void poll()
   {
+    // The EKF advertises its output after wiring its inputs and after a nonzero clock.
+    // Node discovery alone can see it while it's still blocked on that first clock.
+    if (ekf_sub_ && now().nanoseconds() > 0 && ekf_sub_->get_publisher_count() > 0 &&
+      pose_sub_->get_publisher_count() > 0 && odom_sub_->get_publisher_count() > 0 &&
+      input_sub_->get_publisher_count() > 0 &&
+      (!queued_sub_ || queued_sub_->get_publisher_count() > 0) &&
+      (!relay_sub_ || relay_sub_->get_publisher_count() > 0))
+    {
+      std_msgs::msg::Header ready;
+      ready.stamp = now();
+      boot_ready_pub_->publish(ready);
+      ekf_sub_.reset();
+    }
     while (!pending_.empty() && odom_ns_ >= pending_.front() && input_ns_ >= pending_.front() &&
       relay_ns_ >= pending_.front() && queued_ns_ >= pending_.front()) {
       const rclcpp::Time at(pending_.front(), RCL_ROS_TIME);
       bool ready = true;
+      std::string missing;
       for (const auto & frame : frames_) {
-        ready = ready && tf_buffer_->canTransform(odom_frame_, frame, at);
+        std::string error;
+        if (!tf_buffer_->canTransform(odom_frame_, frame, at, rclcpp::Duration(0, 0), &error)) {
+          ready = false;
+          missing += " " + frame + ": " + error;
+        }
       }
-      if (!ready) {return;}
+      if (!ready) {
+        report_wait("TF" + missing);
+        return;
+      }
       std_msgs::msg::Header h;
       h.stamp = at;
       pub_->publish(h);
       pending_.pop_front();
+      waiting_since_.reset();
+    }
+    if (!pending_.empty()) {
+      report_wait("inputs: odom " + std::to_string(odom_ns_) + " ekf_input " +
+        std::to_string(input_ns_) + " relay " + std::to_string(relay_ns_) + " queued " +
+        std::to_string(queued_ns_));
+    }
+  }
+
+  // Names what still holds the oldest POSE once it has waited 5 s of wall time.
+  void report_wait(const std::string & what)
+  {
+    const auto wall = std::chrono::steady_clock::now();
+    if (!waiting_since_ || waiting_for_ != pending_.front()) {
+      waiting_since_ = wall;
+      waiting_for_ = pending_.front();
+      reported_ = false;
+    }
+    if (!reported_ && wall - *waiting_since_ > std::chrono::seconds(5)) {
+      reported_ = true;
+      RCLCPP_WARN(get_logger(), "POSE %.3f s unconsumed after 5 s; waiting on %s",
+        pending_.front() * 1e-9, what.c_str());
     }
   }
 
@@ -97,11 +148,14 @@ private:
   int64_t odom_ns_ = 0, input_ns_ = 0, relay_ns_ = 0, queued_ns_ = 0;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr pub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr pub_, boot_ready_pub_;
   rclcpp::Subscription<dji_serial_bridge::msg::RobotPose>::SharedPtr pose_sub_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_, input_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_, input_sub_, ekf_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr relay_sub_, queued_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  std::optional<std::chrono::steady_clock::time_point> waiting_since_;
+  int64_t waiting_for_ = 0;
+  bool reported_ = false;
 };
 }  // namespace
 

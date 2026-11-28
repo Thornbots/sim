@@ -114,8 +114,7 @@ public:
             120, "all four robot truth streams");
       // Bring-up ends at a fixed sim time, so what AMCL's start or the host's speed
       // does to when the chain appears cannot move where the cells start.
-      wait([&]() { return scorer->now_s() >= kBringupS; }, 300,
-           "the fixed bring-up time");
+      scorer->run_to(kBringupS);
       wait(
           [&]() {
             return scorer->tf.canTransform("map", "root", tf2::TimePointZero);
@@ -140,13 +139,17 @@ public:
   void TearDown() override {
     timing::Phase phase("teardown");
     if (scorer) {
+      // Unsubscribe before the Gazebo publisher goes away. Leave the harness tick held.
+      scorer->stop_truth_subscriptions();
       EXPECT_EQ(scorer->locked_shots, 0u) << "projectile exits that triggered or ignored a heat lock";
     }
     if (launch) {
       // Keep the last harness tick held until the stack stops.
-      launch->stop();
+      launch->stop(75.0);
       EXPECT_TRUE(launch->clean())
           << "stack shutdown needed SIGKILL; see the SIGKILLing line above";
+      if (launch->clean())
+        std::cout << "E2E stack process group reaped" << std::endl;
     }
     timing::set_sim_clock({});
     scorer.reset();
@@ -157,7 +160,7 @@ public:
     const auto trace = cb::options.log_dir + "/ingress.jsonl";
     cb::truncate(trace);
     // Let the stationary localization seed settle before the tight first waypoint.
-    scorer->run_to(scorer->tick_s() + 3, 120);
+    scorer->run_to(scorer->tick_s() + 3);
     control->set_params("mcb_emulator",
                         {rclcpp::Parameter("auto_fire", false),
                          rclcpp::Parameter("drive", std::string("simple"))});
@@ -165,7 +168,7 @@ public:
     std::optional<double> settled;
     bool arrived = false;
     while (scorer->tick_s() - start < 120) {
-      scorer->run_to(scorer->tick_s() + .2, 120);
+      scorer->run_to(scorer->tick_s() + .2);
       if (launch && !launch->alive())
         throw std::runtime_error("E2E stack exited during parked ingress");
       auto pose = scorer->histories.at("sentry")->at(scorer->tick_s() - .1);
@@ -189,7 +192,7 @@ public:
                         {rclcpp::Parameter("drive", std::string("stop"))});
     if (!arrived)
       throw std::runtime_error("firmware parked ingress did not settle at center");
-    scorer->run_to(scorer->tick_s() + 3, 120);
+    scorer->run_to(scorer->tick_s() + 3);
     const auto pose = scorer->histories.at("sentry")->at(scorer->tick_s() - .1);
     if (!pose) throw std::runtime_error("missing parked chassis truth");
     parked_x = pose->root(0, 3);
@@ -300,7 +303,7 @@ TEST_P(E2ESuite, MCB) {
       timing::Phase phase("settle");
       // Windows are counted in chain ticks, not in the clock this scorer happens to have seen:
       // the last shot's record depends on where they end.
-      s->run_to(s->tick_s() + 3, 120);
+      s->run_to(s->tick_s() + 3);
     }
     s->reset();
     const double window_start = s->tick_s();
@@ -310,10 +313,10 @@ TEST_P(E2ESuite, MCB) {
       environment->control->set_params("detector_standin",
                                        {rclcpp::Parameter("hidden_from_s", *disappears)});
     s->score_until = s->tick_s() + duration + .5;
-    s->run_to(s->score_until, std::max(30., (duration + .5) * 20));
+    s->run_to(s->score_until);
     // Shots and TargetStates stamped inside the window are judged and received later, by
     // however many ticks that takes; keep stepping until they have, then drop the rest.
-    s->run_to(s->score_until + 1.0, 60);
+    s->run_to(s->score_until + 1.0);
     // Physics stays held at this tick until the next cell's first step: this wall time
     // grows with host load, which the lockstep waits must tolerate (README#lockstep-waits-and-load).
     const auto held_from = std::chrono::steady_clock::now();
@@ -383,7 +386,7 @@ TEST_P(E2ESuite, MCB) {
                             rclcpp::Parameter("active", true)});
   double duration = sim::match_scenario::match_duration(cb::options.stage);
   s->score_until = *s->match_start + duration;
-  s->run_to(*s->match_start + duration + .5 + .05 + .1, std::max(30., (duration + .65) * 20));
+  s->run_to(*s->match_start + duration + .5 + .05 + .1);
   s->scoring = false;
   s->check_nodes(environment->nodes);
   s->check_lockstep();

@@ -801,6 +801,9 @@ def generate_launch_description():
         rviz_arg,
         foxglove_arg,
         remote_dds_argument(), *dds_environment(),
+        *[SetEnvironmentVariable(name, value,
+                                 condition=IfCondition(LaunchConfiguration('uart_deterministic')))
+          for name, value in udp_env().items()],
         rviz_config_arg,
         camera_arg,
         real_time_factor_arg,
