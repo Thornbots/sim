@@ -95,6 +95,11 @@ ros2 launch sim localization_tests.launch.py
 `suite:=ekf` runs the EKF ground-truth test instead. It is on demand, not part
 of the standard run: run it after changing the EKF or rf2o config.
 
+For the image bench CPU inference node, run `bash src/sim/scripts/image_bench_deps.sh`
+from the container workspace root and source `install/setup.bash`. This installs
+ONNX Runtime for the current user and builds the shared YOLO26 decoder without
+Isaac components. Set the node’s `model_onnx` parameter to the model path.
+
 The CV aiming bench runs ten shot-hit cases, all with lead on: a stationary
 target, then 0.5, 1, 2 and 4 m/s, first with flat panels and then with
 neighbouring panels staggered 10.39 cm apart vertically (about 83% of a
@@ -202,6 +207,21 @@ including collection errors, after shutting down their stack. Check the
 GTest summary as well as the measured hit rates: diagnostic-tier completion
 is not an accuracy guarantee. `tools/check_bench_log.cpp` also rejects failed
 GTest summaries and clock or lockstep stalls.
+
+The images estimation test reports accuracy metrics without applying emulator limits; it
+requires at least 50% of frames to contain detections and compares two loaded runs.
+Its arrival age uses the later of the input-frame and state stamps as the
+lockstep arrival time, including the age of a held state.
+
+`bench_world` also has an experimental `cv_source:=images` mode. It renders
+640×480 RGB and aligned millimetre depth from panel truth and publishes camera
+info and identity depth-to-colour extrinsics. `face_variant:=sticker` (default)
+or `dotmatrix` chooses the face; `class_id` selects both glyph and colour.
+Configure the rectifier with `color_ns:=/color`, `depth_ns:=/depth`,
+`input_mode:=armor_keypoints` and the extrinsics relay. Images mode requires
+lockstep and at most one frame per clock step. It waits for each matching
+panel array and, when non-empty, the tracker acknowledgement. The rectifier
+uses matching capture stamps for depth and keypoints.
 
 The CV estimation bench scores tracking, not hits. `bench_world` (C++)
 is the whole world in one lockstep loop: `/clock`, the phantom target through
@@ -388,6 +408,39 @@ completed and is reported separately. Run it in your container after building:
 src/sim/tools/lifecycle_check.sh --repeat 3 --out /tmp/lifecycle      # BACKEND=renode for the board
 src/sim/tools/lifecycle_check.sh mcb_parked:kill tracking:int         # selected cases
 ```
+
+### Images mode
+
+The estimation bench can render camera frames and run an ONNX armor model through
+CPU inference and the depth rectifier. Build the image bench dependencies as
+above, then supply an accessible YOLO26 ONNX model with input `images`
+`[1,3,640,640]` and output `output0` `[1,300,18]`:
+
+```bash
+ros2 launch sim estimation.launch.py cv_source:=images model_onnx:=/path/to/model.onnx
+```
+
+`face_variant:=dotmatrix` selects the alternate rendered face. Images mode uses
+lockstep (`real_time_factor:=0`) and the bench AM02 light-bar geometry. The
+images camera defaults to a 69° horizontal field of view; override it with
+`image_horizontal_fov` in radians.
+The bench defaults `image_confidence_threshold` to 0.1; set it for another
+model or to evaluate a different confidence cutoff.
+
+For an offline detector sweep from a container workspace, compile the renderer
+and provide the shared decoder built by `image_bench_deps.sh`:
+
+```bash
+c++ -O2 -std=c++17 -I src/sim/include -I /usr/include/eigen3 \
+  src/sim/scripts/panel_sweep.cpp src/sim/src/panel_renderer.cpp -o /tmp/panel_sweep
+python3 src/sim/scripts/panel_sweep.py /tmp/panel_sweep /path/to/model.onnx \
+  "$(ros2 pkg prefix realsense_yolov8_nitros_bridge)/lib/librealsense_yolov8_nitros_bridge_yolo26_c.so"
+```
+
+The table uses class 0 and covers both faces, 1–6 m and yaw from −60° to 60°.
+A `1` means
+at least one output passed the confidence threshold; it does not validate the
+class, keypoints or range.
 
 ## Build
 

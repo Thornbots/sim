@@ -27,6 +27,8 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstring>
+#include <stdexcept>
 #include <deque>
 #include <functional>
 #include <map>
@@ -43,11 +45,17 @@
 #include "dji_serial_bridge/msg/panel_detection_array.hpp"
 #include "dji_serial_bridge/msg/robot_pose.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
+#include "tf2_ros/static_transform_broadcaster.h"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rosgraph_msgs/msg/clock.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "sensor_msgs/msg/image.hpp"
+#include "sensor_msgs/msg/camera_info.hpp"
+#include "realsense2_camera_msgs/msg/extrinsics.hpp"
+#include "sim/panel_renderer.hpp"
 #include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "std_srvs/srv/set_bool.hpp"
@@ -205,8 +213,24 @@ public:
     declare_parameter("target_yaw", 0.0);
     frame_rate_hz_ = declare_parameter("frame_rate_hz", 60.0);
     hfov_ = declare_parameter("horizontal_fov", 1.5184);
-    const double aspect = declare_parameter("image_height", 480) /
-      static_cast<double>(declare_parameter("image_width", 640));
+    image_height_ = declare_parameter("image_height", 480);
+    image_width_ = declare_parameter("image_width", 640);
+    if (!(hfov_ > 0.0 && hfov_ < M_PI) || image_width_ <= 0 || image_height_ <= 0) {
+      throw std::invalid_argument("invalid camera dimensions or horizontal_fov");
+    }
+    const double aspect = image_height_ / static_cast<double>(image_width_);
+    cv_source_ = declare_parameter("cv_source", std::string("emulator"));
+    const auto face = declare_parameter("face_variant", std::string("sticker"));
+    if ((cv_source_ != "emulator" && cv_source_ != "images") ||
+      (face != "sticker" && face != "dotmatrix")) {
+      throw std::invalid_argument("invalid cv_source or face_variant");
+    }
+    face_ = face == "sticker" ? sim::PanelFace::Sticker : sim::PanelFace::DotMatrix;
+    if (cv_source_ == "images" && (image_width_ != sim::PanelImage::width ||
+      image_height_ != sim::PanelImage::height || rate_ > 0.0 ||
+      frame_rate_hz_ * substeps_ * physics_step_s_ >= 1.0)) {
+      throw std::invalid_argument("images mode requires 640x480, lockstep and at most one frame per clock step");
+    }
     vfov_ = 2.0 * std::atan(std::tan(hfov_ / 2.0) * aspect);
     range_near_ = declare_parameter("range_near", 0.1);
     range_far_ = declare_parameter("range_far", 10.0);
@@ -256,7 +280,50 @@ public:
     odom_pub_ = create_publisher<nav_msgs::msg::Odometry>("/sim/raw_odom", 10);
     joint_pub_ = create_publisher<sensor_msgs::msg::JointState>("/sim/raw_joint_states", 10);
     pose_pub_ = create_publisher<RobotPose>("/dji_serial_bridge/pose", 10);
-    det_pub_ = create_publisher<PanelDetectionArray>("cv/panel_detections", 10);
+    if (cv_source_ == "emulator") {
+      det_pub_ = create_publisher<PanelDetectionArray>("cv/panel_detections", 10);
+    } else {
+      const auto sensor_qos = rclcpp::QoS(10).reliable();
+      paused_pub_ = create_publisher<std_msgs::msg::Header>("/bench/paused", 10);
+      color_pub_ = create_publisher<sensor_msgs::msg::Image>("/color/image_raw", sensor_qos);
+      depth_pub_ = create_publisher<sensor_msgs::msg::Image>("/depth/image_rect_raw", sensor_qos);
+      color_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("/color/camera_info", sensor_qos);
+      depth_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("/depth/camera_info", sensor_qos);
+      extrinsics_pub_ = create_publisher<realsense2_camera_msgs::msg::Extrinsics>(
+        "/extrinsics/depth_to_color", rclcpp::QoS(1).reliable().transient_local());
+      realsense2_camera_msgs::msg::Extrinsics ext;
+      ext.rotation = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+      ext.translation = {0, 0, 0};
+      extrinsics_pub_->publish(ext);
+      static_tf_ = std::make_unique<tf2_ros::StaticTransformBroadcaster>(*this);
+      geometry_msgs::msg::TransformStamped transform;
+      transform.header.frame_id = "camera";
+      transform.child_frame_id = "camera_optical_frame";
+      transform.transform.rotation.x = -0.5;
+      transform.transform.rotation.y = 0.5;
+      transform.transform.rotation.z = -0.5;
+      transform.transform.rotation.w = 0.5;
+      static_tf_->sendTransform(transform);
+      subs_.push_back(create_subscription<PanelDetectionArray>(
+        "cv/panel_detections", 10, [this](PanelDetectionArray::ConstSharedPtr m) {
+          std::lock_guard<std::mutex> lock(gate_mutex_);
+          const auto ns = rclcpp::Time(m->header.stamp).nanoseconds();
+          if (ns == image_frame_ns_) {
+            last_input_ns_ = ns;
+            image_result_received_ = true;
+            gate_cv_.notify_all();
+          }
+        }));
+      subs_.push_back(create_subscription<PanelDetectionArray>(
+        "/cv/robot_panels", 10, [this](PanelDetectionArray::ConstSharedPtr m) {
+          std::lock_guard<std::mutex> lock(gate_mutex_);
+          if (rclcpp::Time(m->header.stamp).nanoseconds() == image_frame_ns_) {
+            image_selection_received_ = true;
+            image_result_nonempty_ = !m->detections.empty();
+            gate_cv_.notify_all();
+          }
+        }));
+    }
     marker_pub_ = create_publisher<MarkerArray>("target_markers", 10);
     // Each case's start (stamp) and case_seed (frame_id), latched for the scorer.
     case_pub_ = create_publisher<std_msgs::msg::Header>(
@@ -354,6 +421,7 @@ private:
   {
     std::lock_guard<std::mutex> lock(gate_mutex_);
     tracker_live_ = true;
+    last_echo_ns_ = std::max(last_echo_ns_, static_cast<int64_t>(std::llround(stamp * 1e9)));
     while (!owed_.empty() && owed_.front() <= stamp + 1e-9) {owed_.pop_front();}
     gate_cv_.notify_all();
   }
@@ -413,6 +481,14 @@ private:
     return true;
   }
 
+  bool inference_subscribed()
+  {
+    const auto endpoints = get_subscriptions_info_by_topic("/color/image_raw");
+    return std::any_of(endpoints.begin(), endpoints.end(), [](const auto & endpoint) {
+      return endpoint.node_name() == "onnx_armor_inference";
+    });
+  }
+
   // Hold /clock at 0 until the nodes under test are up, so mcb_aim_standin's
   // timer starts at 0 (the grace covers its timers, made after its publisher).
   void await_nodes()
@@ -423,15 +499,25 @@ private:
     while (!stop_ && rclcpp::ok() && std::chrono::steady_clock::now() < deadline) {
       if (count_publishers("/cv/target/tick") > 0 &&
         count_publishers("/cv/manager/input_ack") > 0 &&
-        count_publishers("/cv/tracker/measurement") > 0) {
+        count_publishers("/cv/tracker/measurement") > 0 &&
+        (cv_source_ != "images" || (count_publishers("/cv/panel_detections") > 0 &&
+        count_publishers("/cv/armor_keypoints") > 0 &&
+        inference_subscribed() && depth_pub_->get_subscription_count() > 0 &&
+        color_info_pub_->get_subscription_count() > 0 &&
+        depth_info_pub_->get_subscription_count() > 0))) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         aim_live_ = true;
         return;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    RCLCPP_WARN(get_logger(), "lockstep: nodes under test not up after %.0f s; "
-      "starting the clock without them", startup_wait_s_);
+    if (cv_source_ == "images") {
+      RCLCPP_ERROR(get_logger(), "lockstep: image pipeline not ready; stopping");
+      stop_ = true;
+    } else {
+      RCLCPP_WARN(get_logger(), "lockstep: nodes under test not up after %.0f s; "
+        "starting the clock without them", startup_wait_s_);
+    }
   }
 
   void run()
@@ -442,6 +528,16 @@ private:
     publish_clock();
     if (rate_ <= 0.0) {await_nodes();}
     while (!stop_ && rclcpp::ok()) {
+      if (cv_source_ == "images") {
+        std::unique_lock<std::mutex> lock(gate_mutex_);
+        if (!progress_enabled_) {
+          std_msgs::msg::Header paused;
+          paused.stamp = to_stamp(t_);
+          paused_pub_->publish(paused);
+          gate_cv_.wait(lock, [this] {return stop_ || progress_enabled_;});
+          if (stop_) {break;}
+        }
+      }
       const double next_t = (n_ + substeps_) * physics_step_s_;
       if (rate_ > 0.0) {
         std::this_thread::sleep_until(
@@ -461,12 +557,35 @@ private:
       }
       const int64_t shown_ns = n_ * physics_step_ns_;  // the /clock nodes last saw
       for (int i = 0; i < substeps_; ++i) {step();}
-      if (rate_ <= 0.0 && detections_due()) {
+      if (rate_ <= 0.0 && (detections_due() || (image_due_ && shown_ns > 0))) {
         // The tracker stamps with now(): send only once it reads shown_ns.
         std::unique_lock<std::mutex> lock(gate_mutex_);
         wait_for(lock, "/cv/tracker/clock_ack", [&] {return tracker_clock_ns_ >= shown_ns;});
       }
       flush_detections();
+      if (image_due_) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (last_pose_ns_ != n_ * physics_step_ns_) {publish_pose();}
+        image_frame();
+        image_due_ = false;
+      }
+      if (cv_source_ == "images") {
+        std::unique_lock<std::mutex> lock(gate_mutex_);
+        if (image_frame_ns_ >= 0) {
+          const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::duration<double>(max_wait_s_);
+          while (!stop_ && (!image_result_received_ || !image_selection_received_ ||
+            (image_result_nonempty_ && last_echo_ns_ < image_frame_ns_))) {
+            if (gate_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
+              RCLCPP_ERROR(get_logger(), "lockstep: image frame timed out; stopping");
+              stop_ = true;
+              break;
+            }
+          }
+          image_frame_ns_ = -1;
+        }
+        if (stop_) {break;}
+      }
       const int64_t t_ns = n_ * physics_step_ns_;
       if (rate_ <= 0.0) {
         // The tracker folds in every published detection while /clock still
@@ -536,7 +655,9 @@ private:
     if (due(head_rate_hz_, last_head_)) {control_head();}
     if (due(pose_rate_hz_, last_pose_)) {publish_pose();}
     if (due(truth_rate_hz_, last_truth_)) {publish_truth();}
-    if (due(frame_rate_hz_, last_frame_)) {frame();}
+    if (due(frame_rate_hz_, last_frame_)) {
+      if (cv_source_ == "images") {image_due_ = true;} else {frame();}
+    }
     if (marker_pub_->get_subscription_count() > 0 && due(markers_rate_hz_, last_markers_)) {
       publish_markers();
     }
@@ -652,6 +773,7 @@ private:
   void publish_pose()
   {
     const auto stamp = to_stamp(t_);
+    last_pose_ns_ = n_ * physics_step_ns_;
     RobotPose pose;
     pose.header.stamp = stamp;
     pose.x = xy_.x();
@@ -745,6 +867,63 @@ private:
     if (!detections_enabled_ || holding()) {return true;}
     const double period = live_["blackout_period_s"];
     return period > 0.0 && std::fmod(t_ - case_t0_, period) < live_["blackout_s"];
+  }
+
+  void image_frame()
+  {
+    const auto [cam, rot] = camera_pose();
+    Matrix3d optical;
+    optical << 0, -1, 0, 0, 0, -1, 1, 0, 0;
+    const Matrix3d world_to_optical = optical * rot.transpose();
+    std::vector<sim::RenderPanel> rendered;
+    if (!masked()) {
+      for (const auto & p : panels()) {
+        sim::RenderPanel panel;
+        panel.T_cam_panel.translation() = world_to_optical * (p.pos - cam);
+        panel.T_cam_panel.linear().col(0) = world_to_optical * p.right;
+        panel.T_cam_panel.linear().col(1) = world_to_optical * p.up;
+        panel.T_cam_panel.linear().col(2) = world_to_optical * p.normal;
+        panel.class_id = static_cast<int>(class_id_);
+        panel.face = face_;
+        rendered.push_back(panel);
+      }
+    }
+    sim::PanelCamera camera;
+    camera.fx = camera.fy = image_width_ / (2.0 * std::tan(hfov_ / 2.0));
+    camera.cx = image_width_ / 2.0;
+    camera.cy = image_height_ / 2.0;
+    auto image = sim::render_panels(camera, rendered,
+        static_cast<uint32_t>(mix(mix(seed_, noise_key_), static_cast<uint64_t>(last_frame_))));
+    sensor_msgs::msg::CameraInfo info;
+    info.header.stamp = to_stamp(t_);
+    info.header.frame_id = "camera_optical_frame";
+    info.width = image_width_;
+    info.height = image_height_;
+    info.distortion_model = "plumb_bob";
+    info.d.assign(5, 0.0);
+    info.k = {camera.fx, 0, camera.cx, 0, camera.fy, camera.cy, 0, 0, 1};
+    info.r = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    info.p = {camera.fx, 0, camera.cx, 0, 0, camera.fy, camera.cy, 0, 0, 0, 1, 0};
+    sensor_msgs::msg::Image color, depth;
+    color.header = depth.header = info.header;
+    color.width = depth.width = image_width_;
+    color.height = depth.height = image_height_;
+    color.encoding = "rgb8";
+    color.step = image_width_ * 3;
+    color.data = std::move(image.rgb8);
+    depth.encoding = "16UC1";
+    depth.step = image_width_ * 2;
+    depth.data.resize(image.depth_mm.size() * sizeof(uint16_t));
+    std::memcpy(depth.data.data(), image.depth_mm.data(), depth.data.size());
+    {
+      std::lock_guard<std::mutex> lock(gate_mutex_);
+      image_frame_ns_ = rclcpp::Time(info.header.stamp).nanoseconds();
+      image_result_received_ = image_selection_received_ = image_result_nonempty_ = false;
+    }
+    color_info_pub_->publish(info);
+    depth_info_pub_->publish(info);
+    depth_pub_->publish(depth);
+    color_pub_->publish(color);
   }
 
   // One camera frame at t_: every panel in range, in view and presenting,
@@ -953,6 +1132,9 @@ private:
   bool emit_normal_ = false;
   double frame_rate_hz_, hfov_, vfov_, range_near_, range_far_, view_half_angle_;
   int64_t class_id_;
+  int image_width_, image_height_;
+  std::string cv_source_;
+  sim::PanelFace face_;
   double head_rate_hz_, head_gain_, max_yaw_rate_, max_pitch_rate_;
   double pose_rate_hz_, truth_rate_hz_, markers_rate_hz_;
   OnSetParametersCallbackHandle::SharedPtr param_cb_;
@@ -985,6 +1167,9 @@ private:
   int64_t last_aim_ns_ = -1, last_point_ns_ = -1, expected_point_ns_ = -1;
   int64_t manager_input_ns_ = -1, last_input_ns_ = -1;
   int64_t tracker_clock_ns_ = -1;
+  int64_t image_frame_ns_ = -1, last_echo_ns_ = -1, last_pose_ns_ = -1;
+  bool image_result_received_ = false, image_selection_received_ = false;
+  bool image_result_nonempty_ = false, image_due_ = false;
   bool warned_phase_ = false;
   std::optional<double> progress_;
   bool progress_enabled_ = true;
@@ -996,8 +1181,12 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_pub_;
   rclcpp::Publisher<RobotPose>::SharedPtr pose_pub_;
   rclcpp::Publisher<PanelDetectionArray>::SharedPtr det_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr color_pub_, depth_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr color_info_pub_, depth_info_pub_;
+  rclcpp::Publisher<realsense2_camera_msgs::msg::Extrinsics>::SharedPtr extrinsics_pub_;
+  std::unique_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_;
   rclcpp::Publisher<MarkerArray>::SharedPtr marker_pub_;
-  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr case_pub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr case_pub_, paused_pub_;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subs_;
 
   std::atomic<bool> stop_{false};

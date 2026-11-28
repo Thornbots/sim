@@ -51,7 +51,7 @@ def _is_true(context, name):
 
 
 def cv_node(executable, package='thornbots_pkg', **params):
-    return Node(package=package, executable=executable, name=executable,
+    return Node(package=package, executable=executable, name=executable.removesuffix('.py'),
                 output='screen', parameters=[{'use_sim_time': True, **params}])
 
 
@@ -66,6 +66,8 @@ def _require_aim_standin():
 def _stack(context):
     _require_aim_standin()
     cfg = context.launch_configurations
+    if cfg['cv_source'] == 'images' and not os.path.isfile(cfg['model_onnx']):
+        raise RuntimeError('cv_source:=images requires model_onnx to name an existing ONNX file')
     headless = _is_true(context, 'headless') or display_error() is not None
     camera_latency = float(cfg['camera_latency_s'])
     # rate 0: as fast as the nodes under test keep up (bench_world's gates).
@@ -75,6 +77,10 @@ def _stack(context):
              'camera_latency_s': camera_latency,
              'yaw_bearing_damping': float(cfg['yaw_bearing_damping']),
              'seed': int(cfg['seed']),
+             'cv_source': cfg['cv_source'],
+             'horizontal_fov': (float(cfg['image_horizontal_fov'])
+                                if cfg['cv_source'] == 'images' else 1.5184),
+             'face_variant': cfg['face_variant'],
              'emit_normal': _is_true(context, 'emit_normal'),
              'normal_yaw_noise_rad': float(cfg['normal_yaw_noise_rad']),
              'normal_flip_probability': float(cfg['normal_flip_probability'])}
@@ -118,6 +124,18 @@ def _stack(context):
         cv_node('mcb_aim_standin', package='sim', fire_enabled=False,
                 tick_topic='/cv/target/tick', state_ack_topic='/cv/target/managed_ack'),
     ]
+    if cfg['cv_source'] == 'images':
+        actions += [
+            cv_node('onnx_armor_inference.py', package='sim', model_onnx=cfg['model_onnx'],
+                    confidence_threshold=float(cfg['image_confidence_threshold'])),
+            cv_node('roi_depth_node_exe', package='roi_depth_query',
+                    input_mode='armor_keypoints', exact_stamp_sync=True,
+                    depth_ns='/depth', color_ns='/color',
+                    **{'plate.light_bar_spacing_m': 0.1258,
+                       'plate.light_bar_length_m': 0.060,
+                       'extrinsics.rotation': [1.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+                                               0.0, 0.0, 1.0]}),
+        ]
     if not headless:
         actions.append(cv_node('target_state_markers', package='sim'))
         actions.append(Node(
@@ -137,6 +155,8 @@ def _tests(context):
            '--panel-layout', cfg['panel_layout'], '--target-path', cfg['target_path'],
            '--shooter-speed', cfg['shooter_speed'], '--chassis-spin', cfg['chassis_spin'],
            '--camera-latency', cfg['camera_latency_s']]
+    if cfg['cv_source'] == 'images':
+        cmd.append('--images')
     speeds = cfg['speeds'].replace(',', ' ').split()
     if speeds:
         cmd += ['--shot-speeds', ','.join(speeds)]
@@ -165,6 +185,16 @@ def _foxglove():
 
 def generate_launch_description():
     args = [
+        DeclareLaunchArgument('cv_source', default_value='emulator',
+                              choices=['emulator', 'images']),
+        DeclareLaunchArgument('image_horizontal_fov', default_value='1.204277',
+                              description='images camera horizontal field of view (radians)'),
+        DeclareLaunchArgument('image_confidence_threshold', default_value='0.1',
+                              description='image-bench detection confidence threshold'),
+        DeclareLaunchArgument('model_onnx', default_value='',
+                              description='ONNX model for images mode'),
+        DeclareLaunchArgument('face_variant', default_value='sticker',
+                              choices=['sticker', 'dotmatrix']),
         DeclareLaunchArgument('confidence_decay_tau_s', default_value='0.30'),
         DeclareLaunchArgument('run_tests', default_value='true',
                               description='false: bring up the stack only'),

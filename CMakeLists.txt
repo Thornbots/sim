@@ -94,13 +94,21 @@ if(EXISTS "${MCB_AIM_PLANNER_DIR}/AimPlanner.cpp" AND EXISTS "${MCB_INDEXER_DIR}
   install(TARGETS mcb_aim_standin DESTINATION lib/${PROJECT_NAME})
 endif()
 
+install(PROGRAMS scripts/onnx_armor_inference.py DESTINATION lib/${PROJECT_NAME})
+
 add_executable(bench_world src/bench_world.cpp)
 target_compile_features(bench_world PUBLIC cxx_std_17)
-target_link_libraries(bench_world Eigen3::Eigen)
+target_link_libraries(bench_world Eigen3::Eigen panel_renderer)
 ament_target_dependencies(bench_world
-  rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs std_srvs
+  rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs std_srvs realsense2_camera_msgs tf2_ros
   visualization_msgs)
 install(TARGETS bench_world DESTINATION lib/${PROJECT_NAME})
+
+add_library(panel_renderer STATIC src/panel_renderer.cpp)
+target_compile_features(panel_renderer PUBLIC cxx_std_17)
+target_include_directories(panel_renderer PUBLIC include)
+target_link_libraries(panel_renderer PUBLIC Eigen3::Eigen)
+install(TARGETS panel_renderer ARCHIVE DESTINATION lib)
 
 add_library(cv_head_aim_core src/cv_head_aim_core.cpp)
 target_compile_features(cv_head_aim_core PUBLIC cxx_std_17)
@@ -441,6 +449,9 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_lidar_scan sensor_msgs)
   ament_add_gtest(test_depth_mm test/cpp/test_depth_mm.cpp)
   target_include_directories(test_depth_mm PRIVATE include)
+  find_package(ZLIB REQUIRED)
+  ament_add_gtest(test_panel_renderer test/test_panel_renderer.cpp)
+  target_link_libraries(test_panel_renderer panel_renderer ZLIB::ZLIB)
   ament_add_gtest(test_panel_view test/cpp/test_panel_view.cpp)
   target_include_directories(test_panel_view PRIVATE include)
   target_link_libraries(test_panel_view Eigen3::Eigen)
@@ -535,6 +546,12 @@ if(BUILD_TESTING)
     OPPONENT_DRIVER_EXE="$<TARGET_FILE:opponent_driver>")
   target_link_libraries(test_opponent_startup suite_support gz-transport::core gz-msgs::core)
   ament_target_dependencies(test_opponent_startup rclcpp std_msgs)
+  ament_add_pytest_test(sim_image_estimation test/test_image_estimation.py TIMEOUT 1500
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENV "PYTEST_ADDOPTS=-p no:anyio")
+  ament_add_pytest_test(sim_onnx_armor test/test_onnx_armor_inference.py TIMEOUT 120
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENV "PYTEST_ADDOPTS=-p no:anyio")
   ament_add_pytest_test(sim_dds_switch test/test_dds_switch.py TIMEOUT 60
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENV "PYTEST_ADDOPTS=-p no:anyio")
