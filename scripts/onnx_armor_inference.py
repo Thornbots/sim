@@ -60,7 +60,6 @@ def make_node(ort):
     from cv_bridge import CvBridge
     from dji_serial_bridge.msg import ArmorKeypoints, ArmorKeypointsArray
     from rclpy.node import Node
-    from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import Image
 
     class Inference(Node):
@@ -71,22 +70,28 @@ def make_node(ort):
             model = self.declare_parameter('model_onnx', '').value
             threshold = self.declare_parameter('confidence_threshold', 0.25).value
             self.threshold = float(threshold)
-            self.session = ort.InferenceSession(model, providers=['CPUExecutionProvider'])
+            options = ort.SessionOptions()
+            options.intra_op_num_threads = 1
+            self.session = ort.InferenceSession(
+                model, sess_options=options, providers=['CPUExecutionProvider'])
             inputs, outputs = self.session.get_inputs(), self.session.get_outputs()
-            if len(inputs) != 1 or inputs[0].name != 'images' or inputs[0].shape != [1, 3, 640, 640]:
+            if (len(inputs) != 1 or inputs[0].name != 'images' or
+                    inputs[0].shape != [1, 3, 640, 640]):
                 raise ValueError('model must have input images [1,3,640,640]')
-            if len(outputs) != 1 or outputs[0].name != 'output0' or outputs[0].shape != [1, 300, 18]:
+            if (len(outputs) != 1 or outputs[0].name != 'output0' or
+                    outputs[0].shape != [1, 300, 18]):
                 raise ValueError('model must have output0 [1,300,18]')
             try:
                 path = os.path.join(get_package_prefix('realsense_yolov8_nitros_bridge'), 'lib',
                                     'librealsense_yolov8_nitros_bridge_yolo26_c.so')
                 self.library = ctypes.CDLL(path)
             except (PackageNotFoundError, OSError) as exc:
-                raise RuntimeError('B1 decoder missing; run sim/scripts/image_bench_deps.sh') from exc
+                raise RuntimeError(
+                    'B1 decoder missing; run sim/scripts/image_bench_deps.sh') from exc
             self.bridge = CvBridge()
             self.pub = self.create_publisher(ArmorKeypointsArray, '/cv/armor_keypoints', 10)
             self.sub = self.create_subscription(Image, '/color/image_raw', self.image,
-                                                qos_profile_sensor_data)
+                                                10)
 
         def image(self, msg):
             """Decode using the shared robot decoder and preserve capture time."""
@@ -122,10 +127,12 @@ def main():
     try:
         node = make_node(ort)
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         if node is not None:
             node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':

@@ -35,6 +35,8 @@ public:
   std::optional<std::pair<int64_t, double>> current_case;
   EstimationSampler() : SimTimeNode("estimation_sampler") {
     progress_ = create_publisher<std_msgs::msg::Header>("/bench/progress", 10);
+    paused_sub_ = create_subscription<std_msgs::msg::Header>(
+        "/bench/paused", 10, [this](const std_msgs::msg::Header &) { paused_ = true; });
     truth_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "/target/ground_truth_odom", 50,
         [this](const nav_msgs::msg::Odometry &m) {
@@ -87,7 +89,11 @@ public:
   }
   void pause_progress() {
     if (!pacing_) return;
+    paused_ = false;
+    const bool has_pause = count_publishers("/bench/paused") > 0;
     set_pacing(false);
+    if (has_pause && !wait_until([&] { return paused_; }, 60, "image pipeline drain"))
+      throw std::runtime_error("image pipeline failed to drain");
     pacing_ = false;
   }
   void resolve(double newest) {
@@ -113,13 +119,21 @@ public:
     pending = std::move(keep);
   }
   bool spin_until_truth(double t) {
-    const double rate = std::stod(cb::options.rtf);
-    const double latest = truth.empty() ? now_s() : truth.back().t;
-    const double sim_remaining = std::max(0., t - latest);
-    const double wall_wait = sim_remaining / (rate > 0. ? rate : 1.);
-    return wait_until([&]() { return !truth.empty() && truth.back().t >= t; },
-                      std::max(60., wall_wait + 10.),
-                      "truth at " + cb::number(t) + " s");
+    auto last_progress = std::chrono::steady_clock::now();
+    double latest = truth.empty() ? 0. : truth.back().t;
+    while (rclcpp::ok()) {
+      if (!truth.empty() && truth.back().t >= t) return true;
+      spin_once();
+      if (!truth.empty() && truth.back().t > latest) {
+        latest = truth.back().t;
+        last_progress = std::chrono::steady_clock::now();
+      }
+      if (std::chrono::steady_clock::now() - last_progress > std::chrono::seconds(60)) {
+        std::cout << "[spin_until_truth] no truth progress for 60s at " << latest << std::endl;
+        return false;
+      }
+    }
+    return false;
   }
 
 private:
@@ -139,9 +153,9 @@ private:
     if (!future.get()->success)
       throw std::runtime_error("stack NOT ready: /bench/pacing rejected handoff");
   }
-  bool pacing_ = false;
+  bool pacing_ = false, paused_ = false;
   rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr progress_;
-  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr case_sub_;
+  rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr case_sub_, paused_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr truth_sub_,
       root_sub_;
   rclcpp::Subscription<dji_serial_bridge::msg::TargetState>::SharedPtr

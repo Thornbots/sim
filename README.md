@@ -215,10 +215,8 @@ or `dotmatrix` chooses the face; `class_id` selects both glyph and colour.
 Configure the rectifier with `color_ns:=/color`, `depth_ns:=/depth`,
 `input_mode:=armor_keypoints` and the extrinsics relay. Images mode requires
 lockstep and at most one frame per clock step. It waits for each matching
-panel array and, when non-empty, the tracker acknowledgement. The rectifier's
-independent depth and calibration callbacks can still race inference; until
-those inputs are synchronised, image-mode results are not guaranteed to repeat
-across host loads.
+panel array and, when non-empty, the tracker acknowledgement. The rectifier
+uses matching capture stamps for depth and keypoints.
 
 The CV estimation bench scores tracking, not hits. `bench_world` (C++)
 is the whole world in one lockstep loop: `/clock`, the phantom target through
@@ -405,6 +403,39 @@ completed and is reported separately. Run it in your container after building:
 src/sim/tools/lifecycle_check.sh --repeat 3 --out /tmp/lifecycle      # BACKEND=renode for the board
 src/sim/tools/lifecycle_check.sh mcb_parked:kill tracking:int         # selected cases
 ```
+
+### Images mode
+
+The estimation bench can render camera frames and run an ONNX armor model through
+CPU inference and the depth rectifier. Build the image bench dependencies as
+above, then supply an accessible YOLO26 ONNX model with input `images`
+`[1,3,640,640]` and output `output0` `[1,300,18]`:
+
+```bash
+ros2 launch sim estimation.launch.py cv_source:=images model_onnx:=/path/to/model.onnx
+```
+
+`face_variant:=dotmatrix` selects the alternate rendered face. Images mode uses
+lockstep (`real_time_factor:=0`) and the bench AM02 light-bar geometry. The
+images camera defaults to a 69° horizontal field of view; override it with
+`image_horizontal_fov` in radians.
+The bench defaults `image_confidence_threshold` to 0.1; set it for another
+model or to evaluate a different confidence cutoff.
+
+For an offline detector sweep from a container workspace, compile the renderer
+and provide the shared decoder built by `image_bench_deps.sh`:
+
+```bash
+c++ -O2 -std=c++17 -I src/sim/include -I /usr/include/eigen3 \
+  src/sim/scripts/panel_sweep.cpp src/sim/src/panel_renderer.cpp -o /tmp/panel_sweep
+python3 src/sim/scripts/panel_sweep.py /tmp/panel_sweep /path/to/model.onnx \
+  "$(ros2 pkg prefix realsense_yolov8_nitros_bridge)/lib/librealsense_yolov8_nitros_bridge_yolo26_c.so"
+```
+
+The table uses class 0 and covers both faces, 1–6 m and yaw from −60° to 60°.
+A `1` means
+at least one output passed the confidence threshold; it does not validate the
+class, keypoints or range.
 
 ## Build
 

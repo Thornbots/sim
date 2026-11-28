@@ -215,6 +215,9 @@ public:
     hfov_ = declare_parameter("horizontal_fov", 1.5184);
     image_height_ = declare_parameter("image_height", 480);
     image_width_ = declare_parameter("image_width", 640);
+    if (!(hfov_ > 0.0 && hfov_ < M_PI) || image_width_ <= 0 || image_height_ <= 0) {
+      throw std::invalid_argument("invalid camera dimensions or horizontal_fov");
+    }
     const double aspect = image_height_ / static_cast<double>(image_width_);
     cv_source_ = declare_parameter("cv_source", std::string("emulator"));
     const auto face = declare_parameter("face_variant", std::string("sticker"));
@@ -280,7 +283,8 @@ public:
     if (cv_source_ == "emulator") {
       det_pub_ = create_publisher<PanelDetectionArray>("cv/panel_detections", 10);
     } else {
-      const auto sensor_qos = rclcpp::SensorDataQoS();
+      const auto sensor_qos = rclcpp::QoS(10).reliable();
+      paused_pub_ = create_publisher<std_msgs::msg::Header>("/bench/paused", 10);
       color_pub_ = create_publisher<sensor_msgs::msg::Image>("/color/image_raw", sensor_qos);
       depth_pub_ = create_publisher<sensor_msgs::msg::Image>("/depth/image_rect_raw", sensor_qos);
       color_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("/color/camera_info", sensor_qos);
@@ -307,6 +311,14 @@ public:
           if (ns == image_frame_ns_) {
             last_input_ns_ = ns;
             image_result_received_ = true;
+            gate_cv_.notify_all();
+          }
+        }));
+      subs_.push_back(create_subscription<PanelDetectionArray>(
+        "/cv/robot_panels", 10, [this](PanelDetectionArray::ConstSharedPtr m) {
+          std::lock_guard<std::mutex> lock(gate_mutex_);
+          if (rclcpp::Time(m->header.stamp).nanoseconds() == image_frame_ns_) {
+            image_selection_received_ = true;
             image_result_nonempty_ = !m->detections.empty();
             gate_cv_.notify_all();
           }
@@ -469,6 +481,14 @@ private:
     return true;
   }
 
+  bool inference_subscribed()
+  {
+    const auto endpoints = get_subscriptions_info_by_topic("/color/image_raw");
+    return std::any_of(endpoints.begin(), endpoints.end(), [](const auto & endpoint) {
+      return endpoint.node_name() == "onnx_armor_inference";
+    });
+  }
+
   // Hold /clock at 0 until the nodes under test are up, so mcb_aim_standin's
   // timer starts at 0 (the grace covers its timers, made after its publisher).
   void await_nodes()
@@ -481,7 +501,8 @@ private:
         count_publishers("/cv/manager/input_ack") > 0 &&
         count_publishers("/cv/tracker/measurement") > 0 &&
         (cv_source_ != "images" || (count_publishers("/cv/panel_detections") > 0 &&
-        color_pub_->get_subscription_count() > 0 && depth_pub_->get_subscription_count() > 0 &&
+        count_publishers("/cv/armor_keypoints") > 0 &&
+        inference_subscribed() && depth_pub_->get_subscription_count() > 0 &&
         color_info_pub_->get_subscription_count() > 0 &&
         depth_info_pub_->get_subscription_count() > 0))) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -507,6 +528,16 @@ private:
     publish_clock();
     if (rate_ <= 0.0) {await_nodes();}
     while (!stop_ && rclcpp::ok()) {
+      if (cv_source_ == "images") {
+        std::unique_lock<std::mutex> lock(gate_mutex_);
+        if (!progress_enabled_) {
+          std_msgs::msg::Header paused;
+          paused.stamp = to_stamp(t_);
+          paused_pub_->publish(paused);
+          gate_cv_.wait(lock, [this] {return stop_ || progress_enabled_;});
+          if (stop_) {break;}
+        }
+      }
       const double next_t = (n_ + substeps_) * physics_step_s_;
       if (rate_ > 0.0) {
         std::this_thread::sleep_until(
@@ -526,18 +557,24 @@ private:
       }
       const int64_t shown_ns = n_ * physics_step_ns_;  // the /clock nodes last saw
       for (int i = 0; i < substeps_; ++i) {step();}
-      if (rate_ <= 0.0 && detections_due()) {
+      if (rate_ <= 0.0 && (detections_due() || (image_due_ && shown_ns > 0))) {
         // The tracker stamps with now(): send only once it reads shown_ns.
         std::unique_lock<std::mutex> lock(gate_mutex_);
         wait_for(lock, "/cv/tracker/clock_ack", [&] {return tracker_clock_ns_ >= shown_ns;});
       }
       flush_detections();
+      if (image_due_) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (last_pose_ns_ != n_ * physics_step_ns_) {publish_pose();}
+        image_frame();
+        image_due_ = false;
+      }
       if (cv_source_ == "images") {
         std::unique_lock<std::mutex> lock(gate_mutex_);
         if (image_frame_ns_ >= 0) {
           const auto deadline = std::chrono::steady_clock::now() +
             std::chrono::duration<double>(max_wait_s_);
-          while (!stop_ && (!image_result_received_ ||
+          while (!stop_ && (!image_result_received_ || !image_selection_received_ ||
             (image_result_nonempty_ && last_echo_ns_ < image_frame_ns_))) {
             if (gate_cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
               RCLCPP_ERROR(get_logger(), "lockstep: image frame timed out; stopping");
@@ -619,7 +656,7 @@ private:
     if (due(pose_rate_hz_, last_pose_)) {publish_pose();}
     if (due(truth_rate_hz_, last_truth_)) {publish_truth();}
     if (due(frame_rate_hz_, last_frame_)) {
-      if (cv_source_ == "images") {image_frame();} else {frame();}
+      if (cv_source_ == "images") {image_due_ = true;} else {frame();}
     }
     if (marker_pub_->get_subscription_count() > 0 && due(markers_rate_hz_, last_markers_)) {
       publish_markers();
@@ -736,6 +773,7 @@ private:
   void publish_pose()
   {
     const auto stamp = to_stamp(t_);
+    last_pose_ns_ = n_ * physics_step_ns_;
     RobotPose pose;
     pose.header.stamp = stamp;
     pose.x = xy_.x();
@@ -880,7 +918,7 @@ private:
     {
       std::lock_guard<std::mutex> lock(gate_mutex_);
       image_frame_ns_ = rclcpp::Time(info.header.stamp).nanoseconds();
-      image_result_received_ = image_result_nonempty_ = false;
+      image_result_received_ = image_selection_received_ = image_result_nonempty_ = false;
     }
     color_info_pub_->publish(info);
     depth_info_pub_->publish(info);
@@ -1129,8 +1167,9 @@ private:
   int64_t last_aim_ns_ = -1, last_point_ns_ = -1, expected_point_ns_ = -1;
   int64_t manager_input_ns_ = -1, last_input_ns_ = -1;
   int64_t tracker_clock_ns_ = -1;
-  int64_t image_frame_ns_ = -1, last_echo_ns_ = -1;
-  bool image_result_received_ = false, image_result_nonempty_ = false;
+  int64_t image_frame_ns_ = -1, last_echo_ns_ = -1, last_pose_ns_ = -1;
+  bool image_result_received_ = false, image_selection_received_ = false;
+  bool image_result_nonempty_ = false, image_due_ = false;
   bool warned_phase_ = false;
   std::optional<double> progress_;
   bool progress_enabled_ = true;
@@ -1147,7 +1186,7 @@ private:
   rclcpp::Publisher<realsense2_camera_msgs::msg::Extrinsics>::SharedPtr extrinsics_pub_;
   std::unique_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_;
   rclcpp::Publisher<MarkerArray>::SharedPtr marker_pub_;
-  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr case_pub_;
+  rclcpp::Publisher<std_msgs::msg::Header>::SharedPtr case_pub_, paused_pub_;
   std::vector<rclcpp::SubscriptionBase::SharedPtr> subs_;
 
   std::atomic<bool> stop_{false};

@@ -131,8 +131,28 @@ PanelImage render_panels(const PanelCamera & camera, const std::vector<RenderPan
       std::swap(projection.keypoints[2], projection.keypoints[3]);
     }
     const Eigen::Isometry3d inverse = panel.T_cam_panel.inverse();
-    for (int v = 0; v < height; ++v) {
-      for (int u = 0; u < width; ++u) {
+    // Rasterize only the projected body bounds, including the bar glow.
+    double min_x = width, max_x = 0, min_y = height, max_y = 0;
+    for (double x : {-0.23, 0.23}) {
+      for (double y : {-0.20, 0.20}) {
+        for (double z : {-0.04, 0.008}) {
+          const auto p = panel.T_cam_panel * Eigen::Vector3d(x, y, z);
+          if (p.z() <= 0.01) {
+            min_x = 0; max_x = width; min_y = 0; max_y = height;
+            continue;
+          }
+          const auto uv = project(camera, p);
+          min_x = std::min(min_x, uv.x()); max_x = std::max(max_x, uv.x());
+          min_y = std::min(min_y, uv.y()); max_y = std::max(max_y, uv.y());
+        }
+      }
+    }
+    const int u0 = static_cast<int>(std::clamp(std::floor(min_x) - 2, 0.0, static_cast<double>(width)));
+    const int u1 = static_cast<int>(std::clamp(std::ceil(max_x) + 2, 0.0, static_cast<double>(width)));
+    const int v0 = static_cast<int>(std::clamp(std::floor(min_y) - 2, 0.0, static_cast<double>(height)));
+    const int v1 = static_cast<int>(std::clamp(std::ceil(max_y) + 2, 0.0, static_cast<double>(height)));
+    for (int v = v0; v < v1; ++v) {
+      for (int u = u0; u < u1; ++u) {
         const Eigen::Vector3d ray((u + 0.5 - camera.cx) / camera.fx,
           (v + 0.5 - camera.cy) / camera.fy, 1.0);
         const double denom = normal.dot(ray);
@@ -149,11 +169,22 @@ PanelImage render_panels(const PanelCamera & camera, const std::vector<RenderPan
         const double distance = std::hypot(dx, dy);
         const bool bar = distance == 0;
         const bool glow = distance < 0.014;
-        if (!face && !glow) {continue;}
+        const double body_z = (normal.dot(origin) - 0.04) / denom;
+        const Eigen::Vector3d body_point = inverse * (body_z * ray);
+        const bool body = body_z > 0 && std::abs(body_point.x()) <= 0.23 &&
+          std::abs(body_point.y()) <= 0.20;
+        const bool frame = std::abs(f.x()) <= 0.075 && std::abs(f.y()) <= 0.068;
+        if (!face && !glow && !body && !frame) {continue;}
         const auto pixel = static_cast<std::size_t>(v * width + u);
-        const double z = bar ? bar_z : face_z;
+        const double z = bar ? bar_z : ((face || frame || glow) ? face_z : body_z);
         if (z >= zbuffer[pixel]) {continue;}
         const auto rgb = pixel * 3;
+        if (body || frame) {
+          const double value = frame ? 25 : 43;
+          image.rgb8[rgb] = channel(value);
+          image.rgb8[rgb + 1] = channel(value * 1.05);
+          image.rgb8[rgb + 2] = channel(value * 1.15);
+        }
         if (face) {
           const bool lit = glyph(f.x(), f.y(), panel.class_id % 4,
             panel.face == PanelFace::DotMatrix);
@@ -175,11 +206,11 @@ PanelImage render_panels(const PanelCamera & camera, const std::vector<RenderPan
             }
           }
         }
-        if (face || bar) {
+        if (face || bar || body || frame) {
           zbuffer[pixel] = z;
           image.depth_mm[pixel] = static_cast<std::uint16_t>(
             std::clamp(std::round(z * 1000), 1.0, 65535.0));
-          owner[pixel] = index;
+          owner[pixel] = (face || bar) ? index : panels.size();
         }
       }
     }

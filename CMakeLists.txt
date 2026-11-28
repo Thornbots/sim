@@ -546,6 +546,9 @@ if(BUILD_TESTING)
     OPPONENT_DRIVER_EXE="$<TARGET_FILE:opponent_driver>")
   target_link_libraries(test_opponent_startup suite_support gz-transport::core gz-msgs::core)
   ament_target_dependencies(test_opponent_startup rclcpp std_msgs)
+  ament_add_pytest_test(sim_image_estimation test/test_image_estimation.py TIMEOUT 1500
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    ENV "PYTEST_ADDOPTS=-p no:anyio")
   ament_add_pytest_test(sim_onnx_armor test/test_onnx_armor_inference.py TIMEOUT 120
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     ENV "PYTEST_ADDOPTS=-p no:anyio")
