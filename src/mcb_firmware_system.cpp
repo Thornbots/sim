@@ -230,7 +230,6 @@ public:
     } catch (const std::runtime_error &) {
       // Ctrl-C during the board's boot calibration: stop instead of failing.
       if (!mcb_firmware::cancelled()) throw;
-      events.Emit<gz::sim::events::Stop>();
       return;
     }
     if (relay_) relay_->close_child();
@@ -400,7 +399,8 @@ public:
       // kill_launch.sh and Ctrl-C signal every process, so the firmware can die
       // of SIGINT/SIGTERM just before this process learns it is stopping.
       const int by = firmware_->exit_signal();
-      if (*stopping_ || by == SIGINT || by == SIGTERM || firmware_->exited_cleanly()) {
+      if (*stopping_) return;
+      if (by == SIGINT || by == SIGTERM || firmware_->exited_cleanly()) {
         events_->Emit<gz::sim::events::Stop>();
         return;
       }
@@ -469,10 +469,7 @@ public:
     const auto held = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime).count();
     const auto deadline = std::chrono::steady_clock::now() + kDeadlockGuard;
     while (failure_.empty() && (!pending_.empty() || !consume_pending_.empty() || clock_ns_ < held)) {
-      if (*stopping_) {
-        events_->Emit<gz::sim::events::Stop>();
-        return;
-      }
+      if (*stopping_) return;
       if (std::chrono::steady_clock::now() >= deadline)
         throw std::runtime_error("UART acknowledgment or ROS clock timeout: pending=" +
             std::to_string(pending_.size()) + " clock=" + std::to_string(clock_ns_) +
