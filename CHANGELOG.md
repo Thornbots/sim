@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Deliver each lockstep scan and the clock sample at a hold to readers that
+  discovery matched late or that a CPU stall delayed. Producer-chain stages
+  latch `/scan` and read it reliably in rf2o, AMCL and `map_pose_publisher`,
+  and robot clock readers become transient-local. A dropped scan or missed
+  clock sample had held `mcb_match` forever under load.
 - Hold AMCL to lockstep in every producer-chain E2E stage. AMCL answers every
   scan, `map_pose_publisher` uses an answer only 50 ms after its scan and waits
   for it, and AMCL starts from the spawn prior at 5 s with `amcl_seed`. AMCL's

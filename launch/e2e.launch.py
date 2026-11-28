@@ -63,7 +63,10 @@ DRIVING = ('mcb_drive', 'mcb_match')
 ROBOT_DELAY_S = 8.0  # as localization_tests.launch.py: the sim is up first
 OPPONENT = 'opponent_0'
 OPPONENT_CLASS = 6  # red; we are blue
-RELIABLE_CLOCK = {'qos_overrides./clock.subscription.reliability': 'reliable'}
+# gz_bridge latches /clock (sim/src/gz_bridge.cpp): a reader matched after a hold's only clock
+# sample must still get it, or its clock stays behind the hold forever.
+RELIABLE_CLOCK = {'qos_overrides./clock.subscription.reliability': 'reliable',
+                  'qos_overrides./clock.subscription.durability': 'transient_local'}
 POSE_BOOT_READY = '/sim/e2e/pose_boot_ready'
 
 
@@ -536,6 +539,10 @@ def generate_launch_description():
                 'consumer_ack_topic': '/dji_serial_bridge/tx_ack/target_state',
                 'tick_ack_topic': MANAGER_TICK_ACK,
                 'target_state_none_topic': ''}}
+            # The scan chain holds for every scan, so each must reach its readers even when
+            # one matched after the first scan or was stalled: latch, read reliably.
+            robot_params['lidar_self_filter'] = {'ros__parameters': {'latched': True}}
+            robot_params['rf2o_laser_odometry'] = {'ros__parameters': {'reliable_scans': True}}
         if stage == 'mcb_parked':
             robot_params['point_to_cv_target'] = {'ros__parameters': {
                 'idle_zone': parked_paths['idle_zone']}}
