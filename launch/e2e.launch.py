@@ -121,6 +121,7 @@ def _is_true(context, name):
 ODOM = 'nav_msgs/msg/Odometry'
 EKF_PERIOD_S = 0.034  # simulation only: 29.4 Hz for the stock 30 Hz, a whole number of ms
 MANAGER_FRAME_ACK = '/target_manager/frame_ack'
+MANAGER_TICK_ACK = '/target_manager/tick_ack'
 # Simulation only: AMCL's modelled latency. It needs nav_odom TF past the scan, which comes
 # with the next EKF output (34 ms apart), so every tick this late can wait for it.
 AMCL_DELAY_S = 0.05
@@ -157,6 +158,10 @@ PRODUCER_CHAINS = {
     'detector': {'period_s': 1.0 / 60.0, 'phase_s': 0.0, 'lag_s': 0.025, 'align_s': 0.004,
                  'acks': [f'{MANAGER_FRAME_ACK}@tick|'
                           '/sim/e2e/target_state_none@tick']},
+    # target_manager's 5 ms decision grid: a confidence-decay clear decided between frames
+    # reaches the firmware at its tick, not whenever the timer callback ran.
+    'manager': {'period_s': 0.005, 'phase_s': 0.0, 'start_s': 0.005, 'lag_s': 0.0,
+                'acks': [f'{MANAGER_TICK_ACK}@tick']},
     # waypoint_nav's 10 Hz NAV_GOAL, held 1 ms after its tick so the EKF chain (same
     # instant every third tick) has been released first.
     'nav': {'period_s': 0.1, 'phase_s': 0.0, 'lag_s': 0.0, 'acks': [
@@ -506,6 +511,7 @@ def generate_launch_description():
             robot_params['target_manager'] = {'ros__parameters': {
                 MANAGER_FRAME_ACK_PARAMETER: MANAGER_FRAME_ACK,
                 'consumer_ack_topic': '/dji_serial_bridge/tx_ack/target_state',
+                'tick_ack_topic': MANAGER_TICK_ACK,
                 'target_state_none_topic': ''}}
         if stage == 'mcb_parked':
             robot_params['point_to_cv_target'] = {'ros__parameters': {
