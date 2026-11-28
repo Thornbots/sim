@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include "gz/msgs/empty.pb.h"
 #include "gz/msgs/scene.pb.h"
@@ -36,8 +37,8 @@ int main(int argc, char ** argv)
   uint64_t count = 0;
   bool valid = false;
   // Destroy transport callbacks before the state they capture.
-  gz::transport::Node gz;
-  gz.Subscribe<gz::msgs::WorldStatistics>(sim::field::world_path("stats"),
+  std::optional<gz::transport::Node> gz(std::in_place);
+  gz->Subscribe<gz::msgs::WorldStatistics>(sim::field::world_path("stats"),
     [&](const gz::msgs::WorldStatistics & msg) {
       std::lock_guard<std::mutex> lock(mutex);
       ++count;
@@ -58,6 +59,8 @@ int main(int argc, char ** argv)
       ready = confirmed && count > after;
     }
     if (ready) {
+      // The latched ROS marker serves late peers. The Gazebo client is finished.
+      gz.reset();
       std_msgs::msg::Header message;
       message.frame_id = name;
       pub->publish(message);
@@ -70,7 +73,7 @@ int main(int argc, char ** argv)
     gz::msgs::Empty request;
     gz::msgs::Scene scene;
     bool result = false;
-    if (gz.Request(sim::field::world_path("scene/info"), request, 500u, scene, result) && result) {
+    if (gz->Request(sim::field::world_path("scene/info"), request, 500u, scene, result) && result) {
       int matches = 0;
       bool correct = false;
       for (const auto & model : scene.model()) {

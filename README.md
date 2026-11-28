@@ -413,10 +413,11 @@ outside the launch tree to clean up:
   cannot kill it mid-tick; it exits when gz closes its stdin.
 - The checker rejects SIGTERM/SIGKILL escalation and notes every non-zero node
   exit, including -2. The run summary requires clean teardown.
-- The coordinated E2E launch uses UDP for its clock, UART and robot
-  nodes. DDS readers may exit in any order without sharing ports. The
-  scorer disconnects its Gazebo truth subscriptions before stopping the
-  publishers. `gz_bridge` takes SIGINT/SIGTERM on the executor thread,
+- The coordinated E2E launch uses UDP for ROS transport in the sim launch
+  and for the UART and robot nodes. The spawn verifier releases its Gazebo
+  client once it has confirmed the spawn. The scorer disconnects its
+  Gazebo truth subscriptions before stopping the publishers. `gz_bridge`
+  takes SIGINT/SIGTERM on the executor thread,
   disconnects its Gazebo subscriptions, and destroys its ROS context on
   that thread. The launch supervisor still bounds a stuck shutdown.
   `tools/bridge_teardown_stress.py N MIN MAX OUT` exercises concurrent exits.

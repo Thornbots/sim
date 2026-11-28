@@ -64,10 +64,9 @@ def gz_sim_process(arguments, name='gazebo_gui'):
         name=name, output='screen', additional_env=_gz_env(), shell=False)
 
 
-def gz_server_process(world, run=True, name='gazebo', additional_env=None):
+def gz_server_process(world, run=True, name='gazebo'):
     """Return an ExecuteProcess running the gz server on `world`, paused unless `run`."""
     server = os.path.join(get_package_prefix('sim'), 'lib', 'sim', 'gz_server')
     return ExecuteProcess(
         cmd=[server, world, *(['-r'] if run else [])],
-        name=name, output='screen', shell=False,
-        additional_env={**_gz_env(), **(additional_env or {})})
+        name=name, output='screen', additional_env=_gz_env(), shell=False)
