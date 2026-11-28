@@ -25,7 +25,7 @@
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
-  <exec_depend>realsense_yolov8_nitros_bridge</exec_depend>
+  <!-- onnx_armor_inference loads the bridge decoder at runtime; image_bench_deps.sh builds it. -->
   <exec_depend>rclpy</exec_depend>
   <exec_depend>foxglove_bridge</exec_depend>
   <depend>tf2_msgs</depend>
