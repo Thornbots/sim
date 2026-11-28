@@ -278,6 +278,8 @@ def generate_launch_description():
     xacro_file = os.path.join(share, 'urdf', 'sentry_v2.urdf.xacro')
 
     def detector(opponents, match_referee):
+        detector_noise = PythonExpression(
+            ["1.0 if '", LaunchConfiguration('detector_noise'), "' == 'true' else 0.0"])
         return Node(
             package='sim', executable='detector_standin_node', name='detector_standin',
             output='screen',
@@ -290,12 +292,10 @@ def generate_launch_description():
                 'opponents': opponents,
                 'seed': ParameterValue(LaunchConfiguration('detector_seed'), value_type=int),
                 # The estimation bench's D435-shaped ray noise; see README.md's target driver.
-                'noise_depth_range_coeff': ParameterValue(PythonExpression(
-                    ["0.0036 if '", LaunchConfiguration('detector_noise'), "' == 'true' else 0.0"]),
-                    value_type=float),
-                'noise_lateral_rad': ParameterValue(PythonExpression(
-                    ["0.003 if '", LaunchConfiguration('detector_noise'), "' == 'true' else 0.0"]),
-                    value_type=float),
+                'noise_depth_range_coeff': ParameterValue(
+                    PythonExpression([detector_noise, ' * 0.0036']), value_type=float),
+                'noise_lateral_rad': ParameterValue(
+                    PythonExpression([detector_noise, ' * 0.003']), value_type=float),
                 'match_referee': match_referee,
                 'class_ids': [2 if name.startswith('ally') else OPPONENT_CLASS
                               for name in opponents],
