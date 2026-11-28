@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Record the Gazebo pane with a follow camera: the `FollowCamera` gz GUI plugin
+  frames our robot and the nearest opponent at native resolution, smoothed in
+  sim time, so MCB and localization videos need no digital zoom.
+  `record_e2e.py capture --camera preset` keeps the fixed view.
+- Recolor the localization RViz trails with Okabe-Ito colours and nested
+  widths, mark the robot with a white disc and heading arrow, and dim lidar.
 - Stop tracking colcon `build/`, `install/` and `log/` output from a 2026-10-02
   test run, and ignore those directories at the package root.
 - Publish one run summary for every guarded integration suite. Use its verdict

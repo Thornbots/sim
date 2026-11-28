@@ -308,6 +308,14 @@ def generate_launch_description():
             os.environ.get('GZ_SIM_SYSTEM_PLUGIN_PATH', ''),
         ])
     )
+    # --- The GUI finds sim's FollowCamera plugin (recordings) in lib/sim/gui.
+    gz_gui_plugin_path = SetEnvironmentVariable(
+        name='GZ_GUI_PLUGIN_PATH',
+        value=os.pathsep.join([
+            os.path.join(get_package_prefix('sim'), 'lib', 'sim', 'gui'),
+            os.environ.get('GZ_GUI_PLUGIN_PATH', ''),
+        ])
+    )
     # --- Start the gz sim server with the requested world. The GUI comes up
     # separately once the robot is in (gz_gui below): a GUI started with the
     # server takes its first state before the spawn and never shows the robot.
@@ -824,6 +832,7 @@ def generate_launch_description():
         gz_resource_path,
         gz_ip,
         gz_plugin_path,
+        gz_gui_plugin_path,
         OpaqueFunction(function=_world_with_rtf),
         gz_sim,
         clock_bridge,

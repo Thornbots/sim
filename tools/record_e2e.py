@@ -19,7 +19,6 @@ from threading import Thread
 import time
 
 WIDTH, HEIGHT, BANNER = 1920, 1080, 86
-LOCALIZATION = ('localization_drift', 'ekf')
 VIEWS = {
     'localization_drift': ('rviz', 'gz'),
     'ekf': ('rviz', 'gz'),
@@ -127,15 +126,13 @@ def arrange(env, views, original, placed):
     return current
 
 
-def camera_request(config):
-    """Format the launch camera preset for Gazebo's pose service."""
-    x, y, z, roll, pitch, yaw = map(
-        float, re.search(r'<camera_pose>(.*?)</camera_pose>', config)[1].split())
-    cr, cp, cy = (math.cos(value / 2) for value in (roll, pitch, yaw))
-    sr, sp, sy = (math.sin(value / 2) for value in (roll, pitch, yaw))
-    return (f'pose: {{position: {{x: {x}, y: {y}, z: {z}}} orientation: {{'
-            f'x: {sr*cp*cy-cr*sp*sy}, y: {cr*sp*cy+sr*cp*sy}, '
-            f'z: {cr*cp*sy-sr*sp*cy}, w: {cr*cp*cy+sr*sp*sy}}}}}')
+def follow_camera(env):
+    """Turn on the gz view's FollowCamera plugin; True once it acknowledges."""
+    result = subprocess.run(
+        ['gz', 'service', '-s', '/gui/follow_camera', '--reqtype', 'gz.msgs.Boolean',
+         '--reptype', 'gz.msgs.Boolean', '--timeout', '1000', '--req', 'data: true'],
+        env=env, capture_output=True, text=True, timeout=3)
+    return not result.returncode and 'data: true' in result.stdout
 
 
 def copy_suite_log(source, log, events):
@@ -211,7 +208,7 @@ def capture(args, launch_args):
                *(f'{key}:={value}' for key, value in settings.items()),
                'headless:=false', 'remote_dds:=false', f'log_dir:={directory}']
     metadata = {'suite': args.suite, 'capture_fps': args.capture_fps, 'command': command,
-                'layout_wall': None}
+                'camera': args.camera if 'gz' in views else None, 'layout_wall': None}
     capture_result = directory / '.capture-result.json'
     launch_complete = directory / '.launch-complete'
     try:
@@ -221,10 +218,7 @@ def capture(args, launch_args):
                 raise RuntimeError('Set ROS_DOMAIN_ID and GZ_PARTITION for an idle sim session')
             from ament_index_python.packages import get_package_share_directory
 
-            camera_pose = None
-            if args.suite in LOCALIZATION:
-                preset = Path(get_package_share_directory('sim')) / 'rviz/localization-gz.config'
-                camera_pose = camera_request(preset.read_text())
+            if 'gz' in views:
                 env.setdefault('GZ_IP', '127.0.0.1')
             os.environ.pop('ROS_AUTOMATIC_DISCOVERY_RANGE', None)
             os.environ['FASTRTPS_DEFAULT_PROFILES_FILE'] = str(
@@ -270,15 +264,9 @@ def capture(args, launch_args):
                         current = arrange(env, views, original, placed)
                         next_layout = time.monotonic() + .25
                         if current == set(views) and metadata['layout_wall'] is None:
-                            if camera_pose:
-                                result = subprocess.run(
-                                    ['gz', 'service', '-s', '/gui/move_to/pose',
-                                     '--reqtype', 'gz.msgs.GUICamera',
-                                     '--reptype', 'gz.msgs.Boolean',
-                                     '--timeout', '1000', '--req', camera_pose],
-                                    env=env, capture_output=True, text=True, timeout=3)
-                                if result.returncode or 'data: true' not in result.stdout:
-                                    continue
+                            if ('gz' in views and args.camera == 'follow'
+                                    and not follow_camera(env)):
+                                continue
                             metadata['layout_wall'] = time.time()
                 finish_encoder(encoder)
                 if encoder.returncode or metadata['layout_wall'] is None:
@@ -535,6 +523,8 @@ def main():
     take.add_argument('directory')
     take.add_argument('--display', help='use a specific existing X11 display')
     take.add_argument('--capture-fps', type=positive_int, default=30)
+    take.add_argument('--camera', choices=['follow', 'preset'], default='follow',
+                      help='Gazebo view: follow our robot and target, or keep the preset')
     take.add_argument('--backend', choices=['hosted', 'renode'], help='MCB backend')
     take.add_argument('--speeds', help='pass speeds:= to the suite')
     take.add_argument('--paths', help='pass paths:= to the suite')
