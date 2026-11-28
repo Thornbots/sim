@@ -34,7 +34,7 @@ struct Options {
   double model_yaw_jitter_rad = 0;
   bool headless = false, external = false, skip_stationary = false,
        only_stationary = false, blackout = false, no_firmware_fixes = false,
-       fail_fast = false, lockstep = true;
+       fail_fast = false, lockstep = true, images = false;
 };
 inline Options options;
 inline std::vector<std::string> split(const std::string &s) {
@@ -55,7 +55,9 @@ inline void parse_options(int &argc, char **argv) {
         throw std::runtime_error("missing value for " + arg);
       return std::string(argv[++i]);
     };
-    if (arg == "--headless")
+    if (arg == "--images")
+      options.images = true;
+    else if (arg == "--headless")
       options.headless = true;
     else if (arg == "--backend") {
       options.backend = value();

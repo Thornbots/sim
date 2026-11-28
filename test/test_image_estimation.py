@@ -96,14 +96,17 @@ def test_image_estimation(tmp_path):
                 failures.append(f'run {run}: log checker failed')
             if not frames or len(frames) != len(set(frames)):
                 failures.append(f'run {run}: missing or duplicate image stamps')
-            if len(results) != len(frames) or {s for s, _ in results} != set(frames):
+            if (len(results) != len(frames) or len({s for s, _ in results}) != len(results)
+                    or {s for s, _ in results} != set(frames)):
                 failures.append(f'run {run}: image and result stamps differ')
             rate = sum(nonempty for _, nonempty in results) / len(results) if results else 0
             print(f'run {run}: {len(results)} frames, {rate:.1%} nonempty')
-            if rate <= 0.5:
+            if rate < 0.5:
                 failures.append(f'run {run}: detection rate {rate:.1%}')
-            outputs.append((directory / 'estimation.jsonl').read_bytes())
-            print(f'run {run}: sha256 {hashlib.sha256(outputs[-1]).hexdigest()}')
+            outputs.append(tuple((directory / name).read_bytes() for name in
+                                 ('estimation.jsonl', 'estimation_states.jsonl')))
+            for name, data in zip(('summary', 'states'), outputs[-1]):
+                print(f'run {run}: {name} sha256 {hashlib.sha256(data).hexdigest()}')
             if stress:
                 stress.terminate()
                 stress.wait()

@@ -208,6 +208,11 @@ GTest summary as well as the measured hit rates: diagnostic-tier completion
 is not an accuracy guarantee. `tools/check_bench_log.cpp` also rejects failed
 GTest summaries and clock or lockstep stalls.
 
+The images estimation test reports accuracy metrics without applying emulator limits; it
+requires at least 50% of frames to contain detections and compares two loaded runs.
+Its arrival age uses the later of the input-frame and state stamps as the
+lockstep arrival time, including the age of a held state.
+
 `bench_world` also has an experimental `cv_source:=images` mode. It renders
 640×480 RGB and aligned millimetre depth from panel truth and publishes camera
 info and identity depth-to-colour extrinsics. `face_variant:=sticker` (default)

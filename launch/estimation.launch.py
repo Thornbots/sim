@@ -78,7 +78,8 @@ def _stack(context):
              'yaw_bearing_damping': float(cfg['yaw_bearing_damping']),
              'seed': int(cfg['seed']),
              'cv_source': cfg['cv_source'],
-             'horizontal_fov': float(cfg['image_horizontal_fov']) if cfg['cv_source'] == 'images' else 1.5184,
+             'horizontal_fov': (float(cfg['image_horizontal_fov'])
+                                if cfg['cv_source'] == 'images' else 1.5184),
              'face_variant': cfg['face_variant'],
              'emit_normal': _is_true(context, 'emit_normal'),
              'normal_yaw_noise_rad': float(cfg['normal_yaw_noise_rad']),
@@ -154,6 +155,8 @@ def _tests(context):
            '--panel-layout', cfg['panel_layout'], '--target-path', cfg['target_path'],
            '--shooter-speed', cfg['shooter_speed'], '--chassis-spin', cfg['chassis_spin'],
            '--camera-latency', cfg['camera_latency_s']]
+    if cfg['cv_source'] == 'images':
+        cmd.append('--images')
     speeds = cfg['speeds'].replace(',', ' ').split()
     if speeds:
         cmd += ['--shot-speeds', ','.join(speeds)]
