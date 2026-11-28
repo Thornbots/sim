@@ -208,6 +208,18 @@ GTest summary as well as the measured hit rates: diagnostic-tier completion
 is not an accuracy guarantee. `tools/check_bench_log.cpp` also rejects failed
 GTest summaries and clock or lockstep stalls.
 
+`bench_world` also has an experimental `cv_source:=images` mode. It renders
+640×480 RGB and aligned millimetre depth from panel truth and publishes camera
+info and identity depth-to-colour extrinsics. `face_variant:=sticker` (default)
+or `dotmatrix` chooses the face; `class_id` selects both glyph and colour.
+Configure the rectifier with `color_ns:=/color`, `depth_ns:=/depth`,
+`input_mode:=armor_keypoints` and the extrinsics relay. Images mode requires
+lockstep and at most one frame per clock step. It waits for each matching
+panel array and, when non-empty, the tracker acknowledgement. The rectifier's
+independent depth and calibration callbacks can still race inference; until
+those inputs are synchronised, image-mode results are not guaranteed to repeat
+across host loads.
+
 The CV estimation bench scores tracking, not hits. `bench_world` (C++)
 is the whole world in one lockstep loop: `/clock`, the phantom target through
 the aiming bench's ten cells plus a still one at 45 deg (`stationary45`, two

@@ -98,9 +98,9 @@ install(PROGRAMS scripts/onnx_armor_inference.py DESTINATION lib/${PROJECT_NAME}
 
 add_executable(bench_world src/bench_world.cpp)
 target_compile_features(bench_world PUBLIC cxx_std_17)
-target_link_libraries(bench_world Eigen3::Eigen)
+target_link_libraries(bench_world Eigen3::Eigen panel_renderer)
 ament_target_dependencies(bench_world
-  rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs std_srvs
+  rclcpp dji_serial_bridge geometry_msgs nav_msgs rosgraph_msgs sensor_msgs std_msgs std_srvs realsense2_camera_msgs tf2_ros
   visualization_msgs)
 install(TARGETS bench_world DESTINATION lib/${PROJECT_NAME})
 
