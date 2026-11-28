@@ -10,9 +10,10 @@
 // stamps, never wall time; a wall timer polls so a held sim clock cannot stall it.
 
 #include <chrono>
-#include <limits>
 #include <deque>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -100,14 +101,44 @@ private:
       relay_ns_ >= pending_.front() && queued_ns_ >= pending_.front()) {
       const rclcpp::Time at(pending_.front(), RCL_ROS_TIME);
       bool ready = true;
+      std::string missing;
       for (const auto & frame : frames_) {
-        ready = ready && tf_buffer_->canTransform(odom_frame_, frame, at);
+        std::string error;
+        if (!tf_buffer_->canTransform(odom_frame_, frame, at, rclcpp::Duration(0, 0), &error)) {
+          ready = false;
+          missing += " " + frame + ": " + error;
+        }
       }
-      if (!ready) {return;}
+      if (!ready) {
+        report_wait("TF" + missing);
+        return;
+      }
       std_msgs::msg::Header h;
       h.stamp = at;
       pub_->publish(h);
       pending_.pop_front();
+      waiting_since_.reset();
+    }
+    if (!pending_.empty()) {
+      report_wait("inputs: odom " + std::to_string(odom_ns_) + " ekf_input " +
+        std::to_string(input_ns_) + " relay " + std::to_string(relay_ns_) + " queued " +
+        std::to_string(queued_ns_));
+    }
+  }
+
+  // Names what still holds the oldest POSE once it has waited 5 s of wall time.
+  void report_wait(const std::string & what)
+  {
+    const auto wall = std::chrono::steady_clock::now();
+    if (!waiting_since_ || waiting_for_ != pending_.front()) {
+      waiting_since_ = wall;
+      waiting_for_ = pending_.front();
+      reported_ = false;
+    }
+    if (!reported_ && wall - *waiting_since_ > std::chrono::seconds(5)) {
+      reported_ = true;
+      RCLCPP_WARN(get_logger(), "POSE %.3f s unconsumed after 5 s; waiting on %s",
+        pending_.front() * 1e-9, what.c_str());
     }
   }
 
@@ -122,6 +153,9 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_, input_sub_, ekf_sub_;
   rclcpp::Subscription<std_msgs::msg::Header>::SharedPtr relay_sub_, queued_sub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  std::optional<std::chrono::steady_clock::time_point> waiting_since_;
+  int64_t waiting_for_ = 0;
+  bool reported_ = false;
 };
 }  // namespace
 
